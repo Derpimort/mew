@@ -163,6 +163,42 @@
 
 /* ── focus dial ───────────────────────────────────────────────── */
 .nx-stage { position: relative; }
+.nx-clock {
+  position: absolute;
+  top: 16px;
+  left: 18px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  transition: color 0.3s ease;
+  pointer-events: none;
+}
+.nx-stage:hover .nx-clock { color: var(--ice); }
+.nx-live {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  white-space: nowrap;
+  max-width: 88%;
+  overflow: hidden;
+  transition: color 0.3s ease;
+}
+.nx-stage:hover .nx-live { color: var(--ink); }
+.nx-live .it { cursor: pointer; }
+.nx-live .it .dot { color: var(--ice); }
+.nx-live .it.life .dot { color: var(--teal); }
+.nx-live .it .tm { color: var(--faint); font-weight: 600; }
+.nx-live .idle { color: var(--faint); }
+.nx-live .nx-next { color: var(--faint); font-weight: 600; }
 .nx-fade { opacity: 0; transition: opacity 0.5s ease; }
 .nx-stage:hover .nx-fade,
 .nx-stage.reveal .nx-fade { opacity: 1; }

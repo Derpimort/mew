@@ -138,6 +138,12 @@ export function FocusDial() {
     meta = "day's items done"
   }
 
+  /* everything holding this exact minute — the always-on "what is live" strip */
+  const nowMin = minOfDay(now)
+  const liveItems = blocksForDay(blocks, todayKey).filter(
+    (b) => b.status === 'open' && b.startMin <= nowMin && nowMin < b.endMin,
+  )
+
   const switches = interruptionsLastHour(memory, nowMs)
   const guardOn = guardDayKey === todayKey && guardUntilMin != null && minOfDay(now) < guardUntilMin
 
@@ -338,13 +344,28 @@ export function FocusDial() {
             })}
         </g>
 
-        {/* now — at its clock position, on its ring */}
+        {/* now — a carbon-cased hand across both rings: the dark casing cuts
+            a visible notch through whatever arc it crosses, the bright core
+            reads over empty face, and the dot marks which ring is live */}
         {(() => {
           const [x, y] = rPolar(g.cx, g.cy, nowRing, nowDeg)
+          const [hx0, hy0] = rPolar(g.cx, g.cy, g.ri - 58, nowDeg)
+          const [hx1, hy1] = rPolar(g.cx, g.cy, g.ro + 24, nowDeg)
           const [tx, ty] = rPolar(g.cx, g.cy, g.ro + 50, nowDeg)
           return (
-            <g>
-              <circle cx={x} cy={y} r="7" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
+            <g style={{ pointerEvents: 'none' }}>
+              <line x1={hx0} y1={hy0} x2={hx1} y2={hy1} stroke="var(--bg)" strokeWidth={10} strokeLinecap="round" opacity={0.92} />
+              <line
+                x1={hx0}
+                y1={hy0}
+                x2={hx1}
+                y2={hy1}
+                stroke="var(--ice)"
+                strokeWidth={3.5}
+                strokeLinecap="round"
+                style={{ filter: 'drop-shadow(0 0 9px var(--glowc))' }}
+              />
+              <circle cx={x} cy={y} r="8" fill="var(--ice)" stroke="var(--bg)" strokeWidth={2.5} style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
               <text x={tx} y={ty} textAnchor="middle" className="mono" style={{ fill: 'var(--ice)', fontSize: 12, fontWeight: 700 }}>
                 now · {fmtTime(minOfDay(now))}
               </text>
@@ -364,6 +385,35 @@ export function FocusDial() {
             {' '}· guard {guardOn ? 'on' : 'off'} · {switches} switch{switches === 1 ? '' : 'es'}
           </span>
         </div>
+      </div>
+      {/* fixed clock chip: wherever the cursor is, the current time has one
+          predictable home — brighter while the dial is being explored */}
+      <div className="nx-clock mono">now {fmtTime(nowMin)}</div>
+      {/* the live strip: what's running this minute (and what's next) — always
+          on, brighter on hover; click pins the block's card */}
+      <div className="nx-live mono">
+        {liveItems.length ? (
+          liveItems.map((b) => (
+            <span
+              key={b.id}
+              className={'it' + (b.tag !== 'work' ? ' life' : '')}
+              onClick={(e) => {
+                e.stopPropagation()
+                holdHover()
+                setPinned(b.id)
+                setHoverRaw(b.id)
+              }}
+            >
+              <span className="dot">●</span> {b.title.split('—')[0].trim()}
+              {b.optional ? '?' : ''} <span className="tm">{fmtTime(b.startMin)}–{fmtTime(b.endMin)}</span>
+            </span>
+          ))
+        ) : (
+          <span className="idle">nothing live</span>
+        )}
+        {live.next && (
+          <span className="nx-next">→ {live.next.title.split('—')[0].trim()} {fmtTime(live.next.startMin)}</span>
+        )}
       </div>
       {scrub && !sel && (
         <span className="dial-scrub" style={{ left: scrub.x + 14, top: scrub.y - 8 }}>
