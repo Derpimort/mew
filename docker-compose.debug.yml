@@ -1,0 +1,17 @@
+# Debug override — `app debug` (or `make debug`) runs:
+#   docker compose -f docker-compose.yml -f docker-compose.debug.yml up --build
+# Vite dev server with HMR; source bind-mounted, node_modules stay in-image.
+# Reach per-dev stacks via SSM port-forwarding, not by rebinding the ALB port.
+services:
+  mew:
+    build:
+      target: dev
+    ports: !override
+      - "${MEW_DEV_PORT:-5173}:5173"
+    read_only: false
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./app/src:/app/src
+      - ./app/public:/app/public
+      - ./app/index.html:/app/index.html

@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MEW — Final</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; background: #101010; }
+  #root { height: 100%; }
+  .doc, .doc *{ box-sizing:border-box; }
+  .doc{ font-family:'Hanken Grotesk', system-ui, sans-serif; color:#2b2620; }
+  .doc h1{ font-family:'Space Grotesk', sans-serif; font-weight:600; font-size:30px; margin:0 0 8px; letter-spacing:-0.01em; }
+  .doc h1 b{ color:#a4761f; }
+  .doc p{ font-size:15px; line-height:1.6; color:#6f6453; margin:0 0 10px; }
+  .doc b{ color:#2b2620; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="surfaces.jsx"></script>
+<script type="text/babel" src="mew-v5-calendar.jsx"></script>
+<script type="text/babel" src="mew-v8-core.jsx"></script>
+<script type="text/babel" src="mew-v9-den.jsx"></script>
+<script type="text/babel" src="mew-v10-dev.jsx"></script>
+<script type="text/babel" src="mew-v11-final.jsx"></script>
+<script type="text/babel" src="mew-v12-clock.jsx"></script>
+<script type="text/babel" src="mew-v13-rings.jsx"></script>
+<script type="text/babel" src="mew-v14-bezel.jsx"></script>
+<script type="text/babel" src="mew-v15-spotlight.jsx"></script>
+<script type="text/babel" src="mew-v16-noir.jsx"></script>
+<script type="text/babel" src="mew-v17-week.jsx"></script>
+<script type="text/babel" src="mew-v18-weekstyles.jsx"></script>
+<script type="text/babel" src="mew-v19-steel.jsx"></script>
+<script type="text/babel" src="mew-v20-final.jsx"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+
+<script type="text/babel">
+function Intro() {
+  return (
+    <div className="doc" style={{ width: 1224 }}>
+      <h1>MEW — <b>the final system</b></h1>
+      <p style={{ maxWidth: 960 }}><b>Carbon</b> dark by default: pitch-black stage, steel components (key-lines, brushed panels, machined buttons), and only Pixie carries color — her gold fur for work &amp; attention, cream chest for life. The light mode is <b>pet-accented white</b>: warm paper-white, not cool steel. Focus = the bezel dial (minimal at rest → hover reveals labels &amp; telemetry → blocks expand with actions). Week = pure columns with solid ink-on-gold blocks, today 2.3× wider. The first artboard is fully live — <b>click Focus/Week, hover the dial, hover blocks</b>.</p>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <React.Fragment>
+      <StlStyles />
+      <VDenStyles />
+      <DevStyles />
+      <FinStyles />
+      <ClkStyles />
+      <RngStyles />
+      <BzStyles />
+      <SpStyles />
+      <NxStyles />
+      <NxwStyles />
+      <NxbStyles />
+      <NsStyles />
+      <FinalStyles />
+      <DesignCanvas>
+        <DCSection id="intro" title="MEW" subtitle="Final · carbon + pet-accented white">
+          <DCArtboard id="brief" label="The system" width={1280} height={214}>
+            <div style={{ padding: 26, background: "#f6f1e8", width: "100%", height: "100%", boxSizing: "border-box" }}><Intro /></div>
+          </DCArtboard>
+        </DCSection>
+        <DCSection id="dark" title="Carbon · dark default" subtitle="First artboard is live — toggle Focus/Week, hover the dial and blocks">
+          <DCArtboard id="live" label="Main page · live" width={1280} height={840}><SurfaceFin /></DCArtboard>
+          <DCArtboard id="rev" label="Focus · revealed (hover state)" width={1280} height={840}><SurfaceFin reveal /></DCArtboard>
+          <DCArtboard id="det" label="Focus · block detail" width={1280} height={840}><SurfaceFin reveal expand={2} /></DCArtboard>
+          <DCArtboard id="wk" label="Week · solid ink, today wide" width={1280} height={840}><SurfaceFin defaultView="week" /></DCArtboard>
+        </DCSection>
+        <DCSection id="light" title="Pet white · light" subtitle="Warm accented white — paper warmed by Pixie's colors">
+          <DCArtboard id="lf" label="Focus · light" width={1280} height={840}><SurfaceFin light reveal /></DCArtboard>
+          <DCArtboard id="lw" label="Week · light" width={1280} height={840}><SurfaceFin light defaultView="week" /></DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+    </React.Fragment>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

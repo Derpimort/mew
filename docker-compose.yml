@@ -1,0 +1,20 @@
+# MEW — shared/prod compose. Conventions from aisquare-ec2-dev (bootstrap-docker):
+#   · the `app` helper runs this file with COMPOSE_PROJECT_NAME set per dev,
+#     so no container_name anywhere (it would break project isolation)
+#   · only the shared "main" project should bind the ALB port; per-dev stacks
+#     override it:  MEW_PORT=3100 app -p alice up
+#   · `app debug` layers docker-compose.debug.yml on top (hot reload)
+services:
+  mew:
+    build:
+      context: ./app
+      target: runtime
+    ports:
+      - "${MEW_PORT:-3000}:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    # healthcheck comes from the image (GET /healthz)

@@ -1,0 +1,7 @@
+node_modules
+dist
+shots
+scripts/shoot.mjs
+.git
+*.log
+.DS_Store

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MEW v4 — The whole product</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; background: #ece6da; }
+  #root { height: 100%; }
+  .doc, .doc *{ box-sizing:border-box; }
+  .doc{ font-family:'Hanken Grotesk', system-ui, sans-serif; color:#2b2620; }
+  .doc h1{ font-family:'Newsreader', serif; font-weight:500; font-size:32px; margin:0 0 8px; letter-spacing:-0.01em; }
+  .doc h1 b{ color:#c98a3c; font-weight:600; }
+  .doc p{ font-size:15px; line-height:1.6; color:#6f6453; margin:0 0 10px; }
+  .doc .card{ background:#fbf7ef; border:1px solid #e8ddca; border-radius:16px; padding:16px 18px; }
+  .doc h3{ font-size:12.5px; letter-spacing:.06em; text-transform:uppercase; color:#b09a76; margin:0 0 9px; font-weight:700; }
+  .doc li{ font-size:14px; color:#5f5544; line-height:1.55; margin-bottom:7px; }
+  .doc b{ color:#2b2620; }
+  .doc .mono{ font-family:ui-monospace,'SF Mono',monospace; font-size:12px; line-height:1.75; color:#5f5544; }
+  .doc .mono b{ color:#a8702a; font-weight:600; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="surfaces.jsx"></script>
+<script type="text/babel" src="mew-v2-parts.jsx"></script>
+<script type="text/babel" src="mew-v3-parts.jsx"></script>
+<script type="text/babel" src="mew-v4-settings.jsx"></script>
+<script type="text/babel" src="mew-v4-research.jsx"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+
+<script type="text/babel">
+function Intro() {
+  return (
+    <div className="doc" style={{ width: 1224 }}>
+      <h1>MEW v4 — <b>the whole product</b>, aligned to the vision</h1>
+      <p style={{ maxWidth: 950 }}>Everything beyond the main page, kept to the vision's "single page, no fuss" rule: <b>one</b> settings page carries calendars + tag-privacy routing ("everyone else sees simply busy"), your mew, chat-first nudges, and privacy &amp; model (local-first, your key, remote or fully local). The full <b>nudge library</b> maps every research finding to a trigger, a phrasing in your own numbers, and a tone — positive-only throughout. Below it: the six interaction points of a day with MEW, and the truth model — history informs, the live week decides.</p>
+    </div>
+  );
+}
+
+function LongArc() {
+  return (
+    <div className="doc" style={{ padding: 26, width: "100%", height: "100%", background: "#f6f1e8", display: "flex", alignItems: "center", boxSizing: "border-box" }}>
+      <div>
+        <h3>The long arc — MEW-to-MEW</h3>
+        <p style={{ margin: 0, fontSize: 14 }}>Beyond the MVP: your mew coordinates with your teammates' mews — scheduling across people, routing delegations, keeping a team aligned through their companions instead of their inboxes. Nothing in the surfaces above blocks it: tags, the routing table, and the brain's people-graph are the foundations it will stand on. <b>The MVP serves one person extremely well.</b></p>
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <React.Fragment>
+      <SurfaceStyles />
+      <WeekStyles />
+      <V3Styles />
+      <SettingsStyles />
+      <DesignCanvas>
+        <DCSection id="intro" title="MEW" subtitle="Round 4 · the whole product">
+          <DCArtboard id="brief" label="Reasoning" width={1280} height={208}>
+            <div style={{ padding: 26, background: "#f6f1e8", width: "100%", height: "100%", boxSizing: "border-box" }}><Intro /></div>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="main" title="Main page" subtitle="Carried from v3 — week → today → now · companion slot · chat-first nudges">
+          <DCArtboard id="week3" label="The week, focused" width={1280} height={840}><SurfaceWeek3 /></DCArtboard>
+        </DCSection>
+
+        <DCSection id="settings" title="Settings & connections" subtitle="The only other page. Calendars see what their tags allow; only MEW sees the whole picture.">
+          <DCArtboard id="set" label="Settings — one calm page" width={1280} height={880}><SurfaceSettings /></DCArtboard>
+        </DCSection>
+
+        <DCSection id="library" title="The nudge library" subtitle="A living research asset — finding → trigger → phrasing → tone. Always your own numbers. Always positive-only.">
+          <DCArtboard id="nudges" label="All eight nudge types" width={1280} height={620}><NudgeLibrary /></DCArtboard>
+        </DCSection>
+
+        <DCSection id="day" title="A day with MEW" subtitle="The six interaction points, morning to rest">
+          <DCArtboard id="moments" label="Interaction points" width={1280} height={330}><DayMoments /></DCArtboard>
+        </DCSection>
+
+        <DCSection id="truth" title="How MEW stays true" subtitle="Memory serves the live truth, never replaces it">
+          <DCArtboard id="truthm" label="Live week ⇄ brain" width={930} height={332}><TruthModel /></DCArtboard>
+          <DCArtboard id="arc" label="Scope note — the long arc" width={332} height={332}><LongArc /></DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+    </React.Fragment>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

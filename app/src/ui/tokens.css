@@ -1,0 +1,160 @@
+/* MEW design tokens — FINAL "Carbon & Pet White" system.
+   Source of truth: design_handoff_mew_mvp/DESIGN_LANGUAGE.md + mew-v21-system.jsx.
+   The one rule: the interface is monochrome carbon (or warm white) — only the
+   pet carries color. --pa = work & attention, --pb = life & rest. */
+
+/* ---- pet accent registry: dark pair (pa/pb) + light pair (pal/pbl) ---- */
+.nx.sys[data-pet='cat']   { --pa: #e9b96b; --pa-rgb: 233, 185, 107; --pb: #d4c8a8; --pb-rgb: 212, 200, 168; --pal: #a4761f; --pal-rgb: 164, 118, 31; --pbl: #7e7250; --pbl-rgb: 126, 114, 80; }
+.nx.sys[data-pet='dog']   { --pa: #e0975a; --pa-rgb: 224, 151, 90;  --pb: #cbb091; --pb-rgb: 203, 176, 145; --pal: #b56a28; --pal-rgb: 181, 106, 40; --pbl: #8a7556; --pbl-rgb: 138, 117, 86; }
+.nx.sys[data-pet='fox']   { --pa: #e8825a; --pa-rgb: 232, 130, 90;  --pb: #d8a98f; --pb-rgb: 216, 169, 143; --pal: #c25a2e; --pal-rgb: 194, 90, 46;  --pbl: #94705a; --pbl-rgb: 148, 112, 90; }
+.nx.sys[data-pet='bunny'] { --pa: #dd9ab8; --pa-rgb: 221, 154, 184; --pb: #c6b4d2; --pb-rgb: 198, 180, 210; --pal: #b15a86; --pal-rgb: 177, 90, 134; --pbl: #836a96; --pbl-rgb: 131, 106, 150; }
+.nx.sys[data-pet='bird']  { --pa: #5fb6c0; --pa-rgb: 95, 182, 192;  --pb: #9fc9b2; --pb-rgb: 159, 201, 178; --pal: #2f8a96; --pal-rgb: 47, 138, 150; --pbl: #5a8a72; --pbl-rgb: 90, 138, 114; }
+
+/* ---- CARBON (dark, default) ---- */
+.nx.sys {
+  --bg: #060708;
+  --panel: #14161a;
+  --panel2: #1a1d22;
+  --glass: rgba(20, 22, 26, 0.94);
+  --ink: #ecedef;
+  --muted: #8f97a3;
+  --faint: #555c66;
+  --line: #23272e;
+  --line2: #15171b;
+  --ice: var(--pa);
+  --ice-soft: rgba(var(--pa-rgb), 0.13);
+  --ice-bd: rgba(var(--pa-rgb), 0.5);
+  --gold: var(--pa);
+  --gold-soft: rgba(var(--pa-rgb), 0.14);
+  --teal: var(--pb);
+  --teal-soft: rgba(var(--pb-rgb), 0.12);
+  --teal-bd: rgba(var(--pb-rgb), 0.46);
+  --glow: 0 0 14px rgba(var(--pa-rgb), 0.45);
+  --glowc: rgba(var(--pa-rgb), 0.8);
+  --acc-rgb: var(--pa-rgb);
+  --on-acc: #16100a; /* dark text on solid accent */
+}
+
+/* ---- PET WHITE (light) — warm white washed by the pet accent ---- */
+.nx.sys.sys--light {
+  --bg: #fdfbf6;
+  --panel: #f6f1e8;
+  --panel2: #fffefb;
+  --glass: rgba(255, 254, 250, 0.96);
+  --ink: #1b160d;
+  --muted: #766a58;
+  --faint: #b0a48d;
+  --line: #e7dfcd;
+  --line2: #f1ebde;
+  --ice: var(--pal);
+  --ice-soft: rgba(var(--pal-rgb), 0.1);
+  --ice-bd: rgba(var(--pal-rgb), 0.42);
+  --gold: var(--pal);
+  --gold-soft: rgba(var(--pal-rgb), 0.12);
+  --teal: var(--pbl);
+  --teal-soft: rgba(var(--pbl-rgb), 0.1);
+  --teal-bd: rgba(var(--pbl-rgb), 0.4);
+  --glow: 0 0 12px rgba(var(--pal-rgb), 0.3);
+  --glowc: rgba(var(--pal-rgb), 0.5);
+  --acc-rgb: var(--pal-rgb);
+  --on-acc: #fff; /* white text on the deeper light-mode accents */
+}
+
+/* ---- base ---- */
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+.stl {
+  font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+.stl *,
+.stl *::before,
+.stl *::after {
+  box-sizing: border-box;
+}
+.stl .disp {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: -0.02em;
+}
+.stl .mono {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+.stl button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  letter-spacing: inherit;
+  text-align: inherit;
+}
+.stl input {
+  font: inherit;
+  color: var(--ink);
+}
+
+/* faint accent wash so "white" feels pet-tinted (also breathes on carbon) */
+.sys-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 70% at 50% -8%, rgba(var(--acc-rgb), 0.1), transparent 60%);
+}
+
+@keyframes stlPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes petFloat {
+  0%,
+  100% {
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+  50% {
+    transform: translateX(-50%) translateY(-7px) scale(1.012);
+  }
+}
+@keyframes nxWedge {
+  0%,
+  100% {
+    opacity: 0.06;
+  }
+  50% {
+    opacity: 0.11;
+  }
+}
+@keyframes devBlink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stl *,
+  .stl *::before,
+  .stl *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

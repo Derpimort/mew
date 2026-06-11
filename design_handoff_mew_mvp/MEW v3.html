@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MEW v3 — Companion slot + chat-powered nudges</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400;1,6..72,500&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; height: 100%; background: #ece6da; }
+  #root { height: 100%; }
+  .doc, .doc *{ box-sizing:border-box; }
+  .doc{ font-family:'Hanken Grotesk', system-ui, sans-serif; color:#2b2620; }
+  .doc h1{ font-family:'Newsreader', serif; font-weight:500; font-size:32px; margin:0 0 8px; letter-spacing:-0.01em; }
+  .doc h1 b{ color:#c98a3c; font-weight:600; }
+  .doc p{ font-size:15px; line-height:1.6; color:#6f6453; margin:0 0 10px; }
+  .doc .card{ background:#fbf7ef; border:1px solid #e8ddca; border-radius:16px; padding:16px 18px; }
+  .doc h3{ font-size:12.5px; letter-spacing:.06em; text-transform:uppercase; color:#b09a76; margin:0 0 9px; font-weight:700; }
+  .doc li{ font-size:14px; color:#5f5544; line-height:1.55; margin-bottom:7px; }
+  .doc b{ color:#2b2620; }
+  .doc .mono{ font-family:ui-monospace,'SF Mono',monospace; font-size:12px; line-height:1.75; color:#5f5544; }
+  .doc .mono b{ color:#a8702a; font-weight:600; }
+  .step{ flex:1; background:#fbf7ef; border:1px solid #e8ddca; border-radius:16px; padding:15px 17px; position:relative; }
+  .step .n{ width:24px; height:24px; border-radius:50%; background:#c98a3c; color:#fff; font-weight:800; font-size:12.5px; display:grid; place-items:center; margin-bottom:9px; }
+  .step h4{ margin:0 0 5px; font-size:14.5px; }
+  .step p{ font-size:13px; margin:0; }
+  .arrow{ align-self:center; color:#b09a76; font-size:20px; flex:none; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="surfaces.jsx"></script>
+<script type="text/babel" src="mew-v2-parts.jsx"></script>
+<script type="text/babel" src="mew-v3-parts.jsx"></script>
+<script type="text/babel" src="design-canvas.jsx"></script>
+
+<script type="text/babel">
+function Intro() {
+  return (
+    <div className="doc" style={{ width: 1224 }}>
+      <h1>MEW v3 — the <b>companion slot</b> + chat-powered nudges</h1>
+      <p style={{ maxWidth: 940 }}>Straight answer: a truly high-fidelity, <b>moving</b> vector Pixie is character-animation work — the right tool is <b>Rive</b> (rive.app), and the full pipeline is specced below. The UI now has a dedicated <b>companion slot</b> designed around Rive's state-machine contract, so the finished <b>pixie.riv</b> drops in with one line; her low-poly portrait holds the slot until then (click the state chips — the contract is live). Nudges are now <b>chat-first</b>: every nudge is a chat message with actions, and browser notifications only ever mirror chat.</p>
+    </div>
+  );
+}
+
+function RivePipeline() {
+  return (
+    <div className="doc" style={{ padding: 26, width: "100%", height: "100%", background: "#f6f1e8", display: "grid", gridTemplateColumns: "1.1fr 1fr 0.9fr", gap: 18, boxSizing: "border-box" }}>
+      <div className="card">
+        <h3>The tool — Rive (rive.app)</h3>
+        <ol style={{ margin: 0, paddingLeft: 18 }}>
+          <li><b>Design the vector Pixie</b> from her photos — in Rive's editor, Figma, or Illustrator. No artist on hand? Commission one from the Rive community / marketplace (this is a standard gig).</li>
+          <li><b>Rig &amp; animate in Rive:</b> bones for head, ears, tail; breathing, blinking, walk, stretch, celebrate on timelines; one state machine: <b>"PixieMachine"</b>.</li>
+          <li><b>Export pixie.riv</b> (~50–150 KB) and embed with the official web runtime (<b>@rive-app/canvas</b>). MEW sets inputs; Pixie reacts in real time.</li>
+        </ol>
+      </div>
+      <div className="card">
+        <h3>PixieMachine — input contract</h3>
+        <div className="mono">
+          <b>mood</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;enum&nbsp;&nbsp;healthy | drowsy | rundown<br/>
+          <b>resting</b>&nbsp;&nbsp;bool&nbsp;&nbsp;day's items done<br/>
+          <b>celebrate</b>&nbsp;trigger&nbsp;&nbsp;a task completed (a mew)<br/>
+          <b>drift</b>&nbsp;&nbsp;&nbsp;&nbsp;trigger&nbsp;&nbsp;drift detected<br/>
+          <b>attention</b>&nbsp;bool&nbsp;&nbsp;nudge waiting in chat<br/>
+          <b>pace</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;number&nbsp;0–1 weekly sustainability
+        </div>
+        <p style={{ fontSize: 13, marginTop: 10 }}>The slot in the main page is built around exactly these inputs — the state chips preview them.</p>
+      </div>
+      <div className="card">
+        <h3>Alternatives, honestly</h3>
+        <ul style={{ margin: 0, paddingLeft: 18 }}>
+          <li><b>Lottie</b> (LottieLab / After Effects): gorgeous fixed loops, but no interactive state blending — fine for a v0.</li>
+          <li><b>Blender + three.js</b>: a true 3D polygon cat — game-grade, heavier; only if you want real 3D.</li>
+          <li><b>Spine</b>: 2D skeletal, strong but game-oriented tooling.</li>
+        </ul>
+        <p style={{ fontSize: 13, marginTop: 10 }}><b>Recommendation:</b> Rive. Interactive, tiny, web-native — built for exactly this.</p>
+      </div>
+    </div>
+  );
+}
+
+function NudgeFlow() {
+  return (
+    <div className="doc" style={{ padding: 26, width: "100%", height: "100%", background: "#f6f1e8", display: "flex", gap: 12, boxSizing: "border-box" }}>
+      <div className="step"><span className="n">1</span><h4>Signal</h4><p>Drift detected · a heavy day planned · chronic carry-over. Always computed from the live week.</p></div>
+      <span className="arrow">→</span>
+      <div className="step"><span className="n">2</span><h4>Nudge lands in chat — always</h4><p>A first-class chat message from Pixie with action chips and the research footnote, in your own numbers. Chat is the single source of truth for every nudge.</p></div>
+      <span className="arrow">→</span>
+      <div className="step"><span className="n">3</span><h4>Browser notification mirrors it</h4><p>Only if the tab is unfocused (Notification API). Click = focus the chat thread. Never a separate system — a mirror.</p></div>
+      <span className="arrow">→</span>
+      <div className="step"><span className="n">4</span><h4>Action resolves it</h4><p>Still on it / Move it / Right-size. The outcome is remembered — next week's plan gets honester. Positive only; ignoring a nudge costs nothing.</p></div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <React.Fragment>
+      <SurfaceStyles />
+      <WeekStyles />
+      <V3Styles />
+      <DesignCanvas>
+        <DCSection id="intro" title="MEW" subtitle="Round 3 · companion slot + nudge system">
+          <DCArtboard id="brief" label="Reasoning" width={1280} height={196}>
+            <div style={{ padding: 26, background: "#f6f1e8", width: "100%", height: "100%", boxSizing: "border-box" }}><Intro /></div>
+          </DCArtboard>
+        </DCSection>
+
+        <DCSection id="main" title="Main page" subtitle="Companion slot (Rive-ready, click the state chips) · nudges live in chat · browser notif mirrors">
+          <DCArtboard id="week3" label="The week, focused — v3" width={1280} height={840}><SurfaceWeek3 /></DCArtboard>
+        </DCSection>
+
+        <DCSection id="pipeline" title="How Pixie gets built" subtitle="The tool to use, the contract I designed the slot around, and the honest alternatives">
+          <DCArtboard id="rive" label="Rive pipeline" width={1280} height={400}><RivePipeline /></DCArtboard>
+        </DCSection>
+
+        <DCSection id="nudges" title="Nudge system" subtitle="Chat-powered, browser-mirrored, positive-only">
+          <DCArtboard id="flow" label="Anatomy of a nudge" width={1280} height={230}><NudgeFlow /></DCArtboard>
+          <DCArtboard id="mirror" label="Browser notification — a mirror of chat" width={352} height={230}><NotifToast /></DCArtboard>
+        </DCSection>
+      </DesignCanvas>
+    </React.Fragment>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
