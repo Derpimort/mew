@@ -2,12 +2,16 @@
    the whole page; the routing matrix, connect flow, sync status, quiet hours
    and model settings keep their full behavior, re-skinned. */
 
-import { useRef, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMew } from '../../state/store'
 import type { PetId, VisibleTag } from '../../domain/types'
 import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
+import { aggregates } from '../../domain/memory'
+import { computeInsights } from '../../domain/insights'
 import { PETS, petById, Segc, Tgl } from '../primitives'
+import { usePetPalette } from '../components/petPalette'
+import SimpleGraph from '../react-bits/simple-graph'
 
 const TAGS: VisibleTag[] = ['work', 'private', 'health']
 const VIS_CLASS = { details: 'det', busy: 'busy', hidden: 'hid' } as const
@@ -52,6 +56,7 @@ export function SettingsPage() {
       <div className="set-grid">
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <CompanionCard />
+          <PatternsCard />
           <CalendarsCard />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -60,6 +65,46 @@ export function SettingsPage() {
           <PrivacyModelCard />
         </div>
       </div>
+    </div>
+  )
+}
+
+/* Your patterns — the brain's trailing-4-week numbers made visible: weekday
+   load as an animated line, MEW's own insight lines underneath. Appears only
+   once the memory has something honest to show. */
+function PatternsCard() {
+  const memory = useMew((s) => s.memory)
+  const nowMs = useMew((s) => s.nowMs)
+  const pal = usePetPalette()
+  const insights = useMemo(() => {
+    const now = new Date(nowMs)
+    return computeInsights(memory, aggregates(memory, now), now)
+  }, [memory, nowMs])
+
+  const load = insights.weekdayLoad.filter((w) => w.avgPlannedH > 0)
+  if (load.length < 3) return null
+
+  return (
+    <div className="set-card">
+      <h2>Your patterns</h2>
+      <div className="sub">Planned hours by weekday — trailing four weeks, MEW's own numbers.</div>
+      <div style={{ padding: '10px 4px 2px' }}>
+        <SimpleGraph
+          data={insights.weekdayLoad.map((w) => ({
+            value: Math.round(w.avgPlannedH * 10) / 10,
+            label: w.name.toLowerCase(),
+          }))}
+          lineColor={pal.pa}
+          dotColor={pal.pb}
+          width="100%"
+          height={120}
+        />
+      </div>
+      {insights.lines.slice(0, 3).map((l) => (
+        <div key={l} className="sub" style={{ marginTop: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+          # {l.toLowerCase()}
+        </div>
+      ))}
     </div>
   )
 }

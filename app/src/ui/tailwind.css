@@ -1,0 +1,8 @@
+/* Tailwind v4 for React Bits components — theme + utilities ONLY.
+   Preflight is deliberately skipped: MEW's design system (tokens.css,
+   primitives.css, components.css) owns base styles, and Tailwind's reset
+   would fight it. React Bits components style themselves with utility
+   classes, which is all this layer provides. */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);

@@ -13,7 +13,9 @@ import { blocksForDay } from '../../domain/week'
 import { interruptionsLastHour } from '../../domain/memory'
 import { NXG, clkDeg, rArc, rPolar, ringOf } from './dialGeometry'
 import { layoutLanes } from './lanes'
+import { declutterLabels } from './labelLayout'
 import { BlockCard } from './BlockCard'
+import StaggeredText from '../react-bits/staggered-text'
 
 
 interface Seg {
@@ -115,6 +117,45 @@ export function FocusDial() {
     }
     return out
   }, [segs, g.ro, g.ri])
+
+  /* label placement: blocks that overlap in time step outward one ring each
+     (the arcs' lane logic, pointed the other way), then a callout-declutter
+     pass — the standard pie-label algorithm — guarantees no label ever shares
+     pixels with another label or the now tag, whatever the day looks like.
+     optional invites and sub-half-hour slivers stay quiet (hover tells their story) */
+  const labels = useMemo(() => {
+    const uniq = segs
+      .filter((s, idx, all) => !s.done && all.findIndex((o) => o.block.id === s.block.id) === idx)
+      .filter((s) => !s.block.optional && s.block.endMin - s.block.startMin >= 30)
+    const lanes = layoutLanes(uniq, (s) => s.sH, (s) => Math.max(s.eH, s.block.endMin / 60), (s) => s.block.id)
+    const cand = uniq.map((s) => {
+      const title = s.block.title.split('—')[0].trim()
+      const short = title.length > 13 ? title.slice(0, 11) + '…' : title
+      const timeStr = fmtTime(s.block.startMin)
+      const mid = (s.sH + Math.max(s.eH, s.block.endMin / 60)) / 2
+      const lane = Math.min(lanes.get(s.block.id)?.lane ?? 0, 2)
+      const stag = 40 + lane * 19
+      let [lx, ly] = rPolar(g.cx, g.cy, g.ro + stag, clkDeg(mid))
+      const anchor: 'start' | 'middle' | 'end' = lx > g.cx + 14 ? 'start' : lx < g.cx - 14 ? 'end' : 'middle'
+      /* keep the rendered text box on-canvas whatever the name length */
+      const estW = short.length * 7.4 + 8 + timeStr.length * 6.8
+      if (anchor === 'start') lx = Math.min(lx, g.w - 10 - estW)
+      else if (anchor === 'end') lx = Math.max(lx, 10 + estW)
+      else lx = Math.min(Math.max(lx, estW / 2 + 10), g.w - 10 - estW / 2)
+      ly = Math.min(Math.max(ly, 14), g.h - 14)
+      return { s, short, lx, ly, anchor, estW }
+    })
+    const nowText = `now · ${fmtTime(Math.round(nowH * 60))}`
+    const [nx, ny] = rPolar(g.cx, g.cy, g.ro + 50, clkDeg(nowH))
+    const resolved = declutterLabels(
+      [
+        ...cand.map((c) => ({ id: c.s.block.id, x: c.lx, y: c.ly, w: c.estW, anchor: c.anchor })),
+        { id: '__now', x: nx, y: ny, w: nowText.length * 7.2 + 6, anchor: 'middle' as const, fixed: true },
+      ],
+      { minY: 14, maxY: g.h - 14, gap: 4 },
+    )
+    return cand.map((c) => ({ ...c, ly: resolved.get(c.s.block.id) ?? c.ly }))
+  }, [segs, g, nowH])
 
   pinnedRef.current = pinned
   const selId = pinned ?? hover // a click owns the card; hover only fills the gaps
@@ -299,49 +340,31 @@ export function FocusDial() {
           })}
         </g>
 
-        {/* labels at their hour — revealed on approach, clamped inside the canvas.
-            optional invites and sub-half-hour slivers stay quiet (hover tells their story) */}
+        {/* labels at their hour — revealed on approach, declutter-placed so
+            overlapping events never overlap text (see labels memo above) */}
         <g className="nx-fade">
-          {segs
-            .filter((s, idx, all) => !s.done && all.findIndex((o) => o.block.id === s.block.id) === idx)
-            .filter((s) => !s.block.optional && s.block.endMin - s.block.startMin >= 30)
-            .map((s, i) => {
-              const title = s.block.title.split('—')[0].trim()
-              const short = title.length > 13 ? title.slice(0, 11) + '…' : title
-              const timeStr = fmtTime(s.block.startMin)
-              const mid = (s.sH + Math.max(s.eH, s.block.endMin / 60)) / 2
-              const stag = 40 + (i % 2) * 18
-              let [lx, ly] = rPolar(g.cx, g.cy, g.ro + stag, clkDeg(mid))
-              const anchor = lx > g.cx + 14 ? 'start' : lx < g.cx - 14 ? 'end' : 'middle'
-              /* keep the rendered text box on-canvas whatever the name length */
-              const estW = short.length * 7.4 + 8 + timeStr.length * 6.8
-              if (anchor === 'start') lx = Math.min(lx, g.w - 10 - estW)
-              else if (anchor === 'end') lx = Math.max(lx, 10 + estW)
-              else lx = Math.min(Math.max(lx, estW / 2 + 10), g.w - 10 - estW / 2)
-              ly = Math.min(Math.max(ly, 14), g.h - 14)
-              return (
-                <text
-                  key={s.block.id}
-                  x={lx}
-                  y={ly}
-                  textAnchor={anchor}
-                  dominantBaseline="central"
-                  style={{
-                    fill: s.block.tag === 'work' ? 'var(--ice)' : 'var(--teal)',
-                    fontFamily: "'Hanken Grotesk',sans-serif",
-                    fontSize: 14,
-                    fontWeight: 650,
-                    cursor: 'pointer',
-                  }}
-                  {...arcInteractions(s.block.id)}
-                >
-                  {short}{' '}
-                  <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
-                    {fmtTime(s.block.startMin)}
-                  </tspan>
-                </text>
-              )
-            })}
+          {labels.map(({ s, short, lx, ly, anchor }) => (
+            <text
+              key={s.block.id}
+              x={lx}
+              y={ly}
+              textAnchor={anchor}
+              dominantBaseline="central"
+              style={{
+                fill: s.block.tag === 'work' ? 'var(--ice)' : 'var(--teal)',
+                fontFamily: "'Hanken Grotesk',sans-serif",
+                fontSize: 14,
+                fontWeight: 650,
+                cursor: 'pointer',
+              }}
+              {...arcInteractions(s.block.id)}
+            >
+              {short}{' '}
+              <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 11 }}>
+                {fmtTime(s.block.startMin)}
+              </tspan>
+            </text>
+          ))}
         </g>
 
         {/* now — a carbon-cased hand across both rings: the dark casing cuts
@@ -379,7 +402,10 @@ export function FocusDial() {
       <div className="clk-center" style={sel ? { opacity: 0, pointerEvents: 'none' } : undefined}>
         <div className="nx-count" style={{ fontSize: count.length > 6 ? 64 : 92 }}>{count}</div>
         <div className="nx-meta">{meta}</div>
-        <div className="nx-task" style={{ fontSize: 27 }}>{live.headline}</div>
+        <div className="nx-task" style={{ fontSize: 27 }}>
+          {/* re-keyed per headline so each new task staggers in word by word */}
+          <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
+        </div>
         <div className="nx-fade mono" style={{ marginTop: 12, fontSize: 11.5 }}>
           <span style={{ color: 'var(--gold)', fontWeight: 700 }}>★ {live.mewsToday} mew{live.mewsToday === 1 ? '' : 's'}</span>
           <span style={{ color: 'var(--muted)' }}>
