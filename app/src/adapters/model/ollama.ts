@@ -8,13 +8,14 @@ import { contextBlock, MEW_VOICE } from './types'
 import { runIntent, sanitizeIntent } from './rules'
 
 const INTENT_SPEC = `Decide what the user wants and respond ONLY with JSON matching:
-{"kind":"plan|complete|move|capture|clear|edit|chat",
+{"kind":"plan|complete|move|capture|clear|remove|edit|chat",
  "places":[{"title":str,"tag":"work|private|health|rest","dayOffset":int,"startMin":int?,"durationMin":int?,"protected":bool?}],
  "frees":[{"dayOffset":int,"startMin":int,"endMin":int}],
  "query":str?,"toDayOffset":int?,"toStartMin":int?,"title":str?,"scope":"today|tomorrow|week|upcoming"?,
  "edit":{"startMin":int?,"endMin":int?,"durationMin":int?,"title":str?}?,"reply":str?}
 kind="edit" to change an existing block's time/length/title in place ("make X 45 minutes","X should be 6:00-6:30").
 dayOffset = days from today. startMin = minutes from midnight (9:00 = 540). "thursday morning" = that weekday's offset, startMin 540, durationMin 180.
+kind="remove" to drop/delete/cancel specific named blocks (query = words from the title).
 kind="clear" when they ask to clean up / wipe / reset the calendar or start over (scope default "upcoming").
 kind="chat" for greetings/questions/anything conversational — put your short MEW-voice answer in "reply".
 kind="capture" only for a task mentioned without a time.`

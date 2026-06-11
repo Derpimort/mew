@@ -3,7 +3,9 @@ import { useMew } from './state/store'
 import { MainPage } from './ui/pages/MainPage'
 import { SettingsPage } from './ui/pages/SettingsPage'
 
-const TICK_MS = 15_000
+/* 5s keeps liveNow's current/next flips feeling immediate; the dial's own
+   1s clock handles the countdown, and sync/nudges self-throttle by time. */
+const TICK_MS = 5_000
 
 export default function App() {
   const hydrated = useMew((s) => s.hydrated)

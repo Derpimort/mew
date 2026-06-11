@@ -3,9 +3,14 @@ import {
   blocksForDay,
   complete,
   dayClear,
+  conflictsWith,
+  contextMarkers,
   dayEndMin,
   findByQuery,
   findFreeSlot,
+  freeWindows,
+  isFixedTime,
+  nextSlotAfter,
   isDeep,
   loadBySegment,
   place,
@@ -110,6 +115,84 @@ describe('week model', () => {
 
     it('the longer phrase still finds its own block', () => {
       expect(findByQuery([lunch, order], 'order lunch', D)?.id).toBe(order.id)
+    })
+  })
+
+  describe('fixed-time vs flexible (interviews own their slot; tasks can give)', () => {
+    it('classifies meetings, calls, interviews, and external events as fixed', () => {
+      expect(isFixedTime(mk({ title: 'Interview — Pooran Suthar' }))).toBe(true)
+      expect(isFixedTime(mk({ title: 'Weekly sync' }))).toBe(true)
+      expect(isFixedTime(mk({ title: 'Call with the bank' }))).toBe(true)
+      expect(isFixedTime(mk({ title: 'Team standup' }))).toBe(true)
+      expect(isFixedTime(mk({ title: 'Board prep', external: { calId: 'c', eventId: 'e' } }))).toBe(true)
+      expect(isFixedTime(mk({ title: 'Write the Q3 deck' }))).toBe(false)
+      expect(isFixedTime(mk({ title: 'Interview prep — Mira' }))).toBe(false) // prep is our task, not their meeting
+      expect(isFixedTime(mk({ title: 'Call prep notes' }))).toBe(false)
+    })
+
+    it('conflictsWith sees fixed tentative interviews but stays transparent to optional tasks', () => {
+      const interview = mk({ id: 'i1', title: 'Interview — Mira', startMin: 13.5 * 60, endMin: 14.5 * 60, optional: true })
+      const maybeGym = mk({ id: 'g1', title: 'Gym?', startMin: 13.5 * 60, endMin: 14.5 * 60, optional: true })
+      expect(conflictsWith([interview], D, 13.5 * 60, 13.75 * 60).map((b) => b.id)).toEqual(['i1'])
+      expect(conflictsWith([maybeGym], D, 13.5 * 60, 13.75 * 60)).toHaveLength(0)
+    })
+
+    it('auto-placement keeps clear of a tentative interview', () => {
+      const interview = mk({ id: 'i1', title: 'Interview — Pooran', startMin: 8 * 60, endMin: 9 * 60, optional: true })
+      const slot = findFreeSlot([interview], D, 30)
+      expect(slot?.startMin).toBe(9 * 60)
+    })
+  })
+
+  describe('nextSlotAfter — giving way never teleports a block earlier', () => {
+    it('an evening block moves later in the evening, not to 8:00 am', () => {
+      const board = mk({ id: 'board', title: 'Board sanitization', startMin: 20 * 60, endMin: 20 * 60 + 15 })
+      const rest = mk({ id: 'rest', title: 'Micro-break', tag: 'rest', startMin: 19 * 60 + 45, endMin: 20 * 60 + 5 })
+      const next = nextSlotAfter([board, rest], board, 19 * 60 + 50)
+      expect(next).toMatchObject({ dayKey: D, startMin: 20 * 60 + 5 })
+    })
+
+    it('falls to tomorrow morning when the evening is full', () => {
+      const late = mk({ id: 'late', title: 'Wrap-up', startMin: 22 * 60, endMin: 22 * 60 + 20 })
+      const wall = mk({ id: 'wall', title: 'Everything else', startMin: 22 * 60 + 20, endMin: 23 * 60 + 30 })
+      const next = nextSlotAfter([late, wall], late, 22 * 60 + 10)
+      expect(next?.dayKey).toBe('2026-06-10')
+      expect(next?.startMin).toBe(9 * 60)
+    })
+  })
+
+  describe('freeWindows — the truth behind "find me time before 5pm"', () => {
+    it('a window inside an interview does not exist', () => {
+      const interview = mk({ id: 'iv', title: 'Interview — Mira', startMin: 14.5 * 60, endMin: 15.5 * 60 })
+      const post = mk({ id: 'po', title: 'Post-interview reviews', startMin: 14.5 * 60, endMin: 14.75 * 60 })
+      const windows = freeWindows([interview, post], D, 14 * 60, 17 * 60)
+      expect(windows).toEqual([
+        { startMin: 14 * 60, endMin: 14.5 * 60 },
+        { startMin: 15.5 * 60, endMin: 17 * 60 },
+      ])
+    })
+
+    it('tentative interviews block the window; optional tasks stay transparent', () => {
+      const tentative = mk({ id: 't', title: 'Interview — Pooran', optional: true, startMin: 13 * 60, endMin: 14 * 60 })
+      const maybe = mk({ id: 'm', title: 'Gym?', optional: true, startMin: 14 * 60, endMin: 15 * 60 })
+      expect(freeWindows([tentative, maybe], D, 13 * 60, 15 * 60)).toEqual([
+        { startMin: 14 * 60, endMin: 15 * 60 },
+      ])
+    })
+  })
+
+  describe('contextMarkers — calendar-owned and fixed-time are different facts', () => {
+    it('a MEW-placed sync is fixed but NOT calendar', () => {
+      expect(contextMarkers(mk({ title: 'Sync: Jordan/Remy' }))).toBe('work, fixed')
+    })
+
+    it('a connected-calendar event is calendar (which already implies fixed)', () => {
+      expect(contextMarkers(mk({ title: 'Townhall', external: { calId: 'c', eventId: 'e' } }))).toBe('work, calendar')
+    })
+
+    it('a plain task carries only its tag, plus state', () => {
+      expect(contextMarkers(mk({ title: 'Write the deck' }))).toBe('work')
+      expect(contextMarkers(mk({ title: 'Lunch', tag: 'private', optional: true, status: 'done' }))).toBe('private, optional, done')
     })
   })
 })

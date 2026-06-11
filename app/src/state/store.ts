@@ -28,6 +28,7 @@ import { liveNow } from '../domain/liveNow'
 import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory'
 import { computeInsights, proposeKinderPlan } from '../domain/insights'
 import { pixieInputs } from '../domain/pixie'
+import { dayShape } from '../domain/dayShape'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
@@ -62,6 +63,8 @@ function clockOffsetMs(): number {
 }
 const CLOCK_OFFSET = clockOffsetMs()
 const nowFn = () => Date.now() + CLOCK_OFFSET
+/** The app clock (honors the ?t= override) — for UI that ticks faster than the store. */
+export const clockNow = nowFn
 
 export interface MewState {
   hydrated: boolean
@@ -144,6 +147,19 @@ function nudgeMsg(n: NudgeInstance): ChatMessage {
   }
 }
 
+/** Factual collision note for tool results — the model re-checks constraints
+    against these and moves the flexible side. */
+function clashNote(clash: Block[]): string {
+  if (!clash.length) return ''
+  const parts = clash.map((c) => {
+    const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+    return week.isFixedTime(c)
+      ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
+      : `${base} (flexible — it can shift)`
+  })
+  return ` — heads up: it overlaps ${parts.join(' and ')}`
+}
+
 function weekContext(s: MewState): WeekContext {
   const now = new Date(s.nowMs)
   const todayKey = dayKey(now)
@@ -155,7 +171,7 @@ function weekContext(s: MewState): WeekContext {
     const day = week.blocksForDay(s.blocks, key)
     if (!day.length) continue
     const items = day
-      .map((b) => `${fmtTime(b.startMin)} ${b.title} [${b.tag}${b.status === 'done' ? ', done' : ''}]`)
+      .map((b) => `${fmtTime(b.startMin)}\u2013${fmtTime(b.endMin)} ${b.title} [${week.contextMarkers(b)}]`)
       .join(' · ')
     summary.push(`${i === 0 ? 'today' : fmtDowLong(key)} (${key}): ${items}`)
   }
@@ -222,6 +238,11 @@ export const useMew = create<MewState>((set, get) => {
         lastDriftBlockId: n.type === 'drift' ? String(n.payload.blockId) : s.engine.lastDriftBlockId,
       },
     }))
+    /* a drift check-in IS the drift signal — log it so insights can find where
+       attention slips (driftBand reads these; weekly summaries count them) */
+    if (n.type === 'drift') {
+      logMemory({ kind: 'drift', dayKey: dayKey(new Date(nowMs)), ts: nowMs })
+    }
   }
 
   function runTickEngine() {
@@ -291,7 +312,9 @@ export const useMew = create<MewState>((set, get) => {
   }
 
   function setBlocks(blocks: Block[]) {
-    set({ blocks })
+    /* refresh the clock with the mutation so liveNow, the now-line, and the
+       dial reflect the change this frame instead of waiting for the next tick */
+    set({ blocks, nowMs: nowFn() })
     persistBlocks(blocks)
   }
 
@@ -310,22 +333,26 @@ export const useMew = create<MewState>((set, get) => {
 
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
+      /* short rests are pacing, not sacred rest: leave them unprotected so a
+         reshape can absorb them instead of tripping protect-rest every move */
+      const microRest = p.tag === 'rest' && (p.durationMin ?? 60) <= 20
       const placed = week.place(blocks, {
         title: p.title,
         tag: p.tag,
         dayKey: key,
         startMin: p.startMin,
         durationMin: p.durationMin,
-        protected: p.protected ?? true,
+        protected: p.protected ?? !microRest,
       })
       if (!placed) {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
         continue
       }
+      const clash = week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id)
       blocks = [...blocks, placed]
       if (week.isDeep(placed)) placedDeep = placed
       lines.push(
-        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}`,
+        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${clashNote(clash)}`,
       )
     }
     for (const f of frees) {
@@ -401,8 +428,9 @@ export const useMew = create<MewState>((set, get) => {
       if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
       start = slot.startMin
     }
+    const landed = week.conflictsWith(s.blocks, toKey, start, start + week.duration(target), target.id)
     setBlocks(week.move(s.blocks, target.id, toKey, start))
-    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.`
+    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed)}`
   }
 
   function execCapture(title: string): string {
@@ -438,8 +466,84 @@ export const useMew = create<MewState>((set, get) => {
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.tag ? { tag: patch.tag } : {}),
     }
+    const clash = week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
-    return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}.`
+    return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}.${clashNote(clash)}`
+  }
+
+  function execRemove(query: string): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const matches = week
+      .findAllByQuery(s.blocks, query)
+      .filter((b) => b.dayKey >= todayKey)
+    if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
+    const external = matches.filter((b) => b.external)
+    const removed = matches.filter((b) => !b.external)
+    if (!removed.length) {
+      return `${external.length === 1 ? 'That one' : 'Those'} came from a connected calendar — not MEW's to remove.`
+    }
+    const keep = new Set(removed.map((b) => b.id))
+    const kept = s.blocks.filter((b) => !keep.has(b.id))
+    set({ blocks: kept, nowMs: nowFn() })
+    persistBlocks(kept)
+    storage.deleteBlocks(removed.map((b) => b.id)).catch(() => {})
+    const names = removed
+      .map((b) => `${b.title.split('—')[0].trim()} (${b.dayKey === todayKey ? 'today' : fmtDowLong(b.dayKey)} ${fmtTime(b.startMin)})`)
+      .join(', ')
+    return `Removed — ${names}. Everything else stands${external.length ? `; ${external.length} calendar event${external.length === 1 ? '' : 's'} matching stayed (not mine to delete)` : ''}.`
+  }
+
+  function execAnalyze(dayOffset: number): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const key = addDaysKey(todayKey, dayOffset)
+    const fromMin = key === todayKey ? minOfDay(new Date(s.nowMs)) : 0
+    const shape = dayShape(s.blocks, key, fromMin)
+    const agg = aggregates(s.memory, new Date(s.nowMs))
+    const deepH = Math.round((week.plannedDeepMin(s.blocks, key) / 60) * 2) / 2
+    const load =
+      agg.realisticBestH != null && deepH > agg.realisticBestH * 1.2
+        ? ` · planned deep work ${deepH}h vs realistic best ~${agg.realisticBestH}h — consider right-sizing`
+        : ''
+    const label = key === todayKey ? 'today' : fmtDowLong(key)
+    return `Day shape (${label}, from ${fmtTime(fromMin)}): ${shape.lines.join(' · ')}${load}`
+  }
+
+  function execFindSlot(
+    durationMin: number,
+    dayOffset: number,
+    notBeforeMin?: number,
+    notAfterMin?: number,
+  ): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const key = addDaysKey(todayKey, dayOffset)
+    const label = key === todayKey ? 'today' : fmtDowLong(key)
+    const floor = Math.max(
+      notBeforeMin ?? week.DAY_START,
+      key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0,
+    )
+    const ceil = notAfterMin ?? 22 * 60 + 30
+    const fit = week
+      .freeWindows(s.blocks, key, floor, ceil)
+      .find((w) => w.endMin - w.startMin >= durationMin)
+    if (fit) {
+      return `Clear window ${label}: ${fmtTime(fit.startMin)}–${fmtTime(fit.startMin + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
+    }
+    /* honest alternatives: same day without the ceiling, then tomorrow */
+    const later = week
+      .freeWindows(s.blocks, key, floor, 22 * 60 + 30)
+      .find((w) => w.endMin - w.startMin >= durationMin)
+    const nextKey = addDaysKey(key, 1)
+    const nextDay = week
+      .freeWindows(s.blocks, nextKey, 9 * 60, 22 * 60 + 30)
+      .find((w) => w.endMin - w.startMin >= durationMin)
+    const alts = [
+      later ? `later ${label} ${fmtTime(later.startMin)}–${fmtTime(later.startMin + durationMin)}` : null,
+      nextDay ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}` : null,
+    ].filter(Boolean)
+    return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''}`
   }
 
   function execClear(scope: import('../domain/types').ClearScope): string {
@@ -639,6 +743,12 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           return execEdit(q, patch)
         },
+        remove: (q) => {
+          acted = true
+          return execRemove(q)
+        },
+        analyze: (d) => execAnalyze(d), // read-only: not an action
+        findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only
       }
 
       try {
@@ -780,6 +890,29 @@ export const useMew = create<MewState>((set, get) => {
         case 'guard:notnow':
           decline()
           break
+        case 'post-buffer:buffer': {
+          const srcId = payload.blockId ? String(payload.blockId) : null
+          const src = srcId ? s.blocks.find((b) => b.id === srcId) : null
+          const today = dayKey(new Date(s.nowMs))
+          const start = Math.ceil(minOfDay(new Date(s.nowMs)) / 5) * 5
+          const placed = week.place(s.blocks, {
+            title: `${src ? src.title.split('—')[0].trim() + ' — ' : ''}review & notes`,
+            tag: 'work',
+            dayKey: today,
+            startMin: start,
+            durationMin: 15,
+            protected: true,
+          })
+          if (placed) {
+            setBlocks([...s.blocks, placed])
+            post([mewMsg(`Held — review & notes ${fmtTime(start)}–${fmtTime(start + 15)}. Capture it while it's warm.`)])
+          }
+          accept()
+          break
+        }
+        case 'post-buffer:skip':
+          decline()
+          break
         case 'right-size:rightsize': {
           const heavyKey = String(payload.dayKey)
           const day = week
@@ -886,12 +1019,14 @@ export const useMew = create<MewState>((set, get) => {
             break
           }
           if (intruder) {
-            const slot =
-              week.findFreeSlot(s.blocks.filter((b) => b.id !== intruder.id), intruder.dayKey, week.duration(intruder)) ??
-              week.findFreeSlot(s.blocks, addDaysKey(intruder.dayKey, 1), week.duration(intruder), 9 * 60)
-            if (slot) {
-              setBlocks(week.move(s.blocks, intruder.id, intruder.dayKey, slot.startMin))
-              post([mewMsg(`Kept. ${intruder.title.split('—')[0].trim()} moved to ${fmtTime(slot.startMin)} — the rest stays yours.`)])
+            const fromMin = intruder.dayKey === dayKey(new Date(s.nowMs)) ? minOfDay(new Date(s.nowMs)) : 0
+            const next = week.nextSlotAfter(s.blocks, intruder, fromMin)
+            if (next) {
+              setBlocks(week.move(s.blocks, intruder.id, next.dayKey, next.startMin))
+              const dayLabel = next.dayKey === intruder.dayKey ? '' : ' tomorrow'
+              post([mewMsg(`Kept. ${intruder.title.split('—')[0].trim()} moved${dayLabel} to ${fmtTime(next.startMin)} — the rest stays yours.`)])
+            } else {
+              post([mewMsg(`Kept — the rest stays. I couldn't find a later slot for ${intruder.title.split('—')[0].trim()}, so it's still where it was; move it where you like.`)])
             }
           } else {
             post([mewMsg(`Kept. Tonight's rest is yours.`)])

@@ -331,6 +331,67 @@
 .nx-card .ca.pri { background: var(--ice); color: var(--on-acc); }
 .nx-card .ca.sec { border: 1px solid var(--line); color: var(--ink); background: var(--panel2); }
 
+.nx-card .cx {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  font-size: 16px;
+  line-height: 1;
+  padding: 4px 6px;
+  color: var(--muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 7px;
+}
+.nx-card .cx:hover { color: var(--ink); background: var(--panel2); }
+
+/* docked variants — details render in reserved space, never over other blocks */
+.nx-card.center {
+  width: 330px;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  background: var(--panel);
+}
+.nx-card.center .cacts { justify-content: center; }
+
+.nx-card.dock {
+  position: relative;
+  width: auto;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 18px;
+  box-shadow: none;
+  border-color: var(--line);
+  border-radius: 14px;
+}
+.nx-card.dock .cbody { min-width: 0; }
+.nx-card.dock .ct { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-card.dock .cm { margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nx-card.dock .ctag { margin-top: 7px; }
+.nx-card.dock .cacts { margin-top: 0; margin-left: auto; flex-wrap: nowrap; }
+
+.wk-dock {
+  display: flex;
+  align-items: stretch;
+  min-height: 82px;
+  margin-top: 14px;
+}
+.wk-dock-hint {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+  color: var(--faint);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.05em;
+}
+
 /* ── settings cards ───────────────────────────────────────────── */
 .set-grid {
   display: grid;

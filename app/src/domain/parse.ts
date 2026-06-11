@@ -122,6 +122,17 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
     return { kind: 'edit', query: cleanTitle(rangeEdit[1]), edit: { startMin: s1, endMin: e1 } }
   }
 
+  /* targeted removal: "drop the prod release" · "remove both doc reviews" */
+  const dropM = lower.match(/^(?:drop|remove|delete|cancel|scrap)\s+(.+)$/)
+  if (dropM && !/\bfree\b/.test(dropM[1])) {
+    const q = cleanTitle(
+      stripTimeWords(dropM[1])
+        .replace(/^(?:both|all|the|my)\s+/i, '')
+        .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, ''),
+    )
+    if (q) return { kind: 'remove', query: q }
+  }
+
   /* completions: "done with the deck", "finished the walk" */
   const doneM = lower.match(/^(?:done(?:\s+with)?|finished?|completed?)\s+(.+)$/)
   if (doneM) return { kind: 'complete', query: cleanTitle(doneM[1]) }

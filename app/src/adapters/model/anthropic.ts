@@ -10,7 +10,7 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
 
-const MODEL = 'claude-opus-4-8'
+const MODEL = 'claude-fable-5'
 const MAX_LOOP = 6
 
 const TOOLS: Anthropic.Tool[] = MEW_TOOLS.map((t) => ({

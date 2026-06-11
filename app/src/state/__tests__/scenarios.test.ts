@@ -187,6 +187,25 @@ describe('a seeded Tuesday morning', () => {
     expect(errand.status).toBe('open')
   })
 
+  it('"drop the prod release" removes both matching blocks and nothing else', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 45m for prod release today at 2pm')
+    await say('block 45m for prod release tomorrow at 10am')
+    const before = useMew.getState().blocks.filter((b) => b.status === 'open').length
+    await say('drop the prod release')
+    const after = useMew.getState().blocks
+    expect(after.filter((b) => /prod release/i.test(b.title))).toHaveLength(0)
+    expect(after.filter((b) => b.status === 'open')).toHaveLength(before - 2)
+    expect(lastMsg().body).toMatch(/^Removed — /)
+  })
+
+  it('placing over an interview names the collision in the reply', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 1h for interview with pooran today at 1:30pm')
+    await say('block 15m for pooran prep today at 1:30pm')
+    expect(lastMsg().body).toMatch(/heads up: it overlaps .*interview with pooran 13:30–14:30 \(fixed — it can't move\)/i)
+  })
+
   it('answers "how is my week looking?" from its own pattern history', async () => {
     await fresh(TUE(9, 40))
     await say('how is my week looking?')

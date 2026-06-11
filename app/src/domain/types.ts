@@ -46,6 +46,7 @@ export type NudgeId =
   | 'kinder-plan'
   | 'fresh-start'
   | 'break-smaller'
+  | 'post-buffer'
   | 'next-up'
   | 'micro-break'
 
@@ -159,7 +160,7 @@ export interface PixieInputs {
 export type ClearScope = 'today' | 'tomorrow' | 'week' | 'upcoming'
 
 export interface ScheduleIntent {
-  kind: 'plan' | 'complete' | 'move' | 'capture' | 'clear' | 'edit' | 'chat'
+  kind: 'plan' | 'complete' | 'move' | 'capture' | 'clear' | 'remove' | 'edit' | 'chat'
   /** clear: which open MEW-placed blocks to remove (mews + calendar events never) */
   scope?: ClearScope
   /** edit: changes to apply to the matched block */

@@ -27,6 +27,8 @@ export interface NudgeCtx {
   eodProposal: { toDayKey: string; toStartMin: number } | null
   restCollision: { rest: Block; intruder: Block } | null
   restPlannedToday: Block | null
+  /** A ≥45-min fixed event that ended in the last 12 min, nothing live now. */
+  justEndedFixed: Block | null
   /* event payloads (set only on the matching event) */
   justCompleted: Block | null
   newCapture: Capture | null
@@ -147,6 +149,27 @@ export const NUDGES: NudgeDef[] = [
       payload: { blockId: c.live.current!.id },
       key: c.live.current!.id,
     }),
+  },
+  {
+    id: 'post-buffer',
+    label: 'post-meeting buffer',
+    tone: 'practical, while it is fresh',
+    cooldownMs: 1 * H,
+    trigger: (c) => c.justEndedFixed != null,
+    build: (c) => {
+      const b = c.justEndedFixed!
+      const base = b.title.split('—')[0].trim()
+      return {
+        body: `${base} just wrapped. want fifteen minutes to write down the decisions and next steps while they're fresh?`,
+        footnote: `Back-to-back work after meetings keeps stress elevated; a short buffer resets the brain — and what isn't written down intrudes until it is. (Microsoft Human Factors Lab, 2021; Masicampo & Baumeister, 2011)`,
+        actions: [
+          { id: 'buffer', label: '15 min — review & notes', kind: 'primary' },
+          { id: 'skip', label: 'Not needed', kind: 'secondary' },
+        ],
+        payload: { blockId: b.id },
+        key: b.id,
+      }
+    },
   },
   {
     id: 'celebrate',

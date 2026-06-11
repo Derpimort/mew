@@ -6,7 +6,7 @@
    card (fat invisible hit-targets + a grace delay keep it steady). */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMew, useLive } from '../../state/store'
+import { useMew, useLive, clockNow } from '../../state/store'
 import type { Block } from '../../domain/types'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { blocksForDay } from '../../domain/week'
@@ -15,8 +15,6 @@ import { NXG, clkDeg, rArc, rPolar, ringOf } from './dialGeometry'
 import { layoutLanes } from './lanes'
 import { BlockCard } from './BlockCard'
 
-const CARD_W = 260
-const CARD_H = 170
 
 interface Seg {
   block: Block
@@ -36,16 +34,18 @@ export function FocusDial() {
   const live = useLive()
   const g = NXG
 
-  const now = new Date(nowMs)
-  const todayKey = dayKey(now)
-  const nowH = minOfDay(now) / 60
-
-  /* a 1s clock just for the giant countdown — the dial itself moves on store ticks */
+  /* the dial reads the live app clock, not the store tick: a 1s interval
+     re-renders, and clockNow() makes each render actually one second fresher —
+     otherwise the countdown repaints the same store-stale value and jumps
+     once per tick. nowMs (store) stays for memory/engine-derived bits. */
   const [, forceSecond] = useState(0)
   useEffect(() => {
     const id = setInterval(() => forceSecond((n) => n + 1), 1000)
     return () => clearInterval(id)
   }, [])
+  const now = new Date(Math.max(nowMs, clockNow()))
+  const todayKey = dayKey(now)
+  const nowH = minOfDay(now) / 60
 
   /* today's blocks, split at the noon boundary onto their rings */
   const segs: Seg[] = useMemo(() => {
@@ -69,18 +69,33 @@ export function FocusDial() {
     return out
   }, [blocks, todayKey, live.current?.id, g])
 
-  /* steady hover: grace delay before clearing, and the card itself holds it */
+  /* steady hover: grace delay before clearing, and the card itself holds it.
+     While a card is open, switching to a DIFFERENT arc commits only after a
+     short dwell — so the pointer can travel across rings to the center card
+     without the selection flickering through everything it crosses. */
   const [hover, setHoverRaw] = useState<string | null>(null)
   const [pinned, setPinned] = useState<string | null>(null)
   const [scrub, setScrub] = useState<{ x: number; y: number; label: string } | null>(null)
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const commitTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoverRef = useRef<string | null>(null)
+  hoverRef.current = hover
   const holdHover = () => {
     if (clearTimer.current) clearTimeout(clearTimer.current)
+    if (commitTimer.current) clearTimeout(commitTimer.current)
   }
+  const pinnedRef = useRef<string | null>(null)
   const setHover = (id: string | null) => {
+    if (pinnedRef.current) return // a clicked selection holds — hover is muted
     holdHover()
-    if (id === null) clearTimer.current = setTimeout(() => setHoverRaw(null), 300)
-    else setHoverRaw(id)
+    if (id === null) {
+      /* long grace: enough time to leave the arc and travel back to the card */
+      clearTimer.current = setTimeout(() => setHoverRaw(null), 650)
+    } else if (hoverRef.current && hoverRef.current !== id) {
+      commitTimer.current = setTimeout(() => setHoverRaw(id), 160)
+    } else {
+      setHoverRaw(id)
+    }
   }
   useEffect(() => () => holdHover(), [])
 
@@ -101,7 +116,8 @@ export function FocusDial() {
     return out
   }, [segs, g.ro, g.ri])
 
-  const selId = hover ?? pinned
+  pinnedRef.current = pinned
+  const selId = pinned ?? hover // a click owns the card; hover only fills the gaps
   const selSegs = segs.filter((s) => s.block.id === selId)
   const sel = selSegs[0] ?? null
 
@@ -125,26 +141,22 @@ export function FocusDial() {
   const switches = interruptionsLastHour(memory, nowMs)
   const guardOn = guardDayKey === todayKey && guardUntilMin != null && minOfDay(now) < guardUntilMin
 
-  /* detail card, clamped inside the stage */
+  /* detail card docked in the dial face — the center is the one spot that can
+     never cover an arc or a label, so every block stays hoverable while it's open */
   let card = null
   if (sel) {
-    const mid = (sel.sH + sel.eH) / 2
-    const [sx, sy] = rPolar(g.cx, g.cy, sel.r + 30, clkDeg(mid))
-    const onRight = sx > g.cx
-    let left = onRight ? sx + g.ox + 12 : sx + g.ox - 12 - CARD_W
-    let top = sy - CARD_H / 2
-    left = Math.min(Math.max(left, 8), g.w - CARD_W - 8)
-    top = Math.min(Math.max(top, 8), g.h - CARD_H - 8)
     card = (
       <div onMouseEnter={holdHover} onMouseLeave={() => setHover(null)}>
         <BlockCard
+          variant="center"
           block={sel.block}
           isNow={sel.isNow}
+          pinned={pinned === sel.block.id}
           onClose={() => {
             setPinned(null)
             setHoverRaw(null)
           }}
-          style={{ left, top }}
+          style={{ left: g.cx + g.ox, top: g.cy }}
         />
       </div>
     )
@@ -155,7 +167,9 @@ export function FocusDial() {
     onMouseLeave: () => setHover(null),
     onClick: (ev: React.MouseEvent) => {
       ev.stopPropagation()
+      holdHover()
       setPinned(pinned === id ? null : id)
+      setHoverRaw(id)
     },
   })
 
@@ -261,10 +275,12 @@ export function FocusDial() {
           })}
         </g>
 
-        {/* labels at their hour — revealed on approach, clamped inside the canvas */}
+        {/* labels at their hour — revealed on approach, clamped inside the canvas.
+            optional invites and sub-half-hour slivers stay quiet (hover tells their story) */}
         <g className="nx-fade">
           {segs
             .filter((s, idx, all) => !s.done && all.findIndex((o) => o.block.id === s.block.id) === idx)
+            .filter((s) => !s.block.optional && s.block.endMin - s.block.startMin >= 30)
             .map((s, i) => {
               const title = s.block.title.split('—')[0].trim()
               const short = title.length > 13 ? title.slice(0, 11) + '…' : title
@@ -319,8 +335,8 @@ export function FocusDial() {
         })()}
       </svg>
 
-      {/* center: countdown → meta → task → telemetry */}
-      <div className="clk-center">
+      {/* center: countdown → meta → task → telemetry (the card borrows this spot) */}
+      <div className="clk-center" style={sel ? { opacity: 0, pointerEvents: 'none' } : undefined}>
         <div className="nx-count" style={{ fontSize: count.length > 6 ? 64 : 92 }}>{count}</div>
         <div className="nx-meta">{meta}</div>
         <div className="nx-task" style={{ fontSize: 27 }}>{live.headline}</div>

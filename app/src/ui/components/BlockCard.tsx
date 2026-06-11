@@ -13,11 +13,18 @@ export function BlockCard({
   isNow,
   style,
   onClose,
+  variant,
+  pinned,
 }: {
   block: Block
   isNow: boolean
-  style: CSSProperties
+  style?: CSSProperties
   onClose: () => void
+  /** 'center' = docked in the dial face; 'dock' = the week view's footer strip.
+      Docked cards live in reserved space, so they never cover other blocks. */
+  variant?: 'center' | 'dock'
+  /** Clicked-and-held selection: hover stops mattering, the × explains why. */
+  pinned?: boolean
 }) {
   const toggleComplete = useMew((s) => s.toggleComplete)
   const startNow = useMew((s) => s.startNow)
@@ -32,22 +39,25 @@ export function BlockCard({
   }
 
   return (
-    <div className="nx-card" style={style} onClick={(e) => e.stopPropagation()}>
-      <div className="ct">{block.title}</div>
-      <div className="cm">
-        {fmtTime(block.startMin)} – {fmtTime(block.endMin)} · {duration(block)} min
-        {block.protected ? ' · held' : ''}
-        {done ? ' · done' : ''}
-      </div>
-      <span className={'ctag' + (life ? ' life' : '')}>
-        {block.external ? 'calendar' : block.tag === 'work' ? 'work' : block.tag === 'rest' ? 'rest · earned' : 'life'}
-        {block.optional ? ' · optional' : ''}
-      </span>
-      {block.optional && (
-        <div className="cm" style={{ marginTop: 6 }}>
-          tentative / shows-as-free — doesn't hold the time
-        </div>
+    <div className={'nx-card' + (variant ? ` ${variant}` : '')} style={style} onClick={(e) => e.stopPropagation()}>
+      {pinned && (
+        <button type="button" className="cx" aria-label="close" title="deselect" onClick={onClose}>
+          ×
+        </button>
       )}
+      <div className="cbody">
+        <div className="ct">{block.title}</div>
+        <div className="cm">
+          {fmtTime(block.startMin)} – {fmtTime(block.endMin)} · {duration(block)} min
+          {block.protected ? ' · held' : ''}
+          {done ? ' · done' : ''}
+          {block.optional ? " · tentative — doesn't hold the time" : ''}
+        </div>
+        <span className={'ctag' + (life ? ' life' : '')}>
+          {block.external ? 'calendar' : block.tag === 'work' ? 'work' : block.tag === 'rest' ? 'rest · earned' : 'life'}
+          {block.optional ? ' · optional' : ''}
+        </span>
+      </div>
       {!done && (
         <div className="cacts">
           {isNow ? (

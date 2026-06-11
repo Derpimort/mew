@@ -17,7 +17,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'plan_blocks',
     description:
-      'Place new time blocks on the week and/or protect windows as free. Call this when the user asks to schedule, block, hold, add, or keep time free — including multiple asks in one message (one call, several entries). Count the items the user named and place EVERY one — silently dropping any is an error. Distinct phrases are distinct blocks ("order lunch" is an errand, "lunch" is the meal — never merge them). Do NOT call it for things the user merely mentions without wanting them scheduled.',
+      'Place new time blocks on the week and/or protect windows as free, when the user asks to schedule, block, hold, add, or keep time free. One call carries the whole ask: count the items they named and include every one. Distinct phrases are distinct blocks ("order lunch" is an errand, "lunch" is the meal). Reserve it for things the user wants scheduled; a passing mention stays conversation.',
     parameters: {
       type: 'object',
       properties: {
@@ -32,7 +32,7 @@ export const MEW_TOOLS: NeutralTool[] = [
               dayOffset: { type: 'integer', description: 'Days from today (0 = today). Resolve weekday words against the context date.' },
               startMin: { type: 'integer', description: 'Start in minutes from midnight (9:00 = 540). Omit to auto-place in the first free slot.' },
               durationMin: { type: 'integer', description: 'Duration in minutes. Default 60; "morning" = startMin 540, durationMin 180 unless the user says otherwise; "afternoon" ≈ 240 from 780.' },
-              protected: { type: 'boolean', description: 'Default true.' },
+              protected: { type: 'boolean', description: 'Default true — except short rests (≤20 min), which default false so reshaping can absorb them.' },
             },
             required: ['title', 'tag', 'dayOffset'],
             additionalProperties: false,
@@ -88,7 +88,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'capture_intention',
     description:
-      'Record a task the user mentioned WITHOUT a time ("I should call the bank"). MEW will then ask when it should live — do not propose a slot yourself after calling this.',
+      'Record a task the user mentioned with no time attached ("I should call the bank"). MEW follows up to ask when it should live, so end your reply there and let the user pick the moment.',
     parameters: {
       type: 'object',
       properties: {
@@ -101,7 +101,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'edit_block',
     description:
-      "Change an EXISTING block in place — its start/end time, duration, title, or tag — when the user asks to resize, shorten, extend, retime ('wake should be 6:00–6:30', 'make the release 45 minutes'), rename, or retag it. Never re-create a block to change it. Calendar events from connected calendars cannot be edited.",
+      "Change an existing block in place — its start/end time, duration, title, or tag — when the user asks to resize, shorten, extend, retime ('wake should be 6:00–6:30', 'make the release 45 minutes'), rename, or retag it. Editing keeps the block's identity and history, so prefer it over re-creating. Events from connected calendars stay as they are; they belong to the calendar, so tell the user that instead.",
     parameters: {
       type: 'object',
       properties: {
@@ -117,9 +117,51 @@ export const MEW_TOOLS: NeutralTool[] = [
     },
   },
   {
+    name: 'find_slot',
+    description:
+      "Find the first genuinely clear window for a task — checked against every time-holding block including tentative meetings. Call it whenever the user asks to 'find time' or gives a constraint ('before 5pm', 'in the morning'), then place exactly the window it returns. Read-only; it changes nothing.",
+    parameters: {
+      type: 'object',
+      properties: {
+        durationMin: { type: 'integer', description: 'Minutes needed' },
+        dayOffset: { type: 'integer', description: 'Day to search, days from today (default 0)' },
+        notBeforeMin: { type: 'integer', description: 'Earliest acceptable start, minutes from midnight' },
+        notAfterMin: { type: 'integer', description: 'Latest acceptable END, minutes from midnight ("before 5pm" = 1020)' },
+      },
+      required: ['durationMin'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'analyze_day',
+    description:
+      "X-ray one day's shape before optimizing it: dead gaps, unbroken stretches past the ~90-minute focus ceiling, big meetings missing a post-buffer, and load vs the user's realistic best. Read-only — it changes nothing. Call it when asked to optimize, tidy, or review a day, then fix the findings with the other tools.",
+    parameters: {
+      type: 'object',
+      properties: {
+        dayOffset: { type: 'integer', description: 'Day to analyze, days from today (default 0)' },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'remove_blocks',
+    description:
+      'Take specific blocks off the week — when the user asks to drop, remove, delete, or cancel a named block ("drop the prod release", "drop both prod release blocks"). Removes every open block matching the query and leaves everything else standing. For wiping a whole day or week, clear_blocks is the broom.',
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few words from the block title; all open matches are removed' },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'clear_blocks',
     description:
-      "Remove the user's open MEW-placed blocks when they ask to clear, clean up, wipe, or reset their calendar/week, or to start over and re-plan. Done blocks (their mews) and events from connected calendars are NEVER removed — the tool result tells you what was kept. Call this before re-planning if they asked for a fresh start.",
+      "Sweep a whole scope clean when the user asks to clear, clean up, wipe, or reset their calendar/week, or to start over and re-plan. For one or a few named blocks, reach for remove_blocks instead — this broom takes the whole scope. Done blocks (their mews) and events from connected calendars always survive a clear; the tool result tells you what was kept. Call this before re-planning when they ask for a fresh start.",
     parameters: {
       type: 'object',
       properties: {
@@ -150,7 +192,7 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
           dayOffset: clampInt(p.dayOffset, 0, 13, 0),
           startMin: optInt(p.startMin, 0, 1439),
           durationMin: optInt(p.durationMin, 15, 600),
-          protected: p.protected !== false,
+          protected: typeof p.protected === 'boolean' ? p.protected : undefined,
         }))
       const frees = (Array.isArray(o.frees) ? o.frees : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -180,6 +222,17 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
       if ((['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)) patch.tag = o.tag as 'work'
       return exec.edit(String(o.query ?? ''), patch)
     }
+    case 'find_slot':
+      return exec.findSlot(
+        clampInt(o.durationMin, 5, 600, 30),
+        clampInt(o.dayOffset, 0, 13, 0),
+        optInt(o.notBeforeMin, 0, 1439),
+        optInt(o.notAfterMin, 1, 1440),
+      )
+    case 'analyze_day':
+      return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
+    case 'remove_blocks':
+      return exec.remove(String(o.query ?? ''))
     case 'clear_blocks': {
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
       const scope = scopes.includes(o.scope as never) ? (o.scope as 'upcoming') : 'upcoming'

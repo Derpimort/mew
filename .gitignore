@@ -1,0 +1,13 @@
+# never ship snapshots or licensed vendor material
+*.zip
+.claude/skills/react-bits-pro/
+
+# local env & keys (BYO-key lives in the browser; licenses stay on-device)
+.env
+.env.*
+*.local
+
+# build & verification artifacts
+node_modules/
+dist/
+app/shots/

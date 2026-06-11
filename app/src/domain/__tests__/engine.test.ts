@@ -210,4 +210,68 @@ describe('nudge engine', () => {
     const wouldFire = evaluateTick(buildCtx(tick({ blocks: heavy, nowMin: 7 * 60, nowMs }), engineState))
     expect(wouldFire[0]?.type).toBe('right-size')
   })
+
+  describe('early finish is context-aware (no "engine\'s warm" noise)', () => {
+    const done = mk({ id: 'meet', title: 'Standup that never happened', startMin: 10 * 60, endMin: 11 * 60, status: 'done' })
+    const at = (blocks: Block[]) =>
+      buildCtx(tick({ blocks, nowMin: 10 * 60 + 5, nowMs: Date.UTC(2026, 5, 9, 10, 5) }), fresh, {
+        justCompleted: done,
+      })
+
+    it('mid-rest: completing a block suggests nothing', () => {
+      const rest = mk({ id: 'rest', title: 'Recover', tag: 'rest', startMin: 9 * 60 + 30, endMin: 10 * 60 + 30 })
+      const ctx = at([done, rest])
+      expect(ctx.nextUp).toBeNull()
+      expect(ctx.breakDue).toBe(false)
+    })
+
+    it('inside another commitment: the window reclaims nothing', () => {
+      const meeting = mk({ id: 'm2', title: 'Other meeting', external: { calId: 'c1', eventId: 'e1' }, startMin: 10 * 60, endMin: 11 * 60 })
+      const ctx = at([done, meeting])
+      expect(ctx.earlyGapMin).toBe(0)
+      expect(ctx.nextUp).toBeNull()
+    })
+
+    it('a later commitment truncates the reclaimed gap', () => {
+      const next = mk({ id: 'n1', title: 'Doc review', startMin: 10 * 60 + 20, endMin: 11 * 60 })
+      const ctx = at([done, next])
+      expect(ctx.earlyGapMin).toBe(15) // 10:05 → 10:20, not 10:05 → 11:00
+    })
+  })
+
+  describe('post-buffer — a review offer right after a big meeting', () => {
+    const interview = mk({ id: 'iv', title: 'Interview — Mira', startMin: 13.5 * 60, endMin: 14.5 * 60 })
+    const at = (blocks: Block[], nowMin: number) =>
+      buildCtx(tick({ blocks, nowMin, nowMs: Date.UTC(2026, 5, 9, 14, 35) }), fresh)
+
+    it('fires within minutes of the meeting wrapping, when nothing follows', () => {
+      const ctx = at([interview], 14.5 * 60 + 5)
+      expect(ctx.justEndedFixed?.id).toBe('iv')
+      const out = evaluateTick(ctx)
+      expect(out[0]?.type).toBe('post-buffer')
+      expect(out[0]?.footnote).toContain('Microsoft')
+    })
+
+    it('stays quiet when the user is already inside the next block', () => {
+      const nextBlock = mk({ id: 'nb', title: 'Deep work', startMin: 14.5 * 60, endMin: 16 * 60 })
+      const ctx = at([interview, nextBlock], 14.5 * 60 + 5)
+      expect(ctx.justEndedFixed).toBeNull()
+    })
+
+    it('stays quiet for flexible tasks — only fixed events earn a buffer', () => {
+      const task = mk({ id: 'tk', title: 'Write the deck', startMin: 13.5 * 60, endMin: 14.5 * 60 })
+      const ctx = at([task], 14.5 * 60 + 5)
+      expect(ctx.justEndedFixed).toBeNull()
+    })
+  })
+
+  describe('drift idle is scoped to the current block', () => {
+    it('stale idle from before a block started does not trigger drift on it', () => {
+      const fresh2 = { lastFired: {}, lastDriftBlockId: null }
+      const justStarted = mk({ id: 'new', startMin: 9 * 60 + 50, endMin: 11 * 60 })
+      const ctx = buildCtx(tick({ blocks: [justStarted], idleMin: 14 }), fresh2)
+      expect(ctx.idleMin).toBe(2) // block is 2 min old at 9:52
+      expect(evaluateTick(ctx).find((n) => n.type === 'drift')).toBeUndefined()
+    })
+  })
 })

@@ -39,6 +39,18 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('edit')
       return `Updated ${q}.`
     }),
+    remove: vi.fn((q) => {
+      calls.push('remove')
+      return `Removed ${q}.`
+    }),
+    analyze: vi.fn((d) => {
+      calls.push('analyze')
+      return `Day shape (offset ${d}).`
+    }),
+    findSlot: vi.fn((dur, d, nb, na) => {
+      calls.push('findSlot')
+      return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
+    }),
     clear: vi.fn((scope) => {
       calls.push('clear')
       return `Cleared ${scope}.`
@@ -134,6 +146,11 @@ describe('anthropic tool dispatch — runTool', () => {
       'prod release',
       { durationMin: 45 },
     ])
+    expect(runTool('remove_blocks', { query: 'prod release' }, exec)).toBe('Removed prod release.')
+    expect(runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
+    expect(runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
+      'Slot 45m day 0 [-,1020].',
+    )
     expect(runTool('clear_blocks', { scope: 'week' }, exec)).toBe('Cleared week.')
     expect(runTool('clear_blocks', { scope: 'junk' }, exec)).toBe('Cleared upcoming.')
     expect(runTool('nope', {}, exec)).toMatch(/unknown tool/)

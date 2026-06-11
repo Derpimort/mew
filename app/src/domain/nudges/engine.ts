@@ -11,6 +11,7 @@ import {
   dayEndMin,
   duration,
   findFreeSlot,
+  isFixedTime,
   openItems,
   overlaps,
   plannedDeepMin,
@@ -169,6 +170,31 @@ export function buildCtx(
     }
   }
 
+  /* a big fixed event that wrapped in the last 12 minutes, with the user not
+     inside anything else and no review/rest cushion already following it —
+     the moment a post-meeting buffer is worth offering */
+  const dayBlocks = blocksForDay(t.blocks, t.todayKey)
+  const justEndedFixed =
+    live.current == null
+      ? (dayBlocks.find(
+          (b) =>
+            !b.optional &&
+            b.status !== 'rolled' &&
+            isFixedTime(b) &&
+            duration(b) >= 45 &&
+            b.endMin <= t.nowMin &&
+            t.nowMin - b.endMin <= 12 &&
+            !dayBlocks.some(
+              (n) =>
+                n.id !== b.id &&
+                n.status === 'open' &&
+                !n.optional &&
+                n.startMin >= b.endMin &&
+                n.startMin <= b.endMin + 20,
+            ),
+        ) ?? null)
+      : null
+
   return {
     nowMs: t.nowMs,
     nowMin: t.nowMin,
@@ -176,7 +202,10 @@ export function buildCtx(
     blocks: t.blocks,
     live,
     agg: t.agg,
-    idleMin: t.idleMin,
+    /* you can't have been off a block longer than it has existed — stale idle
+       from a previous block (or an expired guard) must not instantly qualify
+       the next block for a drift check-in */
+    idleMin: live.current ? Math.min(t.idleMin, t.nowMin - live.current.startMin) : t.idleMin,
     interruptionsLastHour: t.interruptionsLastHour,
     guardUntilMin: t.guardUntilMin,
     heavyDay: findHeavyDay(t.blocks, t.todayKey, t.agg.realisticBestH),
@@ -187,6 +216,7 @@ export function buildCtx(
     restPlannedToday:
       blocksForDay(t.blocks, t.todayKey).find((b) => b.tag === 'rest' && b.status === 'open') ??
       null,
+    justEndedFixed,
     justCompleted: event?.justCompleted ?? null,
     newCapture: event?.newCapture ?? null,
     captureProposal,
@@ -211,8 +241,21 @@ function earlyFinish(
   if (!done || done.dayKey !== t.todayKey || t.nowMin < done.startMin || t.nowMin >= done.endMin) {
     return none
   }
-  const earlyGapMin = done.endMin - t.nowMin
   const day = blocksForDay(t.blocks, t.todayKey)
+
+  /* the "reclaimed" window is only what's actually free. completing a meeting
+     that never happened, mid-rest, with three other things booked over the
+     same hour reclaims nothing — suggesting more work there reads as noise. */
+  let gapEnd = done.endMin
+  for (const b of day) {
+    if (b.id === done.id || b.status !== 'open' || b.optional) continue
+    if (b.startMin <= t.nowMin && t.nowMin < b.endMin) {
+      return none // already inside another commitment (a rest block counts double)
+    }
+    if (b.startMin > t.nowMin && b.startMin < gapEnd) gapEnd = b.startMin
+  }
+  const earlyGapMin = gapEnd - t.nowMin
+  if (earlyGapMin < 10) return none
   const restEnds = day
     .filter((b) => b.tag === 'rest' && (b.status === 'done' || b.endMin <= t.nowMin))
     .map((b) => b.endMin)
@@ -256,6 +299,7 @@ function earlyFinish(
 const TICK_NUDGES: NudgeId[] = [
   'drift',
   'guard',
+  'post-buffer',
   'close-loop',
   'protect-rest',
   'fresh-start',

@@ -3,7 +3,7 @@
    other days are shapes. ‹ › pages week by week; the summary line carries the
    pending-nudge teaser. */
 
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMew, useLive } from '../../state/store'
 import type { Block } from '../../domain/types'
 import { dayKey, fmtDow, fmtShortDate, fmtTime, minOfDay, weekKeys, addDaysKey } from '../../domain/time'
@@ -14,7 +14,7 @@ import { nxwY } from './dialGeometry'
 import { layoutLanes } from './lanes'
 import { BlockCard } from './BlockCard'
 
-const H = 540
+const H = 560
 
 export function WeekColumns() {
   const blocks = useMew((s) => s.blocks)
@@ -47,7 +47,23 @@ export function WeekColumns() {
     [blocks, todayKey, agg.realisticBestH],
   )
 
-  const [card, setCard] = useState<{ block: Block; x: number; y: number } | null>(null)
+  /* hovered/clicked block details land in the footer dock — reserved space,
+     so the card can never sit on top of other blocks and steal their hover.
+     Hover swaps only after a short dwell (crossing blocks en route won't churn
+     the card); a click pins the selection until × or a background click. */
+  const [card, setCard] = useState<Block | null>(null)
+  const [pinnedId, setPinnedId] = useState<string | null>(null)
+  const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoverCard = (b: Block) => {
+    if (pinnedId) return
+    if (dwellTimer.current) clearTimeout(dwellTimer.current)
+    if (card && card.id !== b.id) {
+      dwellTimer.current = setTimeout(() => setCard(b), 150)
+    } else {
+      setCard(b)
+    }
+  }
+  useEffect(() => () => { if (dwellTimer.current) clearTimeout(dwellTimer.current) }, [])
   const [scrubY, setScrubY] = useState<number | null>(null)
 
   const plannedH = useMemo(() => {
@@ -77,26 +93,13 @@ export function WeekColumns() {
 
   const cols = '34px ' + keys.map((k) => (k === selectedKey ? '2.3fr' : '1fr')).join(' ')
 
-  const openCard = (block: Block, el: HTMLElement) => {
-    const wrap = wrapRef.current
-    if (!wrap) return
-    const wr = wrap.getBoundingClientRect()
-    const br = el.getBoundingClientRect()
-    const onRight = br.left + br.width / 2 > wr.left + wr.width / 2
-    setCard({
-      block,
-      x: onRight ? br.left - wr.left - 240 : br.right - wr.left + 10,
-      y: Math.max(8, br.top - wr.top - 10),
-    })
-  }
-
   const weekLabel =
     weekOffset === 0
       ? 'this week'
       : `week of ${fmtShortDate(keys[0]).toLowerCase()}`
 
   return (
-    <div ref={wrapRef} className="nxs1" style={{ width: 730, position: 'relative' }} onClick={() => setCard(null)}>
+    <div ref={wrapRef} className="nxs1" style={{ width: 730, position: 'relative' }} onClick={() => { setPinnedId(null); setCard(null) }}>
       <div className="week-nav">
         <button type="button" onClick={(e) => { e.stopPropagation(); setWeekOffset(weekOffset - 1) }} aria-label="previous week">
           ‹
@@ -113,7 +116,7 @@ export function WeekColumns() {
           ›
         </button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 7 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 10 }}>
         <span />
         {keys.map((k) => {
           const isToday = k === todayKey
@@ -139,7 +142,7 @@ export function WeekColumns() {
       </div>
 
       <div
-        style={{ display: 'grid', gridTemplateColumns: cols, gap: 7, position: 'relative' }}
+        style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, position: 'relative' }}
         onMouseMove={(e) => {
           const r = e.currentTarget.getBoundingClientRect()
           const y = e.clientY - r.top
@@ -179,7 +182,7 @@ export function WeekColumns() {
                 const dur = eH - sH
                 const isNow = isToday && live.current?.id === b.id
                 const done = b.status === 'done'
-                const showT = (isSel ? dur >= 0.55 : dur >= 1.3) && (slots.get(b.id)?.lanes ?? 1) <= (isSel ? 3 : 2)
+                const showT = (isSel ? dur >= 0.55 : dur >= 1.5) && (slots.get(b.id)?.lanes ?? 1) <= (isSel ? 3 : 2)
                 const showM = isSel && dur >= 1.15 && (slots.get(b.id)?.lanes ?? 1) <= 2
                 const { lane, lanes } = slots.get(b.id) ?? { lane: 0, lanes: 1 }
                 return (
@@ -195,10 +198,12 @@ export function WeekColumns() {
                       width: `calc(${100 / lanes}% - ${lanes > 1 ? 6 : 8}px)`,
                       right: 'auto',
                     }}
-                    title={`${b.title} · ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}${b.optional ? ' · optional' : ''}`}
+                    onMouseEnter={() => hoverCard(b)}
                     onClick={(e) => {
                       e.stopPropagation()
-                      openCard(b, e.currentTarget)
+                      if (dwellTimer.current) clearTimeout(dwellTimer.current)
+                      setPinnedId(pinnedId === b.id ? null : b.id)
+                      setCard(b)
                     }}
                   >
                     {showT && (
@@ -231,6 +236,24 @@ export function WeekColumns() {
         )}
       </div>
 
+      {/* the dock: details live HERE, never floating over the grid */}
+      <div className="wk-dock">
+        {card ? (
+          <BlockCard
+            variant="dock"
+            block={card}
+            isNow={live.current?.id === card.id}
+            pinned={pinnedId === card.id}
+            onClose={() => {
+              setPinnedId(null)
+              setCard(null)
+            }}
+          />
+        ) : (
+          <span className="wk-dock-hint">hover a block — its details and actions land here</span>
+        )}
+      </div>
+
       <div className="week-summary">
         {plannedH}h planned
         {restKept && (
@@ -256,14 +279,6 @@ export function WeekColumns() {
         )}
       </div>
 
-      {card && (
-        <BlockCard
-          block={card.block}
-          isNow={live.current?.id === card.block.id}
-          onClose={() => setCard(null)}
-          style={{ left: card.x, top: card.y }}
-        />
-      )}
     </div>
   )
 }

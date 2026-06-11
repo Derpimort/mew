@@ -62,6 +62,8 @@ export function runIntent(
       return exec.clear(intent.scope ?? 'upcoming')
     case 'edit':
       return exec.edit(intent.query ?? '', intent.edit ?? {})
+    case 'remove':
+      return exec.remove(intent.query ?? '')
     case 'chat': {
       if (intent.reply) return intent.reply
       const hit = CHAT_REPLIES.find(([re]) => re.test(rawText))
@@ -124,6 +126,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
       toStartMin: optInt(o.toStartMin, 0, 1439),
     }
   if (kind === 'capture' && typeof o.title === 'string') return { kind, title: o.title }
+  if (kind === 'remove' && typeof o.query === 'string' && o.query.trim()) return { kind, query: o.query }
   if (kind === 'edit' && typeof o.query === 'string') {
     const e = (o.edit && typeof o.edit === 'object' ? o.edit : {}) as Record<string, unknown>
     const edit: NonNullable<ScheduleIntent['edit']> = {}

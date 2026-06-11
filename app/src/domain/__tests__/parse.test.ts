@@ -111,4 +111,18 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
       expect(i.kind).not.toBe('edit')
     })
   })
+
+  describe('targeted removal ("drop both and create afresh" must not wipe the day)', () => {
+    it('"drop the prod release" → remove with the title query', () => {
+      expect(parseCommand('drop the prod release', NOW)).toMatchObject({ kind: 'remove', query: 'prod release' })
+    })
+
+    it('"remove both doc review blocks" strips the plural scaffolding', () => {
+      expect(parseCommand('remove both doc review blocks', NOW)).toMatchObject({ kind: 'remove', query: 'doc review' })
+    })
+
+    it('"cancel gym tomorrow" stays a removal, with time words stripped', () => {
+      expect(parseCommand('cancel gym tomorrow', NOW)).toMatchObject({ kind: 'remove', query: 'gym' })
+    })
+  })
 })

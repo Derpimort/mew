@@ -2,7 +2,7 @@
    source of truth; everything here is synchronous and side-effect free. */
 
 import type { Block, Tag } from './types'
-import { uid } from './time'
+import { addDaysKey, uid } from './time'
 
 export const DAY_START = 8 * 60
 export const DAY_END = 18 * 60 + 30
@@ -47,6 +47,38 @@ export function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: num
 }
 
 /** First free slot of `durationMin` on `dayKey` within [windowStart, windowEnd). */
+/* Fixed-time blocks own their clock slot — interviews, calls, meetings, and
+   anything from a connected calendar. Tasks are flexible: they can shift or
+   end early; these can't. (Heuristic now; usage patterns can refine it.) */
+const FIXED_WORDS =
+  /\b(interview|call|meeting|meet|standup|stand-up|sync|1:1|one[- ]on[- ]one|demo|huddle|screening|onsite|panel|intro)\b/i
+/* "interview prep" is OUR work about their meeting — a flexible task */
+const PREP_WORDS = /\b(prep|prepare|preparation|practice|practise|debrief|notes|research|draft|write[- ]?up)\b/i
+export function isFixedTime(b: Block): boolean {
+  if (b.external) return true
+  if (PREP_WORDS.test(b.title)) return false
+  return FIXED_WORDS.test(b.title)
+}
+
+/** Open, time-holding blocks overlapping [startMin,endMin) that day. Optional
+    blocks are transparent — unless they're fixed-time (a tentative interview
+    still matters). */
+export function conflictsWith(
+  blocks: Block[],
+  dayKey: string,
+  startMin: number,
+  endMin: number,
+  excludeId?: string,
+): Block[] {
+  return blocksForDay(blocks, dayKey).filter(
+    (b) =>
+      b.id !== excludeId &&
+      b.status === 'open' &&
+      (!b.optional || isFixedTime(b)) &&
+      overlaps(b.startMin, b.endMin, startMin, endMin),
+  )
+}
+
 export function findFreeSlot(
   blocks: Block[],
   dayKey: string,
@@ -54,7 +86,9 @@ export function findFreeSlot(
   windowStart = DAY_START,
   windowEnd = DAY_END,
 ): { startMin: number; endMin: number } | null {
-  const day = blocksForDay(blocks, dayKey).filter((b) => !b.optional) // optional events don't hold time
+  /* optional events don't hold time — except fixed-time ones (a tentative
+     interview is still an interview; auto-placement keeps clear of it) */
+  const day = blocksForDay(blocks, dayKey).filter((b) => !b.optional || isFixedTime(b))
   let cursor = windowStart
   for (const b of day) {
     if (b.endMin <= cursor) continue
@@ -63,6 +97,65 @@ export function findFreeSlot(
   }
   if (cursor + durationMin > windowEnd) return null
   return { startMin: cursor, endMin: cursor + durationMin }
+}
+
+/** Context markers for one block, as the model sees them. 'calendar' =
+    synced from a connected calendar (not MEW's to edit or remove). 'fixed' =
+    the time owns its slot (schedule around it) — the block itself is still
+    fully editable/removable. The two are different facts. */
+export function contextMarkers(b: Block): string {
+  const parts = [b.tag as string]
+  if (b.external) parts.push('calendar')
+  else if (isFixedTime(b)) parts.push('fixed')
+  if (b.optional) parts.push('optional')
+  if (b.status === 'done') parts.push('done')
+  return parts.join(', ')
+}
+
+/** Every clear window within [fromMin, toMin) on the day — air that holds
+    nothing busy. Busy = open blocks that hold time (optional ones only when
+    fixed: a tentative interview is still an interview). */
+export function freeWindows(
+  blocks: Block[],
+  dayKey: string,
+  fromMin: number,
+  toMin: number,
+): { startMin: number; endMin: number }[] {
+  const busy = blocksForDay(blocks, dayKey)
+    .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)))
+    .sort((a, b) => a.startMin - b.startMin)
+  const out: { startMin: number; endMin: number }[] = []
+  let cursor = fromMin
+  for (const b of busy) {
+    if (b.endMin <= cursor) continue
+    if (b.startMin > cursor) out.push({ startMin: cursor, endMin: Math.min(b.startMin, toMin) })
+    cursor = Math.max(cursor, b.endMin)
+    if (cursor >= toMin) break
+  }
+  if (cursor < toMin) out.push({ startMin: cursor, endMin: toMin })
+  return out.filter((w) => w.endMin > w.startMin)
+}
+
+/** Where a block moves when it has to give way: the next free slot at or
+    after BOTH its original start and `fromMin` — never earlier in the day
+    (an evening block must not teleport to 8:00 am), else tomorrow morning. */
+export function nextSlotAfter(
+  blocks: Block[],
+  b: Block,
+  fromMin: number,
+): { dayKey: string; startMin: number } | null {
+  const from = Math.max(b.startMin, fromMin)
+  const today = findFreeSlot(
+    blocks.filter((x) => x.id !== b.id),
+    b.dayKey,
+    duration(b),
+    from,
+    Math.max(DAY_END, 22 * 60 + 30),
+  )
+  if (today) return { dayKey: b.dayKey, startMin: today.startMin }
+  const tomorrow = addDaysKey(b.dayKey, 1)
+  const slot = findFreeSlot(blocks, tomorrow, duration(b), 9 * 60)
+  return slot ? { dayKey: tomorrow, startMin: slot.startMin } : null
 }
 
 export interface PlaceSpec {
@@ -175,6 +268,14 @@ export function findByQuery(blocks: Block[], query: string, todayKey: string): B
       return ad - bd || a.startMin - b.startMin
     })
   return candidates[0]
+}
+
+/** Every open block matching the query — for targeted removal ("drop both
+    prod release blocks"). Same matching as findByQuery, minus the pick-one. */
+export function findAllByQuery(blocks: Block[], query: string): Block[] {
+  const q = query.toLowerCase().trim()
+  if (!q) return []
+  return blocks.filter((b) => b.status === 'open' && b.title.toLowerCase().includes(q))
 }
 
 /** All of the day's non-rest items are done → the day is clear, rest is earned. */
