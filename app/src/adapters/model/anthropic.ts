@@ -49,7 +49,12 @@ export function createAnthropicAdapter(apiKey: string): ModelPort {
       for (let i = 0; i < MAX_LOOP; i++) {
         const stream = client.messages.stream({
           model: MODEL,
-          max_tokens: 8192,
+          /* required by the API — streaming delivers tokens live but every call
+             still declares a ceiling. 32k is unreachable for a MEW turn (the
+             voice is 1–3 sentences); it exists purely as the runaway-cost guard
+             on the user's own key, with the continuation handler below as the
+             never-end-mid-word backstop. */
+          max_tokens: 32000,
           cache_control: { type: 'ephemeral' },
           system,
           tools: TOOLS,
