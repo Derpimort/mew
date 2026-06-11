@@ -21,6 +21,7 @@ import {
   fromDayKey,
   inQuietHours,
   minOfDay,
+  spell,
   uid,
 } from '../domain/time'
 import * as week from '../domain/week'
@@ -304,6 +305,9 @@ export const useMew = create<MewState>((set, get) => {
       event,
     )
     for (const n of evaluateEvent(ctx)) {
+      /* a chat completion celebrates in the model's own reply — posting the
+         celebrate line too would say the same thing twice in a row */
+      if (n.type === 'celebrate' && chatCompletion) continue
       markFired(n, s.nowMs)
       // event nudges answer the user's own action — straight to chat, no mirror.
       // celebrations are brief and concrete (voice law): a plain line, not a card.
@@ -398,6 +402,9 @@ export const useMew = create<MewState>((set, get) => {
     return `Done — ${joinHuman(lines)}.${observation}`
   }
 
+  /* completions through CHAT celebrate in the reply itself — the celebrate
+     nudge stays quiet so one mew speaks once (UI clicks still get the nudge) */
+  let chatCompletion = false
   function execComplete(query: string): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -405,8 +412,21 @@ export const useMew = create<MewState>((set, get) => {
     if (!target) return `I couldn't find "${query}" in the week — say it another way?`
     const base = target.title.split('—')[0].trim()
     if (target.status === 'done') return `${base} was already done — it counted.`
-    get().toggleComplete(target.id)
-    return `Marked ${base} done. (The celebration line is already posted in chat — add at most a brief ack, or nothing.)`
+    chatCompletion = true
+    try {
+      get().toggleComplete(target.id)
+    } finally {
+      chatCompletion = false
+    }
+    const after = get()
+    const live = liveNow(after.blocks, todayKey, minOfDay(new Date(after.nowMs)))
+    const tail =
+      live.openToday === 0
+        ? ' The day is clear — rest is earned.'
+        : live.openToday === 1
+          ? ' One to go.'
+          : ''
+    return `Marked ${base} done — that's a mew, ${spell(live.mewsToday)} today.${tail}`
   }
 
   function execMove(query: string, toDayOffset?: number, toStartMin?: number): string {

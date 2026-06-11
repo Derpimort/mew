@@ -206,6 +206,14 @@ describe('a seeded Tuesday morning', () => {
     expect(lastMsg().body).toMatch(/heads up: it overlaps .*interview with pooran 13:30–14:30 \(fixed — it can't move\)/i)
   })
 
+  it('a chat completion celebrates exactly once (no duplicate mew lines)', async () => {
+    await fresh(TUE(9, 40))
+    await say('done with the deck')
+    const celebrations = chat().filter((m) => /that's a mew/i.test(m.body))
+    expect(celebrations).toHaveLength(1)
+    expect(celebrations[0].role).toBe('mew') // the reply itself, not a second nudge line
+  })
+
   it('answers "how is my week looking?" from its own pattern history', async () => {
     await fresh(TUE(9, 40))
     await say('how is my week looking?')
