@@ -252,30 +252,75 @@
   font-weight: 600;
 }
 
+.prompt-card {
+  background: var(--panel2);
+  border: 1px solid color-mix(in srgb, var(--ice) 20%, var(--line));
+  border-radius: 13px;
+  box-shadow: inset 0 1.5px 4px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.03);
+  cursor: text;
+  transition: border-color 0.25s ease;
+}
+.prompt-card:focus-within { border-color: color-mix(in srgb, var(--ice) 45%, var(--line)); }
+.sys--light .prompt-card { box-shadow: inset 0 1.5px 4px rgba(80, 60, 20, 0.08), 0 1px 0 #fff; }
 .prompt-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 7px;
   font-family: 'JetBrains Mono', monospace;
-  background: var(--panel2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 10px 14px;
+  padding: 11px 14px 4px;
   font-size: 12.5px;
-  box-shadow: inset 0 1.5px 4px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.03);
 }
-.sys--light .prompt-row { box-shadow: inset 0 1.5px 4px rgba(80, 60, 20, 0.08), 0 1px 0 #fff; }
 .prompt-row .p-you { color: var(--ice); font-weight: 600; }
 .prompt-row .p-arr { color: var(--faint); }
-.prompt-row input {
+.prompt-row textarea {
   flex: 1;
   min-width: 0;
   border: 0;
   background: transparent;
   outline: none;
   font: inherit;
+  line-height: 1.55;
   caret-color: var(--ice);
+  resize: none;
+  overflow-y: auto;
+  max-height: 150px;
+  padding: 0;
+  color: var(--ink);
 }
+.prompt-hints {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 14px 9px;
+  border-top: 1px dashed color-mix(in srgb, var(--ice) 14%, var(--line));
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+}
+.prompt-hints .hint .k {
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.prompt-hints .hint.dim { opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-hints .spacer { flex: 1; }
+.prompt-hints .mewing { color: var(--ice); font-weight: 700; }
+.prompt-hints .send {
+  font-family: inherit;
+  white-space: nowrap;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ice);
+  background: var(--ice-soft);
+  border: 1px solid var(--ice-bd);
+  border-radius: 7px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.prompt-hints .send:disabled { opacity: 0.35; cursor: default; }
 
 /* ── block detail card (both views) ───────────────────────────── */
 .nx-card {

@@ -3,7 +3,7 @@
    steel cards with machined buttons, a prompt with a blinking cursor.
    Same store, same nudge engine — only the skin changed. */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMew, useLive } from '../../state/store'
 import type { ChatMessage } from '../../domain/types'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
@@ -15,7 +15,7 @@ export function SessionLog() {
   const scrollToMsgId = useMew((s) => s.scrollToMsgId)
   const clearScroll = useMew((s) => s.clearScroll)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     const el = scrollRef.current
@@ -94,7 +94,8 @@ function LogLine({ msg }: { msg: ChatMessage }) {
   if (msg.role === 'user') {
     return (
       <div data-msg={msg.id}>
-        <span className="p-you">you</span> <span className="p-arr">❯</span> <b>{msg.body}</b>
+        <span className="p-you">you</span> <span className="p-arr">❯</span>{' '}
+        <b style={{ whiteSpace: 'pre-wrap' }}>{msg.body}</b>
       </div>
     )
   }
@@ -108,7 +109,7 @@ function LogLine({ msg }: { msg: ChatMessage }) {
         <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
         {isMew && <span className="mw">★ </span>}
         {isOk && <span className="ok">✓ </span>}
-        <span style={{ color: isAside ? undefined : 'var(--muted)' }}>{msg.body}</span>
+        <span style={{ color: isAside ? undefined : 'var(--muted)', whiteSpace: 'pre-wrap' }}>{msg.body}</span>
         {msg.observation && (
           <div className="cm" style={{ paddingLeft: 34 }}># {msg.observation}</div>
         )}
@@ -146,11 +147,20 @@ function LogLine({ msg }: { msg: ChatMessage }) {
   )
 }
 
-function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | null> }) {
+function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | null> }) {
   const speak = useMew((s) => s.speak)
   const thinking = useMew((s) => s.thinking)
   const [text, setText] = useState('')
   const [focused, setFocused] = useState(false)
+
+  /* auto-grow: the box follows the content up to ~6 comfortable rows, then
+     scrolls internally — multi-line asks stop fighting a single-line slit */
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 150)}px`
+  }, [text, inputRef])
 
   const submit = () => {
     if (!text.trim() || thinking) return
@@ -159,20 +169,50 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLInputElement | nul
   }
 
   return (
-    <div className="prompt-row" onClick={() => inputRef.current?.focus()}>
-      <span className="p-you">you</span> <span className="p-arr">❯</span>
-      <input
-        ref={inputRef}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') submit()
-        }}
-        aria-label="talk to MEW"
-      />
-      {!focused && !text && <span className="blink" />}
+    <div className="prompt-card" onClick={() => inputRef.current?.focus()}>
+      <div className="prompt-row">
+        <span className="p-you">you</span> <span className="p-arr">❯</span>
+        <textarea
+          ref={inputRef}
+          value={text}
+          rows={1}
+          onChange={(e) => setText(e.target.value)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              submit()
+            }
+          }}
+          aria-label="talk to MEW"
+          placeholder={focused || text ? '' : undefined}
+        />
+        {!focused && !text && <span className="blink" />}
+      </div>
+      <div className="prompt-hints">
+        <span className="hint">
+          <span className="k">shift+↵</span> newline
+        </span>
+        <span className="hint dim">"block thursday morning for the deck"</span>
+        <span className="spacer" />
+        {thinking ? (
+          <span className="hint mewing">mewing…</span>
+        ) : (
+          <button
+            type="button"
+            className="send"
+            disabled={!text.trim()}
+            onClick={(e) => {
+              e.stopPropagation()
+              submit()
+            }}
+            aria-label="send"
+          >
+            ↵ send
+          </button>
+        )}
+      </div>
     </div>
   )
 }
