@@ -11,7 +11,7 @@ import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
 
 const MODEL = 'claude-fable-5'
-const MAX_LOOP = 6
+const MAX_LOOP = 10
 
 const TOOLS: Anthropic.Tool[] = MEW_TOOLS.map((t) => ({
   name: t.name,
@@ -49,7 +49,7 @@ export function createAnthropicAdapter(apiKey: string): ModelPort {
       for (let i = 0; i < MAX_LOOP; i++) {
         const stream = client.messages.stream({
           model: MODEL,
-          max_tokens: 2048,
+          max_tokens: 8192,
           cache_control: { type: 'ephemeral' },
           system,
           tools: TOOLS,
@@ -69,6 +69,22 @@ export function createAnthropicAdapter(apiKey: string): ModelPort {
 
         if (message.stop_reason === 'pause_turn') {
           messages.push({ role: 'assistant', content: message.content })
+          continue
+        }
+        if (message.stop_reason === 'max_tokens') {
+          /* never end mid-word: continue the turn (stop-reasons protocol). A
+             truncated tool_use can't go back into history — regenerate instead. */
+          const last = message.content[message.content.length - 1]
+          if (last?.type === 'tool_use') {
+            yield '\n'
+            continue
+          }
+          messages.push({ role: 'assistant', content: message.content })
+          messages.push({
+            role: 'user',
+            content:
+              'Your reply was cut off mid-stream. Continue exactly where you left off — finish any remaining tool calls and the sentence. Repeat nothing.',
+          })
           continue
         }
         if (message.stop_reason !== 'tool_use') return
@@ -93,6 +109,8 @@ export function createAnthropicAdapter(apiKey: string): ModelPort {
         }
         messages.push({ role: 'user', content: results })
       }
+      /* the loop cap hit mid-flow — say so instead of trailing off */
+      yield `\n(i hit my per-turn action limit before finishing — say "continue" and i'll pick it up right there.)`
     },
   }
 }
