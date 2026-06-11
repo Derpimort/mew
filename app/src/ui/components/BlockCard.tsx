@@ -28,6 +28,7 @@ export function BlockCard({
 }) {
   const toggleComplete = useMew((s) => s.toggleComplete)
   const startNow = useMew((s) => s.startNow)
+  const interruptBlock = useMew((s) => s.interruptBlock)
   const moveToNextFree = useMew((s) => s.moveToNextFree)
   const toggleProtected = useMew((s) => s.toggleProtected)
 
@@ -60,10 +61,22 @@ export function BlockCard({
       </div>
       {!done && (
         <div className="cacts">
-          {isNow ? (
-            <button type="button" className="ca pri" onClick={act(() => toggleComplete(block.id))}>
-              Done — a mew
-            </button>
+          {isNow || block.startedAt != null ? (
+            <>
+              <button type="button" className="ca pri" onClick={act(() => toggleComplete(block.id))}>
+                Done — a mew
+              </button>
+              {!block.external && (
+                <button
+                  type="button"
+                  className="ca sec"
+                  title="stop here; the remaining minutes roll to the next free slot"
+                  onClick={act(() => interruptBlock(block.id))}
+                >
+                  Interrupt — finish later
+                </button>
+              )}
+            </>
           ) : (
             !block.external && (
               <button type="button" className="ca pri" onClick={act(() => startNow(block.id))}>

@@ -19,6 +19,9 @@ export interface Block {
   estimateSource: 'user' | 'mew' | 'history'
   rolledToId?: string
   completedAt?: number
+  /** Set by "Start now" — a started block completes or gets interrupted; it
+      never silently re-starts. */
+  startedAt?: number
   /** Set when this block came IN from a connected calendar. External blocks are
       never pushed back out, and MEW never reschedules them (not ours to move). */
   external?: { calId: string; eventId: string }

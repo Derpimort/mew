@@ -349,21 +349,22 @@ export function FocusDial() {
             reads over empty face, and the dot marks which ring is live */}
         {(() => {
           const [x, y] = rPolar(g.cx, g.cy, nowRing, nowDeg)
-          const [hx0, hy0] = rPolar(g.cx, g.cy, g.ri - 58, nowDeg)
-          const [hx1, hy1] = rPolar(g.cx, g.cy, g.ro + 24, nowDeg)
+          /* a short tick from the now-dot outward — clean, no spoke into the face */
+          const [hx0, hy0] = rPolar(g.cx, g.cy, nowRing + 10, nowDeg)
+          const [hx1, hy1] = rPolar(g.cx, g.cy, nowRing + 36, nowDeg)
           const [tx, ty] = rPolar(g.cx, g.cy, g.ro + 50, nowDeg)
           return (
             <g style={{ pointerEvents: 'none' }}>
-              <line x1={hx0} y1={hy0} x2={hx1} y2={hy1} stroke="var(--bg)" strokeWidth={10} strokeLinecap="round" opacity={0.92} />
+              <line x1={hx0} y1={hy0} x2={hx1} y2={hy1} stroke="var(--bg)" strokeWidth={5.5} strokeLinecap="round" opacity={0.9} />
               <line
                 x1={hx0}
                 y1={hy0}
                 x2={hx1}
                 y2={hy1}
                 stroke="var(--ice)"
-                strokeWidth={3.5}
+                strokeWidth={2.5}
                 strokeLinecap="round"
-                style={{ filter: 'drop-shadow(0 0 9px var(--glowc))' }}
+                style={{ filter: 'drop-shadow(0 0 8px var(--glowc))' }}
               />
               <circle cx={x} cy={y} r="8" fill="var(--ice)" stroke="var(--bg)" strokeWidth={2.5} style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
               <text x={tx} y={ty} textAnchor="middle" className="mono" style={{ fill: 'var(--ice)', fontSize: 12, fontWeight: 700 }}>

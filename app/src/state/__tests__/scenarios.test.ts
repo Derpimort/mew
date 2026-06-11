@@ -214,6 +214,31 @@ describe('a seeded Tuesday morning', () => {
     expect(celebrations[0].role).toBe('mew') // the reply itself, not a second nudge line
   })
 
+  it('start is a state: a started block cannot be re-started, and interrupt parks the rest', async () => {
+    await fresh(TUE(9, 40))
+    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    useMew.getState().startNow(deck.id)
+    const started = useMew.getState().blocks.find((b) => b.id === deck.id)!
+    expect(started.startedAt).toBeDefined()
+    expect(started.startMin).toBe(9 * 60 + 40)
+
+    /* mashing Start again moves nothing */
+    useMew.getState().startNow(deck.id)
+    const again = useMew.getState().blocks.find((b) => b.id === deck.id)!
+    expect(again.startMin).toBe(9 * 60 + 40)
+    expect(lastMsg().body).toMatch(/already running/i)
+
+    /* interrupt: original rolls, the remainder gets a later home */
+    useMew.getState().interruptBlock(deck.id)
+    const after = useMew.getState().blocks
+    expect(after.find((b) => b.id === deck.id)!.status).toBe('rolled')
+    const followUp = after.find((b) => b.status === 'open' && /Q3 deck/.test(b.title) && b.id !== deck.id)!
+    expect(followUp).toBeDefined()
+    expect(followUp.startMin).toBeGreaterThan(9 * 60 + 40)
+    expect(useMew.getState().memory.some((e) => e.kind === 'rolled' && /Q3 deck/.test(e.title ?? ''))).toBe(true)
+    expect(lastMsg().body).toMatch(/Paused — no blame/)
+  })
+
   it('answers "how is my week looking?" from its own pattern history', async () => {
     await fresh(TUE(9, 40))
     await say('how is my week looking?')

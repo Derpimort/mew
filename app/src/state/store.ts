@@ -112,6 +112,8 @@ export interface MewState {
   setWeekOffset(offset: number): void
   /** Pull a block to start at the current minute (detail-card "Start now"). */
   startNow(blockId: string): void
+  /** Stop a started block now; the remainder rolls to the next free slot. */
+  interruptBlock(blockId: string): void
   /** Re-place a block in the next free slot today (else tomorrow morning). */
   moveToNextFree(blockId: string): void
   toggleProtected(blockId: string): void
@@ -1239,8 +1241,49 @@ export const useMew = create<MewState>((set, get) => {
       const target = s.blocks.find((b) => b.id === blockId)
       if (!target || target.status !== 'open' || target.external) return
       const now = new Date(s.nowMs)
-      setBlocks(week.move(s.blocks, blockId, dayKey(now), minOfDay(now)))
+      const nowMin = minOfDay(now)
+      /* started is a state, not a button to mash: a live started block stays put */
+      if (target.startedAt != null && target.dayKey === dayKey(now) && target.startMin <= nowMin && nowMin < target.endMin) {
+        post([mewMsg(`${target.title.split('—')[0].trim()} is already running — finish it for the mew, or interrupt it to park the rest.`)])
+        return
+      }
+      const moved = week.move(s.blocks, blockId, dayKey(now), nowMin)
+      setBlocks(moved.map((b) => (b.id === blockId ? { ...b, startedAt: s.nowMs } : b)))
       post([mewMsg(`Started — ${target.title.split('—')[0].trim()} is the now.`)])
+    },
+
+    interruptBlock(blockId) {
+      const s = get()
+      const target = s.blocks.find((b) => b.id === blockId)
+      if (!target || target.status !== 'open' || target.external) return
+      const now = new Date(s.nowMs)
+      const todayKey = dayKey(now)
+      const nowMin = minOfDay(now)
+      const remaining = Math.max(15, target.endMin - nowMin)
+      const without = s.blocks.filter((b) => b.id !== blockId)
+      /* the remainder needs a real home — search up to 3 days out, like close-loop */
+      let slot: { startMin: number } | null = null
+      let toKey = todayKey
+      for (let i = 0; i <= 3 && !slot; i++) {
+        const key = addDaysKey(todayKey, i)
+        slot = week.findFreeSlot(without, key, remaining, i === 0 ? nowMin + 15 : 9 * 60)
+        if (slot) toKey = key
+      }
+      if (!slot) {
+        post([mewMsg(`Nowhere kind to park the rest this week — it stays open; say the word and we'll find it a home.`)])
+        return
+      }
+      const { blocks: rolled, rolled: next } = week.roll(s.blocks, blockId, toKey, slot.startMin)
+      setBlocks(rolled)
+      logMemory({ kind: 'rolled', dayKey: target.dayKey, title: target.title, plannedMin: week.duration(target), startMin: target.startMin })
+      logMemory({ kind: 'interruption', dayKey: todayKey })
+      const base = target.title.split('—')[0].trim()
+      post([
+        mewMsg(
+          `Paused — no blame, things land mid-block. The remaining ${remaining} min of ${base} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(slot.startMin)}.`,
+        ),
+      ])
+      void next
     },
     moveToNextFree(blockId) {
       const s = get()
