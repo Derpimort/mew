@@ -175,7 +175,6 @@ export function FocusDial() {
 
   const nowRing = ringOf(nowH, g)
   const nowDeg = clkDeg(nowH)
-  const current = segs.find((s) => s.isNow && nowH >= s.sH && nowH <= s.eH)
 
   return (
     <div
@@ -206,18 +205,37 @@ export function FocusDial() {
         <circle cx={g.cx} cy={g.cy} r={g.ro} fill="none" stroke="var(--line)" strokeWidth="1.2" />
         <circle cx={g.cx} cy={g.cy} r={g.ri} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity=".7" />
 
-        {/* faint wedge: now → current block end (on now's ring) */}
-        {current && (() => {
-          const endDeg = clkDeg(Math.min(current.eH, Math.floor(nowH / 12) * 12 + 12))
-          const [x0, y0] = rPolar(g.cx, g.cy, nowRing + 14, nowDeg)
-          const [x1, y1] = rPolar(g.cx, g.cy, nowRing + 14, endDeg)
-          const sweep = (endDeg - nowDeg + 360) % 360 > 180 ? 1 : 0
+        {/* the day already lived, as translucent fill: the inner (AM) face
+            sweeps from midnight to now; once afternoon starts it stays full
+            and the outer (PM) ring fills in behind the arcs */}
+        {(() => {
+          const amDeg = (Math.min(nowH, 12) / 12) * 360
+          const pmDeg = nowH > 12 ? ((nowH - 12) / 12) * 360 : 0
+          const rAm = g.ri + 14 // AM face: a pie out to just past the inner track
+          const rPmIn = g.ri + 20 // PM: an annulus between the tracks
+          const rPmOut = g.ro + 14
+          const pie = (r: number, deg: number) => {
+            const [x0, y0] = rPolar(g.cx, g.cy, r, 0)
+            const [x1, y1] = rPolar(g.cx, g.cy, r, deg)
+            return `M ${g.cx} ${g.cy} L ${x0} ${y0} A ${r} ${r} 0 ${deg > 180 ? 1 : 0} 1 ${x1} ${y1} Z`
+          }
+          const annulus = (deg: number) => {
+            const lg = deg > 180 ? 1 : 0
+            const [ox0, oy0] = rPolar(g.cx, g.cy, rPmOut, 0)
+            const [ox1, oy1] = rPolar(g.cx, g.cy, rPmOut, deg)
+            const [ix1, iy1] = rPolar(g.cx, g.cy, rPmIn, deg)
+            const [ix0, iy0] = rPolar(g.cx, g.cy, rPmIn, 0)
+            return `M ${ox0} ${oy0} A ${rPmOut} ${rPmOut} 0 ${lg} 1 ${ox1} ${oy1} L ${ix1} ${iy1} A ${rPmIn} ${rPmIn} 0 ${lg} 0 ${ix0} ${iy0} Z`
+          }
           return (
-            <path
-              className="nx-wedge"
-              d={`M ${g.cx} ${g.cy} L ${x0} ${y0} A ${nowRing + 14} ${nowRing + 14} 0 ${sweep} 1 ${x1} ${y1} Z`}
-              fill="var(--ice)"
-            />
+            <g>
+              {amDeg >= 359.5 ? (
+                <circle className="nx-wedge" cx={g.cx} cy={g.cy} r={rAm} fill="var(--ice)" />
+              ) : amDeg > 0.5 ? (
+                <path className="nx-wedge" d={pie(rAm, amDeg)} fill="var(--ice)" />
+              ) : null}
+              {pmDeg > 0.5 && <path className="nx-wedge" d={annulus(pmDeg)} fill="var(--ice)" />}
+            </g>
           )
         })()}
 
