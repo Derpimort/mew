@@ -14,3 +14,6 @@ app/shots/
 
 # accidental nesting from verification scripts run with the wrong cwd
 app/app/
+
+# agent worktrees + claim locks (/dev-code)
+.worktrees/
