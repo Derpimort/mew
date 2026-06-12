@@ -4,6 +4,7 @@
    Same store, same nudge engine — only the skin changed. */
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { motion } from 'motion/react'
 import { useMew, useLive } from '../../state/store'
 import type { ChatMessage } from '../../domain/types'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
@@ -57,7 +58,15 @@ export function SessionLog() {
         <DayHeader />
         <div className="log" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {chat.map((m) => (
-            <LogLine key={m.id} msg={m} />
+            /* each line lands like terminal output: blur-up entrance, once */
+            <motion.div
+              key={m.id}
+              initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
+              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+              transition={{ duration: 0.25, ease: 'easeOut' }}
+            >
+              <LogLine msg={m} />
+            </motion.div>
           ))}
           {thinking && (
             <div>

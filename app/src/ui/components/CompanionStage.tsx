@@ -1,16 +1,23 @@
 /* The companion stage (PRD §3a) — a fixed-size box reserved for the animated
-   3D/vector companion. Placeholder: the low-poly portrait on a slow float.
-   Condition shows through the companion, never as a metric. */
+   3D/vector companion. The companion body is the React Bits AIBlob, driven
+   live by pixie state: mood picks the colors, pace sets the speed, a waiting
+   nudge raises the glow. The cat keeps her low-poly portrait and gains the
+   blob as an aura; every other pet is the blob itself. Condition shows
+   through the companion, never as a metric. */
 
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { useMew, usePixie } from '../../state/store'
 import { pixieCopy } from '../../domain/pixie'
 import { petById } from '../primitives'
+import { usePetPalette } from './petPalette'
+
+const AIBlob = lazy(() => import('../react-bits/ai-blob'))
 
 export function CompanionStage() {
   const live = usePixie()
   const settings = useMew((s) => s.settings)
   const celebratePulse = useMew((s) => s.celebratePulse)
+  const pal = usePetPalette()
 
   const [celebrating, setCelebrating] = useState(false)
   useEffect(() => {
@@ -24,6 +31,16 @@ export function CompanionStage() {
   const copy = pixieCopy(live, settings.mewName)
   const status = celebrating ? 'celebrating your mew' : copy.status
 
+  /* condition → blob: pace drives motion, mood drives color, attention glows */
+  const speed = celebrating ? 1.8 : live.resting ? 0.35 : 0.45 + live.pace * 0.85
+  const glow = celebrating || live.attention ? 1 : 0.5 + live.pace * 0.35
+  const colors =
+    live.mood === 'healthy'
+      ? [pal.pa, pal.pb, pal.pa]
+      : live.mood === 'drowsy'
+        ? [pal.pa, pal.muted, pal.pb]
+        : [pal.muted, pal.pa, pal.muted]
+
   return (
     <div className="stage">
       <div className="stage-tag">companion · 3D / vector · animated</div>
@@ -31,15 +48,33 @@ export function CompanionStage() {
       <div className="stage-floor" />
       <div className="stage-pet">
         {settings.pet === 'cat' ? (
-          <img src="/pixie-poly-face.svg" alt={settings.mewName} draggable="false" />
+          <>
+            <Suspense fallback={null}>
+              <div style={{ position: 'absolute', inset: -34, opacity: 0.55, pointerEvents: 'none' }} aria-hidden>
+                <AIBlob size={256} animationSpeed={speed} glowIntensity={glow} colors={colors} resolution={0.75} />
+              </div>
+            </Suspense>
+            <img
+              src="/pixie-poly-face.svg"
+              alt={settings.mewName}
+              draggable="false"
+              style={{ position: 'relative', zIndex: 1 }}
+            />
+          </>
         ) : (
-          <div className="pet-blank">
-            {settings.mewName}
-            <br />
-            3D companion
-            <br />
-            <span style={{ color: 'var(--faint)' }}>art per pet · {pet.name.toLowerCase()}</span>
-          </div>
+          <Suspense
+            fallback={
+              <div className="pet-blank">
+                {settings.mewName}
+                <br />
+                3D companion
+                <br />
+                <span style={{ color: 'var(--faint)' }}>art per pet · {pet.name.toLowerCase()}</span>
+              </div>
+            }
+          >
+            <AIBlob size={188} animationSpeed={speed} glowIntensity={glow} colors={colors} />
+          </Suspense>
         )}
       </div>
       <div className="stage-info">

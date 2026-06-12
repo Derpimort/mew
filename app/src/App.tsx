@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useMew } from './state/store'
 import { MainPage } from './ui/pages/MainPage'
 import { SettingsPage } from './ui/pages/SettingsPage'
+import Preloader from './ui/react-bits/preloader'
 
 /* 5s keeps liveNow's current/next flips feeling immediate; the dial's own
    1s clock handles the countdown, and sync/nudges self-throttle by time. */
@@ -60,14 +61,30 @@ export default function App() {
 
   const rootClass = 'stl nx ns sys' + (themeMode === 'white' ? ' sys--light' : '')
 
-  if (!hydrated) {
-    return <div className={rootClass} data-pet={pet} style={{ height: '100%' }} />
-  }
-
+  /* boot: the slide preloader covers hydration and the canvas warm-up, then
+     wipes away — the app lives inside it as children (kept invisible until
+     the wipe), so layout is already settled when the curtain moves */
   return (
     <div className={rootClass} data-pet={pet} style={{ height: '100%' }}>
-      <div className="sys-wash" />
-      {page === 'week' ? <MainPage /> : <SettingsPage />}
+      <Preloader
+        loading={!hydrated}
+        variant="slide"
+        position="fixed"
+        duration={600}
+        zIndex={300}
+        bgColor="var(--bg)"
+        loadingText="MEW"
+        textClassName="!text-[var(--ink)] !font-mono !text-2xl !font-bold tracking-[0.28em]"
+        respectReducedMotion
+        ariaLabel="MEW loading"
+      >
+        {hydrated && (
+          <>
+            <div className="sys-wash" />
+            {page === 'week' ? <MainPage /> : <SettingsPage />}
+          </>
+        )}
+      </Preloader>
     </div>
   )
 }
