@@ -130,15 +130,6 @@ body,
     transform: translateX(-50%) translateY(-7px) scale(1.012);
   }
 }
-@keyframes nxWedge {
-  0%,
-  100% {
-    opacity: 0.06;
-  }
-  50% {
-    opacity: 0.11;
-  }
-}
 @keyframes devBlink {
   0%,
   49% {

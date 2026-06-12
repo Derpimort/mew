@@ -126,6 +126,9 @@ export interface MewState {
   /** Re-place a block in the next free slot today (else tomorrow morning). */
   moveToNextFree(blockId: string): void
   toggleProtected(blockId: string): void
+  /** Promotion/demotion from the Focus orbit — the click writes attention;
+      the center swap falls out of liveNow. Quiet: the swap IS the feedback. */
+  setAttention(blockId: string, attention: 'focus' | 'background'): void
   clearScroll(): void
   updateSettings(patch: Partial<Settings>): void
   cycleVisibility(calId: string, tag: VisibleTag): void
@@ -1480,6 +1483,13 @@ export const useMew = create<MewState>((set, get) => {
         ),
       ])
     },
+    setAttention(blockId, attention) {
+      const s = get()
+      const target = s.blocks.find((b) => b.id === blockId)
+      if (!target || (target.attention ?? 'focus') === attention) return
+      setBlocks(s.blocks.map((b) => (b.id === blockId ? { ...b, attention } : b)))
+    },
+
     toggleProtected(blockId) {
       const s = get()
       const target = s.blocks.find((b) => b.id === blockId)

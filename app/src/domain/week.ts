@@ -125,6 +125,20 @@ export function contextMarkers(b: Block): string {
   return parts.join(', ')
 }
 
+/** The blocks that must yield when `target` is promoted to focus: every
+    OTHER open focus-attention block on the day whose span overlaps the
+    target's. Demoting exactly this set keeps at most one focus inside any
+    overlapping cluster — the center stays deterministic now and later. */
+export function overlappingFocus(blocks: Block[], target: Block): Block[] {
+  return blocksForDay(blocks, target.dayKey).filter(
+    (b) =>
+      b.id !== target.id &&
+      b.status === 'open' &&
+      (b.attention ?? 'focus') === 'focus' &&
+      overlaps(b.startMin, b.endMin, target.startMin, target.endMin),
+  )
+}
+
 /** Every clear window within [fromMin, toMin) on the day — air that holds
     nothing busy. Busy = open blocks that hold time (optional ones only when
     fixed: a tentative interview is still an interview). */

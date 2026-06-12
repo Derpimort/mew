@@ -1,17 +1,6 @@
-/* Focus-dial geometry. Product decision (supersedes the handoff's rolling
-   next-12h): the dial is a true 12-hour clock face — one full 360° = 12 hours,
-   12 at top. Two day rings: OUTER = PM, INNER = AM. */
-
-/* Canvas is sized so the full label ring (ro + stagger + text) fits INSIDE —
-   the handoff's 824×620 clipped labels at 12/3/6/9 o'clock with real-world
-   meeting names. Symmetric: cx/cy at center, no viewBox offset. */
-export const NXG = { cx: 412, cy: 380, ro: 268, ri: 222, w: 824, h: 760, ox: 0 }
-
-/** Clock angle for an hour-of-day (12 pinned at top, like a wall clock). */
-export const clkDeg = (h: number): number => ((h % 12) / 12) * 360
-
-/** The ring an hour lives on: AM inner, PM outer. */
-export const ringOf = (h: number, g = NXG): number => (h % 24 < 12 ? g.ri : g.ro)
+/* Shared polar/time geometry. The Focus view is the orbit-lanes face
+   (orbitGeometry.ts) — a rolling next-12h mapping with now pinned at top;
+   the AM/PM clock-face dial this file once centered on is retired. */
 
 export const rPolar = (cx: number, cy: number, r: number, deg: number): [number, number] => {
   const a = ((deg - 90) * Math.PI) / 180
@@ -25,6 +14,7 @@ export const rArc = (cx: number, cy: number, r: number, d0: number, d1: number):
   return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${d1 - d0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`
 }
 
+/** Rolling face: degrees from "now at top", 12 hours per full turn. */
 export const spDeg = (h: number, nowH: number): number => ((h - nowH) / 12) * 360
 
 /** Time-true week columns: hour → y over the full 00:00–24:00 day, so early

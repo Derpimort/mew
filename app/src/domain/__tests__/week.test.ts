@@ -11,6 +11,7 @@ import {
   freeWindows,
   isFixedTime,
   nextSlotAfter,
+  overlappingFocus,
   isDeep,
   loadBySegment,
   looseThreads,
@@ -268,5 +269,26 @@ describe('looseThreads — a derived query, nothing persisted', () => {
     const t = looseThreads([], [{ ...cap, status: 'placed' as const }], D, now)
     expect(t.unplaced).toHaveLength(0)
     expect(t.paused).toHaveLength(0)
+  })
+
+  describe('overlappingFocus — promotion demotes the whole overlapping cluster', () => {
+    const deck = mk({ id: 'deck', title: 'Deck', startMin: 9 * 60, endMin: 11 * 60 })
+    const sync = mk({ id: 'sync', title: 'Design sync', startMin: 9.5 * 60, endMin: 10.5 * 60 })
+    const review = mk({ id: 'rev', title: 'Code review', startMin: 9.75 * 60, endMin: 10.25 * 60 })
+
+    it('the review repro: promoting code review demotes BOTH other live blocks', () => {
+      expect(overlappingFocus([deck, sync, review], review).map((b) => b.id).sort()).toEqual(['deck', 'sync'])
+    })
+
+    it('promoting a future block leaves a non-overlapping live focus alone', () => {
+      const future = mk({ id: 'fut', title: 'Later thing', startMin: 15 * 60, endMin: 16 * 60 })
+      expect(overlappingFocus([deck, future], future)).toHaveLength(0)
+    })
+
+    it('background and done blocks never need demoting', () => {
+      const bg = mk({ id: 'bg', title: 'Restore', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 })
+      const done = mk({ id: 'dn', title: 'Done thing', status: 'done', startMin: 9 * 60, endMin: 10 * 60 })
+      expect(overlappingFocus([bg, done, review], review)).toHaveLength(0)
+    })
   })
 })

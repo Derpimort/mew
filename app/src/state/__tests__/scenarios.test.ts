@@ -527,6 +527,7 @@ describe('desktop self-update', () => {
     expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
   })
 })
+
 /* ── the attention model: background blocks, due, start-by ───────────── */
 
 describe('background attention through the keyless floor', () => {
@@ -600,6 +601,37 @@ describe('background attention through the keyless floor', () => {
     const b = useMew.getState().blocks.find((x) => /data export/i.test(x.title))!
     expect(b.startedAt).toBeUndefined()
     expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
+  })
+})
+
+/* ── orbit promotion/demotion — clicks write attention ───────────────── */
+
+describe('setAttention (one-click priority from the orbit)', () => {
+  it('demote then promote round-trips through liveNow (the center swap)', async () => {
+    await fresh(TUE(9, 40))
+    const { liveNow } = await import('../../domain/liveNow')
+    const s0 = useMew.getState()
+    const deck = s0.blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    expect(liveNow(s0.blocks, dayKey(TUE(9, 40)), 9 * 60 + 40).current?.id).toBe(deck.id)
+
+    useMew.getState().setAttention(deck.id, 'background')
+    const demoted = liveNow(useMew.getState().blocks, dayKey(TUE(9, 40)), 9 * 60 + 40)
+    expect(demoted.current).toBeUndefined()
+    expect(demoted.headline).toBe('Nothing holds you.')
+
+    useMew.getState().setAttention(deck.id, 'focus')
+    const promoted = liveNow(useMew.getState().blocks, dayKey(TUE(9, 40)), 9 * 60 + 40)
+    expect(promoted.current?.id).toBe(deck.id)
+  })
+
+  it('is quiet (no chat) and idempotent', async () => {
+    await fresh(TUE(9, 40))
+    const before = chat().length
+    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    useMew.getState().setAttention(deck.id, 'background')
+    useMew.getState().setAttention(deck.id, 'background') // no-op
+    expect(chat().length).toBe(before)
+    expect(useMew.getState().blocks.find((b) => b.id === deck.id)!.attention).toBe('background')
   })
 })
 

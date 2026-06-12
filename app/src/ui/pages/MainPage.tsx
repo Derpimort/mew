@@ -6,7 +6,7 @@
 import { Suspense, lazy } from 'react'
 import { useMew } from '../../state/store'
 import { fmtTime, dayKey, minOfDay } from '../../domain/time'
-import { FocusDial } from '../components/FocusDial'
+import { FocusOrbit } from '../components/FocusOrbit'
 import { WeekColumns } from '../components/WeekColumns'
 import { CompanionStage } from '../components/CompanionStage'
 import { SessionLog } from '../components/SessionLog'
@@ -92,7 +92,7 @@ export function MainPage() {
             settings
           </button>
         </div>
-        {view === 'focus' ? <FocusDial /> : <WeekColumns />}
+        {view === 'focus' ? <FocusOrbit /> : <WeekColumns />}
       </div>
       <div className="right-col">
         <CompanionStage />
