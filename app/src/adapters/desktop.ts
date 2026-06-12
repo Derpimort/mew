@@ -19,13 +19,15 @@ interface TauriApi {
     documentDir(): Promise<string>
     join(...parts: string[]): Promise<string>
   }
-  opener: { openPath(path: string): Promise<void> }
+  opener: { openPath(path: string): Promise<void>; openUrl(url: string): Promise<void> }
   window: {
     getCurrentWindow(): {
       onCloseRequested(cb: (e: { preventDefault(): void }) => void | Promise<void>): Promise<unknown>
       destroy(): Promise<void>
     }
   }
+  core: { invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> }
+  event: { listen<T>(name: string, cb: (e: { payload: T }) => void): Promise<() => void> }
 }
 
 type ShellWindow = { __TAURI_INTERNALS__?: unknown; __TAURI__?: TauriApi }
@@ -132,5 +134,74 @@ export function registerCloseFlush(isDirty: () => boolean, flush: () => Promise<
     })
   } catch (err) {
     console.warn('mew: close hook unavailable', err)
+  }
+}
+
+/* ── OAuth loopback (Google blocks sign-in inside embedded webviews) ──── */
+
+/* Fixed candidate ports, not random: Google Web clients demand an EXACT
+   redirect-URI match (and Desktop clients reject the implicit grant the
+   adapter depends on), so the ports must be knowable in advance — the
+   matching http://localhost:<port> URIs are documented in desktop/README.md. */
+export const OAUTH_PORTS = [17893, 17894, 17895]
+
+/* Served by the loopback for every hit. The token arrives in the URL
+   FRAGMENT (implicit grant), which never reaches a server — this page
+   forwards it as a query string so the listener can see it, then tells
+   the human the tab is done. */
+const OAUTH_RESPONSE_HTML = [
+  '<!doctype html><html><head><meta charset="utf-8"><title>MEW</title></head>',
+  '<body style="font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;background:#060708;color:#ecedef">',
+  '<p id="m">finishing sign-in…</p>',
+  '<script>',
+  'if (location.hash.length > 1) {',
+  "  fetch('/?' + location.hash.slice(1)).finally(function () {",
+  "    document.getElementById('m').textContent = 'you can close this tab — MEW has it'",
+  '  })',
+  '} else {',
+  "  document.getElementById('m').textContent = 'you can close this tab — MEW has it'",
+  '}',
+  '</scr' + 'ipt></body></html>',
+].join('\n')
+
+/** Run an OAuth round-trip through the system browser: start the loopback,
+    open the auth URL built for the bound port, resolve with the redirect URL
+    that carries the response. Times out rather than hang the Settings flow. */
+export async function oauthLoopback(
+  buildAuthUrl: (port: number) => string,
+  timeoutMs = 120_000,
+): Promise<string> {
+  const t = api()
+  if (!t) throw new Error('sign-in via the system browser needs the desktop shell')
+  const port = await t.core.invoke<number>('plugin:oauth|start', {
+    config: { ports: OAUTH_PORTS, response: OAUTH_RESPONSE_HTML },
+  })
+  const cleanups: Array<() => void> = []
+  try {
+    const redirect = new Promise<string>((resolve, reject) => {
+      void t.event
+        .listen<string>('oauth://url', (e) => {
+          const url = String(e.payload)
+          /* first hit is the bare redirect (fragment stayed in the browser);
+             only the re-posted, response-bearing URL settles the flow */
+          if (/[?&#](access_token|code|error)=/.test(url)) resolve(url)
+        })
+        .then((un) => cleanups.push(un))
+      void t.event
+        .listen('oauth://invalid-url', () => reject(new Error('the sign-in redirect was not understood')))
+        .then((un) => cleanups.push(un))
+    })
+    const timeout = new Promise<never>((_, reject) => {
+      const id = setTimeout(
+        () => reject(new Error('sign-in timed out after 120s — the browser tab may have been closed')),
+        timeoutMs,
+      )
+      cleanups.push(() => clearTimeout(id))
+    })
+    void t.opener.openUrl(buildAuthUrl(port))
+    return await Promise.race([redirect, timeout])
+  } finally {
+    for (const c of cleanups) c()
+    void t.core.invoke('plugin:oauth|cancel', { port }).catch(() => {})
   }
 }

@@ -3,13 +3,25 @@
    the shell (withGlobalTauri) provides it. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { backupPath, isTauri, latestBackupDate, readBackup, registerCloseFlush, writeBackup } from '../desktop'
+import {
+  OAUTH_PORTS,
+  backupPath,
+  isTauri,
+  latestBackupDate,
+  oauthLoopback,
+  readBackup,
+  registerCloseFlush,
+  writeBackup,
+} from '../desktop'
 
 /* in-memory $DOCUMENT: path → contents */
 function fakeShell() {
   const files = new Map<string, string>()
   const removed: string[] = []
   const closeHandlers: Array<(e: { preventDefault(): void }) => void | Promise<void>> = []
+  const openedUrls: string[] = []
+  const invokes: { cmd: string; args?: Record<string, unknown> }[] = []
+  const listeners = new Map<string, (e: { payload: unknown }) => void>()
   let destroyed = false
   const t = {
     fs: {
@@ -36,7 +48,12 @@ function fakeShell() {
       documentDir: async () => '/home/user/Documents',
       join: async (...parts: string[]) => parts.join('/'),
     },
-    opener: { openPath: async () => {} },
+    opener: {
+      openPath: async () => {},
+      openUrl: async (url: string) => {
+        openedUrls.push(url)
+      },
+    },
     window: {
       getCurrentWindow: () => ({
         onCloseRequested: async (cb: (typeof closeHandlers)[number]) => {
@@ -47,11 +64,27 @@ function fakeShell() {
         },
       }),
     },
+    core: {
+      invoke: async (cmd: string, args?: Record<string, unknown>) => {
+        invokes.push({ cmd, args })
+        if (cmd === 'plugin:oauth|start') return OAUTH_PORTS[0]
+        return undefined
+      },
+    },
+    event: {
+      listen: async (name: string, cb: (e: { payload: unknown }) => void) => {
+        listeners.set(name, cb)
+        return () => listeners.delete(name)
+      },
+    },
   }
   return {
     files,
     removed,
     closeHandlers,
+    openedUrls,
+    invokes,
+    listeners,
     isDestroyed: () => destroyed,
     win: { __TAURI_INTERNALS__: {}, __TAURI__: t },
   }
@@ -142,5 +175,57 @@ describe('desktop adapter', () => {
     await shell.closeHandlers[0]({ preventDefault: () => (prevented = true) })
     expect(prevented).toBe(false)
     expect(flush).toHaveBeenCalledOnce()
+  })
+})
+
+describe('oauthLoopback', () => {
+  const settle = () => new Promise<void>((r) => setTimeout(r, 0))
+
+  it('refuses to run outside the shell', async () => {
+    vi.stubGlobal('window', {})
+    await expect(oauthLoopback(() => 'https://x')).rejects.toThrow(/desktop shell/)
+  })
+
+  it('opens the auth URL for the bound port and resolves on the token-bearing hit only', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const p = oauthLoopback((port) => `https://accounts.google.com/o/oauth2/v2/auth?p=${port}`)
+    await settle()
+    expect(shell.openedUrls).toEqual([`https://accounts.google.com/o/oauth2/v2/auth?p=${OAUTH_PORTS[0]}`])
+    const emit = shell.listeners.get('oauth://url')!
+    /* the bare redirect (fragment stayed in the browser) must NOT settle it */
+    emit({ payload: `http://localhost:${OAUTH_PORTS[0]}/` })
+    /* the response page re-posts the fragment as a query — this settles it */
+    emit({ payload: `http://localhost:${OAUTH_PORTS[0]}/?access_token=tok123&expires_in=3599` })
+    await expect(p).resolves.toContain('access_token=tok123')
+    await settle()
+    expect(shell.invokes.map((i) => i.cmd)).toEqual(['plugin:oauth|start', 'plugin:oauth|cancel'])
+    expect(shell.listeners.size).toBe(0) // unlistened after settling
+  })
+
+  it('starts the listener on the fixed candidate ports (exact-match redirect URIs)', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const p = oauthLoopback(() => 'https://accounts.google.com/x')
+    await settle()
+    const start = shell.invokes.find((i) => i.cmd === 'plugin:oauth|start')!
+    expect((start.args!.config as { ports: number[] }).ports).toEqual(OAUTH_PORTS)
+    shell.listeners.get('oauth://url')!({ payload: 'http://localhost/?error=access_denied' })
+    await expect(p).resolves.toContain('error=access_denied')
+  })
+
+  it('times out instead of hanging, and still cancels the listener', async () => {
+    vi.useFakeTimers()
+    try {
+      const shell = fakeShell()
+      vi.stubGlobal('window', shell.win)
+      const p = oauthLoopback(() => 'https://accounts.google.com/x', 120_000)
+      const rejection = expect(p).rejects.toThrow(/timed out after 120s/)
+      await vi.advanceTimersByTimeAsync(121_000)
+      await rejection
+      expect(shell.invokes.map((i) => i.cmd)).toContain('plugin:oauth|cancel')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

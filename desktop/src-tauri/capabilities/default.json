@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least privilege: the SPA needs only the core window APIs, plus the auto-backup's narrow slice — fs strictly under $DOCUMENT/MEW, opener for that folder only. OAuth arrives with its phase and its own grant.",
+  "description": "Least privilege: the SPA needs only the core window APIs, plus the auto-backup's narrow slice (fs strictly under $DOCUMENT/MEW, opener for that folder) and the calendar-connect slice (loopback start/cancel, opener for Google's auth origin only).",
   "windows": [
     "main"
   ],
@@ -31,6 +31,12 @@
     {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$DOCUMENT/MEW" }]
-    }
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://accounts.google.com/*" }]
+    },
+    "oauth:allow-start",
+    "oauth:allow-cancel"
   ]
 }

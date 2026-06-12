@@ -16,6 +16,9 @@ tauri = { version = "2", features = [] }
 # phase 2 (auto-backup): on-disk snapshots under $DOCUMENT/MEW + "open folder"
 tauri-plugin-fs = "2"
 tauri-plugin-opener = "2"
+# phase 3 (calendar connect): Google blocks OAuth in webviews — system
+# browser + localhost loopback instead
+tauri-plugin-oauth = "2"
 
 [profile.release]
 strip = true

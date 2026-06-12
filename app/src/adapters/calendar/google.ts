@@ -5,9 +5,11 @@
    .mewBlockId, and pull skips anything carrying it. */
 
 import { dayKey, fromDayKey, minOfDay } from '../../domain/time'
+import { isTauri, oauthLoopback } from '../desktop'
 import type { CalendarAccount, PushEventBody, RemoteCalendar, RemoteEvent } from './types'
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
+const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth'
 const SCOPES =
   'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events'
 const API = 'https://www.googleapis.com/calendar/v3'
@@ -83,6 +85,14 @@ export class GoogleAccount implements CalendarAccount {
 
   async authorize(interactive: boolean): Promise<void> {
     if (this.token && this.token.expiresAt > Date.now() + 60_000) return
+    /* the desktop shell can't run the GIS popup (Google rejects embedded
+       webviews with disallowed_useragent) — same implicit grant, but through
+       the system browser and a localhost loopback. Token handling below is
+       byte-identical either way. */
+    if (isTauri()) {
+      this.token = await this.authorizeViaLoopback(interactive)
+      return
+    }
     const oauth2 = await loadGis()
     this.token = await new Promise((resolve, reject) => {
       const client = oauth2.initTokenClient({
@@ -102,6 +112,29 @@ export class GoogleAccount implements CalendarAccount {
       })
       client.requestAccessToken({ prompt: interactive ? 'consent' : '' })
     })
+  }
+
+  /** System-browser sign-in: auth URL → loopback redirect → token from the
+      forwarded fragment. No client secret exists anywhere in this flow. */
+  private async authorizeViaLoopback(interactive: boolean): Promise<{ value: string; expiresAt: number }> {
+    const redirect = await oauthLoopback((port) => {
+      const q = new URLSearchParams({
+        client_id: this.clientId,
+        redirect_uri: `http://localhost:${port}`,
+        response_type: 'token',
+        scope: SCOPES,
+        include_granted_scopes: 'true',
+        ...(interactive ? { prompt: 'consent' } : {}),
+      })
+      return `${AUTH_ENDPOINT}?${q.toString()}`
+    })
+    const u = new URL(redirect)
+    const fields = new URLSearchParams(u.search ? u.search.slice(1) : u.hash.slice(1))
+    const err = fields.get('error')
+    if (err) throw new Error(err === 'access_denied' ? 'sign-in cancelled' : `google sign-in: ${err}`)
+    const value = fields.get('access_token')
+    if (!value) throw new Error('no access token granted')
+    return { value, expiresAt: Date.now() + Number(fields.get('expires_in') ?? 3600) * 1000 }
   }
 
   private async call<T>(path: string, init?: RequestInit, retried = false): Promise<T> {
