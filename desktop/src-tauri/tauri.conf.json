@@ -1,0 +1,48 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "MEW",
+  "version": "0.1.0",
+  "identifier": "com.derpimort.mew",
+  "build": {
+    "beforeDevCommand": "pnpm --dir ../app dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm --dir ../app install --frozen-lockfile && pnpm --dir ../app build",
+    "frontendDist": "../../app/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MEW \u2014 My Entire Week",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1100,
+        "minHeight": 740,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com; font-src https://fonts.gstatic.com; img-src 'self' data: https://*.gstatic.com; connect-src 'self' https://api.anthropic.com https://api.openai.com https://www.googleapis.com https://accounts.google.com http://localhost:11434 http://127.0.0.1:11434; frame-src https://accounts.google.com; base-uri 'self'; form-action 'self'; object-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi",
+      "nsis",
+      "appimage",
+      "deb"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+name: desktop
+
+on:
+  pull_request:
+    paths: ['desktop/**', 'app/**', '.github/workflows/desktop.yml']
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  APT_DEPS: libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libssl-dev librsvg2-dev libayatana-appindicator3-dev libxdo-dev pkg-config
+
+permissions:
+  contents: write # the release job creates draft releases; check only reads
+
+jobs:
+  # PR gate: the shell compiles against a real app bundle
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop/src-tauri }
+      - run: pnpm --dir app install --frozen-lockfile
+      - run: pnpm --dir app build
+      - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
+
+  # tag v* → installers attached to a GitHub Release
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop/src-tauri }
+      - run: pnpm --dir app install --frozen-lockfile
+      - run: pnpm --dir desktop install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'MEW ${{ github.ref_name }}'
+          releaseDraft: true

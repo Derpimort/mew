@@ -17,3 +17,6 @@ app/app/
 
 # agent worktrees + claim locks (/dev-code)
 .worktrees/
+
+# cargo build artifacts — never committed
+desktop/src-tauri/target/
