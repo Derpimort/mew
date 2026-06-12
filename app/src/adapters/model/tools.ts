@@ -33,6 +33,8 @@ export const MEW_TOOLS: NeutralTool[] = [
               startMin: { type: 'integer', description: 'Start in minutes from midnight (9:00 = 540). Omit to auto-place in the first free slot.' },
               durationMin: { type: 'integer', description: 'Duration in minutes. Default 60; "morning" = startMin 540, durationMin 180 unless the user says otherwise; "afternoon" ≈ 240 from 780.' },
               protected: { type: 'boolean', description: 'Default true — except short rests (≤20 min), which default false so reshaping can absorb them.' },
+              attention: { type: 'string', enum: ['focus', 'background'], description: 'background = holds the clock, not the user (a 3h restore): never the Focus center, transparent to slot search. Default focus.' },
+              dueMin: { type: 'integer', description: 'Hard deadline in minutes from midnight, independent of the end time ("due by 1pm" = 780). MEW watches the latest start.' },
             },
             required: ['title', 'tag', 'dayOffset'],
             additionalProperties: false,
@@ -101,7 +103,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'edit_block',
     description:
-      "Change an existing block in place — its start/end time, duration, title, or tag — when the user asks to resize, shorten, extend, retime ('wake should be 6:00–6:30', 'make the release 45 minutes'), rename, or retag it. Editing keeps the block's identity and history, so prefer it over re-creating. Events from connected calendars stay as they are; they belong to the calendar, so tell the user that instead.",
+      "Change an existing block in place — its start/end time, duration, title, tag, attention, or due — when the user asks to resize, shorten, extend, retime ('wake should be 6:00–6:30', 'make the release 45 minutes'), rename, retag, demote to background ('let it run'), or set a deadline. Editing keeps the block's identity and history, so prefer it over re-creating. Events from connected calendars stay as they are; they belong to the calendar, so tell the user that instead.",
     parameters: {
       type: 'object',
       properties: {
@@ -111,6 +113,8 @@ export const MEW_TOOLS: NeutralTool[] = [
         durationMin: { type: 'integer', description: 'New duration in minutes (keeps the start)' },
         title: { type: 'string', description: 'New title' },
         tag: { ...TAG_SCHEMA, description: 'New tag' },
+        attention: { type: 'string', enum: ['focus', 'background'], description: 'background = holds the clock, not the user; focus = holds the user again' },
+        dueMin: { type: 'integer', description: 'Hard deadline, minutes from midnight — independent of the end time' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -193,6 +197,8 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
           startMin: optInt(p.startMin, 0, 1439),
           durationMin: optInt(p.durationMin, 15, 600),
           protected: typeof p.protected === 'boolean' ? p.protected : undefined,
+          attention: p.attention === 'background' ? ('background' as const) : undefined,
+          due: optInt(p.dueMin, 0, 1439),
         }))
       const frees = (Array.isArray(o.frees) ? o.frees : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -220,6 +226,9 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
       if (dm != null) patch.durationMin = dm
       if (typeof o.title === 'string' && o.title.trim()) patch.title = o.title.trim()
       if ((['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)) patch.tag = o.tag as 'work'
+      if (o.attention === 'background' || o.attention === 'focus') patch.attention = o.attention
+      const due = optInt(o.dueMin, 0, 1439)
+      if (due != null) patch.due = due
       return exec.edit(String(o.query ?? ''), patch)
     }
     case 'find_slot':

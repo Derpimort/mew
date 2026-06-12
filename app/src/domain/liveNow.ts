@@ -2,7 +2,7 @@
    and every mutation from (blocks, clock); never stored, so never stale. */
 
 import type { Block } from './types'
-import { blocksForDay, dayClear } from './week'
+import { blocksForDay, dayClear, isBackground } from './week'
 import { fmtTime } from './time'
 
 export interface LiveNow {
@@ -37,10 +37,21 @@ export function liveNow(blocks: Block[], todayKey: string, nowMin: number): Live
   const open = tasks.filter((b) => b.status === 'open')
   const mewsToday = done.length
 
+  /* background never drives the center: it holds the clock, not the user */
   const current = day.find(
-    (b) => b.status === 'open' && !b.optional && b.startMin <= nowMin && nowMin < b.endMin,
+    (b) =>
+      b.status === 'open' &&
+      !b.optional &&
+      !isBackground(b) &&
+      b.startMin <= nowMin &&
+      nowMin < b.endMin,
   )
-  const next = day.find((b) => b.status === 'open' && !b.optional && b.startMin > nowMin)
+  const next = day.find(
+    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.startMin > nowMin,
+  )
+  const backgroundLive = day.some(
+    (b) => b.status === 'open' && isBackground(b) && b.startMin <= nowMin && nowMin < b.endMin,
+  )
 
   const total = Math.max(tasks.length, 1)
   const filled = Math.round((done.length / total) * 7)
@@ -57,6 +68,12 @@ export function liveNow(blocks: Block[], todayKey: string, nowMin: number): Live
     minutesLeft = current.endMin - nowMin
     meta.push(`${minutesLeft} min left in this block`)
     if (current.protected) meta.push(`protected until ${fmtTime(current.endMin)}`)
+  } else if (backgroundLive) {
+    /* only background runs right now — nothing holds the user (§3 center) */
+    headline = 'Nothing holds you.'
+    meta.push(
+      `everything is running on its own${next ? ` · next: ${next.title.split('—')[0].trim()} ${fmtTime(next.startMin)}` : ''}`,
+    )
   } else if (resting) {
     headline = 'Resting — the good kind of tired.'
     meta.push("day's items done")

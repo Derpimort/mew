@@ -28,6 +28,14 @@ export interface Block {
   /** Optional events don't hard-block time: invisible to free-slot search,
       load math, the now-headline and close-the-loop; rendered as a thin tint. */
   optional?: boolean
+  /** Does the block hold YOU, or just hold the clock (a 3h phone restore)?
+      undefined ⇒ focus. Background never occupies the Focus center and is
+      transparent to slot search — a different axis from optional, which
+      holds no time at all. */
+  attention?: 'focus' | 'background'
+  /** Optional hard deadline (minutes from midnight), independent of endMin.
+      With duration it yields latest-start math for the start-by nudge. */
+  due?: number
 }
 
 export interface Capture {
@@ -52,6 +60,7 @@ export type NudgeId =
   | 'post-buffer'
   | 'next-up'
   | 'micro-break'
+  | 'start-by'
 
 export interface NudgeAction {
   id: string
@@ -167,7 +176,15 @@ export interface ScheduleIntent {
   /** clear: which open MEW-placed blocks to remove (mews + calendar events never) */
   scope?: ClearScope
   /** edit: changes to apply to the matched block */
-  edit?: { startMin?: number; endMin?: number; durationMin?: number; title?: string; tag?: Tag }
+  edit?: {
+    startMin?: number
+    endMin?: number
+    durationMin?: number
+    title?: string
+    tag?: Tag
+    attention?: 'focus' | 'background'
+    due?: number
+  }
   /* plan */
   places?: {
     title: string
@@ -178,6 +195,8 @@ export interface ScheduleIntent {
     endMin?: number
     durationMin?: number
     protected?: boolean
+    attention?: 'focus' | 'background'
+    due?: number
   }[]
   frees?: { dayKey: string; startMin: number; endMin: number; label: string }[]
   /* complete / move */

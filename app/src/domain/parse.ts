@@ -45,6 +45,29 @@ function parseTime(text: string): number | null {
   return h * 60 + min
 }
 
+/* "in the background" / "bg task" / "while I work" — holds the clock, not the user */
+const BG_CUE = /\b(?:in the background|background|bg task|while i work)\b/i
+
+/* "due by 1pm" / "due 13:00" / "must finish by 1" — a hard deadline, distinct
+   from the block's end. Bare hours ≤ 7 read as afternoon (a 1pm world). */
+const DUE_CUE =
+  /\b(?:due(?:\s+(?:by|at))?|(?:must\s+(?:be\s+)?)?(?:finish(?:ed)?|done)\s+by)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i
+
+function parseDue(text: string): number | null {
+  const m = text.match(DUE_CUE)
+  if (!m) return null
+  let h = Number(m[1])
+  const min = m[2] ? Number(m[2]) : 0
+  if (m[3]?.toLowerCase() === 'pm' && h < 12) h += 12
+  if (m[3]?.toLowerCase() === 'am' && h === 12) h = 0
+  if (!m[3] && h >= 1 && h <= 7) h += 12 // "due 1" means 13:00, not dawn
+  return h * 60 + min
+}
+
+function stripAttentionWords(s: string): string {
+  return s.replace(BG_CUE, ' ').replace(DUE_CUE, ' ')
+}
+
 function parseDuration(text: string): number | null {
   const h = text.match(/\b(\d+(?:\.\d+)?)\s*h(?:ours?)?\b/i)
   if (h) return Math.round(Number(h[1]) * 60)
@@ -172,22 +195,27 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
       }
     }
 
-    /* "block thursday morning for the deck" · "block 2h for X [tomorrow] [at 9]" · "schedule X thursday at 9" */
+    /* "block thursday morning for the deck" · "block 2h for X [tomorrow] [at 9]" · "schedule X thursday at 9"
+       — and verb-less asks whose cues make the intent unmistakable:
+       "swap iphone 3h in the background due 1pm" (duration + background/due) */
     const blockM = cl.match(/^(?:block|schedule|add|hold|plan)\s+(.+)$/)
-    if (blockM) {
-      let rest = blockM[1]
+    const cueM = !blockM && parseDuration(cl) != null && (BG_CUE.test(cl) || DUE_CUE.test(cl))
+    if (blockM || cueM) {
+      let rest = blockM ? blockM[1] : clause
       let title = ''
       const forM = rest.match(/^(.*?)\s+for\s+(.+)$/)
-      if (forM) {
-        title = stripTimeWords(forM[2]) // "spec review tomorrow at 9" → "spec review"
+      if (forM && blockM) {
+        title = stripTimeWords(stripAttentionWords(forM[2])) // "spec review tomorrow at 9" → "spec review"
         rest = forM[1]
       } else {
         /* "schedule the deck thursday morning" — title is what's left after day/part/time words */
-        title = stripTimeWords(rest)
+        title = stripTimeWords(stripAttentionWords(rest))
       }
       const day = parseDayOffset(clause, now)
       const part = parsePart(clause)
       const time = parseTime(clause)
+      const due = parseDue(clause)
+      const background = BG_CUE.test(clause)
       const dur = parseDuration(rest) ?? parseDuration(clause)
       title = cleanTitle(title)
       if (!title) continue
@@ -199,8 +227,24 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
         endMin: time != null || part == null ? undefined : part.end,
         durationMin: dur ?? (part && time == null ? part.end - part.start : 60),
         protected: true,
+        ...(background ? { attention: 'background' as const } : {}),
+        ...(due != null ? { due } : {}),
       })
       continue
+    }
+
+    /* a trailing modifier clause — "…, must finish by 3pm" / "…, in the
+       background" — carries no block of its own; it shapes the one before */
+    if (places.length) {
+      const due = parseDue(cl)
+      const bg = BG_CUE.test(cl)
+      const residue = cleanTitle(stripTimeWords(stripAttentionWords(clause)))
+      if ((due != null || bg) && !residue) {
+        const last = places[places.length - 1]
+        if (due != null) last.due = due
+        if (bg) last.attention = 'background'
+        continue
+      }
     }
   }
 

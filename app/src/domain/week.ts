@@ -1,8 +1,14 @@
 /* The week model — pure operations on blocks. The live week is the single
    source of truth; everything here is synchronous and side-effect free. */
 
-import type { Block, Tag } from './types'
-import { addDaysKey, uid } from './time'
+import type { Block, Capture, Tag } from './types'
+import { addDaysKey, fmtTime, uid } from './time'
+
+/** Background holds the clock, not the user — a different axis from
+    optional (which holds no time at all). Undefined ⇒ focus. */
+export function isBackground(b: Block): boolean {
+  return b.attention === 'background'
+}
 
 export const DAY_START = 8 * 60
 export const DAY_END = 18 * 60 + 30
@@ -62,7 +68,8 @@ export function isFixedTime(b: Block): boolean {
 
 /** Open, time-holding blocks overlapping [startMin,endMin) that day. Optional
     blocks are transparent — unless they're fixed-time (a tentative interview
-    still matters). */
+    still matters). Background blocks are transparent unconditionally: they
+    hold the clock, not the slot — meetings place straight over them. */
 export function conflictsWith(
   blocks: Block[],
   dayKey: string,
@@ -75,6 +82,7 @@ export function conflictsWith(
       b.id !== excludeId &&
       b.status === 'open' &&
       (!b.optional || isFixedTime(b)) &&
+      !isBackground(b) &&
       overlaps(b.startMin, b.endMin, startMin, endMin),
   )
 }
@@ -87,8 +95,11 @@ export function findFreeSlot(
   windowEnd = DAY_END,
 ): { startMin: number; endMin: number } | null {
   /* optional events don't hold time — except fixed-time ones (a tentative
-     interview is still an interview; auto-placement keeps clear of it) */
-  const day = blocksForDay(blocks, dayKey).filter((b) => !b.optional || isFixedTime(b))
+     interview is still an interview; auto-placement keeps clear of it).
+     background blocks don't hold the slot either: place right over them */
+  const day = blocksForDay(blocks, dayKey).filter(
+    (b) => (!b.optional || isFixedTime(b)) && !isBackground(b),
+  )
   let cursor = windowStart
   for (const b of day) {
     if (b.endMin <= cursor) continue
@@ -108,6 +119,8 @@ export function contextMarkers(b: Block): string {
   if (b.external) parts.push('calendar')
   else if (isFixedTime(b)) parts.push('fixed')
   if (b.optional) parts.push('optional')
+  if (isBackground(b)) parts.push('background')
+  if (b.due != null) parts.push(`due ${fmtTime(b.due)}`)
   if (b.status === 'done') parts.push('done')
   return parts.join(', ')
 }
@@ -122,7 +135,7 @@ export function freeWindows(
   toMin: number,
 ): { startMin: number; endMin: number }[] {
   const busy = blocksForDay(blocks, dayKey)
-    .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)))
+    .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b))
     .sort((a, b) => a.startMin - b.startMin)
   const out: { startMin: number; endMin: number }[] = []
   let cursor = fromMin
@@ -167,6 +180,8 @@ export interface PlaceSpec {
   durationMin?: number
   protected?: boolean
   estimateSource?: Block['estimateSource']
+  attention?: Block['attention']
+  due?: number
 }
 
 /** Place a block; when no explicit time, the first free slot wins. Returns null if the day is full. */
@@ -192,6 +207,8 @@ export function place(blocks: Block[], spec: PlaceSpec): Block | null {
     status: 'open',
     calendarRefs: [],
     estimateSource: spec.estimateSource ?? 'user',
+    ...(spec.attention === 'background' ? { attention: 'background' as const } : {}),
+    ...(spec.due != null ? { due: spec.due } : {}),
   }
 }
 
@@ -294,4 +311,45 @@ export function openItems(blocks: Block[], dayKey: string): Block[] {
 export function dayEndMin(blocks: Block[], dayKey: string): number {
   const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest')
   return Math.max(DAY_END, ...day.map((b) => b.endMin))
+}
+
+/* ── loose threads — everything alive that isn't the current focus ────── */
+
+export interface LooseThreads {
+  /** background blocks actually started and inside their window right now */
+  running: Block[]
+  /** focus commitments whose window passed today without completion */
+  slipped: Block[]
+  /** interrupt follow-ups: open blocks some rolled block points at (rolledToId) */
+  paused: Block[]
+  /** captured intentions that never got a time */
+  unplaced: Capture[]
+}
+
+/** A pure derived query — nothing here is persisted, so it can never go
+    stale. Optional invites never slip (they hold no commitment), and the
+    groups may overlap by design: membership is per-definition, not a
+    partition. */
+export function looseThreads(
+  blocks: Block[],
+  captures: Capture[],
+  todayKey: string,
+  nowMin: number,
+): LooseThreads {
+  const day = blocksForDay(blocks, todayKey)
+  const running = day.filter(
+    (b) =>
+      b.status === 'open' &&
+      isBackground(b) &&
+      b.startedAt != null &&
+      b.startMin <= nowMin &&
+      nowMin < b.endMin,
+  )
+  const slipped = day.filter(
+    (b) => b.status === 'open' && !isBackground(b) && !b.optional && b.endMin < nowMin,
+  )
+  const rolledTargets = new Set(blocks.map((b) => b.rolledToId).filter((id): id is string => !!id))
+  const paused = blocks.filter((b) => b.status === 'open' && rolledTargets.has(b.id))
+  const unplaced = captures.filter((c) => c.status === 'open')
+  return { running, slipped, paused, unplaced }
 }

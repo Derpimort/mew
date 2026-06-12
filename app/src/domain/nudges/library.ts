@@ -29,6 +29,8 @@ export interface NudgeCtx {
   restPlannedToday: Block | null
   /** A ≥45-min fixed event that ended in the last 12 min, nothing live now. */
   justEndedFixed: Block | null
+  /** A due-bearing background block at its latest-start boundary, unstarted. */
+  startBy: { block: Block; latestStart: number } | null
   /* event payloads (set only on the matching event) */
   justCompleted: Block | null
   newCapture: Capture | null
@@ -324,6 +326,27 @@ export const NUDGES: NudgeDef[] = [
         ],
         payload: { kind: n.kind, id: n.id, title: n.title, durMin: n.durMin },
         key: n.id,
+      }
+    },
+  },
+  {
+    id: 'start-by',
+    label: 'start by',
+    tone: 'deadline, factual',
+    cooldownMs: 8 * H, // once per block per working day; key scopes it per-block
+    trigger: (c) => c.startBy != null,
+    build: (c) => {
+      const { block, latestStart } = c.startBy!
+      const title = block.title.split('—')[0].trim()
+      return {
+        body: `start ${title} by ${fmtTime(latestStart)} or it misses ${fmtTime(block.due!)}.`,
+        footnote: `Implementation intentions: naming when-and-where roughly doubles follow-through. (Gollwitzer & Sheeran, 2006)`,
+        actions: [
+          { id: 'start', label: 'Start now', kind: 'primary' },
+          { id: 'ack', label: 'Acknowledged', kind: 'secondary' },
+        ],
+        payload: { blockId: block.id },
+        key: block.id,
       }
     },
   },

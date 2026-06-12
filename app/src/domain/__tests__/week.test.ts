@@ -13,6 +13,7 @@ import {
   nextSlotAfter,
   isDeep,
   loadBySegment,
+  looseThreads,
   place,
   plannedDeepMin,
   roll,
@@ -194,5 +195,78 @@ describe('week model', () => {
       expect(contextMarkers(mk({ title: 'Write the deck' }))).toBe('work')
       expect(contextMarkers(mk({ title: 'Lunch', tag: 'private', optional: true, status: 'done' }))).toBe('private, optional, done')
     })
+  })
+})
+
+describe('background attention — holds the clock, not the slot', () => {
+  const restore = mk({ title: 'iphone restore', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 })
+
+  it('is transparent to conflictsWith in both directions', () => {
+    expect(conflictsWith([restore], D, 10 * 60, 11 * 60)).toHaveLength(0)
+    const meeting = mk({ title: 'design sync', startMin: 10 * 60, endMin: 11 * 60 })
+    expect(conflictsWith([restore, meeting], D, 10 * 60 + 30, 11 * 60).map((b) => b.id)).toEqual([meeting.id])
+  })
+
+  it('findFreeSlot places straight over a background block', () => {
+    const slot = findFreeSlot([restore], D, 60)
+    expect(slot).toEqual({ startMin: 8 * 60, endMin: 9 * 60 })
+    const wholeMorning = findFreeSlot([restore], D, 180, 9 * 60)
+    expect(wholeMorning).toEqual({ startMin: 9 * 60, endMin: 12 * 60 })
+  })
+
+  it('freeWindows ignores background time', () => {
+    const wins = freeWindows([restore], D, 8 * 60, 13 * 60)
+    expect(wins).toEqual([{ startMin: 8 * 60, endMin: 13 * 60 }])
+  })
+
+  it('carries its markers for the model: background + due', () => {
+    expect(contextMarkers(restore)).toBe('work, background')
+    expect(contextMarkers(mk({ ...restore, due: 13 * 60 }))).toBe('work, background, due 13:00')
+  })
+
+  it('place() threads attention and due onto the block', () => {
+    const placed = place([], { title: 'swap', tag: 'work', dayKey: D, durationMin: 180, attention: 'background', due: 780 })
+    expect(placed?.attention).toBe('background')
+    expect(placed?.due).toBe(780)
+    const plain = place([], { title: 'plain', tag: 'work', dayKey: D })
+    expect(plain?.attention).toBeUndefined()
+    expect(plain?.due).toBeUndefined()
+  })
+})
+
+describe('looseThreads — a derived query, nothing persisted', () => {
+  const now = 14 * 60
+  const cap = { id: 'c1', title: 'call the bank', createdAt: 0, status: 'open' as const }
+
+  it('groups running / slipped / paused / unplaced by definition', () => {
+    const running = mk({ id: 'r1', title: 'restore', attention: 'background', startMin: 13 * 60, endMin: 16 * 60, startedAt: 1 })
+    const slipped = mk({ id: 's1', title: 'review', startMin: 10 * 60, endMin: 11 * 60 })
+    const followUp = mk({ id: 'p1', title: 'deck — rest of it', startMin: 16 * 60, endMin: 17 * 60 })
+    const interrupted = mk({ id: 'i1', title: 'deck', status: 'rolled' as BlockStatus, rolledToId: 'p1' })
+    const t = looseThreads([running, slipped, followUp, interrupted], [cap], D, now)
+    expect(t.running.map((b) => b.id)).toEqual(['r1'])
+    expect(t.slipped.map((b) => b.id)).toEqual(['s1'])
+    expect(t.paused.map((b) => b.id)).toEqual(['p1'])
+    expect(t.unplaced.map((c) => c.id)).toEqual(['c1'])
+  })
+
+  it('running needs ALL of: background, started, inside the window', () => {
+    const unstarted = mk({ attention: 'background', startMin: 13 * 60, endMin: 16 * 60 })
+    const notYet = mk({ attention: 'background', startMin: 15 * 60, endMin: 16 * 60, startedAt: 1 })
+    const focusStarted = mk({ startMin: 13 * 60, endMin: 16 * 60, startedAt: 1 })
+    expect(looseThreads([unstarted, notYet, focusStarted], [], D, now).running).toHaveLength(0)
+  })
+
+  it('optional invites never slip, background never slips, done is done', () => {
+    const invite = mk({ optional: true, startMin: 10 * 60, endMin: 11 * 60 })
+    const bg = mk({ attention: 'background', startMin: 10 * 60, endMin: 11 * 60 })
+    const done = mk({ status: 'done' as BlockStatus, startMin: 10 * 60, endMin: 11 * 60 })
+    expect(looseThreads([invite, bg, done], [], D, now).slipped).toHaveLength(0)
+  })
+
+  it('paused derives purely from rolledToId — closed captures stay out too', () => {
+    const t = looseThreads([], [{ ...cap, status: 'placed' as const }], D, now)
+    expect(t.unplaced).toHaveLength(0)
+    expect(t.paused).toHaveLength(0)
   })
 })

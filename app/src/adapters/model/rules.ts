@@ -41,6 +41,8 @@ export function runIntent(
           startMin: p.startMin,
           durationMin: p.durationMin,
           protected: p.protected,
+          attention: p.attention,
+          due: p.due,
         })),
         (intent.frees ?? []).map((f) => ({
           dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
@@ -105,6 +107,8 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         startMin: optInt(p.startMin, 0, 1439),
         durationMin: optInt(p.durationMin, 15, 600),
         protected: p.protected !== false,
+        attention: p.attention === 'background' ? ('background' as const) : undefined,
+        due: optInt(p.dueMin ?? p.due, 0, 1439),
       }))
     const okFrees = frees
       .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -137,6 +141,9 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
     if (em != null) edit.endMin = em
     if (dm != null) edit.durationMin = dm
     if (typeof e.title === 'string' && e.title.trim()) edit.title = e.title.trim()
+    if (e.attention === 'background' || e.attention === 'focus') edit.attention = e.attention
+    const due = optInt(e.dueMin ?? e.due, 0, 1439)
+    if (due != null) edit.due = due
     if (!Object.keys(edit).length) return null
     return { kind, query: o.query, edit }
   }

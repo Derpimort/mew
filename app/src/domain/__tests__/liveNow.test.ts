@@ -56,3 +56,35 @@ describe('liveNow — the live week decides', () => {
     expect(ln.headline).toMatch(/Resting/)
   })
 })
+
+describe('background attention — never the center', () => {
+  const restore = mk({ title: 'iphone restore', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 })
+
+  it('a live background block never becomes current; a meeting over it does', () => {
+    const alone = liveNow([restore], D, 10 * 60)
+    expect(alone.current).toBeUndefined()
+    const meeting = mk({ title: 'Design sync', startMin: 10 * 60, endMin: 11 * 60 })
+    const both = liveNow([restore, meeting], D, 10 * 60 + 15)
+    expect(both.current?.id).toBe(meeting.id)
+    expect(both.headline).not.toMatch(/restore/i)
+  })
+
+  it('only-background-running reads "Nothing holds you." with next-up meta', () => {
+    const standup = mk({ title: 'Team standup', startMin: 11.5 * 60, endMin: 12 * 60 })
+    const ln = liveNow([restore, standup], D, 10 * 60)
+    expect(ln.headline).toBe('Nothing holds you.')
+    expect(ln.meta[0]).toBe('everything is running on its own · next: Team standup 11:30')
+  })
+
+  it('without anything ahead the meta stays honest and short', () => {
+    const ln = liveNow([restore], D, 10 * 60)
+    expect(ln.headline).toBe('Nothing holds you.')
+    expect(ln.meta[0]).toBe('everything is running on its own')
+  })
+
+  it('background never claims next either', () => {
+    const later = mk({ title: 'backup sweep', attention: 'background', startMin: 15 * 60, endMin: 16 * 60 })
+    const ln = liveNow([later], D, 13 * 60)
+    expect(ln.next).toBeUndefined()
+  })
+})

@@ -346,23 +346,38 @@ export const useMew = create<MewState>((set, get) => {
       /* short rests are pacing, not sacred rest: leave them unprotected so a
          reshape can absorb them instead of tripping protect-rest every move */
       const microRest = p.tag === 'rest' && (p.durationMin ?? 60) <= 20
+      /* a background block doesn't contend for the slot, so auto-placement
+         doesn't hunt for free air — it starts now-ish (today) or at day
+         start, and runs over whatever else holds the clock */
+      const bgAutoStart =
+        p.attention === 'background' && p.startMin == null
+          ? key === todayKey
+            ? Math.max(week.DAY_START, Math.ceil(minOfDay(now) / 5) * 5)
+            : week.DAY_START
+          : p.startMin
       const placed = week.place(blocks, {
         title: p.title,
         tag: p.tag,
         dayKey: key,
-        startMin: p.startMin,
+        startMin: bgAutoStart,
         durationMin: p.durationMin,
         protected: p.protected ?? !microRest,
+        attention: p.attention,
+        due: p.due,
       })
       if (!placed) {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
         continue
       }
-      const clash = week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id)
+      /* background holds the clock, not the slot — placing one over a meeting
+         (or vice versa) is the point, never a collision to warn about */
+      const clash = week.isBackground(placed)
+        ? []
+        : week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id)
       blocks = [...blocks, placed]
       if (week.isDeep(placed)) placedDeep = placed
       lines.push(
-        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${clashNote(clash)}`,
+        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash)}`,
       )
     }
     for (const f of frees) {
@@ -471,7 +486,15 @@ export const useMew = create<MewState>((set, get) => {
 
   function execEdit(
     query: string,
-    patch: { startMin?: number; endMin?: number; durationMin?: number; title?: string; tag?: import('../domain/types').Tag },
+    patch: {
+      startMin?: number
+      endMin?: number
+      durationMin?: number
+      title?: string
+      tag?: import('../domain/types').Tag
+      attention?: 'focus' | 'background'
+      due?: number
+    },
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -491,10 +514,13 @@ export const useMew = create<MewState>((set, get) => {
       endMin,
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.tag ? { tag: patch.tag } : {}),
+      ...(patch.attention ? { attention: patch.attention } : {}),
+      ...(patch.due != null ? { due: patch.due } : {}),
     }
-    const clash = week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id)
+    const clash =
+      week.isBackground(next) ? [] : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
-    return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}.${clashNote(clash)}`
+    return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash)}`
   }
 
   function execRemove(query: string): string {
@@ -1221,6 +1247,15 @@ export const useMew = create<MewState>((set, get) => {
         }
         case 'next-up:leave':
           decline()
+          break
+        /* start-by proposes the latest start; only an accept starts anything */
+        case 'start-by:start': {
+          get().startNow(String(payload.blockId))
+          accept()
+          break
+        }
+        case 'start-by:ack':
+          decline() // "I know" — learning stretches the cooldown, not the deadline
           break
         default:
           decline()

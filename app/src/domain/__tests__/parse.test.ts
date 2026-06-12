@@ -126,3 +126,43 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
     })
   })
 })
+
+describe('background + due grammar (attention model)', () => {
+  it('round-trips the acceptance sentence: "swap iphone 3h in the background due 1pm"', () => {
+    const out = parseCommand('swap iphone 3h in the background due 1pm', NOW)
+    expect(out.kind).toBe('plan')
+    expect(out.places).toHaveLength(1)
+    expect(out.places![0]).toMatchObject({
+      title: 'swap iphone',
+      attention: 'background',
+      due: 780,
+      durationMin: 180,
+    })
+  })
+
+  it('verb-led forms carry the cues too, with clean titles', () => {
+    const out = parseCommand('block 2h for the data migration in the background due by 4pm', NOW)
+    expect(out.places![0]).toMatchObject({
+      title: 'data migration',
+      attention: 'background',
+      due: 16 * 60,
+      durationMin: 120,
+    })
+  })
+
+  it('"must finish by" reads as a due; no background cue stays focus', () => {
+    const out = parseCommand('block 1h for the export, must finish by 3pm', NOW)
+    expect(out.places![0]).toMatchObject({ title: 'export', due: 15 * 60 })
+    expect(out.places![0].attention).toBeUndefined()
+  })
+
+  it('a bare verbless phrase without cues still becomes a capture, not a block', () => {
+    expect(parseCommand('call the bank', NOW)).toMatchObject({ kind: 'capture' })
+  })
+
+  it('plain blocks stay exactly as before — no attention, no due', () => {
+    const out = parseCommand('block thursday morning for the deck', NOW)
+    expect(out.places![0].attention).toBeUndefined()
+    expect(out.places![0].due).toBeUndefined()
+  })
+})

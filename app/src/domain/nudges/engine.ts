@@ -11,6 +11,7 @@ import {
   dayEndMin,
   duration,
   findFreeSlot,
+  isBackground,
   isFixedTime,
   openItems,
   overlaps,
@@ -88,6 +89,22 @@ function findRestCollision(
       )
       if (intruder) return { rest, intruder }
     }
+  }
+  return null
+}
+
+/** A background block with a hard due and an unstarted engine, inside the
+    latest-start warning window (10 min of slack left, deadline still
+    makable). due − duration = the last moment starting still works. */
+function findStartBy(
+  blocks: Block[],
+  todayKey: string,
+  nowMin: number,
+): { block: Block; latestStart: number } | null {
+  for (const b of blocksForDay(blocks, todayKey)) {
+    if (b.status !== 'open' || !isBackground(b) || b.due == null || b.startedAt != null) continue
+    if (nowMin >= b.due) continue // the deadline already passed — start-by is moot
+    if (nowMin + duration(b) > b.due - 10) return { block: b, latestStart: b.due - duration(b) }
   }
   return null
 }
@@ -217,6 +234,7 @@ export function buildCtx(
       blocksForDay(t.blocks, t.todayKey).find((b) => b.tag === 'rest' && b.status === 'open') ??
       null,
     justEndedFixed,
+    startBy: findStartBy(t.blocks, t.todayKey, t.nowMin),
     justCompleted: event?.justCompleted ?? null,
     newCapture: event?.newCapture ?? null,
     captureProposal,
@@ -299,6 +317,7 @@ function earlyFinish(
 const TICK_NUDGES: NudgeId[] = [
   'drift',
   'guard',
+  'start-by', // a hard deadline outranks pacing suggestions
   'post-buffer',
   'close-loop',
   'protect-rest',

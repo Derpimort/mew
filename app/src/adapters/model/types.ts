@@ -28,6 +28,10 @@ export interface PlaceSpec {
   startMin?: number
   durationMin?: number
   protected?: boolean
+  /** background = holds the clock, not the user; never the Focus center */
+  attention?: 'focus' | 'background'
+  /** hard deadline, minutes from midnight — independent of the end time */
+  due?: number
 }
 export interface FreeSpec {
   dayOffset: number
@@ -52,10 +56,18 @@ export interface ToolExecutor {
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
   findSlot(durationMin: number, dayOffset: number, notBeforeMin?: number, notAfterMin?: number): string
-  /** Change an existing block in place: time, length, title, tag. */
+  /** Change an existing block in place: time, length, title, tag, attention, due. */
   edit(
     query: string,
-    patch: { startMin?: number; endMin?: number; durationMin?: number; title?: string; tag?: import('../../domain/types').Tag },
+    patch: {
+      startMin?: number
+      endMin?: number
+      durationMin?: number
+      title?: string
+      tag?: import('../../domain/types').Tag
+      attention?: 'focus' | 'background'
+      due?: number
+    },
   ): string
 }
 
@@ -89,6 +101,7 @@ To change an existing block's time, length, or title, call edit_block — editin
 To take specific named blocks off the week, call remove_blocks — it removes only what matches; clear_blocks is the broom for a whole day or week.
 Blocks live one day at a time; recurrence doesn't exist here. Say "every day" only after you have placed each day yourself.
 Interviews, calls, and meetings are fixed points — schedule around them, never over them. Plain tasks are flexible: they can shift or end early to make room, so when something has to give, move the task.
+A block can run in the background — it holds the clock, not the user (a 3h phone restore): set attention "background" and the center stays on what actually holds them; give it dueMin when the user states a hard deadline and MEW watches the latest start.
 The week context shows each block as start–end with markers. [fixed] means the TIME owns its slot — schedule around it; the block itself is still fully yours to edit, move, or remove. [calendar] means it came from a connected calendar — that one alone is not yours to change. [optional] holds no time. Read both ends before placing anything relative to another block, and verify the gap really exists ("prep before the 14:30 interview" needs free air ending at 14:30, not hope).
 When unsure whether a change is allowed, make the tool call — the executor refuses safely and says why. Declaring that a tool "would fail" without calling it is a guess wearing certainty.
 When the user states an order ("prep before the interview"), choose explicit startMin/endMin yourself so the order holds. After each tool result, compare the returned times with what the user asked; if they disagree, fix it with another call or say plainly that it didn't fit.

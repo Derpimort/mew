@@ -275,3 +275,46 @@ describe('nudge engine', () => {
     })
   })
 })
+
+describe('start-by — latest-start intelligence for due-bearing background', () => {
+  /* 3h restore due 13:00 → latest start 10:00, warning opens after 9:50 */
+  const restore = mk({
+    id: 'bg1',
+    title: 'iphone restore',
+    attention: 'background',
+    startMin: 9 * 60,
+    endMin: 12 * 60,
+    due: 13 * 60,
+  })
+
+  const at = (nowMin: number, blocks = [restore]) =>
+    evaluateTick(buildCtx(tick({ nowMin, nowMs: Date.UTC(2026, 5, 9, 0, 0) + nowMin * 60_000, blocks }), fresh))
+
+  it('stays quiet while there is still slack, fires inside the 10-min warning window', () => {
+    expect(at(9 * 60 + 49).some((n) => n.type === 'start-by')).toBe(false) // 9:49 + 180 = 12:49 ≤ 12:50
+    const fired = at(9 * 60 + 51)
+    const sb = fired.find((n) => n.type === 'start-by')
+    expect(sb).toBeDefined()
+    expect(sb!.body).toBe('start iphone restore by 10:00 or it misses 13:00.')
+    expect(sb!.actions.map((a) => a.id)).toEqual(['start', 'ack'])
+    expect(sb!.payload).toEqual({ blockId: 'bg1' })
+  })
+
+  it('never fires once started, without a due, for focus blocks, or past the deadline', () => {
+    expect(at(10 * 60, [{ ...restore, startedAt: 5 }]).some((n) => n.type === 'start-by')).toBe(false)
+    expect(at(10 * 60, [{ ...restore, due: undefined }]).some((n) => n.type === 'start-by')).toBe(false)
+    expect(at(10 * 60, [{ ...restore, attention: undefined }]).some((n) => n.type === 'start-by')).toBe(false)
+    expect(at(13 * 60 + 1, [restore]).some((n) => n.type === 'start-by')).toBe(false)
+  })
+
+  it('fires once per block: the key + 8h cooldown swallow the re-trigger', () => {
+    const nowMs = Date.UTC(2026, 5, 9, 0, 0) + (10 * 60 + 30) * 60_000
+    const again = evaluateTick(
+      buildCtx(
+        tick({ nowMin: 10 * 60 + 30, nowMs, blocks: [restore] }),
+        { lastFired: { 'start-by': { ts: nowMs - 30 * 60_000, key: 'bg1' } }, lastDriftBlockId: null },
+      ),
+    )
+    expect(again.some((n) => n.type === 'start-by')).toBe(false)
+  })
+})

@@ -157,3 +157,31 @@ describe('anthropic tool dispatch — runTool', () => {
     expect(runTool('plan_blocks', {}, exec)).toMatch(/nothing to place/)
   })
 })
+
+describe('attention + due ride the tool registry', () => {
+  it('plan_blocks passes attention/dueMin through to the executor as attention/due', () => {
+    const exec = mockExec()
+    runTool(
+      'plan_blocks',
+      { places: [{ title: 'swap iphone', tag: 'work', dayOffset: 0, durationMin: 180, attention: 'background', dueMin: 780 }] },
+      exec,
+    )
+    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(places[0]).toMatchObject({ title: 'swap iphone', attention: 'background', due: 780 })
+  })
+
+  it('an unknown attention value is dropped, not trusted', () => {
+    const exec = mockExec()
+    runTool('plan_blocks', { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] }, exec)
+    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(places[0].attention).toBeUndefined()
+  })
+
+  it('edit_block carries the demote-to-background and the due patch', () => {
+    const exec = mockExec()
+    runTool('edit_block', { query: 'restore', attention: 'background', dueMin: 780 }, exec)
+    const [q, patch] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(q).toBe('restore')
+    expect(patch).toMatchObject({ attention: 'background', due: 780 })
+  })
+})

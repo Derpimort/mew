@@ -432,3 +432,79 @@ describe('the mirror', () => {
     expect(mirrors[0].title).toContain('Pixie')
   })
 })
+
+/* ── the attention model: background blocks, due, start-by ───────────── */
+
+describe('background attention through the keyless floor', () => {
+  it('"swap iphone 3h in the background due 1pm" round-trips into the real block', async () => {
+    await fresh(TUE(9, 40))
+    await say('swap iphone 3h in the background due 1pm')
+    const b = useMew.getState().blocks.find((x) => /swap iphone/i.test(x.title))!
+    expect(b).toBeDefined()
+    expect(b.attention).toBe('background')
+    expect(b.due).toBe(780)
+    expect(b.endMin - b.startMin).toBe(180)
+    expect(lastMsg().body).toMatch(/running in the background/)
+    expect(lastMsg().body).toMatch(/due 13:00/)
+  })
+
+  it('a meeting placed over a live background block: no clash note, meeting owns the center', async () => {
+    await fresh(TUE(9, 40))
+    /* clear the seeded morning so only the background block holds 9–12 */
+    await say('clear today')
+    await say('swap iphone 3h in the background at 9')
+    await say('block 1h for design sync today at 10')
+    const reply = lastMsg().body
+    expect(reply).toMatch(/^Done — /)
+    expect(reply).not.toMatch(/overlap/i)
+
+    const { liveNow } = await import('../../domain/liveNow')
+    const s = useMew.getState()
+    const live = liveNow(s.blocks, dayKey(TUE(10, 15)), 10 * 60 + 15)
+    expect(live.current?.title).toMatch(/design sync/i)
+    expect(live.headline).not.toMatch(/iphone/i)
+  })
+
+  it('with only background running, the center reads "Nothing holds you."', async () => {
+    await fresh(TUE(9, 40))
+    await say('clear today')
+    await say('swap iphone 3h in the background at 9')
+    const { liveNow } = await import('../../domain/liveNow')
+    const s = useMew.getState()
+    const live = liveNow(s.blocks, dayKey(TUE(10, 0)), 10 * 60)
+    expect(live.headline).toBe('Nothing holds you.')
+    expect(live.meta[0]).toMatch(/everything is running on its own/)
+  })
+
+  it('start-by fires once at the latest-start boundary; accepting starts the block', async () => {
+    await fresh(TUE(9, 40))
+    await say('clear today')
+    /* 2h job due 13:00 → latest start 11:00; warning opens after 10:50 */
+    await say('data export 2h in the background due 1pm')
+    at(TUE(10, 45))
+    expect(nudges('start-by')).toHaveLength(0)
+    at(TUE(10, 55))
+    const fired = nudges('start-by')
+    expect(fired).toHaveLength(1)
+    expect(fired[0].body).toMatch(/start data export by 11:00 or it misses 13:00/)
+    at(TUE(10, 58)) // ticks again inside the window — once means once
+    expect(nudges('start-by')).toHaveLength(1)
+
+    act(fired[0], 'start')
+    const b = useMew.getState().blocks.find((x) => /data export/i.test(x.title))!
+    expect(b.startedAt).not.toBeNull()
+    expect(b.startMin).toBe(10 * 60 + 58) // startNow moves it to the accept-moment clock
+  })
+
+  it('acknowledging leaves everything unstarted — suggest, never seize', async () => {
+    await fresh(TUE(9, 40))
+    await say('clear today')
+    await say('data export 2h in the background due 1pm')
+    at(TUE(10, 55))
+    const offer = nudges('start-by')[0]
+    act(offer, 'ack')
+    const b = useMew.getState().blocks.find((x) => /data export/i.test(x.title))!
+    expect(b.startedAt).toBeUndefined()
+    expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
+  })
+})
