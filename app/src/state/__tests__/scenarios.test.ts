@@ -123,6 +123,23 @@ vi.mock('../../adapters/calendar/google', () => ({
   },
 }))
 
+/* the brain, faked at the factory seam — scenarios count what MEW writes */
+const brainFake = {
+  ingests: [] as { slug: string }[],
+  reset() {
+    this.ingests = []
+  },
+}
+vi.mock('../../adapters/brain/gbrainHttp', () => ({
+  createGbrainHttp: (cfg: { enabled(): boolean }) => ({
+    ingest: async (page: { slug: string }) => {
+      if (cfg.enabled()) brainFake.ingests.push(page)
+    },
+    recall: async () => [],
+    health: async () => false,
+  }),
+}))
+
 import { useMew } from '../store'
 
 /* ── harness ──────────────────────────────────────────────────────── */
@@ -164,6 +181,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.useRealTimers()
+  brainFake.reset()
   desktopFake.reset()
 })
 
@@ -487,6 +505,40 @@ describe('the mirror', () => {
     await fresh(TUE(9, 40))
     expect(mirrors.length).toBeGreaterThanOrEqual(1)
     expect(mirrors[0].title).toContain('Pixie')
+  })
+})
+
+
+/* ── the brain is optional-path: off = invisible, on = a sense ───────── */
+
+describe('brain senses', () => {
+  it('brain off (the default): completing a block writes nothing anywhere new', async () => {
+    await fresh(TUE(9, 40))
+    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    useMew.getState().toggleComplete(deck.id)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(brainFake.ingests).toHaveLength(0)
+  })
+
+  it('brain on: a completion ingests the task page with the day timeline', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    useMew.getState().toggleComplete(deck.id)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(brainFake.ingests.map((p) => p.slug)).toContain('task/q3-deck')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher's window
+  })
+
+  it('chat turns batch into one quiet-minute write, nudges stay out', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    await say('block 30m for inbox today at 15')
+    expect(brainFake.ingests.filter((p) => p.slug.startsWith('week/'))).toHaveLength(0) // debounce open
+    await vi.advanceTimersByTimeAsync(60_000)
+    const weekWrites = brainFake.ingests.filter((p) => p.slug.startsWith('week/'))
+    expect(weekWrites).toHaveLength(1) // user turn + mew reply coalesced
   })
 })
 

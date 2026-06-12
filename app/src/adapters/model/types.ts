@@ -14,6 +14,8 @@ export interface WeekContext {
   mewsToday: number
   /** GBrain pattern lines — the user's own numbers (domain/insights.ts). */
   insightLines: string[]
+  /** Hybrid recall from the connected brain (empty when off/unreachable). */
+  recallLines: string[]
 }
 
 export interface ChatTurn {
@@ -69,6 +71,10 @@ export interface ToolExecutor {
       due?: number
     },
   ): string
+  /** Persist a durable user-stated fact/preference/correction to the brain.
+      Optional-path: confirms even when no brain is connected (the fact still
+      lands in chat history; re-stating later costs nothing). */
+  remember(fact: string, kind: 'preference' | 'correction'): string
 }
 
 export interface ModelPort {
@@ -116,6 +122,7 @@ The tool result is the truth: confirm in one short line built from its facts. A 
 "What is happening now" comes from the week context below, never from memory of earlier turns.
 Asked how the week looks, answer with two or three of the brain's pattern lines (the user's own numbers); the Week view already shows the calendar, so spare them the dump.
 When you can't find something or the data isn't there, say so plainly — "I can't see that yet" is a correct MEW answer, and better than a guess.
+When the user corrects you or states a standing preference ("gym is always 7am", "order lunch is an errand, not the meal"), call remember with one present-tense sentence — being re-taught the same thing twice is a failure. A <brain-recall> block in the context is history that informs; the live week still decides.
 </grounding>
 
 <examples>
@@ -148,6 +155,13 @@ export function contextBlock(ctx: WeekContext): string {
           `<patterns note="history informs; the live week decides">`,
           ...ctx.insightLines.map((l) => `  ${l}`),
           `</patterns>`,
+        ]
+      : []),
+    ...(ctx.recallLines.length
+      ? [
+          `<brain-recall note="recalled history — it informs; the live week decides">`,
+          ...ctx.recallLines.map((l) => `  ${l}`),
+          `</brain-recall>`,
         ]
       : []),
   ].join('\n')

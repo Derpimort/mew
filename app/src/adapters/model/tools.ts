@@ -179,6 +179,20 @@ export const MEW_TOOLS: NeutralTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'remember',
+    description:
+      "Persist a durable fact, preference, or correction the user stated — 'gym is always 7am', 'order lunch is an errand, lunch is the meal', 'never schedule deep work after 4'. One plain sentence, present tense, the user's own rule in their own terms. Call it the moment they correct you or state a standing preference; re-teaching is a failure. Not for one-off scheduling (that's plan_blocks) or vague chatter.",
+    parameters: {
+      type: 'object',
+      properties: {
+        fact: { type: 'string', description: 'One present-tense sentence stating the rule or fact' },
+        kind: { type: 'string', enum: ['preference', 'correction'], description: 'preference = a standing rule; correction = you had it wrong' },
+      },
+      required: ['fact'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 export function runTool(name: string, input: unknown, exec: ToolExecutor): string {
@@ -246,6 +260,12 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
       const scope = scopes.includes(o.scope as never) ? (o.scope as 'upcoming') : 'upcoming'
       return exec.clear(scope)
+    }
+    case 'remember': {
+      const fact = String(o.fact ?? '').trim()
+      if (!fact) return 'nothing to remember — the call was empty'
+      const kind = o.kind === 'correction' ? ('correction' as const) : ('preference' as const)
+      return exec.remember(fact, kind)
     }
     default:
       return `unknown tool: ${name}`

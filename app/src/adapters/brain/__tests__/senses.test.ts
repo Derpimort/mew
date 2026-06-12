@@ -1,0 +1,143 @@
+/* Senses — the pure mapping layer is where wrong knowledge would enter the
+   graph, so it carries the tests: slugs, people extraction (deliberate
+   patterns only), event pages, and the chat batcher's coalescing. */
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Block, ChatMessage } from '../../../domain/types'
+import { blockEventPage, chatBatchPage, makeChatBatcher, peopleFrom, prefPage, slugify, taskSlug } from '../senses'
+
+const D = '2026-06-09'
+
+function mk(over: Partial<Block>): Block {
+  return {
+    id: 'b1',
+    title: 'X',
+    tag: 'work',
+    dayKey: D,
+    startMin: 9 * 60,
+    endMin: 10 * 60,
+    protected: true,
+    status: 'open',
+    calendarRefs: [],
+    estimateSource: 'user',
+    ...over,
+  }
+}
+
+describe('slugify / taskSlug', () => {
+  it('normalizes to brain-safe slugs', () => {
+    expect(slugify('Gym is always 7am!')).toBe('gym-is-always-7am')
+    expect(slugify("  Order lunch ≠ Lunch — it's an errand ")).toBe('order-lunch-lunch-its-an-errand')
+  })
+
+  it('taskSlug drops the em-dash detail half', () => {
+    expect(taskSlug('Q3 deck — investor narrative')).toBe('task/q3-deck')
+  })
+})
+
+describe('peopleFrom — deliberate patterns only', () => {
+  it('reads the interview/call em-dash name', () => {
+    expect(peopleFrom('Interview — Mira')).toEqual(['person/mira'])
+  })
+
+  it('reads colon-separated sync lists with separators', () => {
+    expect(peopleFrom('sync: jordan/remy')).toEqual(['person/jatin', 'person/remy'])
+    expect(peopleFrom('Meeting: dana, sam and lee')).toEqual(['person/dana', 'person/sam', 'person/lee'])
+  })
+
+  it('reads a trailing "with <name>"', () => {
+    expect(peopleFrom('1:1 with Dana')).toEqual(['person/dana'])
+  })
+
+  it('never guesses: plain tasks and stop-words yield nobody', () => {
+    expect(peopleFrom('Write the Q3 deck')).toEqual([])
+    expect(peopleFrom('Lunch with the team')).toEqual([])
+    expect(peopleFrom('Q3 deck — investor narrative')).toEqual([]) // no meeting word → no person
+  })
+})
+
+describe('blockEventPage', () => {
+  it('maps a completion to a task page + day timeline entry with people links', () => {
+    const b = mk({ title: 'Interview — Mira', startMin: 13 * 60, endMin: 14 * 60 })
+    const page = blockEventPage(b, 'completed', D, 14 * 60)
+    expect(page.slug).toBe('task/interview')
+    expect(page.links).toContain(`week/${D}`)
+    expect(page.links).toContain('person/mira')
+    expect(page.timeline).toEqual([{ slug: `week/${D}`, date: D, summary: '14:00 completed — Interview (60m, deep)' }])
+  })
+
+  it('keeps the positive vocabulary: rolled, never missed', () => {
+    const page = blockEventPage(mk({ title: 'Deck', endMin: 11 * 60 }), 'rolled', D, 18 * 60)
+    expect(page.timeline![0].summary).toContain('rolled')
+    expect(JSON.stringify(page)).not.toMatch(/missed|overdue|failed/)
+  })
+})
+
+describe('prefPage', () => {
+  it('one sentence in, one tagged pref page out', () => {
+    const page = prefPage('gym is always 7am', 'preference')
+    expect(page.slug).toBe('pref/gym-is-always-7am')
+    expect(page.tags).toEqual(['preference', 'preference'])
+    expect(page.body).toBe('gym is always 7am\n')
+  })
+})
+
+describe('chatBatchPage', () => {
+  it('keeps user/mew turns, drops nudges, timeline-only (no body to clobber)', () => {
+    const turns: ChatMessage[] = [
+      { id: '1', role: 'user', body: 'block thursday for the deck', ts: 1 },
+      { id: '2', role: 'nudge', body: 'engine chatter', ts: 2 },
+      { id: '3', role: 'mew', body: 'done — thursday holds it', ts: 3 },
+    ]
+    const page = chatBatchPage(turns, D)!
+    expect(page.body).toBeUndefined()
+    expect(page.timeline).toHaveLength(2)
+    expect(page.timeline![0].summary).toBe('you: block thursday for the deck')
+    expect(page.timeline![1].summary).toBe('mew: done — thursday holds it')
+  })
+
+  it('nothing worth writing → null', () => {
+    expect(chatBatchPage([{ id: '1', role: 'nudge', body: 'x', ts: 1 }], D)).toBeNull()
+  })
+})
+
+describe('makeChatBatcher — one write per quiet minute', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  const turn = (id: string): ChatMessage => ({ id, role: 'user', body: id, ts: 0 })
+
+  it('coalesces turns inside the window into one flush', () => {
+    const flush = vi.fn()
+    const b = makeChatBatcher(flush, 60_000)
+    b.add(turn('a'), D)
+    b.add(turn('b'), D)
+    vi.advanceTimersByTime(59_000)
+    expect(flush).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1_000)
+    expect(flush).toHaveBeenCalledOnce()
+    expect(flush.mock.calls[0][0].map((t: ChatMessage) => t.id)).toEqual(['a', 'b'])
+  })
+
+  it('a day rollover mid-batch flushes the old day first', () => {
+    const flush = vi.fn()
+    const b = makeChatBatcher(flush, 60_000)
+    b.add(turn('a'), D)
+    b.add(turn('b'), '2026-06-10')
+    expect(flush).toHaveBeenCalledOnce()
+    expect(flush.mock.calls[0][1]).toBe(D)
+    vi.advanceTimersByTime(60_000)
+    expect(flush).toHaveBeenCalledTimes(2)
+    expect(flush.mock.calls[1][1]).toBe('2026-06-10')
+  })
+
+  it('flushNow drains immediately and an empty drain is silent', () => {
+    const flush = vi.fn()
+    const b = makeChatBatcher(flush, 60_000)
+    b.flushNow()
+    expect(flush).not.toHaveBeenCalled()
+    b.add(turn('a'), D)
+    b.flushNow()
+    expect(flush).toHaveBeenCalledOnce()
+  })
+})

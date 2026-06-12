@@ -116,7 +116,7 @@ export function createDexieStorage(): StoragePort {
       /* a backup travels (downloads folder, cloud drives) — API keys don't.
          Each device keeps its own keys; restore re-enters them in Settings. */
       const settings = state.settings
-        ? { ...state.settings, anthropicKey: '', openaiKey: '' }
+        ? { ...state.settings, anthropicKey: '', openaiKey: '', brainToken: '' }
         : state.settings
       return JSON.stringify({ ...state, settings }, null, 2)
     },
@@ -124,7 +124,7 @@ export function createDexieStorage(): StoragePort {
       const state = JSON.parse(json) as PersistedState
       await db.transaction('rw', [db.blocks, db.captures, db.chat, db.memory, db.kv], async () => {
         const current = (await db.kv.get('settings'))?.value as
-          | { anthropicKey?: string; openaiKey?: string }
+          | { anthropicKey?: string; openaiKey?: string; brainToken?: string }
           | undefined
         await Promise.all([db.blocks.clear(), db.captures.clear(), db.chat.clear(), db.memory.clear()])
         await db.blocks.bulkPut(state.blocks ?? [])
@@ -139,6 +139,7 @@ export function createDexieStorage(): StoragePort {
               ...state.settings,
               anthropicKey: state.settings.anthropicKey || current?.anthropicKey || '',
               openaiKey: state.settings.openaiKey || current?.openaiKey || '',
+              brainToken: state.settings.brainToken || current?.brainToken || '',
             },
           })
         }

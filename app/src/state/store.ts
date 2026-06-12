@@ -34,6 +34,9 @@ import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../doma
 import type { NudgeInstance } from '../domain/nudges/library'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
+import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
+import type { BrainPort } from '../adapters/brain/types'
+import { blockEventPage, chatBatchPage, makeChatBatcher, prefPage } from '../adapters/brain/senses'
 import {
   applyUpdate,
   isTauri,
@@ -60,6 +63,16 @@ import { seed } from './seed'
 
 const storage: StoragePort = createDexieStorage()
 const notifier = createBrowserNotifier()
+
+/* the optional knowledge brain — config read per call so Settings edits
+   apply live; every method is a no-op while brainEnabled is off */
+const brain: BrainPort = createGbrainHttp({
+  url: () => useMew.getState().settings.brainUrl,
+  token: () => useMew.getState().settings.brainToken,
+  enabled: () => useMew.getState().settings.brainEnabled,
+})
+/** exposed for the Settings health dot — same instance the store writes through */
+export const mewBrain = brain
 
 /* Dev/design affordance: `?t=HH:MM` shifts the app clock so any moment of the
    day can be previewed deterministically (now-line, end-of-day, quiet hours). */
@@ -182,7 +195,7 @@ function clashNote(clash: Block[]): string {
   return ` — heads up: it overlaps ${parts.join(' and ')}`
 }
 
-function weekContext(s: MewState): WeekContext {
+function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
   const now = new Date(s.nowMs)
   const todayKey = dayKey(now)
   const live = liveNow(s.blocks, todayKey, minOfDay(now))
@@ -205,6 +218,7 @@ function weekContext(s: MewState): WeekContext {
     realisticBestH: agg.realisticBestH,
     mewsToday: live.mewsToday,
     insightLines: computeInsights(s.memory, agg, now).lines,
+    recallLines,
   }
 }
 
@@ -292,10 +306,21 @@ export const useMew = create<MewState>((set, get) => {
     })
   }
 
+  /* chat → brain: user/mew turns batch into one timeline write per quiet
+     minute (nudges stay out — engine chatter isn't the user's story) */
+  const chatBatcher = makeChatBatcher((turns, day) => {
+    const page = chatBatchPage(turns, day)
+    if (page) void brain.ingest(page)
+  })
+
   function post(msgs: ChatMessage[], opts?: { mirror?: boolean }) {
     if (!msgs.length) return
     set((s) => ({ chat: [...s.chat, ...msgs] }))
     persistChat(msgs)
+    if (get().settings.brainEnabled) {
+      const day = dayKey(new Date(get().nowMs))
+      for (const m of msgs) if (m.role !== 'nudge') chatBatcher.add(m, day)
+    }
     const last = msgs[msgs.length - 1]
     if (opts?.mirror && last.role === 'nudge') {
       notifier.mirror({
@@ -610,6 +635,13 @@ export const useMew = create<MewState>((set, get) => {
       week.isBackground(next) ? [] : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
     return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash)}`
+  }
+
+  function execRemember(fact: string, kind: 'preference' | 'correction'): string {
+    void brain.ingest(prefPage(fact, kind))
+    return get().settings.brainEnabled
+      ? `Remembered — ${fact}`
+      : `Noted — ${fact} (connect a brain in Settings and this sticks across sessions)`
   }
 
   function execRemove(query: string): string {
@@ -944,10 +976,27 @@ export const useMew = create<MewState>((set, get) => {
         },
         analyze: (d) => execAnalyze(d), // read-only: not an action
         findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only
+        remember: (fact, kind) => {
+          acted = true
+          return execRemember(fact, kind)
+        },
       }
 
       try {
-        const ctx = weekContext(get())
+        /* hybrid recall rides into context — capped so a slow brain can
+           never hold the turn hostage (history informs; liveNow decides) */
+        let recallLines: string[] = []
+        if (get().settings.brainEnabled) {
+          const today = week
+            .blocksForDay(get().blocks, dayKey(new Date(get().nowMs)))
+            .map((b) => b.title.split('—')[0].trim())
+            .join(', ')
+          recallLines = await Promise.race([
+            brain.recall(`${text} · today: ${today}`, { limit: 5 }),
+            new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1500)),
+          ])
+        }
+        const ctx = weekContext(get(), recallLines)
         const thread = buildThread(get().chat)
         const adapters = selectAdapters(get().settings, () => new Date(nowFn()))
         const failed: string[] = []
@@ -973,7 +1022,12 @@ export const useMew = create<MewState>((set, get) => {
             }
             if (msgId) {
               const final = get().chat.find((m) => m.id === msgId)
-              if (final?.body.trim()) persistChat([final])
+              if (final?.body.trim()) {
+                persistChat([final])
+                /* streamed replies bypass post() — feed the sense directly,
+                   same brainEnabled gate as post() */
+                if (get().settings.brainEnabled) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
+              }
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
             if (failed.length && adapter.id === 'rules') {
@@ -989,7 +1043,12 @@ export const useMew = create<MewState>((set, get) => {
           } catch {
             if (msgId) {
               const final = get().chat.find((m) => m.id === msgId)
-              if (final?.body.trim()) persistChat([final])
+              if (final?.body.trim()) {
+                persistChat([final])
+                /* streamed replies bypass post() — feed the sense directly,
+                   same brainEnabled gate as post() */
+                if (get().settings.brainEnabled) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
+              }
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
             if (acted || buffer.trim()) {
@@ -1021,6 +1080,7 @@ export const useMew = create<MewState>((set, get) => {
       if (target.status !== 'open') return
       const nowMs = nowFn()
       setBlocks(week.complete(s.blocks, blockId, nowMs))
+      void brain.ingest(blockEventPage(target, 'completed', target.dayKey, minOfDay(new Date(nowMs))))
       logMemory({
         kind: 'completed',
         dayKey: target.dayKey,
@@ -1146,6 +1206,7 @@ export const useMew = create<MewState>((set, get) => {
           if (target && target.status === 'open') {
             const { blocks } = week.roll(s.blocks, id, toKey, toStart)
             setBlocks(blocks)
+            void brain.ingest(blockEventPage(target, 'rolled', target.dayKey, minOfDay(new Date(s.nowMs))))
             logMemory({
               kind: 'rolled',
               dayKey: target.dayKey,
@@ -1461,6 +1522,7 @@ export const useMew = create<MewState>((set, get) => {
       }
       const { blocks: rolled, rolled: next } = week.roll(s.blocks, blockId, toKey, slot.startMin)
       setBlocks(rolled)
+      void brain.ingest(blockEventPage(target, 'interrupted', target.dayKey, nowMin))
       logMemory({ kind: 'rolled', dayKey: target.dayKey, title: target.title, plannedMin: week.duration(target), startMin: target.startMin })
       logMemory({ kind: 'interruption', dayKey: todayKey })
       const base = target.title.split('—')[0].trim()

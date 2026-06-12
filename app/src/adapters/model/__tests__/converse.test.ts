@@ -12,6 +12,7 @@ const ctx: WeekContext = {
   weekSummary: ['today (2026-06-09): 9:00 Q3 deck [work]'],
   realisticBestH: 5.5,
   mewsToday: 2,
+  recallLines: [],
   insightLines: ['mornings hold: 9/10 finished there'],
 }
 
@@ -50,6 +51,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
     findSlot: vi.fn((dur, d, nb, na) => {
       calls.push('findSlot')
       return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
+    }),
+    remember: vi.fn((fact: string) => {
+      calls.push('remember')
+      return `Remembered — ${fact}`
     }),
     clear: vi.fn((scope) => {
       calls.push('clear')
@@ -155,6 +160,23 @@ describe('anthropic tool dispatch — runTool', () => {
     expect(runTool('clear_blocks', { scope: 'junk' }, exec)).toBe('Cleared upcoming.')
     expect(runTool('nope', {}, exec)).toMatch(/unknown tool/)
     expect(runTool('plan_blocks', {}, exec)).toMatch(/nothing to place/)
+  })
+})
+
+describe('remember rides the tool registry', () => {
+  it('passes fact + kind through to the executor', () => {
+    const exec = mockExec()
+    const out = runTool('remember', { fact: 'gym is always 7am', kind: 'preference' }, exec)
+    expect(out).toBe('Remembered — gym is always 7am')
+    const [fact, kind] = (exec.remember as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(fact).toBe('gym is always 7am')
+    expect(kind).toBe('preference')
+  })
+
+  it('an empty fact is refused factually, never persisted', () => {
+    const exec = mockExec()
+    expect(runTool('remember', { fact: '   ' }, exec)).toMatch(/nothing to remember/)
+    expect(exec.remember).not.toHaveBeenCalled()
   })
 })
 

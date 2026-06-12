@@ -2,8 +2,8 @@
    the whole page; the routing matrix, connect flow, sync status, quiet hours
    and model settings keep their full behavior, re-skinned. */
 
-import { useMemo, useRef, useState, type ReactNode } from 'react'
-import { useMew } from '../../state/store'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { mewBrain, useMew } from '../../state/store'
 import type { PetId, VisibleTag } from '../../domain/types'
 import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
@@ -563,6 +563,22 @@ function PrivacyModelCard() {
   const [editingKey, setEditingKey] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
+  /* brain health: probed when the row is live, re-probed on edits */
+  const [brainUp, setBrainUp] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!settings.brainEnabled) {
+      setBrainUp(null)
+      return
+    }
+    let alive = true
+    void mewBrain.health().then((ok) => {
+      if (alive) setBrainUp(ok)
+    })
+    return () => {
+      alive = false
+    }
+  }, [settings.brainEnabled, settings.brainUrl, settings.brainToken])
+
   const downloadBackup = async () => {
     const json = await exportData()
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
@@ -635,6 +651,45 @@ function PrivacyModelCard() {
             {masked}
           </button>
         )}
+      </SetRow>
+      <SetRow
+        t="Brain"
+        s={
+          settings.brainEnabled
+            ? `Writes what happens, recalls what matters — gbrain at ${settings.brainUrl}.`
+            : 'Optional gbrain endpoint: MEW writes what happens and recalls what matters. Off = nothing leaves this tab.'
+        }
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {settings.brainEnabled && (
+            <>
+              <span
+                title={brainUp == null ? 'checking…' : brainUp ? 'reachable' : 'unreachable'}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
+                }}
+              />
+              <span className="keyfield">
+                <input
+                  defaultValue={settings.brainUrl}
+                  placeholder="http://localhost:3131"
+                  onBlur={(e) => updateSettings({ brainUrl: e.target.value.trim() || 'http://localhost:3131' })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  }}
+                />
+              </span>
+            </>
+          )}
+          <Tgl
+            on={settings.brainEnabled}
+            onToggle={() => updateSettings({ brainEnabled: !settings.brainEnabled })}
+            title="brain on/off"
+          />
+        </span>
       </SetRow>
       <SetRow t="Backup &amp; restore" s="One .json with your week, memory, and chat. Keys never travel — each device keeps its own.">
         <span style={{ display: 'flex', gap: 8 }}>

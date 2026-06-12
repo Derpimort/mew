@@ -160,6 +160,12 @@ export interface Settings {
   googleClientId: string
   overnightConsolidation: boolean
   mewName: string
+  /** GBrain (optional): a `gbrain serve` endpoint MEW writes senses to and
+      recalls from. BYO endpoint + token, off by default — the insights floor
+      never depends on it. */
+  brainEnabled: boolean
+  brainUrl: string
+  brainToken: string
 }
 
 /* The Rive "PixieMachine" input contract — PRD §6. The placeholder SVG and the
@@ -228,4 +234,7 @@ export const DEFAULT_SETTINGS: Settings = {
   googleClientId: '',
   overnightConsolidation: true,
   mewName: 'Pixie',
+  brainEnabled: false,
+  brainUrl: 'http://localhost:3131',
+  brainToken: '',
 }
