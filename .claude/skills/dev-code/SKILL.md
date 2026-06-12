@@ -15,6 +15,10 @@ Same table as `/dev-plan` (repo, labels, lock dir, gates). Agent id for traceabi
 AGENT_ID="dev-code-$(date -u +%Y%m%dT%H%M%S)-$$"
 ```
 
+## Invocation
+
+Bare `/dev-code` (no arguments) is the normal loop form: auto-pick the next eligible issue, do one duty cycle, exit. `/loop 15m /dev-code` keeps a worker alive; run parallel workers at staggered intervals. An explicit issue number as argument skips the queue scan and claims that issue directly (it must still carry `dev:queued`).
+
 ## Step 1 — claim atomically
 
 Candidates: open issues, title starts with `[dev]`, label `dev:queued`. Sort P0 → P1 → P2, oldest first.
@@ -23,7 +27,13 @@ Candidates: open issues, title starts with `[dev]`, label `dev:queued`. Sort P0 
 gh issue list --repo Derpimort/mew --label dev:queued --state open --json number,title,labels
 ```
 
-For the first candidate:
+**Skip epics.** An issue labeled `epic`, or with open sub-issues, is a parent — never claimable; its children are the work:
+
+```bash
+gh api repos/Derpimort/mew/issues/$N/sub_issues --jq 'length' 2>/dev/null   # >0 → skip
+```
+
+For the first remaining candidate:
 
 ```bash
 LOCK=".worktrees/locks/dev-${N}.lock"
