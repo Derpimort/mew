@@ -34,11 +34,16 @@ const desktopFake = {
   backup: null as string | null,
   backupDate: null as string | null,
   written: [] as string[],
+  updateReady: null as ((v: string) => void) | null,
+  applied: 0,
   reset() {
     this.tauri = false
     this.backup = null
     this.backupDate = null
     this.written = []
+    /* updateReady survives reset: the real listener registers once per app
+       process and outlives any data wipe — the fake models that lifetime */
+    this.applied = 0
   },
 }
 
@@ -98,6 +103,12 @@ vi.mock('../../adapters/desktop', () => ({
   registerCloseFlush: () => {},
   backupPath: () => 'Documents/MEW/mew-backup.json',
   openBackupFolder: async () => {},
+  onUpdateReady: (cb: (v: string) => void) => {
+    desktopFake.updateReady = cb
+  },
+  applyUpdate: async () => {
+    desktopFake.applied++
+  },
 }))
 
 vi.mock('../../adapters/notify', () => ({
@@ -479,6 +490,43 @@ describe('the mirror', () => {
   })
 })
 
+/* ── desktop self-update (phase 4 of the shell) ──────────────────────── */
+
+describe('desktop self-update', () => {
+  it('a staged update becomes a quiet chat offer; install runs only on accept', async () => {
+    await fresh(TUE(9, 40))
+    desktopFake.applied = 0
+    desktopFake.updateReady?.('0.2.0')
+    const offer = nudges('update')
+    expect(offer).toHaveLength(1)
+    expect(offer[0].body).toContain('v0.2.0')
+    expect(offer[0].body).toMatch(/restart when you like/)
+    expect(desktopFake.applied).toBe(0) // staged ≠ installed: never on its own
+
+    useMew.getState().nudgeAction(offer[0].id, 'restart')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(desktopFake.applied).toBe(1)
+  })
+
+  it('announced before hydration, the offer waits for chat to exist', async () => {
+    useMew.setState({ hydrated: false })
+    desktopFake.updateReady?.('0.3.0')
+    await fresh(TUE(9, 40))
+    expect(nudges('update')).toHaveLength(1)
+    expect(nudges('update')[0].body).toContain('v0.3.0')
+  })
+
+  it('"not now" keeps the current version running and resolves the nudge', async () => {
+    await fresh(TUE(9, 40))
+    desktopFake.applied = 0
+    desktopFake.updateReady?.('0.2.0')
+    const offer = nudges('update')[0]
+    useMew.getState().nudgeAction(offer.id, 'later')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(desktopFake.applied).toBe(0)
+    expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
+  })
+})
 /* ── the attention model: background blocks, due, start-by ───────────── */
 
 describe('background attention through the keyless floor', () => {

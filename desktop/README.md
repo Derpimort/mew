@@ -13,6 +13,32 @@ Storage: IndexedDB lives in the app-scoped webview profile. Phase 2 adds
 auto-backup to ~/Documents/MEW via the FS plugin; phase 3 the Google OAuth
 loopback; phase 4 the release CI + updater.
 
+## Self-update + release signing (one-time setup)
+
+Releases self-update from GitHub Releases: tagging `v*` builds installers and
+`latest.json`; the installed app checks on launch, downloads quietly, and asks
+in chat — *"v… is downloaded and ready — restart when you like"*. It never
+restarts on its own; install runs only when you accept.
+
+Updater artifacts must be signed. One-time, on a trusted machine:
+
+```sh
+cd desktop && pnpm install
+pnpm tauri signer generate -w ~/.tauri/mew.key   # prompts for a password
+```
+
+1. Paste the contents of `~/.tauri/mew.key.pub` into `plugins.updater.pubkey`
+   in `src-tauri/tauri.conf.json` (replacing the committed placeholder) — the
+   public half is meant to be committed.
+2. Add two repo **Actions secrets** (the names the workflow passes through):
+   - `TAURI_SIGNING_PRIVATE_KEY` — contents of `~/.tauri/mew.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose
+3. Keep the private key somewhere safe: lose it and shipped apps can never
+   accept another update (Tauri's own warning).
+
+Dry-run without releasing: Actions → desktop → *Run workflow* — the full
+matrix builds installers + updater artifacts, publishes nothing.
+
 ## Google Calendar sign-in (one-time OAuth client config)
 
 Google refuses OAuth inside embedded webviews (`disallowed_useragent`), so the

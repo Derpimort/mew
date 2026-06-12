@@ -34,7 +34,15 @@ import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../doma
 import type { NudgeInstance } from '../domain/nudges/library'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
-import { isTauri, latestBackupDate, readBackup, registerCloseFlush, writeBackup } from '../adapters/desktop'
+import {
+  applyUpdate,
+  isTauri,
+  latestBackupDate,
+  onUpdateReady,
+  readBackup,
+  registerCloseFlush,
+  writeBackup,
+} from '../adapters/desktop'
 import {
   selectAdapters,
   type ChatTurn,
@@ -244,6 +252,38 @@ export const useMew = create<MewState>((set, get) => {
   const persistCaptures = (cs: Capture[]) => {
     storage.putCaptures(cs).catch(() => {})
     queueBackup()
+  }
+
+  /* desktop self-update: the shell stages the download and announces it;
+     MEW offers a restart in chat and installs only on accept — an update
+     never restarts a running week by itself. The shell can announce before
+     the store hydrates, so the version parks until chat exists. */
+  let stagedUpdateVersion: string | null = null
+  const offerUpdate = (version: string) =>
+    post([
+      {
+        id: uid(),
+        role: 'nudge',
+        body: `v${version} is downloaded and ready — restart when you like and it's yours. I'll keep running this one until then.`,
+        ts: nowFn(),
+        nudgeType: 'update',
+        nudgeLabel: 'update ready',
+        actions: [
+          { id: 'restart', label: 'restart now', kind: 'primary' },
+          { id: 'later', label: 'not now', kind: 'secondary' },
+        ],
+      },
+    ])
+  /* subscribed from hydrate(), not at store creation: module-init order is
+     undefined for test fakes (TDZ), and an update can't precede a boot anyway */
+  let updateOffersSubscribed = false
+  function subscribeUpdateOffers() {
+    if (updateOffersSubscribed) return // hydrate re-runs (restore); one listener is plenty
+    updateOffersSubscribed = true
+    onUpdateReady((version) => {
+      if (get().hydrated) offerUpdate(version)
+      else stagedUpdateVersion = version
+    })
   }
 
   function post(msgs: ChatMessage[], opts?: { mirror?: boolean }) {
@@ -716,6 +756,7 @@ export const useMew = create<MewState>((set, get) => {
     syncError: null,
 
     async hydrate() {
+      subscribeUpdateOffers()
       const loaded = await storage.load()
       if (loaded.blocks.length === 0 && loaded.memory.length === 0) {
         const s = seed(new Date(nowFn()))
@@ -769,6 +810,11 @@ export const useMew = create<MewState>((set, get) => {
         })
       }
       runTickEngine()
+      /* an update announced during boot waits for chat to exist */
+      if (stagedUpdateVersion) {
+        offerUpdate(stagedUpdateVersion)
+        stagedUpdateVersion = null
+      }
     },
 
     tick() {
@@ -1314,6 +1360,18 @@ export const useMew = create<MewState>((set, get) => {
         case 'next-up:leave':
           decline()
           break
+        /* update is a system offer, not an engine nudge — no outcome stats */
+        case 'update:restart': {
+          void applyUpdate().catch((err) => {
+            post([
+              mewMsg(
+                `The restart didn't take — ${err instanceof Error ? err.message : 'unknown error'}. The update stays staged; relaunching will pick it up.`,
+              ),
+            ])
+          })
+          break
+        }
+        case 'update:later':
         /* restore is a system offer, not an engine nudge — no outcome stats */
         case 'restore:accept': {
           void (async () => {

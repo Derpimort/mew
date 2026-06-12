@@ -5,10 +5,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   OAUTH_PORTS,
+  applyUpdate,
   backupPath,
   isTauri,
   latestBackupDate,
   oauthLoopback,
+  onUpdateReady,
   readBackup,
   registerCloseFlush,
   writeBackup,
@@ -227,5 +229,30 @@ describe('oauthLoopback', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('self-update bridge', () => {
+  it('is inert outside the shell; applyUpdate refuses honestly', async () => {
+    vi.stubGlobal('window', {})
+    expect(() => onUpdateReady(() => {})).not.toThrow()
+    await expect(applyUpdate()).rejects.toThrow(/desktop shell/)
+  })
+
+  it('onUpdateReady forwards the staged version from the shell event', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const seen: string[] = []
+    onUpdateReady((v) => seen.push(v))
+    await new Promise<void>((r) => setTimeout(r, 0))
+    shell.listeners.get('mew://update-ready')!({ payload: '0.2.0' })
+    expect(seen).toEqual(['0.2.0'])
+  })
+
+  it('applyUpdate hands off to the shell command', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    await applyUpdate()
+    expect(shell.invokes.map((i) => i.cmd)).toContain('apply_update')
   })
 })

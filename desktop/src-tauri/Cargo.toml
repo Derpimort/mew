@@ -19,6 +19,10 @@ tauri-plugin-opener = "2"
 # phase 3 (calendar connect): Google blocks OAuth in webviews — system
 # browser + localhost loopback instead
 tauri-plugin-oauth = "2"
+# phase 4 (self-update): GitHub Releases latest.json, staged install —
+# the human picks the restart moment; dialog ships for native fallbacks
+tauri-plugin-updater = "2"
+tauri-plugin-dialog = "2"
 
 [profile.release]
 strip = true

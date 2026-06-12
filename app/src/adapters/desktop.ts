@@ -205,3 +205,19 @@ export async function oauthLoopback(
     void t.core.invoke('plugin:oauth|cancel', { port }).catch(() => {})
   }
 }
+
+/* ── self-update (the shell stages, the human decides) ────────────────── */
+
+/** Fires when the shell has an update downloaded and parked, with its version. */
+export function onUpdateReady(cb: (version: string) => void): void {
+  const t = api()
+  if (!t) return
+  void t.event.listen<string>('mew://update-ready', (e) => cb(String(e.payload)))
+}
+
+/** Hand the staged update to the installer — exits the app by design. */
+export async function applyUpdate(): Promise<void> {
+  const t = api()
+  if (!t) throw new Error('updates need the desktop shell')
+  await t.core.invoke('apply_update')
+}

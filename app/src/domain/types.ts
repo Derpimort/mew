@@ -60,6 +60,7 @@ export type NudgeId =
   | 'post-buffer'
   | 'next-up'
   | 'micro-break'
+  | 'update' // system offer (desktop update staged), not an engine nudge
   | 'restore' // system offer (desktop backup found on first boot), not an engine nudge
   | 'start-by'
 
