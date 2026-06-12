@@ -29,8 +29,8 @@ for (const cmd of [
   'block 1.5h for design sync today at 9:30',
   'block 1h for candidate interview today at 10',
 ]) {
-  await page.fill('.prompt-row input', cmd)
-  await page.press('.prompt-row input', 'Enter')
+  await page.fill('.prompt-row input, .prompt-row textarea', cmd)
+  await page.press('.prompt-row input, .prompt-row textarea', 'Enter')
   await page.waitForTimeout(700)
 }
 
