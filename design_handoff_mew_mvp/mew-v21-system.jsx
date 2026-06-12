@@ -172,7 +172,10 @@ function SurfaceMain({ pet = "cat", light, defaultView = "focus", reveal }) {
       <div className="sys-wash"></div>
       <div style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <div style={{ position: "absolute", top: 20, left: 28, zIndex: 10 }}><span className="disp" style={{ fontWeight: 700, fontSize: 15, letterSpacing: ".28em", color: "var(--ink)" }}>MEW</span></div>
-        <div style={{ position: "absolute", top: 22, left: 0, right: 0, display: "flex", justifyContent: "center" }}><span className="agent">watching · drift armed · quiet 18:30</span></div>
+        <div style={{ position: "absolute", top: 16, left: 0, right: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <NxClock />
+          <span className="agent">watching · drift armed · quiet 18:30</span>
+        </div>
         <div style={{ position: "absolute", top: 20, right: 24, zIndex: 10 }}>
           <span className="seg2">
             <span className={view === "focus" ? "on" : ""} onClick={() => setView("focus")}>Focus</span>

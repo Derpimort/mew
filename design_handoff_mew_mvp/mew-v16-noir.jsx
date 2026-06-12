@@ -42,11 +42,47 @@ const NxStyles = () => (
   .nx-mini-lbl{ text-align:center; margin-top:10px; }
   .nx-mini-lbl .d{ font-family:'Space Grotesk',sans-serif; font-weight:600; font-size:14px; }
   .nx-mini-lbl .h{ font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--muted); margin-top:2px; }
+  /* also-now: concurrent tasks, kept subordinate to the central focus */
+  .nx-alsonow{ display:flex; align-items:center; justify-content:center; gap:7px; flex-wrap:wrap; margin-top:16px; max-width:330px; }
+  .nx-alsonow .lbl{ font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--faint); }
+  .nx-now-chip{ display:inline-flex; align-items:center; gap:6px; font-family:'Hanken Grotesk',sans-serif; font-size:11.5px; font-weight:650; color:var(--ink); background:var(--panel2); border:1px solid var(--line); border-radius:999px; padding:4px 11px; cursor:pointer; transition:border-color .18s, background .18s; }
+  .nx-now-chip:hover{ border-color:var(--ice-bd); }
+  .nx-now-chip .pd{ width:6px; height:6px; border-radius:50%; flex:none; }
+  .nx-now-chip .pt{ font-family:'JetBrains Mono',monospace; font-size:9.5px; color:var(--muted); }
+  /* live clock + now-count badge */
+  .nx-clock{ display:inline-flex; align-items:baseline; gap:3px; }
+  .nx-clock .hm{ font-family:'JetBrains Mono',monospace; font-weight:700; font-size:17px; letter-spacing:.04em; color:var(--ink); }
+  .nx-clock .sc{ font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--gold); width:16px; }
+  .nx-clock .dt{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--muted); margin-left:7px; }
+  .nx-nowcount{ font-family:'JetBrains Mono',monospace; font-size:8.5px; font-weight:700; fill:var(--ice); }
   @media (prefers-reduced-motion: reduce){ .nx-wedge{ animation:none; } .nx-fade{ transition:none; } }
   `}</style>
 );
 
 const NXG = { cx: 310, cy: 310, ro: 268, ri: 226, w: 824, h: 620, ox: 110 };
+
+// concurrent tasks running alongside the primary "now" block (the "doing both
+// at once" case). Kept out of DAYBLOCKS so week grids stay clean; Focus layers them.
+const NOW_STACK = [
+  { title: "Reply to Sam", s: 9.25, e: 10.0, tag: "work" },
+  { title: "Watch CI deploy", s: 9.0, e: 10.5, tag: "work" },
+];
+
+// a live wall-clock anchored to the demo's NOW_H, ticking seconds for life.
+function NxClock() {
+  const [sec, setSec] = React.useState(0);
+  React.useEffect(() => {
+    const id = setInterval(() => setSec((s) => (s + 1) % 60), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <span className="nx-clock" title="current time">
+      <span className="hm">{fmtH(NOW_H)}</span>
+      <span className="sc">:{String(sec).padStart(2, "0")}</span>
+      <span className="dt">Tue · Jun 9</span>
+    </span>
+  );
+}
 
 function NxArcSet({ hover, onHover, expandIdx, g = NXG }) {
   const vis = DAYBLOCKS.Tue.map((b, i) => [b, i]).filter(([b]) => b[1] > NOW_H && b[0] < NOW_H + 11.2);
@@ -116,6 +152,11 @@ function NxFocus({ light, reveal, expand = null }) {
           })}
         </g>
         <NxArcSet onHover={setHb} expandIdx={sel} />
+        {/* concurrent "now" tasks — layered arcs just outside the now block */}
+        {NOW_STACK.map((t, k) => (
+          <path key={"ns" + k} d={rArc(g.cx, g.cy, g.ro + 13 + k * 9, spDeg(Math.max(t.s, NOW_H)), spDeg(t.e))} fill="none"
+            stroke="var(--ice)" strokeWidth="4" strokeLinecap="round" opacity={.5 - k * .12} />
+        ))}
         {/* future labels — revealed on approach */}
         <g className="nx-fade">
           {future.map(([b, i]) => {
@@ -138,6 +179,7 @@ function NxFocus({ light, reveal, expand = null }) {
           <g>
             <circle cx={x} cy={y} r="7" fill="var(--ice)" style={{ filter: "drop-shadow(0 0 12px var(--glowc))" }} />
             <text x={x} y={y - 20} textAnchor="middle" className="nx-mono" style={{ fill: "var(--ice)", fontSize: 11.5, fontWeight: 700 }}>now · {fmtH(NOW_H)}</text>
+            {NOW_STACK.length > 0 && <text x={x + 16} y={y + 4} textAnchor="start" className="nx-nowcount">+{NOW_STACK.length}</text>}
           </g>
         ); })()}
       </svg>
@@ -149,6 +191,17 @@ function NxFocus({ light, reveal, expand = null }) {
         <div className="nx-fade nx-mono" style={{ marginTop: 12, fontSize: 11.5 }}>
           <span style={{ color: "var(--gold)", fontWeight: 700 }}>★ 5 mews</span><span style={{ color: "var(--muted)" }}> · guard on · 2 switches</span>
         </div>
+        {NOW_STACK.length > 0 && (
+          <div className="nx-alsonow">
+            <span className="lbl">also now</span>
+            {NOW_STACK.map((t, k) => (
+              <span key={k} className="nx-now-chip">
+                <span className="pd" style={{ background: t.tag === "work" ? "var(--ice)" : "var(--teal)" }}></span>
+                {t.title}<span className="pt">→ {fmtH(t.e)}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       {card}
     </div>
@@ -222,4 +275,4 @@ function SurfaceNx({ view = "focus", light, reveal, expand }) {
   );
 }
 
-Object.assign(window, { NxStyles, SurfaceNx });
+Object.assign(window, { NxStyles, SurfaceNx, NxClock, NOW_STACK });

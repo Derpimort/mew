@@ -62,14 +62,15 @@ Warm accented white — paper washed by the pet accent, **not** cool steel:
 | Technical (times, telemetry, labels, session) | **JetBrains Mono** 400–700 | 8.5–12px; caps labels 10px/.12em tracking |
 
 ## 3. The two views
-### Focus — the bezel dial (signature)
-- Rolling **next-12h dial**, *now pinned at top* (glowing gold dot + `now · 9:40`).
-- Twin rings: **work outer, life inner**. Arcs solid color; current block 22px stroke + gold glow; future 8px (full color, never ghosted). Rest = dashed.
-- A faint gold **wedge** sweeps from now to the current block's end (animates opacity 6.5s).
-- Center: giant countdown → mono caps meta (`remaining · held until 11:30`) → task name.
-- **Minimal at rest**: only rings, arcs, now, countdown, task.
-- **Hover anywhere near the dial** → fade in (.5s): hour marks (+3h/+6h/+9h), task labels at their hour (gold/cream, mono time), telemetry (`★ 5 mews · guard on · 2 switches`).
-- **Hover/click a block or label** → arc thickens (8→15px) and a **detail card** opens at its position: title, time range/duration, `held`, tag chip, actions (`Start now`/`Done — a mew`, `Move`, `Hold`/`Release`).
+### Focus — orbit lanes (FINAL, supersedes the bezel dial)
+- One outer guide circle (1.2px `--line`); *now* pinned at top (glowing gold dot + `now · 9:40`); next-12h mapping `deg = (h − now)/12 × 360`.
+- **Every item = the same thin arc** (3.5px; focus 5px). No thick highlight anywhere. Hierarchy = brightness only: focus 100% + glow, others 40% (85% on hover). Work = `--ice/--pa`, life = `--teal/--pb`, deadline-background = dashed gold `1 5` to a glowing `due HH:MM` tick (r 4.5 dot).
+- **Lanes**: focus owns radius `ro`(252); every other visible item steps inward 14px in priority order (running first). Promotion visibly re-orbits the item outward.
+- **Labels**: callouts at `ro+18` along the item's end-angle, outside the dial; per-side greedy de-collision (17px min gap); 1px leader line when displaced. Title (Hanken 11.5/650) + mono time (`→ end`, `due end`, or start).
+- **Center**: countdown to focus end (Space Grotesk ~84px) → mono caps meta (`remaining · held until 11:30` / `due 13:00`) → task (25px) → demote chip *"↓ let it run in background"* (mono 9.5, border pill, gold on hover). Demoted: *"Nothing holds you."* (24px muted) + `everything is running on its own · next: …`.
+- **Interactions**: click arc/dot/label = promote to focus; click demote chip = background. Hover = 85% opacity preview. Hint line bottom-center (mono 9px faint): `click any item to focus it · click the chip to let it run`.
+- **Loose-threads rail**: vertical pill, left edge (count + state dots: ice/gold/muted/faint) → expands in place to the thread box (262px, groups running/slipped/paused/unplaced, row actions open/resume/place).
+- Reference impl: `mew-v26-priority.jsx` (PriArc, PriCenter, radiiFor, resolveLabels) + `FocusOrbit` in `mew-v27-canonical.jsx`.
 
 ### Week — pure columns
 - Seven time-true columns (8:00–19:00), hour ruler left.

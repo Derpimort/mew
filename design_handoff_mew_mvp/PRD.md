@@ -36,16 +36,22 @@
 ---
 
 ## 2. The week model
-- **Block**: `{id, title, tag, start, end, protected, status, calendarRefs[], estimateSource}`. Tags: `work | private | health | rest` (user-extensible later; these four ship).
+- **Block**: `{id, title, tag, start, end, protected, status, calendarRefs[], estimateSource, attention, due?, startedAt?}`. Tags: `work | private | health | rest` (user-extensible later; these four ship).
+  - **`attention: 'focus' | 'background'`** (default `focus`) — does the block hold *you*, or just hold the clock (e.g. a 3h phone restore)? Background blocks never occupy the Focus center, never collide in slot-search (`findFreeSlot`/`conflictsWith` treat them as tentative), and sync as busy-only by default.
+  - **`due?`** — optional hard deadline. With duration it yields **latest-start** math: `due − remaining → "start the swap by 10:00 or it misses 1pm"` (implementation-intentions nudge, fires once).
+  - **"Loose threads" is a derived query, not a table**: `blocks where open ∧ not current-focus`, grouped by computed state — `running` (started, not done) · `slipped` (window passed) · `paused` (interrupted) · `unplaced` (captured, no time). Nothing new is persisted.
 - **Day**: ordered blocks + unplaced captures. **Week**: Mon–Sun.
 - **Capture**: any task mentioned in chat without a time gets captured and must end the day either *done* or *placed* (see Close-the-loop nudge). Nothing is ever dropped or floating.
 - **Carry-over**: end-of-day unfinished blocks roll forward with MEW proposing a slot ("graceful roll"), never silently.
 - **Load math**: a day's load = sum of block hours by tag; "realistic best" = trailing median of *actually completed* deep-work hours (from memory). These two numbers power the week rail bars and the right-size nudge.
 
 ## 3. Main page requirements
-(FINAL visual system: see `DESIGN_LANGUAGE.md` (Carbon & Pet White) and `MEW Final.html`. The warm-cream v3 spec is superseded.)
+(FINAL visual system: see `DESIGN_LANGUAGE.md` (Carbon & Pet White) and **`MEW Final v2.html`** — the canonical live design. Earlier canvases are history.)
 - **Two views, one toggle (Focus ⇄ Week)** top-right; Carbon dark default, Pet White light.
-- **Focus view**: the bezel dial — next 12h, now pinned at top, work outer ring / life inner, giant countdown + current task center. Minimal at rest; hover reveals hour marks, task labels, telemetry; hover/click a block opens its detail card with actions (Done — a mew / Move / Hold). Spec: DESIGN_LANGUAGE §3.
+- **Focus view (FINAL · "orbit lanes")**: every visible item is the **same thin labeled arc** — no thick hero highlight. The focus item owns the **outer orbit**, full color + soft glow + bold label; everything else steps inward one lane (14px) at 40% opacity, so **overlap is geometrically impossible**. Background blocks with a `due` render dashed-gold to a glowing `due HH:MM` tick. Labels are instrument-style **callouts outside the dial** (greedy de-collision, 17px min gap, leader lines when moved). Center: countdown to the focus item's end → mono meta (`remaining · held until / due`) → task name.
+  - **One-click priority**: click any arc/label/dot → it becomes the focus (center swaps; the old focus keeps running in its lane). The chip under the task — *"↓ let it run in background"* — demotes with one click; the center then reads *"Nothing holds you"* + next up. These clicks write `attention` on the block; that's the whole mechanism.
+  - **Loose-threads rail (F1)**: a slim vertical pill on the left edge of the dial — count + one colored dot per thread. Click → expands in place into the vertical **thread box**: groups `running / slipped / paused / unplaced`, each row with `open / resume / place` actions. Reference: `ThreadBox` + `.frail` in `mew-v25-focus.jsx`.
+  - **Current time**: a live wall-clock (`NxClock`, HH:MM + ticking seconds + date) sits top-center — distinct from the center *countdown* (labeled "remaining").
 - **Week view**: seven time-true columns, today/selected 2.3× wider with full detail + now-line; solid ink-on-gold blocks (S1); summary line carries the pending nudge teaser, deep-linking to chat.
 - **Right column (always)**: the **companion stage** (reserved animated-3D space) above the tty session — chat log, nudge cards with action chips, prompt. Chat is the only command surface and the only nudge surface.
 
