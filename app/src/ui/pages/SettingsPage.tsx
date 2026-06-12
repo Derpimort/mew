@@ -512,7 +512,20 @@ function NudgesCard() {
 function PrivacyModelCard() {
   const settings = useMew((s) => s.settings)
   const updateSettings = useMew((s) => s.updateSettings)
+  const exportData = useMew((s) => s.exportData)
+  const importData = useMew((s) => s.importData)
   const [editingKey, setEditingKey] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const downloadBackup = async () => {
+    const json = await exportData()
+    const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `mew-backup-${new Date().toISOString().slice(0, 10)}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const provider = settings.remoteProvider
   const activeKey = provider === 'openai' ? settings.openaiKey : settings.anthropicKey
@@ -576,6 +589,27 @@ function PrivacyModelCard() {
             {masked}
           </button>
         )}
+      </SetRow>
+      <SetRow t="Backup &amp; restore" s="One .json with your week, memory, and chat. Keys never travel — each device keeps its own.">
+        <span style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="keyfield" onClick={() => void downloadBackup()}>
+            download
+          </button>
+          <button type="button" className="keyfield" onClick={() => fileRef.current?.click()}>
+            restore…
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={async (e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) await importData(await f.text())
+            }}
+          />
+        </span>
       </SetRow>
     </div>
   )

@@ -123,6 +123,10 @@ export interface MewState {
   cycleDefaultTag(calId: string): void
   /** Consume an exported .ics snapshot as external events (re-import updates). */
   importIcs(fileName: string, text: string): void
+  /** Full-state backup as JSON (API keys stripped — they stay on-device). */
+  exportData(): Promise<string>
+  /** Restore a backup, then re-hydrate the live store from storage. */
+  importData(json: string): Promise<void>
   connectGoogle(): Promise<void>
   addGoogleCalendar(cal: RemoteCalendar): void
   dismissPicker(): void
@@ -1360,6 +1364,17 @@ export const useMew = create<MewState>((set, get) => {
       set({ settings })
       persistSettings(settings)
       set({ lastSyncAt: 0 })
+    },
+
+    async exportData() {
+      return storage.exportJson()
+    },
+
+    async importData(json: string) {
+      await storage.importJson(json)
+      await get().hydrate()
+      get().tick()
+      post([mewMsg(`Restored — the week, captures, chat, and memory are back. Keys stay per-device; check Settings if the brain needs one.`)])
     },
 
     importIcs(fileName: string, text: string) {

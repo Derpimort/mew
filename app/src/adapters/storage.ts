@@ -113,17 +113,35 @@ export function createDexieStorage(): StoragePort {
     },
     async exportJson() {
       const state = await this.load()
-      return JSON.stringify(state, null, 2)
+      /* a backup travels (downloads folder, cloud drives) — API keys don't.
+         Each device keeps its own keys; restore re-enters them in Settings. */
+      const settings = state.settings
+        ? { ...state.settings, anthropicKey: '', openaiKey: '' }
+        : state.settings
+      return JSON.stringify({ ...state, settings }, null, 2)
     },
     async importJson(json) {
       const state = JSON.parse(json) as PersistedState
       await db.transaction('rw', [db.blocks, db.captures, db.chat, db.memory, db.kv], async () => {
+        const current = (await db.kv.get('settings'))?.value as
+          | { anthropicKey?: string; openaiKey?: string }
+          | undefined
         await Promise.all([db.blocks.clear(), db.captures.clear(), db.chat.clear(), db.memory.clear()])
         await db.blocks.bulkPut(state.blocks ?? [])
         await db.captures.bulkPut(state.captures ?? [])
         await db.chat.bulkPut(state.chat ?? [])
         await db.memory.bulkPut(state.memory ?? [])
-        if (state.settings) await db.kv.put({ key: 'settings', value: state.settings })
+        if (state.settings) {
+          /* this device's keys survive a restore — backups carry none */
+          await db.kv.put({
+            key: 'settings',
+            value: {
+              ...state.settings,
+              anthropicKey: state.settings.anthropicKey || current?.anthropicKey || '',
+              openaiKey: state.settings.openaiKey || current?.openaiKey || '',
+            },
+          })
+        }
       })
     },
     async wipe() {
