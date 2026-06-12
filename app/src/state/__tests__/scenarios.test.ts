@@ -28,6 +28,20 @@ const fakeDb = {
   },
 }
 
+/* the desktop shell, faked at the adapter seam (web runs leave tauri=false) */
+const desktopFake = {
+  tauri: false,
+  backup: null as string | null,
+  backupDate: null as string | null,
+  written: [] as string[],
+  reset() {
+    this.tauri = false
+    this.backup = null
+    this.backupDate = null
+    this.written = []
+  },
+}
+
 vi.mock('../../adapters/storage', () => ({
   createDexieStorage: () => ({
     load: async () => ({
@@ -49,10 +63,41 @@ vi.mock('../../adapters/storage', () => ({
     loadSyncMap: async () => [],
     saveSyncMap: async () => {},
     deleteSyncForCalendar: async () => {},
-    exportJson: async () => '{}',
-    importJson: async () => {},
+    /* real round-trip semantics so backup/restore scenarios exercise the
+       same shape the dexie adapter produces — keys stripped on the way out */
+    exportJson: async () => {
+      const settings = fakeDb.settings ? { ...fakeDb.settings, anthropicKey: '', openaiKey: '' } : fakeDb.settings
+      return JSON.stringify({
+        blocks: [...fakeDb.blocks.values()],
+        captures: [...fakeDb.captures.values()],
+        chat: [...fakeDb.chat.values()],
+        memory: [...fakeDb.memory.values()],
+        settings,
+      })
+    },
+    importJson: async (json: string) => {
+      const state = JSON.parse(json)
+      fakeDb.reset()
+      for (const b of state.blocks ?? []) fakeDb.blocks.set(b.id, b)
+      for (const c of state.captures ?? []) fakeDb.captures.set(c.id, c)
+      for (const m of state.chat ?? []) fakeDb.chat.set(m.id, m)
+      for (const e of state.memory ?? []) fakeDb.memory.set(e.id, e)
+      fakeDb.settings = state.settings ?? null
+    },
     wipe: async () => fakeDb.reset(),
   }),
+}))
+
+vi.mock('../../adapters/desktop', () => ({
+  isTauri: () => desktopFake.tauri,
+  readBackup: async () => desktopFake.backup,
+  latestBackupDate: async () => desktopFake.backupDate,
+  writeBackup: async (json: string) => {
+    desktopFake.written.push(json)
+  },
+  registerCloseFlush: () => {},
+  backupPath: () => 'Documents/MEW/mew-backup.json',
+  openBackupFolder: async () => {},
 }))
 
 vi.mock('../../adapters/notify', () => ({
@@ -108,6 +153,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.useRealTimers()
+  desktopFake.reset()
 })
 
 /* ── scenarios ────────────────────────────────────────────────────── */
@@ -506,5 +552,84 @@ describe('background attention through the keyless floor', () => {
     const b = useMew.getState().blocks.find((x) => /data export/i.test(x.title))!
     expect(b.startedAt).toBeUndefined()
     expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
+  })
+})
+
+/* ── desktop auto-backup + first-boot restore (phase 2 of the shell) ── */
+
+describe('desktop backup & restore', () => {
+  const drain = () => vi.advanceTimersByTimeAsync(0)
+
+  it('web build never offers a restore and never writes a backup', async () => {
+    desktopFake.backup = JSON.stringify({ blocks: [], captures: [], chat: [], memory: [], settings: null })
+    await fresh(TUE(9, 40))
+    await drain()
+    expect(nudges('restore')).toHaveLength(0)
+    await useMew.getState().speak('block 1h for spec review today at 15')
+    await vi.advanceTimersByTimeAsync(31_000)
+    expect(desktopFake.written).toHaveLength(0)
+  })
+
+  it('first boot on an empty DB offers the disk backup; accept round-trips the week', async () => {
+    const restored = {
+      id: uid(),
+      title: 'the restored block — deep work',
+      tag: 'work',
+      dayKey: dayKey(TUE(9)),
+      startMin: 9 * 60,
+      endMin: 10 * 60,
+      status: 'open',
+    }
+    desktopFake.tauri = true
+    desktopFake.backup = JSON.stringify({ blocks: [restored], captures: [], chat: [], memory: [], settings: null })
+    desktopFake.backupDate = '2026-06-08'
+
+    await fresh(TUE(9, 40))
+    await drain()
+    const offer = nudges('restore')
+    expect(offer).toHaveLength(1)
+    expect(offer[0].body).toContain('2026-06-08')
+    expect(offer[0].body).toContain('Documents/MEW')
+    /* suggest, don't seize: the seeded week is still standing */
+    expect(useMew.getState().blocks.some((b) => b.title === restored.title)).toBe(false)
+
+    useMew.getState().nudgeAction(offer[0].id, 'accept')
+    await drain()
+    await drain()
+    expect(useMew.getState().blocks.some((b) => b.title === restored.title)).toBe(true)
+    expect(lastMsg().body).toMatch(/^Restored —/)
+  })
+
+  it('declining the offer keeps the fresh week and resolves the nudge', async () => {
+    desktopFake.tauri = true
+    desktopFake.backup = JSON.stringify({ blocks: [], captures: [], chat: [], memory: [], settings: null })
+    await fresh(TUE(9, 40))
+    await drain()
+    const offer = nudges('restore')[0]
+    useMew.getState().nudgeAction(offer.id, 'decline')
+    await drain()
+    const resolved = chat().find((m) => m.id === offer.id)
+    expect(resolved?.resolved).toBeTruthy()
+    expect(useMew.getState().blocks.length).toBeGreaterThan(0) // seed stands
+  })
+
+  it('changes coalesce into one keys-stripped snapshot 30s later', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    await drain()
+    useMew.getState().updateSettings({ anthropicKey: 'sk-secret', mewName: 'Pixie' })
+    await useMew.getState().speak('block 1h for spec review today at 15')
+    await useMew.getState().speak('block 30m for inbox today at 16:30')
+    expect(desktopFake.written).toHaveLength(0) // debounce window still open
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(desktopFake.written).toHaveLength(1) // coalesced
+    const snapshot = JSON.parse(desktopFake.written[0])
+    expect(snapshot.blocks.length).toBeGreaterThan(0)
+    expect(snapshot.settings.anthropicKey).toBe('') // keys never travel
+    /* next change opens a fresh window */
+    await useMew.getState().speak('block 30m for review today at 17:30')
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(desktopFake.written).toHaveLength(2)
+
   })
 })

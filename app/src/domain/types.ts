@@ -60,6 +60,7 @@ export type NudgeId =
   | 'post-buffer'
   | 'next-up'
   | 'micro-break'
+  | 'restore' // system offer (desktop backup found on first boot), not an engine nudge
   | 'start-by'
 
 export interface NudgeAction {

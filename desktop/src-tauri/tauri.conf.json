@@ -10,9 +10,10 @@
     "frontendDist": "../../app/dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
-        "title": "MEW \u2014 My Entire Week",
+        "title": "MEW — My Entire Week",
         "width": 1440,
         "height": 900,
         "minWidth": 1100,

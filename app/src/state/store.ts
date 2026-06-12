@@ -34,6 +34,7 @@ import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../doma
 import type { NudgeInstance } from '../domain/nudges/library'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
+import { isTauri, latestBackupDate, readBackup, registerCloseFlush, writeBackup } from '../adapters/desktop'
 import {
   selectAdapters,
   type ChatTurn,
@@ -196,12 +197,54 @@ function weekContext(s: MewState): WeekContext {
 /* ── store ────────────────────────────────────────────────────────── */
 
 export const useMew = create<MewState>((set, get) => {
+  /* desktop auto-backup: every persisted change marks the snapshot dirty; a
+     30s coalescing timer writes ONE on-disk copy (keys already stripped by
+     exportJson). Failures warn and wait for the next change — the backup
+     must never block the week. No-ops outside the desktop shell. */
+  let backupTimer: ReturnType<typeof setTimeout> | null = null
+  let backupDirty = false
+  const flushBackup = async () => {
+    if (!backupDirty) return
+    backupDirty = false
+    if (backupTimer) {
+      clearTimeout(backupTimer)
+      backupTimer = null
+    }
+    try {
+      await writeBackup(await storage.exportJson())
+    } catch (err) {
+      console.warn('mew: auto-backup failed (will retry on the next change)', err)
+    }
+  }
+  const queueBackup = () => {
+    if (!isTauri()) return
+    backupDirty = true
+    if (backupTimer) return // coalesce: one write per quiet 30s window
+    backupTimer = setTimeout(() => {
+      backupTimer = null
+      void flushBackup()
+    }, 30_000)
+  }
+  registerCloseFlush(() => backupDirty, flushBackup)
+
   /* persistence helpers (fire-and-forget; IndexedDB failures must never block the week) */
-  const persistBlocks = (blocks: Block[]) => storage.putBlocks(blocks).catch(() => {})
+  const persistBlocks = (blocks: Block[]) => {
+    storage.putBlocks(blocks).catch(() => {})
+    queueBackup()
+  }
   const persistChat = (msgs: ChatMessage[]) => storage.putChat(msgs).catch(() => {})
-  const persistMemory = (evs: MewState['memory']) => storage.putMemory(evs).catch(() => {})
-  const persistSettings = (st: Settings) => storage.putSettings(st).catch(() => {})
-  const persistCaptures = (cs: Capture[]) => storage.putCaptures(cs).catch(() => {})
+  const persistMemory = (evs: MewState['memory']) => {
+    storage.putMemory(evs).catch(() => {})
+    queueBackup()
+  }
+  const persistSettings = (st: Settings) => {
+    storage.putSettings(st).catch(() => {})
+    queueBackup()
+  }
+  const persistCaptures = (cs: Capture[]) => {
+    storage.putCaptures(cs).catch(() => {})
+    queueBackup()
+  }
 
   function post(msgs: ChatMessage[], opts?: { mirror?: boolean }) {
     if (!msgs.length) return
@@ -690,6 +733,29 @@ export const useMew = create<MewState>((set, get) => {
           storage.putChat(s.chat),
           storage.putSettings(s.settings),
         ]).catch(() => {})
+        /* desktop first boot on an empty DB: a disk backup may hold the real
+           week — offer it in chat. Suggest, don't seize: restore only on accept. */
+        if (isTauri()) {
+          void (async () => {
+            const json = await readBackup()
+            if (!json) return
+            const when = (await latestBackupDate()) ?? 'earlier'
+            post([
+              {
+                id: uid(),
+                role: 'nudge',
+                body: `found a backup from ${when} in Documents/MEW — want me to bring it back?`,
+                ts: nowFn(),
+                nudgeType: 'restore',
+                nudgeLabel: 'backup found',
+                actions: [
+                  { id: 'accept', label: 'bring it back', kind: 'primary' },
+                  { id: 'decline', label: 'start fresh', kind: 'secondary' },
+                ],
+              },
+            ])
+          })()
+        }
       } else {
         set({
           blocks: loaded.blocks,
@@ -1247,6 +1313,17 @@ export const useMew = create<MewState>((set, get) => {
         }
         case 'next-up:leave':
           decline()
+          break
+        /* restore is a system offer, not an engine nudge — no outcome stats */
+        case 'restore:accept': {
+          void (async () => {
+            const json = await readBackup()
+            if (json) await get().importData(json)
+            else post([mewMsg(`The backup file isn't readable anymore — check Documents/MEW/mew-backup.json.`)])
+          })()
+          break
+        }
+        case 'restore:decline':
           break
         /* start-by proposes the latest start; only an accept starts anything */
         case 'start-by:start': {

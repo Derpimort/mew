@@ -1,11 +1,36 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least privilege: the SPA needs only the core window APIs. FS (auto-backup) and oauth arrive with their phases, each with its own narrow grant.",
+  "description": "Least privilege: the SPA needs only the core window APIs, plus the auto-backup's narrow slice — fs strictly under $DOCUMENT/MEW, opener for that folder only. OAuth arrives with its phase and its own grant.",
   "windows": [
     "main"
   ],
   "permissions": [
-    "core:default"
+    "core:default",
+    "core:window:allow-destroy",
+    {
+      "identifier": "fs:allow-mkdir",
+      "allow": [{ "path": "$DOCUMENT/MEW" }]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
+      "allow": [{ "path": "$DOCUMENT/MEW" }, { "path": "$DOCUMENT/MEW/**" }]
+    },
+    {
+      "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$DOCUMENT/MEW" }, { "path": "$DOCUMENT/MEW/**" }]
+    },
+    {
+      "identifier": "fs:allow-read-dir",
+      "allow": [{ "path": "$DOCUMENT/MEW" }]
+    },
+    {
+      "identifier": "fs:allow-remove",
+      "allow": [{ "path": "$DOCUMENT/MEW/**" }]
+    },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$DOCUMENT/MEW" }]
+    }
   ]
 }

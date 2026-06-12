@@ -10,6 +10,7 @@ import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
 import { computeInsights } from '../../domain/insights'
 import { PETS, petById, Segc, Tgl } from '../primitives'
+import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
 import { usePetPalette } from '../components/petPalette'
 import SimpleGraph from '../react-bits/simple-graph'
 
@@ -656,6 +657,13 @@ function PrivacyModelCard() {
           />
         </span>
       </SetRow>
+      {isTauri() && (
+        <SetRow t="Desktop auto-backup" s={`Every change lands in ${backupPath()} within a minute — 14 daily rotations kept.`}>
+          <button type="button" className="keyfield" onClick={() => void openBackupFolder()}>
+            open folder
+          </button>
+        </SetRow>
+      )}
     </div>
   )
 }
