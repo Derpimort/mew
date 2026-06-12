@@ -14,6 +14,7 @@ import {
   isBackground,
   isFixedTime,
   openItems,
+  proposeCaptureSlot,
   overlaps,
   plannedDeepMin,
 } from '../week'
@@ -174,18 +175,9 @@ export function buildCtx(
       })()
     : null
 
-  let captureProposal: { dayKey: string; startMin: number } | null = null
-  if (event?.newCapture) {
-    for (let i = 0; i <= 6; i++) {
-      const key = addDaysKey(t.todayKey, i)
-      const windowStart = i === 0 ? Math.max(t.nowMin + 15, 9 * 60) : 9 * 60
-      const slot = findFreeSlot(t.blocks, key, 30, windowStart)
-      if (slot) {
-        captureProposal = { dayKey: key, startMin: slot.startMin }
-        break
-      }
-    }
-  }
+  const captureProposal = event?.newCapture
+    ? proposeCaptureSlot(t.blocks, t.todayKey, t.nowMin)
+    : null
 
   /* a big fixed event that wrapped in the last 12 minutes, with the user not
      inside anything else and no review/rest cushion already following it —

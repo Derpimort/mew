@@ -635,6 +635,36 @@ describe('setAttention (one-click priority from the orbit)', () => {
   })
 })
 
+/* ── the thread rail's "place": a capture lands like when-where's accept ── */
+
+describe('placeCapture (loose-threads rail)', () => {
+  it('lands an open capture in the first 30-min slot after now+15 and tells the chat', async () => {
+    await fresh(TUE(9, 40))
+    await say('call the bank')
+    const cap = useMew.getState().captures.find((c) => /call the bank/i.test(c.title))!
+    expect(cap.status).toBe('open')
+
+    useMew.getState().placeCapture(cap.id)
+    const after = useMew.getState()
+    const placedCap = after.captures.find((c) => c.id === cap.id)!
+    expect(placedCap.status).toBe('placed')
+    const block = after.blocks.find((b) => b.id === placedCap.placedBlockId)!
+    expect(block.endMin - block.startMin).toBe(30)
+    expect(block.startMin).toBeGreaterThanOrEqual(9 * 60 + 55) // now+15, rounded into free air
+    expect(lastMsg().body).toMatch(/^Placed — "call the bank" lives/)
+  })
+
+  it('is idempotent: placing a placed capture does nothing', async () => {
+    await fresh(TUE(9, 40))
+    await say('call the bank')
+    const cap = useMew.getState().captures.find((c) => /call the bank/i.test(c.title))!
+    useMew.getState().placeCapture(cap.id)
+    const blocksAfterFirst = useMew.getState().blocks.length
+    useMew.getState().placeCapture(cap.id)
+    expect(useMew.getState().blocks.length).toBe(blocksAfterFirst)
+  })
+})
+
 /* ── desktop auto-backup + first-boot restore (phase 2 of the shell) ── */
 
 describe('desktop backup & restore', () => {

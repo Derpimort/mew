@@ -129,6 +129,9 @@ export interface MewState {
   /** Promotion/demotion from the Focus orbit — the click writes attention;
       the center swap falls out of liveNow. Quiet: the swap IS the feedback. */
   setAttention(blockId: string, attention: 'focus' | 'background'): void
+  /** Land an open capture in the first free 30-min slot (the same proposal +
+      placement the when-where nudge's accept runs) — the rail's "place". */
+  placeCapture(captureId: string): void
   clearScroll(): void
   updateSettings(patch: Partial<Settings>): void
   cycleVisibility(calId: string, tag: VisibleTag): void
@@ -630,6 +633,31 @@ export const useMew = create<MewState>((set, get) => {
       .map((b) => `${b.title.split('—')[0].trim()} (${b.dayKey === todayKey ? 'today' : fmtDowLong(b.dayKey)} ${fmtTime(b.startMin)})`)
       .join(', ')
     return `Removed — ${names}. Everything else stands${external.length ? `; ${external.length} calendar event${external.length === 1 ? '' : 's'} matching stayed (not mine to delete)` : ''}.`
+  }
+
+  /** ONE home for "a capture becomes a 30-min block": place, mark, announce.
+      Used by the when-where accept and the thread rail's place action. */
+  function placeCaptureAt(cap: Capture, toDayKey: string, startMin: number): boolean {
+    const s = get()
+    const placed = week.place(s.blocks, {
+      title: cap.title,
+      tag: 'work',
+      dayKey: toDayKey,
+      startMin,
+      durationMin: 30,
+    })
+    if (!placed) return false
+    setBlocks([...s.blocks, placed])
+    const updated: Capture = { ...cap, status: 'placed', placedBlockId: placed.id }
+    set((st) => ({ captures: st.captures.map((c) => (c.id === cap.id ? updated : c)) }))
+    persistCaptures([updated])
+    const todayKey = dayKey(new Date(s.nowMs))
+    post([
+      mewMsg(
+        `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`,
+      ),
+    ])
+    return true
   }
 
   function execAnalyze(dayOffset: number): string {
@@ -1144,27 +1172,8 @@ export const useMew = create<MewState>((set, get) => {
         case 'when-where:placecap': {
           const capId = String(payload.captureId)
           const cap = s.captures.find((c) => c.id === capId)
-          if (cap) {
-            const key = String(payload.dayKey)
-            const start = Number(payload.startMin)
-            const placed = week.place(s.blocks, {
-              title: cap.title,
-              tag: 'work',
-              dayKey: key,
-              startMin: start,
-              durationMin: 30,
-            })
-            if (placed) {
-              setBlocks([...s.blocks, placed])
-              const updated: Capture = { ...cap, status: 'placed', placedBlockId: placed.id }
-              set((st) => ({ captures: st.captures.map((c) => (c.id === capId ? updated : c)) }))
-              persistCaptures([updated])
-              post([
-                mewMsg(
-                  `Placed — "${cap.title}" lives ${key === todayKey ? 'today' : fmtDowLong(key)} at ${fmtTime(start)}.`,
-                ),
-              ])
-            }
+          if (cap && cap.status === 'open') {
+            placeCaptureAt(cap, String(payload.dayKey), Number(payload.startMin))
           }
           accept()
           break
@@ -1488,6 +1497,19 @@ export const useMew = create<MewState>((set, get) => {
       const target = s.blocks.find((b) => b.id === blockId)
       if (!target || (target.attention ?? 'focus') === attention) return
       setBlocks(s.blocks.map((b) => (b.id === blockId ? { ...b, attention } : b)))
+    },
+
+    placeCapture(captureId) {
+      const s = get()
+      const cap = s.captures.find((c) => c.id === captureId)
+      if (!cap || cap.status !== 'open') return
+      const now = new Date(s.nowMs)
+      const proposal = week.proposeCaptureSlot(s.blocks, dayKey(now), minOfDay(now))
+      if (!proposal) {
+        post([mewMsg(`The week can't hold "${cap.title}" yet — say where it should live and I'll make room.`)])
+        return
+      }
+      if (!placeCaptureAt(cap, proposal.dayKey, proposal.startMin)) return
     },
 
     toggleProtected(blockId) {

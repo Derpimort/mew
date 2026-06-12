@@ -199,6 +199,61 @@
 }
 .pri-demote:hover { color: var(--gold); border-color: var(--ice-bd); }
 .pri-hint { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--faint); }
+/* loose-threads rail: the collapsed pill on the stage's left edge */
+.frail {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 12px 9px;
+  cursor: pointer;
+  transition: border-color 0.18s;
+  z-index: 8;
+}
+.frail:hover { border-color: var(--ice-bd); }
+.frail .cnt { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; color: var(--ink); }
+.frail .dot { width: 8px; height: 8px; border-radius: 50%; }
+.frail .vlabel { writing-mode: vertical-rl; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+/* the thread box the pill expands into */
+.tbox {
+  width: 262px;
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 13px 15px;
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.6);
+}
+.tbox-h { display: flex; align-items: center; margin-bottom: 6px; }
+.tbox-h .t { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13.5px; }
+.tbox-h .x { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--faint); cursor: pointer; }
+.tgrp {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 11px 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.tgrp:first-of-type { margin-top: 2px; }
+.tgrp::after { content: ''; flex: 1; height: 1px; background: var(--line2); }
+.trow { display: flex; align-items: center; gap: 9px; padding: 6px 7px; border-radius: 9px; cursor: pointer; }
+.trow:hover { background: var(--bg); }
+.trow .g { font-family: 'JetBrains Mono', monospace; font-size: 11px; width: 13px; text-align: center; flex: none; }
+.trow .tt { font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.trow .mm { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 1px; }
+.trow .pin { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: var(--faint); opacity: 0; }
+.trow:hover .pin { opacity: 1; }
 .clk-center {
   position: absolute;
   left: 50%;

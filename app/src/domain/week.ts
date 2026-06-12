@@ -125,6 +125,23 @@ export function contextMarkers(b: Block): string {
   return parts.join(', ')
 }
 
+/** The when-where proposal: the first 30-min slot from now+15 today (9:00
+    floor), scanning up to a week forward. One rule, one home — the engine's
+    capture nudge, the chat accept, and the thread rail all read THIS. */
+export function proposeCaptureSlot(
+  blocks: Block[],
+  todayKey: string,
+  nowMin: number,
+): { dayKey: string; startMin: number } | null {
+  for (let i = 0; i <= 6; i++) {
+    const key = addDaysKey(todayKey, i)
+    const windowStart = i === 0 ? Math.max(nowMin + 15, 9 * 60) : 9 * 60
+    const slot = findFreeSlot(blocks, key, 30, windowStart)
+    if (slot) return { dayKey: key, startMin: slot.startMin }
+  }
+  return null
+}
+
 /** The blocks that must yield when `target` is promoted to focus: every
     OTHER open focus-attention block on the day whose span overlaps the
     target's. Demoting exactly this set keeps at most one focus inside any

@@ -13,6 +13,7 @@ import { isBackground, overlappingFocus } from '../../domain/week'
 import { rArc, rPolar, spDeg } from './dialGeometry'
 import { LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
+import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
 
 /** Live wall clock — distinct from the center countdown (it's labeled). */
@@ -50,14 +51,14 @@ export function FocusOrbit() {
   const labels = useMemo(() => resolveLabels(vis, radii, nowH), [vis, radii, nowH])
 
   const [hover, setHover] = useState<string | null>(null)
-  const [cardOpen, setCardOpen] = useState(false)
+  const [cardId, setCardId] = useState<string | null>(null)
 
   /* promote: the clicked block holds the user now; if something else held
      them, it keeps running — in background, one lane in. Both are attention
      writes; the center swap falls out of liveNow. */
   const promote = (id: string) => {
     if (id === focusId) {
-      setCardOpen((v) => !v) // the focus item's click opens its detail card
+      setCardId((v) => (v === id ? null : id)) // the focus item's click opens its detail card
       return
     }
     const target = blocks.find((b) => b.id === id)
@@ -66,11 +67,11 @@ export function FocusOrbit() {
     /* exactly one focus inside any overlapping cluster — demoting only
        live.current left siblings to win the center by sort order */
     for (const o of overlappingFocus(blocks, target)) setAttention(o.id, 'background')
-    setCardOpen(false)
+    setCardId(null)
   }
   const demote = () => {
     if (focusId) setAttention(focusId, 'background')
-    setCardOpen(false)
+    setCardId(null)
   }
 
   /* countdown to the FOCUS item's end, ticking seconds */
@@ -89,7 +90,7 @@ export function FocusOrbit() {
     : (live.meta[0] ?? '')
 
   return (
-    <div className="nx-stage" style={{ width: OG.w, height: OG.h, position: 'relative' }} onClick={() => setCardOpen(false)}>
+    <div className="nx-stage" style={{ width: OG.w, height: OG.h, position: 'relative' }} onClick={() => setCardId(null)}>
       <NxClock now={now} />
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
         {/* one guide circle — the outer orbit the focus item rides */}
@@ -204,7 +205,7 @@ export function FocusOrbit() {
 
       {/* center: countdown → meta → task → demote chip; or "Nothing holds you." */}
       {current ? (
-        <div className="clk-center" style={cardOpen ? { opacity: 0, pointerEvents: 'none' } : undefined}>
+        <div className="clk-center" style={cardId ? { opacity: 0, pointerEvents: 'none' } : undefined}>
           <div className="nx-count" style={{ fontSize: count.length > 6 ? 62 : 84 }}>{count}</div>
           <div className="nx-meta">{meta}</div>
           <div
@@ -212,7 +213,7 @@ export function FocusOrbit() {
             style={{ fontSize: 25, cursor: 'pointer' }}
             onClick={(e) => {
               e.stopPropagation()
-              setCardOpen((v) => !v)
+              setCardId((v) => (v === current!.id ? null : current!.id))
             }}
           >
             <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
@@ -236,16 +237,22 @@ export function FocusOrbit() {
         </div>
       )}
 
-      {cardOpen && current && (
-        <BlockCard
-          variant="center"
-          block={current}
-          isNow
-          pinned
-          onClose={() => setCardOpen(false)}
-          style={{ left: OG.cx + OG.ox, top: OG.cy }}
-        />
-      )}
+      {(() => {
+        const cardBlock = cardId ? blocks.find((b) => b.id === cardId) : null
+        if (!cardBlock) return null
+        return (
+          <BlockCard
+            variant="center"
+            block={cardBlock}
+            isNow={cardBlock.id === focusId}
+            pinned
+            onClose={() => setCardId(null)}
+            style={{ left: OG.cx + OG.ox, top: OG.cy }}
+          />
+        )
+      })()}
+
+      <ThreadRail onOpen={(id) => setCardId(id)} />
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center' }}>
         <span className="pri-hint">click any item to focus it · click the chip to let it run</span>
