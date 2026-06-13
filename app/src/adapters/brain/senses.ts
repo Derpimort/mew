@@ -60,13 +60,18 @@ export function blockEventPage(b: Block, kind: BlockEventKind, dayKey: string, a
   const title = b.title.split('—')[0].trim()
   const dur = b.endMin - b.startMin
   const deep = b.tag === 'work' && dur >= 60
-  const summary = `${fmtTime(atMin)} ${kind} — ${title} (${dur}m${deep ? ', deep' : ''})`
+  /* outcome words give recall substance: "ran over" is the fact a pre-meeting
+     heads-up most wants back. ≥10m past the planned end counts; under that is
+     calendar noise, not an outcome. */
+  const overMin = kind === 'completed' ? atMin - b.endMin : 0
+  const ranOver = overMin >= 10 ? ` · ran over +${overMin}m` : ''
+  const summary = `${fmtTime(atMin)} ${kind} — ${title} (${dur}m${deep ? ', deep' : ''})${ranOver}`
   const people = peopleFrom(b.title)
   return {
     slug: taskSlug(b.title),
     type: 'task',
     tags: [b.tag, kind],
-    body: `# ${title}\n\nlast: ${kind} on ${dayKey} · planned ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} (${dur}m)\n`,
+    body: `# ${title}\n\nlast: ${kind} on ${dayKey} · planned ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} (${dur}m)${ranOver}\n`,
     links: [`week/${dayKey}`, ...people],
     timeline: [{ slug: `week/${dayKey}`, date: dayKey, summary }],
   }

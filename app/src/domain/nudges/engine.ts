@@ -48,6 +48,9 @@ export interface TickInputs {
   brainLinks?: { from: string; to: string }[]
   /** Last week's debrief color from the brain (store-fetched, Monday only). */
   brainWeekLines?: string[]
+  /** Pre-meeting recall, keyed by block id — fetched ahead by the store (the
+      engine stays pure); a block with lines here has a person the brain knows. */
+  personRecall?: Record<string, string[]>
 }
 
 /** Heaviest day in the next 3 days whose planned deep work exceeds 1.2× realistic best. */
@@ -113,6 +116,26 @@ function findStartBy(
     if (b.status !== 'open' || !isBackground(b) || b.due == null || b.startedAt != null) continue
     if (nowMin >= b.due) continue // the deadline already passed — start-by is moot
     if (nowMin + duration(b) > b.due - 10) return { block: b, latestStart: b.due - duration(b) }
+  }
+  return null
+}
+
+/** A fixed, non-optional block starting in 8–12 min whose person the brain
+    has lines for. Information with a shelf life: before 8 min there is time
+    to fetch, after 12 the meeting owns the moment. */
+function findHeadsUp(
+  blocks: Block[],
+  todayKey: string,
+  nowMin: number,
+  personRecall: Record<string, string[]> | undefined,
+): { block: Block; lines: string[] } | null {
+  if (!personRecall) return null
+  for (const b of blocksForDay(blocks, todayKey)) {
+    if (b.status !== 'open' || b.optional || !isFixedTime(b)) continue
+    const lead = b.startMin - nowMin
+    if (lead < 8 || lead > 12) continue
+    const lines = personRecall[b.id]
+    if (lines?.length) return { block: b, lines: lines.slice(0, 2) }
   }
   return null
 }
@@ -243,6 +266,7 @@ export function buildCtx(
     justEndedFixed,
     startBy: findStartBy(t.blocks, t.todayKey, t.nowMin),
     prefDrift,
+    headsUp: findHeadsUp(t.blocks, t.todayKey, t.nowMin, t.personRecall),
     justCompleted: event?.justCompleted ?? null,
     newCapture: event?.newCapture ?? null,
     captureProposal,
@@ -332,6 +356,7 @@ const TICK_NUDGES: NudgeId[] = [
   'drift',
   'guard',
   'start-by', // a hard deadline outranks pacing suggestions
+  'heads-up', // a meeting in ~10 min — the recall expires with the moment
   'post-buffer',
   'close-loop',
   'debrief', // the open thread gets a plan first; the story follows next tick

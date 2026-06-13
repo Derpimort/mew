@@ -123,14 +123,18 @@ vi.mock('../../adapters/calendar/google', () => ({
   },
 }))
 
-/* the brain, faked at the factory seam — scenarios count what MEW writes
-   and control what the graph holds */
+/* the brain, faked at the factory seam — scenarios count what MEW writes,
+   control what the graph holds, and what it asks back (recall is behavior) */
 const brainFake = {
   ingests: [] as { slug: string }[],
   links: {} as Record<string, string[]>,
+  recalls: [] as string[],
+  recallImpl: null as null | ((q: string) => string[] | Promise<string[]>),
   reset() {
     this.ingests = []
     this.links = {}
+    this.recalls = []
+    this.recallImpl = null
   },
 }
 vi.mock('../../adapters/brain/gbrainHttp', () => ({
@@ -138,7 +142,10 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
     ingest: async (page: { slug: string }) => {
       if (cfg.enabled()) brainFake.ingests.push(page)
     },
-    recall: async () => [],
+    recall: async (q: string) => {
+      brainFake.recalls.push(q)
+      return brainFake.recallImpl ? brainFake.recallImpl(q) : []
+    },
     health: async () => false,
     listPrefs: async () => [],
     links: async (slug: string) => (cfg.enabled() ? (brainFake.links[slug] ?? []) : []),
@@ -744,6 +751,67 @@ describe('week-in-review (fresh-start upgraded)', () => {
     expect(fs).toBeDefined()
     expect(fs.body).toMatch(/^Monday — a new accounting period/)
     expect(fs.body).not.toContain('last week:')
+  })
+})
+
+/* ── pre-meeting recall: a heads-up before fixed blocks with people ──── */
+
+describe('heads-up (pre-meeting recall)', () => {
+  /* the seeded week puts "1:1 with Dana" two days out at 13:00 */
+  const THU = (h: number, m = 0) => new Date(2026, 5, 11, h, m)
+  const drain = () => vi.advanceTimersByTimeAsync(0)
+
+  it('fetches recall for the imminent fixed block only, once, and speaks the lines verbatim', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    brainFake.recallImpl = () => [
+      'task/q3-deck — last 1:1 ran over +20m',
+      'person/dana — asked for the roadmap pre-read',
+    ]
+    at(THU(12, 46)) // 14 min out: inside the fetch window, before the speak window
+    await drain()
+    const danaQueries = brainFake.recalls.filter((q) => q.includes('dana'))
+    expect(danaQueries).toHaveLength(1)
+    expect(danaQueries[0]).toContain('person dana')
+    expect(nudges('heads-up')).toHaveLength(0) // information waits for its moment
+
+    at(THU(12, 50)) // 10 min out — the heads-up window
+    await drain()
+    expect(brainFake.recalls.filter((q) => q.includes('dana'))).toHaveLength(1) // cached, not re-asked
+    const hu = nudges('heads-up')
+    expect(hu).toHaveLength(1)
+    expect(hu[0].body).toContain('task/q3-deck — last 1:1 ran over +20m')
+    expect(hu[0].body).toContain('person/dana — asked for the roadmap pre-read')
+    expect(hu[0].body).not.toMatch(/missed|overdue|failed/)
+
+    at(THU(12, 52)) // still in the window — the per-block key holds it to once
+    expect(nudges('heads-up')).toHaveLength(1)
+  })
+
+  it('a failed recall is silence, never an error in chat', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    brainFake.recallImpl = () => {
+      throw new Error('brain unreachable')
+    }
+    at(THU(12, 46))
+    await drain()
+    at(THU(12, 50))
+    await drain()
+    expect(brainFake.recalls.length).toBeGreaterThan(0) // it did ask
+    expect(nudges('heads-up')).toHaveLength(0) // and said nothing
+    expect(chat().some((m) => /unreachable|error/i.test(m.body))).toBe(false)
+  })
+
+  it('brain off: the brain is never asked and the nudge never exists', async () => {
+    await fresh(TUE(9, 40))
+    brainFake.reset()
+    at(THU(12, 50))
+    await drain()
+    expect(brainFake.recalls).toHaveLength(0)
+    expect(nudges('heads-up')).toHaveLength(0)
   })
 })
 

@@ -595,3 +595,72 @@ describe('fresh-start carries the week review', () => {
     expect(fs!.body).toMatch(/^A blank page/)
   })
 })
+
+describe('heads-up — pre-meeting recall with a shelf life', () => {
+  const meeting = mk({
+    id: 'm1',
+    title: 'Sync: mira',
+    startMin: 10 * 60,
+    endMin: 10 * 60 + 30,
+    protected: false,
+  })
+  const RECALL = { m1: ['task/q3-deck — 14:05 completed · ran over +20m', 'person/mira — prefers decisions pre-read'] }
+  const at = (
+    nowMin: number,
+    blocks: Block[] = [meeting],
+    personRecall: Record<string, string[]> | undefined = RECALL,
+    engine = fresh,
+  ) => evaluateTick(buildCtx(tick({ nowMin, blocks, personRecall }), engine))
+
+  it('fires only inside the 8–12 minute window before a fixed block', () => {
+    expect(at(10 * 60 - 13).some((n) => n.type === 'heads-up')).toBe(false) // 13 min out — too early
+    expect(at(10 * 60 - 12)[0]?.type).toBe('heads-up')
+    expect(at(10 * 60 - 8)[0]?.type).toBe('heads-up')
+    expect(at(10 * 60 - 7).some((n) => n.type === 'heads-up')).toBe(false) // the meeting owns the moment
+  })
+
+  it('carries the recall lines verbatim, dismiss-only — information, not a demand', () => {
+    const hu = at(10 * 60 - 10).find((n) => n.type === 'heads-up')
+    expect(hu).toBeDefined()
+    expect(hu!.body).toContain('task/q3-deck — 14:05 completed · ran over +20m')
+    expect(hu!.body).toContain('person/mira — prefers decisions pre-read')
+    expect(hu!.actions.map((a) => a.id)).toEqual(['ack'])
+    expect(hu!.payload).toEqual({ blockId: 'm1' })
+  })
+
+  it('needs a fixed-time, non-optional block — flexible work never triggers it', () => {
+    const flexible = { ...meeting, title: 'Draft notes for mira' } // no fixed word
+    expect(at(10 * 60 - 10, [flexible], { m1: RECALL.m1 }).some((n) => n.type === 'heads-up')).toBe(false)
+    const optional = { ...meeting, optional: true }
+    expect(at(10 * 60 - 10, [optional]).some((n) => n.type === 'heads-up')).toBe(false)
+  })
+
+  it('stays silent without recall lines (brain off, fetch failed, or person unknown)', () => {
+    /* no personRecall in TickInputs at all (the event path never carries it) */
+    const bare = evaluateTick(buildCtx(tick({ nowMin: 10 * 60 - 10, blocks: [meeting] }), fresh))
+    expect(bare.some((n) => n.type === 'heads-up')).toBe(false)
+    expect(at(10 * 60 - 10, [meeting], {}).some((n) => n.type === 'heads-up')).toBe(false)
+    expect(at(10 * 60 - 10, [meeting], { m1: [] }).some((n) => n.type === 'heads-up')).toBe(false)
+  })
+
+  it('fires once per block: the per-block key holds the cooldown', () => {
+    const nowMs = Date.UTC(2026, 5, 9, 9, 50)
+    const again = at(10 * 60 - 10, [meeting], RECALL, {
+      lastFired: { 'heads-up': { ts: nowMs - 60_000, key: 'm1' } },
+      lastDriftBlockId: null,
+    })
+    expect(again.some((n) => n.type === 'heads-up')).toBe(false)
+    const other = at(10 * 60 - 10, [meeting], RECALL, {
+      lastFired: { 'heads-up': { ts: nowMs - 60_000, key: 'SOME-OTHER-BLOCK' } },
+      lastDriftBlockId: null,
+    })
+    expect(other[0]?.type).toBe('heads-up')
+  })
+
+  it('caps the body at two lines — a heads-up, not a dossier', () => {
+    const hu = at(10 * 60 - 10, [meeting], { m1: ['one', 'two', 'three', 'four'] }).find(
+      (n) => n.type === 'heads-up',
+    )
+    expect(hu!.body.split('\n').slice(1)).toEqual(['one', 'two'])
+  })
+})

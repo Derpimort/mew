@@ -71,6 +71,16 @@ describe('blockEventPage', () => {
     expect(page.timeline![0].summary).toContain('rolled')
     expect(JSON.stringify(page)).not.toMatch(/missed|overdue|failed/)
   })
+
+  it('records ran-over as an outcome word once lateness reaches 10m — recall substance', () => {
+    const b = mk({ title: 'Sync: mira', startMin: 13 * 60, endMin: 14 * 60 })
+    const over = blockEventPage(b, 'completed', D, 14 * 60 + 23)
+    expect(over.timeline![0].summary).toContain('ran over +23m')
+    expect(over.body).toContain('ran over +23m')
+    /* under 10m is calendar noise, not an outcome; rolling is never "over" */
+    expect(blockEventPage(b, 'completed', D, 14 * 60 + 9).timeline![0].summary).not.toContain('ran over')
+    expect(blockEventPage(b, 'rolled', D, 18 * 60).timeline![0].summary).not.toContain('ran over')
+  })
 })
 
 describe('prefPage — structured, upsert-by-construction', () => {

@@ -28,7 +28,7 @@ import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
-import { blockEventPage, chatBatchPage, debriefPage, makeChatBatcher, prefPage } from '../adapters/brain/senses'
+import { blockEventPage, chatBatchPage, debriefPage, makeChatBatcher, peopleFrom, prefPage } from '../adapters/brain/senses'
 import { applyPrefs } from '../domain/prefs'
 import {
   applyUpdate,
@@ -467,6 +467,35 @@ export const useMew = create<MewState>((set, get) => {
       })
   }
 
+  /* pre-meeting recall: fetched a tick ahead of the 8–12 min window (the
+     engine stays pure — it only reads the map). Cached per block id for the
+     session; a failed or empty recall caches [] so the brain is asked once.
+     Brain off → never asked, never fired: no degradation theater. */
+  const personRecall: Record<string, string[]> = {}
+  const personRecallPending = new Set<string>()
+  function primePersonRecall(s: MewState, todayKey: string, nowMin: number) {
+    if (!s.settings.brainEnabled) return
+    for (const b of week.blocksForDay(s.blocks, todayKey)) {
+      if (b.status !== 'open' || b.optional || !week.isFixedTime(b)) continue
+      const lead = b.startMin - nowMin
+      if (lead < 0 || lead > 15) continue
+      if (b.id in personRecall || personRecallPending.has(b.id)) continue
+      const people = peopleFrom(b.title)
+      if (!people.length) continue
+      personRecallPending.add(b.id)
+      const names = people.map((p) => p.split('/')[1]).join(', ')
+      brain
+        .recall(`person ${names} recent interactions and outcomes`, { limit: 2 })
+        .then((lines) => {
+          personRecall[b.id] = lines
+        })
+        .catch(() => {
+          personRecall[b.id] = [] // silence, not error — the floor never hears about it
+        })
+        .finally(() => personRecallPending.delete(b.id))
+    }
+  }
+
   function runTickEngine() {
     const s = get()
     const now = new Date(s.nowMs)
@@ -476,6 +505,7 @@ export const useMew = create<MewState>((set, get) => {
     const guardActive = s.guardDayKey === todayKey ? s.guardUntilMin : null
     primeBrainLinks(s, todayKey, nowMin, now)
     primeWeekColor(s, todayKey, now)
+    primePersonRecall(s, todayKey, nowMin)
     const ctx = buildCtx(
       {
         nowMs: s.nowMs,
@@ -492,6 +522,7 @@ export const useMew = create<MewState>((set, get) => {
         prefs: activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
         brainLinks: s.settings.brainEnabled ? brainLinks?.pairs : undefined,
         brainWeekLines: weekColor?.day === todayKey ? weekColor.lines : undefined,
+        personRecall,
       },
       s.engine,
     )
@@ -1620,6 +1651,10 @@ export const useMew = create<MewState>((set, get) => {
         }
         case 'delegate:later':
           decline()
+          break
+        /* heads-up is information; "got it" means it landed, not "stop" */
+        case 'heads-up:ack':
+          accept()
           break
         default:
           decline()

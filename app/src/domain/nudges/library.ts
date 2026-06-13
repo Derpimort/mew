@@ -32,6 +32,8 @@ export interface NudgeCtx {
   startBy: { block: Block; latestStart: number } | null
   /** A standing rule that lived behavior has outgrown (trailing 14d, ≥3). */
   prefDrift: { pref: PrefPayload; observed: string; count: number } | null
+  /** A fixed block ~10 min out whose person the brain has recall lines for. */
+  headsUp: { block: Block; lines: string[] } | null
   /* event payloads (set only on the matching event) */
   justCompleted: Block | null
   newCapture: Capture | null
@@ -395,6 +397,25 @@ export const NUDGES: NudgeDef[] = [
         ],
         payload: { kind: pref.kind, match: pref.match, value: pref.value, observed, stated: pref.stated },
         key: prefKey(pref),
+      }
+    },
+  },
+  {
+    id: 'heads-up',
+    label: 'heads-up',
+    tone: 'informational, factual',
+    cooldownMs: 8 * H, // once per block; the per-block key scopes it
+    trigger: (c) => c.headsUp != null,
+    build: (c) => {
+      const { block, lines } = c.headsUp!
+      const title = block.title.split('—')[0].trim()
+      return {
+        /* the recall lines ride verbatim — history informs, it never demands */
+        body: `${title} at ${fmtTime(block.startMin)} — what the brain holds:\n${lines.join('\n')}`,
+        footnote: `From your brain: the last thing that happened with these people, so the first minute isn't spent reconstructing it.`,
+        actions: [{ id: 'ack', label: 'Got it', kind: 'secondary' }],
+        payload: { blockId: block.id },
+        key: block.id,
       }
     },
   },
