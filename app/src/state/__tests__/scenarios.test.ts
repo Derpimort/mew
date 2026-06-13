@@ -881,6 +881,55 @@ describe('queryBrain (project rollups)', () => {
   })
 })
 
+/* ── entity-aware durations: this task's real median sizes the block ──── */
+
+describe('entity-aware durations', () => {
+  const TUE_KEY = '2026-06-09'
+  const prepDone = (daysAgo: number, actualMin: number) => {
+    const day = addDaysKey(TUE_KEY, -daysAgo)
+    const d = new Date(day + 'T00:00:00')
+    d.setMinutes(9 * 60 + actualMin)
+    return {
+      id: `prep-${daysAgo}`,
+      ts: d.getTime(),
+      kind: 'completed' as const,
+      dayKey: day,
+      title: 'Interview prep',
+      startMin: 9 * 60,
+      plannedMin: 60,
+    }
+  }
+
+  it('three 40-minute preps make "block interview prep tomorrow" a 40-minute block, credited', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((st) => ({ memory: [...st.memory, prepDone(2, 40), prepDone(5, 40), prepDone(9, 40)] }))
+    await say('block interview prep tomorrow')
+    const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
+    expect(placed).toBeDefined()
+    expect(placed!.endMin - placed!.startMin).toBe(40)
+    expect(lastMsg().body).toContain('(your usual)')
+  })
+
+  it('an explicit duration always wins over the usual', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((st) => ({ memory: [...st.memory, prepDone(2, 40), prepDone(5, 40), prepDone(9, 40)] }))
+    /* 50m fits tomorrow's 60-minute gap; 40 is the usual — explicit wins */
+    await say('block 50m for interview prep tomorrow')
+    const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
+    expect(placed!.endMin - placed!.startMin).toBe(50)
+    expect(lastMsg().body).not.toContain('(your usual)')
+  })
+
+  it('two preps are an anecdote: the 60-minute floor stands, uncredited', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((st) => ({ memory: [...st.memory, prepDone(2, 40), prepDone(5, 40)] }))
+    await say('block interview prep tomorrow')
+    const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
+    expect(placed!.endMin - placed!.startMin).toBe(60)
+    expect(lastMsg().body).not.toContain('(your usual)')
+  })
+})
+
 /* ── desktop self-update (phase 4 of the shell) ──────────────────────── */
 
 describe('desktop self-update', () => {

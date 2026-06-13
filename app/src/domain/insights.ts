@@ -58,7 +58,9 @@ function bandOf(startMin: number): (typeof BANDS)[number] | null {
   return BANDS.find((b) => startMin >= b.from && startMin < b.to) ?? null
 }
 
-function normTitle(title: string): string {
+/** The task-kind key: base half of the title, lowercased — the convention
+    chronic rollers, rollups, and duration medians all share. */
+export function normTitle(title: string): string {
   return title.split('—')[0].trim().toLowerCase()
 }
 
@@ -366,6 +368,47 @@ export function weekReview(
   const lines = [`last week: ${parts.join(', ')}.`]
   if (brainLines.length) lines.push(brainLines[0])
   return { lines, kinder: carryPct > 30 }
+}
+
+export interface TaskDuration {
+  /** median ACTUAL minutes — completion-stamp-derived where sane, else planned */
+  median: number
+  n: number
+}
+
+/** Per-task-kind medians from history: what "interview prep" REALLY takes.
+    Completed events in the trailing 8 weeks; the actual span is derived from
+    the completion timestamp when it's sane (same day, ≥5 min, within the
+    lateness cap past the plan), else the plan stands in. Only kinds seen
+    ≥3 times qualify — two data points are an anecdote, not a default. */
+export function taskDurations(events: MemoryEvent[], nowMs: number): Map<string, TaskDuration> {
+  const floor = nowMs - 56 * 24 * 60 * 60 * 1000
+  const spans = new Map<string, number[]>()
+  for (const e of events) {
+    if (e.kind !== 'completed' || e.ts < floor || e.ts > nowMs || !e.title || !e.plannedMin) continue
+    let span = e.plannedMin
+    if (e.startMin != null) {
+      const done = new Date(e.ts)
+      if (dayKey(done) === e.dayKey) {
+        const actual = done.getHours() * 60 + done.getMinutes() - e.startMin
+        if (actual >= 5 && actual <= e.plannedMin + 300) span = actual
+      }
+    }
+    const k = normTitle(e.title)
+    const arr = spans.get(k) ?? []
+    arr.push(span)
+    spans.set(k, arr)
+  }
+  const out = new Map<string, TaskDuration>()
+  for (const [k, arr] of spans) {
+    if (arr.length < 3) continue
+    const sorted = [...arr].sort((a, b) => a - b)
+    const mid = sorted.length >> 1
+    const median =
+      sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+    out.set(k, { median, n: arr.length })
+  }
+  return out
 }
 
 export interface KinderMove {

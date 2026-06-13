@@ -5,6 +5,7 @@
    explicitly in this message always wins. */
 
 import type { PrefPayload } from './types'
+import { normTitle, type TaskDuration } from './insights'
 
 /** A rule matches a block when its normalized `match` phrase appears on
     token boundaries in the normalized title (the base half, before any
@@ -52,12 +53,17 @@ export interface PlacementDefaults {
   durationMin?: number
 }
 
-/** Fill missing placement fields from matching rules. Explicit values are
-    never touched — suggest, don't seize, even against the user's own rules. */
+/** Fill missing placement fields from matching rules, then from history.
+    Explicit values are never touched — suggest, don't seize, even against
+    the user's own rules. Duration precedence: explicit > stored preference >
+    this task's real median (n≥3, threaded in as data) > the 60-min floor
+    downstream. `usual` reports a history-sized block so the reply can credit
+    it honestly. */
 export function applyPrefs<T extends PlacementDefaults>(
   spec: T,
   prefs: PrefPayload[],
-): { spec: T & PlacementDefaults; applied: PrefPayload[] } {
+  histDurations?: Map<string, TaskDuration>,
+): { spec: T & PlacementDefaults; applied: PrefPayload[]; usual: TaskDuration | null } {
   const applied: PrefPayload[] = []
   let next: T & PlacementDefaults = spec
   for (const p of prefs) {
@@ -77,7 +83,15 @@ export function applyPrefs<T extends PlacementDefaults>(
       }
     }
   }
-  return { spec: next, applied }
+  let usual: TaskDuration | null = null
+  if (next.durationMin == null && next.endMin == null) {
+    const hist = histDurations?.get(normTitle(spec.title))
+    if (hist) {
+      next = { ...next, durationMin: hist.median }
+      usual = hist
+    }
+  }
+  return { spec: next, applied, usual }
 }
 
 /** A flexibility rule overrides the fixed-time word heuristic — in either

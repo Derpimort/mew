@@ -20,7 +20,7 @@ import {
 import * as week from '../domain/week'
 import { liveNow } from '../domain/liveNow'
 import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory'
-import { computeInsights, proposeKinderPlan } from '../domain/insights'
+import { computeInsights, proposeKinderPlan, taskDurations, type TaskDuration } from '../domain/insights'
 import { pixieInputs } from '../domain/pixie'
 import { dayShape } from '../domain/dayShape'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
@@ -593,6 +593,16 @@ export const useMew = create<MewState>((set, get) => {
      Whatever model is talking, these strings are the ground truth it must
      confirm from (and the rules/Ollama composers use them verbatim). */
 
+  /* per-kind duration medians, recomputed only when memory actually changed
+     (array identity flips on every write) — cheap, and always tick-fresh */
+  let histCache: { mem: unknown; map: Map<string, TaskDuration> } | null = null
+  function histDurations(s: MewState): Map<string, TaskDuration> {
+    if (histCache?.mem !== s.memory) {
+      histCache = { mem: s.memory, map: taskDurations(s.memory, s.nowMs) }
+    }
+    return histCache.map
+  }
+
   function execPlan(places: PlaceSpec[], frees: FreeSpec[]): string {
     const s = get()
     const now = new Date(s.nowMs)
@@ -602,13 +612,15 @@ export const useMew = create<MewState>((set, get) => {
     let placedDeep: Block | null = null
 
     const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
+    const hist = histDurations(s)
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
       /* the standing rulebook fills what the user left open this message —
          their explicit times/durations always win over their own rules */
-      const { spec: prefd, applied } = applyPrefs(
+      const { spec: prefd, applied, usual } = applyPrefs(
         { title: p.title, startMin: p.startMin, durationMin: p.durationMin },
         prefs,
+        hist,
       )
       /* short rests are pacing, not sacred rest: leave them unprotected so a
          reshape can absorb them instead of tripping protect-rest every move */
@@ -645,7 +657,7 @@ export const useMew = create<MewState>((set, get) => {
       blocks = [...blocks, placed]
       if (week.isDeep(placed)) placedDeep = placed
       lines.push(
-        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`,
+        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`,
       )
     }
     for (const f of frees) {

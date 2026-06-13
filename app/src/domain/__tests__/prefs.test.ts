@@ -78,3 +78,46 @@ describe('flexOverride — the user’s rule outranks the word heuristic', () =>
     expect(flexOverride('Team sync', [])).toBeNull()
   })
 })
+
+describe('duration precedence — explicit > rule > your usual > the floor', () => {
+  const HIST = new Map([['interview prep', { median: 40, n: 3 }]])
+  const durPref = pref({ kind: 'duration-default', match: 'interview prep', value: '45m' })
+
+  it('level 1 — an explicit duration silences everything below it', () => {
+    const r = applyPrefs({ title: 'Interview prep', durationMin: 90 }, [durPref], HIST)
+    expect(r.spec.durationMin).toBe(90)
+    expect(r.applied).toHaveLength(0)
+    expect(r.usual).toBeNull()
+  })
+
+  it('level 2 — the stored rule outranks history', () => {
+    const r = applyPrefs({ title: 'Interview prep' }, [durPref], HIST)
+    expect(r.spec.durationMin).toBe(45)
+    expect(r.applied).toEqual([durPref])
+    expect(r.usual).toBeNull()
+  })
+
+  it('level 3 — with no rule, the real median sizes the block and is credited', () => {
+    const r = applyPrefs({ title: 'Interview prep — Mira' }, [], HIST)
+    expect(r.spec.durationMin).toBe(40)
+    expect(r.usual).toEqual({ median: 40, n: 3 })
+  })
+
+  it('level 4 — no signal anywhere leaves the field for the 60-min floor downstream', () => {
+    const r = applyPrefs({ title: 'Brand new thing' }, [], HIST)
+    expect(r.spec.durationMin).toBeUndefined()
+    expect(r.usual).toBeNull()
+  })
+
+  it('an explicit end time is an explicit duration — history stays out', () => {
+    const r = applyPrefs({ title: 'Interview prep', startMin: 540, endMin: 600 }, [], HIST)
+    expect(r.spec.durationMin).toBeUndefined()
+    expect(r.usual).toBeNull()
+  })
+
+  it('n<3 means no map entry means clean fall-through', () => {
+    const r = applyPrefs({ title: 'Interview prep' }, [], new Map())
+    expect(r.spec.durationMin).toBeUndefined()
+    expect(r.usual).toBeNull()
+  })
+})

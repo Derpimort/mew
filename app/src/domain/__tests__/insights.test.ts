@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, proposeKinderPlan, weekReview } from '../insights'
+import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, proposeKinderPlan, taskDurations, weekReview } from '../insights'
 import { aggregates, consolidate } from '../memory'
 import { findFreeSlot } from '../week'
 import type { Block, MemoryEvent } from '../types'
@@ -413,5 +413,59 @@ describe('weekReview — last week, one honest line', () => {
     const r = weekReview(events, LAST, ['debrief: tuesday ran hot', 'debrief: wednesday calm'])
     expect(r.lines).toHaveLength(2)
     expect(r.lines[1]).toBe('debrief: tuesday ran hot')
+  })
+})
+
+describe('taskDurations — what this task REALLY takes', () => {
+  const NOW = TODAY.getTime()
+  /* a completion whose stamp implies the actual span */
+  const took = (daysAgo: number, title: string, startMin: number, actualMin: number, plannedMin = 60): MemoryEvent => {
+    const day = addDaysKey(todayKey, -daysAgo)
+    const d = new Date(day + 'T00:00:00')
+    d.setMinutes(startMin + actualMin)
+    return { id: `t${daysAgo}-${actualMin}`, ts: d.getTime(), kind: 'completed', dayKey: day, title, startMin, plannedMin }
+  }
+
+  it('three sane completions yield the actual median, not the plan', () => {
+    const events = [
+      took(2, 'Interview prep', 9 * 60, 40),
+      took(5, 'Interview prep', 9 * 60, 35),
+      took(9, 'Interview prep', 9 * 60, 50),
+    ]
+    expect(taskDurations(events, NOW).get('interview prep')).toEqual({ median: 40, n: 3 })
+  })
+
+  it('two data points are an anecdote — n<3 never qualifies', () => {
+    const events = [took(2, 'Prep', 9 * 60, 40), took(5, 'Prep', 9 * 60, 40)]
+    expect(taskDurations(events, NOW).has('prep')).toBe(false)
+  })
+
+  it('an insane stamp falls back to the plan (checked off at night ≠ a 9-hour task)', () => {
+    const events = [
+      took(2, 'Prep', 9 * 60, 40),
+      took(5, 'Prep', 9 * 60, 40),
+      took(9, 'Prep', 9 * 60, 9 * 60, 45), // +540 past a 45m plan → plan stands in
+    ]
+    expect(taskDurations(events, NOW).get('prep')).toEqual({ median: 40, n: 3 })
+  })
+
+  it('the 8-week window holds, and even counts average the middles', () => {
+    const events = [
+      took(2, 'Prep', 9 * 60, 30),
+      took(5, 'Prep', 9 * 60, 40),
+      took(9, 'Prep', 9 * 60, 50),
+      took(12, 'Prep', 9 * 60, 60),
+      took(60, 'Prep', 9 * 60, 200), // aged out
+    ]
+    expect(taskDurations(events, NOW).get('prep')).toEqual({ median: 45, n: 4 })
+  })
+
+  it('the em-dash detail half never splits the kind', () => {
+    const events = [
+      took(2, 'Interview prep — Mira', 9 * 60, 40),
+      took(5, 'Interview prep — panel', 9 * 60, 40),
+      took(9, 'Interview prep', 9 * 60, 40),
+    ]
+    expect(taskDurations(events, NOW).get('interview prep')?.n).toBe(3)
   })
 })
