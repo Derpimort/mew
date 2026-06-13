@@ -5,30 +5,10 @@ import Dexie, { type EntityTable } from 'dexie'
 import type { Block, Capture, ChatMessage, MemoryEvent, Settings } from '../domain/types'
 import type { SyncEntry } from './calendar/types'
 
-export interface PersistedState {
-  blocks: Block[]
-  captures: Capture[]
-  chat: ChatMessage[]
-  memory: MemoryEvent[]
-  settings: Settings | null
-}
-
-export interface StoragePort {
-  load(): Promise<PersistedState>
-  putBlocks(blocks: Block[]): Promise<void>
-  deleteBlocks(ids: string[]): Promise<void>
-  putCaptures(captures: Capture[]): Promise<void>
-  putChat(msgs: ChatMessage[]): Promise<void>
-  putMemory(events: MemoryEvent[]): Promise<void>
-  deleteMemory(ids: string[]): Promise<void>
-  putSettings(s: Settings): Promise<void>
-  loadSyncMap(): Promise<SyncEntry[]>
-  saveSyncMap(put: SyncEntry[], removeIds: string[]): Promise<void>
-  deleteSyncForCalendar(calId: string): Promise<void>
-  exportJson(): Promise<string>
-  importJson(json: string): Promise<void>
-  wipe(): Promise<void>
-}
+/* The contract now lives in storage-port.ts (Dexie-free, so MEW Core can
+   import it). Re-exported here so existing callers are unchanged. */
+import type { PersistedState, StoragePort } from './storage-port'
+export type { PersistedState, StoragePort } from './storage-port'
 
 class MewDb extends Dexie {
   blocks!: EntityTable<Block, 'id'>
