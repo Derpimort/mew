@@ -77,7 +77,7 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
         for (const call of msg.tool_calls) {
           let out: string
           try {
-            out = runTool(call.function.name, JSON.parse(call.function.arguments || '{}'), exec)
+            out = await runTool(call.function.name, JSON.parse(call.function.arguments || '{}'), exec)
           } catch (e) {
             out = `error: ${e instanceof Error ? e.message : 'tool failed'}`
           }

@@ -53,6 +53,37 @@ export function overlaps(aStart: number, aEnd: number, bStart: number, bEnd: num
   return aStart < bEnd && bStart < aEnd
 }
 
+export interface Rollup {
+  plannedMin: number
+  doneMin: number
+  done: number
+  open: number
+  rolled: number
+}
+
+/** How much the matching blocks have eaten across `dayKeys` — real sums from
+    the live week, never an estimate. Optional blocks hold no time and stay
+    out, same as load math. */
+export function rollup(blocks: Block[], dayKeys: string[], match: (b: Block) => boolean): Rollup {
+  const days = new Set(dayKeys)
+  const out: Rollup = { plannedMin: 0, doneMin: 0, done: 0, open: 0, rolled: 0 }
+  for (const b of blocks) {
+    if (!days.has(b.dayKey) || b.optional || !match(b)) continue
+    if (b.status === 'rolled') {
+      out.rolled++
+      continue // a rolled block's time moved with it — counting both doubles it
+    }
+    out.plannedMin += duration(b)
+    if (b.status === 'done') {
+      out.done++
+      out.doneMin += duration(b)
+    } else {
+      out.open++
+    }
+  }
+  return out
+}
+
 /** First free slot of `durationMin` on `dayKey` within [windowStart, windowEnd). */
 /* Fixed-time blocks own their clock slot — interviews, calls, meetings, and
    anything from a connected calendar. Tasks are flexible: they can shift or

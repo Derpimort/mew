@@ -100,7 +100,7 @@ export function createAnthropicAdapter(apiKey: string): ModelPort {
           if (block.type !== 'tool_use') continue
           let out: string
           try {
-            out = runTool(block.name, block.input, exec)
+            out = await runTool(block.name, block.input, exec)
           } catch (e) {
             results.push({
               type: 'tool_result',

@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage } from '../../../domain/types'
-import { blockEventPage, chatBatchPage, makeChatBatcher, parsePrefBody, peopleFrom, prefPage, slugify, taskSlug } from '../senses'
+import { blockEventPage, chatBatchPage, explicitProjectFrom, knownProjectsFrom, makeChatBatcher, parsePrefBody, peopleFrom, prefPage, projectsFrom, slugify, taskSlug } from '../senses'
 
 const D = '2026-06-09'
 
@@ -100,6 +100,47 @@ describe('prefPage — structured, upsert-by-construction', () => {
     expect(parsePrefBody('```json\n{broken\n```')).toBeNull()
   })
 })
+
+describe('project extraction', () => {
+  it('explicit "for <Proper Noun>" at the title tail declares a project', () => {
+    expect(explicitProjectFrom('Pitch deck for Spicanova')).toBe('spicanova')
+    expect(explicitProjectFrom('Edge cases for Kite London')).toBe('kite-london')
+    expect(explicitProjectFrom('Slides for 11Labs')).toBe('11labs')
+  })
+
+  it('lowercase phrases and bare titles are not projects — deliberate patterns only', () => {
+    expect(explicitProjectFrom('block time for deep work')).toBeNull()
+    expect(explicitProjectFrom('order lunch for the team')).toBeNull()
+    expect(explicitProjectFrom('Q3 deck — investor narrative')).toBeNull()
+  })
+
+  it('knownProjectsFrom collects declared projects, first display name wins', () => {
+    const known = knownProjectsFrom([
+      'Pitch deck for Spicanova',
+      'API design for Spicanova',
+      'Walk',
+      'Edge cases for Kite London',
+    ])
+    expect([...known.keys()].sort()).toEqual(['kite-london', 'spicanova'])
+    expect(known.get('spicanova')).toBe('Spicanova')
+  })
+
+  it('projectsFrom links the explicit declaration plus known-project fragments', () => {
+    const known = ['spicanova']
+    expect(projectsFrom('Pitch deck for Spicanova', known)).toEqual(['project/spicanova'])
+    /* fragment match: once spicanova is known, any title carrying it links */
+    expect(projectsFrom('Spicanova standup notes', known)).toEqual(['project/spicanova'])
+    expect(projectsFrom('Inbox sweep', known)).toEqual([])
+  })
+
+  it('blockEventPage carries project links beside people and the week', () => {
+    const b = mk({ title: 'Pitch deck for Spicanova', startMin: 9 * 60, endMin: 10 * 60 })
+    const page = blockEventPage(b, 'completed', D, 10 * 60, ['spicanova'])
+    expect(page.links).toContain('project/spicanova')
+    expect(page.links).toContain(`week/${D}`)
+  })
+})
+
 
 describe('chatBatchPage', () => {
   it('keeps user/mew turns, drops nudges, timeline-only (no body to clobber)', () => {

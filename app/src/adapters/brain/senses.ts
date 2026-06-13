@@ -52,11 +52,56 @@ export function taskSlug(title: string): string {
   return `task/${slugify(title.split('—')[0].trim())}`
 }
 
+/* Projects follow the people rule: deliberate patterns only. Explicit
+   naming ("for Kite London" — a proper-noun run after 'for') is how a
+   project enters the graph; once known, a title fragment is enough to
+   keep linking it. Lowercase "for deep work" stays a phrase, not a project. */
+const PROJECT_EXPLICIT = /\bfor\s+((?:[A-Z][\w&'-]*|[0-9][\w&'-]*)(?:\s+(?:[A-Z][\w&'-]*|[0-9][\w&'-]*)){0,3})\s*$/
+
+/** The explicit project name a title declares, if any — slug form. */
+export function explicitProjectFrom(title: string): string | null {
+  const m = title.match(PROJECT_EXPLICIT)
+  return m ? slugify(m[1]) : null
+}
+
+/** Every project name the week's titles have declared, slug → first-seen
+    display name. The graph's "existing project pages", derivable locally. */
+export function knownProjectsFrom(titles: string[]): Map<string, string> {
+  const out = new Map<string, string>()
+  for (const t of titles) {
+    const m = t.match(PROJECT_EXPLICIT)
+    if (m) {
+      const slug = slugify(m[1])
+      if (slug && !out.has(slug)) out.set(slug, m[1])
+    }
+  }
+  return out
+}
+
+/** project/ links for a title: its explicit declaration, plus any known
+    project whose name the title carries as a fragment. */
+export function projectsFrom(title: string, known: Iterable<string> = []): string[] {
+  const out = new Set<string>()
+  const explicit = explicitProjectFrom(title)
+  if (explicit) out.add(`project/${explicit}`)
+  const titleSlug = slugify(title)
+  for (const k of known) {
+    if (k && titleSlug.includes(k)) out.add(`project/${k}`)
+  }
+  return [...out]
+}
+
 export type BlockEventKind = 'completed' | 'rolled' | 'interrupted'
 
 /** A block event becomes: the day's timeline entry + an upserted task page
     linked to the day and any people the title names. */
-export function blockEventPage(b: Block, kind: BlockEventKind, dayKey: string, atMin: number): BrainPage {
+export function blockEventPage(
+  b: Block,
+  kind: BlockEventKind,
+  dayKey: string,
+  atMin: number,
+  knownProjects: Iterable<string> = [],
+): BrainPage {
   const title = b.title.split('—')[0].trim()
   const dur = b.endMin - b.startMin
   const deep = b.tag === 'work' && dur >= 60
@@ -67,12 +112,13 @@ export function blockEventPage(b: Block, kind: BlockEventKind, dayKey: string, a
   const ranOver = overMin >= 10 ? ` · ran over +${overMin}m` : ''
   const summary = `${fmtTime(atMin)} ${kind} — ${title} (${dur}m${deep ? ', deep' : ''})${ranOver}`
   const people = peopleFrom(b.title)
+  const projects = projectsFrom(b.title, knownProjects)
   return {
     slug: taskSlug(b.title),
     type: 'task',
     tags: [b.tag, kind],
     body: `# ${title}\n\nlast: ${kind} on ${dayKey} · planned ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} (${dur}m)${ranOver}\n`,
-    links: [`week/${dayKey}`, ...people],
+    links: [`week/${dayKey}`, ...people, ...projects],
     timeline: [{ slug: `week/${dayKey}`, date: dayKey, summary }],
   }
 }

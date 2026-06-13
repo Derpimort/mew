@@ -18,6 +18,7 @@ import {
   place,
   plannedDeepMin,
   roll,
+  rollup,
 } from '../week'
 import type { Block, BlockStatus } from '../types'
 
@@ -313,5 +314,41 @@ describe('flexibility prefs override the fixed-time heuristic', () => {
     const tentative = mk({ id: 'sy', title: 'Weekly sync', optional: true, startMin: 13 * 60, endMin: 14 * 60 })
     expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60).map((b) => b.id)).toEqual(['sy'])
     expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60, undefined, movableSyncs)).toHaveLength(0)
+  })
+})
+
+describe('rollup — real sums for "how much has X eaten"', () => {
+  const days = ['2026-06-08', D, '2026-06-10']
+  const spica = (over: Partial<Block>) => mk({ title: 'Deck for Spicanova', ...over })
+
+  it('sums planned and done minutes over the given days, counting statuses', () => {
+    const blocks = [
+      spica({ startMin: 9 * 60, endMin: 10 * 60, status: 'done' }), // 60 done
+      spica({ startMin: 11 * 60, endMin: 12 * 60 + 30 }), // 90 open
+      spica({ dayKey: '2026-06-10', startMin: 9 * 60, endMin: 9 * 60 + 45 }), // 45 open
+      mk({ title: 'Inbox sweep' }), // different subject — out by matcher
+    ]
+    const r = rollup(blocks, days, (b) => b.title.includes('Spicanova'))
+    expect(r).toEqual({ plannedMin: 195, doneMin: 60, done: 1, open: 2, rolled: 0 })
+  })
+
+  it('rolled blocks count once as a fact, never as time (the moved copy holds it)', () => {
+    const blocks = [
+      spica({ status: 'rolled' }),
+      spica({ dayKey: '2026-06-10', startMin: 9 * 60, endMin: 10 * 60 }), // the landed copy
+    ]
+    const r = rollup(blocks, days, (b) => b.title.includes('Spicanova'))
+    expect(r.plannedMin).toBe(60)
+    expect(r.rolled).toBe(1)
+  })
+
+  it('optional blocks hold no time; days outside the window stay out', () => {
+    const blocks = [
+      spica({ optional: true }),
+      spica({ dayKey: '2026-06-15', startMin: 9 * 60, endMin: 11 * 60 }), // next week
+    ]
+    const r = rollup(blocks, days, () => true)
+    expect(r.plannedMin).toBe(0)
+    expect(r.open).toBe(0)
   })
 })

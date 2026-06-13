@@ -57,6 +57,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('remember')
       return `Remembered — ${pref.match} ${pref.value}.`
     }),
+    queryBrain: vi.fn(async (q: string) => {
+      calls.push('queryBrain')
+      return `Spicanova this week: 2.5h across 2 blocks. (asked: ${q})`
+    }),
     clear: vi.fn((scope) => {
       calls.push('clear')
       return `Cleared ${scope}.`
@@ -120,9 +124,9 @@ describe('rules adapter — converse', () => {
 })
 
 describe('anthropic tool dispatch — runTool', () => {
-  it('sanitizes plan_blocks input (clamps, defaults, drops junk)', () => {
+  it('sanitizes plan_blocks input (clamps, defaults, drops junk)', async () => {
     const exec = mockExec()
-    runTool(
+    await runTool(
       'plan_blocks',
       {
         places: [
@@ -140,34 +144,39 @@ describe('anthropic tool dispatch — runTool', () => {
     expect(frees[0]).toMatchObject({ dayOffset: 3 })
   })
 
-  it('routes each tool to its executor and reports unknown tools without throwing', () => {
+  it('routes each tool to its executor and reports unknown tools without throwing', async () => {
     const exec = mockExec()
-    expect(runTool('complete_task', { query: 'deck' }, exec)).toBe('Marked deck done.')
-    expect(runTool('move_task', { query: 'deck', toDayOffset: 2 }, exec)).toBe('Moved deck.')
-    expect(runTool('capture_intention', { title: 'call the bank' }, exec)).toBe('Captured "call the bank".')
-    expect(runTool('edit_block', { query: 'prod release', durationMin: 45 }, exec)).toBe(
+    expect(await runTool('complete_task', { query: 'deck' }, exec)).toBe('Marked deck done.')
+    expect(await runTool('move_task', { query: 'deck', toDayOffset: 2 }, exec)).toBe('Moved deck.')
+    expect(await runTool('capture_intention', { title: 'call the bank' }, exec)).toBe('Captured "call the bank".')
+    expect(await runTool('edit_block', { query: 'prod release', durationMin: 45 }, exec)).toBe(
       'Updated prod release.',
     )
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
       'prod release',
       { durationMin: 45 },
     ])
-    expect(runTool('remove_blocks', { query: 'prod release' }, exec)).toBe('Removed prod release.')
-    expect(runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
-    expect(runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
+    expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe('Removed prod release.')
+    expect(await runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
+    expect(await runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
       'Slot 45m day 0 [-,1020].',
     )
-    expect(runTool('clear_blocks', { scope: 'week' }, exec)).toBe('Cleared week.')
-    expect(runTool('clear_blocks', { scope: 'junk' }, exec)).toBe('Cleared upcoming.')
-    expect(runTool('nope', {}, exec)).toMatch(/unknown tool/)
-    expect(runTool('plan_blocks', {}, exec)).toMatch(/nothing to place/)
+    expect(await runTool('clear_blocks', { scope: 'week' }, exec)).toBe('Cleared week.')
+    expect(await runTool('clear_blocks', { scope: 'junk' }, exec)).toBe('Cleared upcoming.')
+    expect(await runTool('nope', {}, exec)).toMatch(/unknown tool/)
+    expect(await runTool('query_brain', { question: 'how much has spicanova eaten' }, exec)).toContain(
+      'Spicanova this week',
+    )
+    expect(exec.calls).toContain('queryBrain')
+    expect(await runTool('query_brain', { question: '  ' }, exec)).toMatch(/nothing to look up/)
+    expect(await runTool('plan_blocks', {}, exec)).toMatch(/nothing to place/)
   })
 })
 
 describe('remember rides the tool registry', () => {
-  it('passes the structured rule through to the executor', () => {
+  it('passes the structured rule through to the executor', async () => {
     const exec = mockExec()
-    const out = runTool(
+    const out = await runTool(
       'remember',
       { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' },
       exec,
@@ -177,18 +186,18 @@ describe('remember rides the tool registry', () => {
     expect(pref).toEqual({ kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' })
   })
 
-  it('an unknown kind degrades to fact; a subject-less rule is refused', () => {
+  it('an unknown kind degrades to fact; a subject-less rule is refused', async () => {
     const exec = mockExec()
-    runTool('remember', { kind: 'sneaky', match: 'gym', value: 'x', stated: 's' }, exec)
+    await runTool('remember', { kind: 'sneaky', match: 'gym', value: 'x', stated: 's' }, exec)
     expect((exec.remember as ReturnType<typeof vi.fn>).mock.calls[0][0].kind).toBe('fact')
-    expect(runTool('remember', { match: ' ', value: '' }, exec)).toMatch(/nothing to remember/)
+    expect(await runTool('remember', { match: ' ', value: '' }, exec)).toMatch(/nothing to remember/)
   })
 })
 
 describe('attention + due ride the tool registry', () => {
-  it('plan_blocks passes attention/dueMin through to the executor as attention/due', () => {
+  it('plan_blocks passes attention/dueMin through to the executor as attention/due', async () => {
     const exec = mockExec()
-    runTool(
+    await runTool(
       'plan_blocks',
       { places: [{ title: 'swap iphone', tag: 'work', dayOffset: 0, durationMin: 180, attention: 'background', dueMin: 780 }] },
       exec,
@@ -197,16 +206,16 @@ describe('attention + due ride the tool registry', () => {
     expect(places[0]).toMatchObject({ title: 'swap iphone', attention: 'background', due: 780 })
   })
 
-  it('an unknown attention value is dropped, not trusted', () => {
+  it('an unknown attention value is dropped, not trusted', async () => {
     const exec = mockExec()
-    runTool('plan_blocks', { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] }, exec)
+    await runTool('plan_blocks', { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] }, exec)
     const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0].attention).toBeUndefined()
   })
 
-  it('edit_block carries the demote-to-background and the due patch', () => {
+  it('edit_block carries the demote-to-background and the due patch', async () => {
     const exec = mockExec()
-    runTool('edit_block', { query: 'restore', attention: 'background', dueMin: 780 }, exec)
+    await runTool('edit_block', { query: 'restore', attention: 'background', dueMin: 780 }, exec)
     const [q, patch] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(q).toBe('restore')
     expect(patch).toMatchObject({ attention: 'background', due: 780 })

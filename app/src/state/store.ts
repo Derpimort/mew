@@ -15,6 +15,7 @@ import {
   minOfDay,
   spell,
   uid,
+  weekKeys,
 } from '../domain/time'
 import * as week from '../domain/week'
 import { liveNow } from '../domain/liveNow'
@@ -28,7 +29,7 @@ import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
-import { blockEventPage, chatBatchPage, debriefPage, makeChatBatcher, peopleFrom, prefPage } from '../adapters/brain/senses'
+import { blockEventPage, chatBatchPage, debriefPage, knownProjectsFrom, makeChatBatcher, peopleFrom, prefPage, slugify } from '../adapters/brain/senses'
 import { applyPrefs } from '../domain/prefs'
 import {
   applyUpdate,
@@ -157,6 +158,9 @@ export interface MewState {
   activity(): void
   interruption(): void
   speak(text: string): Promise<void>
+  /** Read-only history answer: real sums from the live week + brain recall
+      color. Never mutates — chat is where the reply lands, via the tool. */
+  queryBrain(question: string): Promise<string>
   toggleComplete(blockId: string): void
   nudgeAction(msgId: string, actionId: string): void
   focusDay(key: string | null): void
@@ -802,6 +806,58 @@ export const useMew = create<MewState>((set, get) => {
     return `Remembered — ${pref.match} ${pref.value}.`
   }
 
+  /** History/entity answers: the live week supplies the NUMBERS (rollup over
+      real blocks — never an estimate), the brain supplies citable color. The
+      week of the question is this week; "eaten" means held clock time. The
+      subject is matched as a title fragment, so projects, tasks, and people
+      all answer — and a name only ever spoken to the keyless floor (which
+      lowercases titles) still resolves. */
+  async function execQueryBrain(question: string): Promise<string> {
+    const s = get()
+    const known = knownProjectsFrom(s.blocks.map((b) => b.title))
+    const qSlug = `-${slugify(question)}-`
+    /* subject: a declared project named in the question, else the noun the
+       question's own shape points at ("how much has X eaten/taken") */
+    const projectHit = [...known.entries()].find(([slug]) => qSlug.includes(`-${slug}-`))
+    const asked =
+      question.match(/\b(?:has|have|did)\s+(.+?)\s+(?:eaten|taken|cost|consumed|used)\b/i)?.[1] ??
+      question.match(/\b(?:time|much|long)\s+(?:on|for|with)\s+(.+?)(?:\s+this\s+week|[?.!]|$)/i)?.[1] ??
+      null
+    const slug = projectHit?.[0] ?? (asked ? slugify(asked) : null)
+    const name = projectHit?.[1] ?? asked?.trim() ?? null
+
+    /* recall rides along when a brain is connected — capped, optional-path */
+    let recall: string[] = []
+    if (s.settings.brainEnabled) {
+      recall = await Promise.race([
+        brain.recall(question, { limit: 3 }),
+        new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1200)),
+      ]).catch(() => [])
+    }
+
+    if (slug && name) {
+      const days = weekKeys(new Date(s.nowMs))
+      const r = week.rollup(s.blocks, days, (b) => slugify(b.title).includes(slug))
+      if (r.plannedMin > 0 || r.rolled > 0) {
+        const h = (min: number) =>
+          min % 60 === 0 ? `${min / 60}h` : `${Math.round((min / 60) * 10) / 10}h`
+        const parts = [
+          `${name} this week: ${h(r.plannedMin)} across ${r.done + r.open} block${r.done + r.open === 1 ? '' : 's'}`,
+          `${h(r.doneMin)} done, ${h(r.plannedMin - r.doneMin)} still open`,
+        ]
+        if (r.rolled) parts.push(`${r.rolled} rolled forward`)
+        const lines = recall.length ? `\n${recall.join('\n')}` : ''
+        return `${parts.join(' · ')}.${lines}`
+      }
+    }
+
+    /* no local numbers — recall may still know it; absent both, say so honestly */
+    if (recall.length) return recall.join('\n')
+    return `I can't see ${name ?? 'that'} yet — nothing in this week's blocks${
+      s.settings.brainEnabled ? ' or the brain' : ''
+    } mentions it.`
+  }
+
   function execRemove(query: string): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -976,6 +1032,10 @@ export const useMew = create<MewState>((set, get) => {
     lastSyncAt: 0,
     syncError: null,
 
+    queryBrain(question: string) {
+      return execQueryBrain(question)
+    },
+
     async hydrate() {
       subscribeUpdateOffers()
       const loaded = await storage.load()
@@ -1135,6 +1195,7 @@ export const useMew = create<MewState>((set, get) => {
         },
         analyze: (d) => execAnalyze(d), // read-only: not an action
         findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only
+        queryBrain: (q) => execQueryBrain(q), // read-only
         remember: (pref) => {
           acted = true
           return execRemember(pref)
@@ -1239,7 +1300,9 @@ export const useMew = create<MewState>((set, get) => {
       if (target.status !== 'open') return
       const nowMs = nowFn()
       setBlocks(week.complete(s.blocks, blockId, nowMs))
-      void brain.ingest(blockEventPage(target, 'completed', target.dayKey, minOfDay(new Date(nowMs))))
+      void brain.ingest(
+        blockEventPage(target, 'completed', target.dayKey, minOfDay(new Date(nowMs)), knownProjectsFrom(s.blocks.map((b) => b.title)).keys()),
+      )
       logMemory({
         kind: 'completed',
         dayKey: target.dayKey,
@@ -1365,7 +1428,9 @@ export const useMew = create<MewState>((set, get) => {
           if (target && target.status === 'open') {
             const { blocks } = week.roll(s.blocks, id, toKey, toStart)
             setBlocks(blocks)
-            void brain.ingest(blockEventPage(target, 'rolled', target.dayKey, minOfDay(new Date(s.nowMs))))
+            void brain.ingest(
+              blockEventPage(target, 'rolled', target.dayKey, minOfDay(new Date(s.nowMs)), knownProjectsFrom(s.blocks.map((b) => b.title)).keys()),
+            )
             logMemory({
               kind: 'rolled',
               dayKey: target.dayKey,
@@ -1713,7 +1778,9 @@ export const useMew = create<MewState>((set, get) => {
       }
       const { blocks: rolled, rolled: next } = week.roll(s.blocks, blockId, toKey, slot.startMin)
       setBlocks(rolled)
-      void brain.ingest(blockEventPage(target, 'interrupted', target.dayKey, nowMin))
+      void brain.ingest(
+        blockEventPage(target, 'interrupted', target.dayKey, nowMin, knownProjectsFrom(s.blocks.map((b) => b.title)).keys()),
+      )
       logMemory({ kind: 'rolled', dayKey: target.dayKey, title: target.title, plannedMin: week.duration(target), startMin: target.startMin })
       logMemory({ kind: 'interruption', dayKey: todayKey })
       const base = target.title.split('—')[0].trim()

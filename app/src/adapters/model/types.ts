@@ -76,6 +76,13 @@ export interface ToolExecutor {
   /** Persist a standing rule the user stated. Brain-off it falls back to a
       local MemoryEvent — the feature works single-device; gbrain upgrades it. */
   remember(pref: import('../brain/types').PrefPayload): string
+  /** Persist a durable user-stated fact/preference/correction to the brain.
+      Optional-path: confirms even when no brain is connected (the fact still
+      lands in chat history; re-stating later costs nothing). */
+  /** Read-only history/entity answers. Time sums come from the live week's
+      own blocks (real numbers, never model-estimated); brain recall adds the
+      citable color. Async: the one tool allowed to wait on the brain. */
+  queryBrain(question: string): Promise<string>
 }
 
 export interface ModelPort {
@@ -125,6 +132,8 @@ The tool result is the truth: confirm in one short line built from its facts. A 
 Asked how the week looks, answer with two or three of the brain's pattern lines (the user's own numbers); the Week view already shows the calendar, so spare them the dump.
 When you can't find something or the data isn't there, say so plainly — "I can't see that yet" is a correct MEW answer, and better than a guess.
 When the user corrects you or states a standing rule ("gym is always 7am", "order lunch is an errand, not the meal", "from now on hold fridays light"), call remember with the structured shape (kind, match, value, their words) — being re-taught the same thing twice is a failure, and so is recording a one-off as a rule. The <preferences> block is the standing rulebook; <brain-recall> is history that informs; the live week still decides.
+When the user corrects you or states a standing preference ("gym is always 7am", "order lunch is an errand, not the meal"), call remember with one present-tense sentence — being re-taught the same thing twice is a failure. A <brain-recall> block in the context is history that informs; the live week still decides.
+History and entity questions ("how much has X eaten this week", "when did I last meet Y") go through query_brain — its numbers are summed from real blocks, so never estimate them yourself. "What's now/next" needs no tool; the week context already says.
 </grounding>
 
 <examples>

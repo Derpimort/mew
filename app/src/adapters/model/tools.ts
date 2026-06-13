@@ -199,9 +199,22 @@ export const MEW_TOOLS: NeutralTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'query_brain',
+    description:
+      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'when did I last meet Y', 'what happened with Z'. Time sums come from the real week, recall from the brain. NOT for the live moment — the week context already says what's now and next.",
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: "The question, naming the project/person/task it's about" },
+      },
+      required: ['question'],
+      additionalProperties: false,
+    },
+  },
 ]
 
-export function runTool(name: string, input: unknown, exec: ToolExecutor): string {
+export async function runTool(name: string, input: unknown, exec: ToolExecutor): Promise<string> {
   const o = (input ?? {}) as Record<string, unknown>
   switch (name) {
     case 'plan_blocks': {
@@ -278,6 +291,11 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
         value,
         stated: String(o.stated ?? '').trim() || `${match} ${value}`,
       })
+    }
+    case 'query_brain': {
+      const question = String(o.question ?? '').trim()
+      if (!question) return 'nothing to look up — the call was empty'
+      return exec.queryBrain(question)
     }
     default:
       return `unknown tool: ${name}`

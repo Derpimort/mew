@@ -126,15 +126,17 @@ vi.mock('../../adapters/calendar/google', () => ({
 /* the brain, faked at the factory seam — scenarios count what MEW writes,
    control what the graph holds, and what it asks back (recall is behavior) */
 const brainFake = {
-  ingests: [] as { slug: string }[],
+  ingests: [] as { slug: string; links?: string[] }[],
   links: {} as Record<string, string[]>,
   recalls: [] as string[],
   recallImpl: null as null | ((q: string) => string[] | Promise<string[]>),
+  recallLines: [] as string[],
   reset() {
     this.ingests = []
     this.links = {}
     this.recalls = []
     this.recallImpl = null
+    this.recallLines = []
   },
 }
 vi.mock('../../adapters/brain/gbrainHttp', () => ({
@@ -143,8 +145,10 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
       if (cfg.enabled()) brainFake.ingests.push(page)
     },
     recall: async (q: string) => {
+      if (!cfg.enabled()) return []
       brainFake.recalls.push(q)
-      return brainFake.recallImpl ? brainFake.recallImpl(q) : []
+      if (brainFake.recallImpl) return brainFake.recallImpl(q)
+      return brainFake.recallLines
     },
     health: async () => false,
     listPrefs: async () => [],
@@ -812,6 +816,68 @@ describe('heads-up (pre-meeting recall)', () => {
     await drain()
     expect(brainFake.recalls).toHaveLength(0)
     expect(nudges('heads-up')).toHaveLength(0)
+  })
+})
+
+/* ── project rollups: history questions answered with real numbers ───── */
+
+describe('queryBrain (project rollups)', () => {
+  it('"how much has spicanova eaten this week" sums the real blocks', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 1h for prep for Spicanova today at 15')
+    await say('block 90m for deck for Spicanova tomorrow at 9')
+    const done = useMew.getState().blocks.find((b) => /prep for spicanova/i.test(b.title))!
+    useMew.getState().toggleComplete(done.id)
+    const reply = await useMew.getState().queryBrain('how much has spicanova eaten this week')
+    expect(reply).toContain('2.5h across 2 blocks')
+    expect(reply).toContain('1h done')
+    expect(reply).toContain('1.5h still open')
+    expect(reply).not.toMatch(/missed|overdue|failed/)
+  })
+
+  it('unknown project: honest "can\'t see", no invented numbers', async () => {
+    await fresh(TUE(9, 40))
+    const reply = await useMew.getState().queryBrain('how much has nebulon eaten this week')
+    expect(reply).toMatch(/can't see nebulon yet/i)
+    expect(reply).not.toMatch(/\d+h/)
+  })
+
+  it('brain on: recall lines ride under the real numbers', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.recallLines = ['project/spicanova — kickoff ran over +20m']
+    await say('block 1h for prep for Spicanova today at 15')
+    const reply = await useMew.getState().queryBrain('how much has spicanova eaten this week')
+    expect(reply).toContain('1h across 1 block')
+    expect(reply).toContain('kickoff ran over +20m')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+
+  it('completing a project-named block links its task page to the project', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    /* proper-cased title (a remote-model placement keeps user casing; the
+       keyless floor lowercases, which deliberately cannot declare projects) */
+    const b = {
+      id: 'spica-1',
+      title: 'Deck for Spicanova',
+      tag: 'work' as const,
+      dayKey: dayKey(TUE(9, 40)),
+      startMin: 15 * 60,
+      endMin: 16 * 60,
+      protected: false,
+      status: 'open' as const,
+      calendarRefs: [],
+      estimateSource: 'user' as const,
+    }
+    useMew.setState((st) => ({ blocks: [...st.blocks, b] }))
+    useMew.getState().toggleComplete('spica-1')
+    await vi.advanceTimersByTimeAsync(0)
+    const task = brainFake.ingests.find((p) => p.slug === 'task/deck-for-spicanova')
+    expect(task).toBeDefined()
+    expect(task!.links).toContain('project/spicanova')
+    await vi.advanceTimersByTimeAsync(60_000)
   })
 })
 
