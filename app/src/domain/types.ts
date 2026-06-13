@@ -64,6 +64,7 @@ export type NudgeId =
   | 'restore' // system offer (desktop backup found on first boot), not an engine nudge
   | 'start-by'
   | 'pref-drift'
+  | 'delegate'
 
 export interface NudgeAction {
   id: string

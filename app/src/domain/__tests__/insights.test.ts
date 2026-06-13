@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeInsights, prefContradictions, proposeKinderPlan } from '../insights'
+import { computeInsights, delegationCandidates, prefContradictions, proposeKinderPlan } from '../insights'
 import { aggregates, consolidate } from '../memory'
 import { findFreeSlot } from '../week'
 import type { Block, MemoryEvent } from '../types'
@@ -231,5 +231,57 @@ describe('prefContradictions — rules reality has outgrown', () => {
     const out = prefContradictions([sevenAm], lived, TODAY)
     expect(out).toHaveLength(1)
     expect(out[0]).toMatchObject({ count: 3, observed: 'starts 18:00' })
+  })
+})
+
+describe('delegationCandidates — co-occurrence with receipts', () => {
+  const NOW = TODAY.getTime()
+  const LINK = { from: 'task/doc-review', to: 'person/robin' }
+  /* 3 shared runs + 1 solo inside the window */
+  const shared = (daysAgo: number) =>
+    ev({ title: 'Doc review — Robin', dayKey: addDaysKey(todayKey, -daysAgo) })
+  const solo = (daysAgo: number) => ev({ title: 'Doc review', dayKey: addDaysKey(todayKey, -daysAgo) })
+
+  it('a pair with ≥3 shared runs, a solo run, and a graph edge is a candidate', () => {
+    const events = [shared(2), shared(7), shared(12), solo(4)]
+    const out = delegationCandidates(events, [LINK], NOW)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ taskKind: 'doc-review', person: 'robin', personLabel: 'Robin', count: 3 })
+    expect(out[0].label).toBe('doc review')
+  })
+
+  it('two shared runs are coincidence, not a pattern', () => {
+    expect(delegationCandidates([shared(2), shared(7), solo(4)], [LINK], NOW)).toHaveLength(0)
+  })
+
+  it('the 28-day window holds: old runs do not count', () => {
+    const events = [shared(2), shared(7), shared(35), solo(4)] // third run aged out
+    expect(delegationCandidates(events, [LINK], NOW)).toHaveLength(0)
+  })
+
+  it('without a solo run the thread is already theirs — no candidate', () => {
+    expect(delegationCandidates([shared(2), shared(7), shared(12)], [LINK], NOW)).toHaveLength(0)
+  })
+
+  it('no graph edge, no receipts, no candidate — counts alone are not enough', () => {
+    const events = [shared(2), shared(7), shared(12), solo(4)]
+    expect(delegationCandidates(events, [], NOW)).toHaveLength(0)
+    expect(delegationCandidates(events, [{ from: 'task/doc-review', to: 'week/2026-06-08' }], NOW)).toHaveLength(0)
+  })
+
+  it('multiple candidates sort by count, multi-word people get proper labels', () => {
+    const events = [
+      shared(2), shared(7), shared(12), solo(4),
+      ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -1) }),
+      ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -3) }),
+      ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -5) }),
+      ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -8) }),
+      ev({ title: 'Sprint notes', dayKey: addDaysKey(todayKey, -6) }),
+    ]
+    const links = [LINK, { from: 'task/sprint-notes', to: 'person/dana-k' }]
+    const out = delegationCandidates(events, links, NOW)
+    expect(out.map((c) => c.person)).toEqual(['dana-k', 'robin'])
+    expect(out[0].personLabel).toBe('Dana K')
+    expect(out[0].count).toBe(4)
   })
 })

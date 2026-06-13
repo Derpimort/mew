@@ -194,6 +194,67 @@ export function computeInsights(
    the smallest deep blocks to the lightest days; keep one afternoon free.
    Proposed, not imposed — the caller renders it and applies only on accept. */
 
+export interface DelegationCandidate {
+  /** normalized task kind (slug form, matches the graph's task/ pages) */
+  taskKind: string
+  /** display form, from the live titles */
+  label: string
+  /** person slug (matches person/ pages) */
+  person: string
+  personLabel: string
+  count: number
+}
+
+/** Recurring task×person co-occurrence with receipts. A candidate needs all
+    three: the pair ran ≥3 times in the trailing 28 days, the task kind is
+    also YOURS (it appears without that person — shared, not theirs already),
+    and the graph holds the task→person edge (links are the receipts; no
+    brain, no links, no candidates). Links arrive as data — the store fetches,
+    the domain never does I/O. */
+export function delegationCandidates(
+  events: MemoryEvent[],
+  links: { from: string; to: string }[],
+  nowMs: number,
+): DelegationCandidate[] {
+  const floor = nowMs - 28 * 24 * 60 * 60 * 1000
+  const recent = events.filter(
+    (e) => e.kind === 'completed' && e.ts >= floor && e.ts <= nowMs && !!e.title,
+  )
+  if (!recent.length) return []
+  const kindSlug = (title: string) =>
+    normTitle(title)
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+
+  const out: DelegationCandidate[] = []
+  const seen = new Set<string>()
+  for (const l of links) {
+    if (!l.from.startsWith('task/') || !l.to.startsWith('person/')) continue
+    const kind = l.from.slice('task/'.length)
+    const person = l.to.slice('person/'.length)
+    const key = `${person}:${kind}`
+    if (!kind || !person || seen.has(key)) continue
+    seen.add(key)
+    const ofKind = recent.filter((e) => kindSlug(e.title!) === kind)
+    const together = ofKind.filter((e) => e.title!.toLowerCase().includes(person.replace(/-/g, ' ')) || e.title!.toLowerCase().includes(person))
+    const alsoYours = ofKind.some((e) => !together.includes(e))
+    if (together.length >= 3 && alsoYours) {
+      const personLabel = person
+        .split('-')
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(' ')
+      out.push({
+        taskKind: kind,
+        label: normTitle(together[0].title!),
+        person,
+        personLabel,
+        count: together.length,
+      })
+    }
+  }
+  return out.sort((a, b) => b.count - a.count)
+}
+
 export interface KinderMove {
   blockId: string
   title: string

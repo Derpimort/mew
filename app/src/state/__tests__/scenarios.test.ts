@@ -123,11 +123,14 @@ vi.mock('../../adapters/calendar/google', () => ({
   },
 }))
 
-/* the brain, faked at the factory seam — scenarios count what MEW writes */
+/* the brain, faked at the factory seam — scenarios count what MEW writes
+   and control what the graph holds */
 const brainFake = {
   ingests: [] as { slug: string }[],
+  links: {} as Record<string, string[]>,
   reset() {
     this.ingests = []
+    this.links = {}
   },
 }
 vi.mock('../../adapters/brain/gbrainHttp', () => ({
@@ -138,6 +141,7 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
     recall: async () => [],
     health: async () => false,
     listPrefs: async () => [],
+    links: async (slug: string) => (cfg.enabled() ? (brainFake.links[slug] ?? []) : []),
   }),
 }))
 
@@ -581,6 +585,70 @@ describe('remember (the standing rulebook)', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(brainFake.ingests.map((p) => p.slug)).toContain('pref/duration-default-standup')
     await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+})
+
+/* ── delegation: recurring task×person pairs, suggested at week-shaping ── */
+
+describe('delegate (handoff candidates)', () => {
+  const MON = (h: number, m = 0) => new Date(2026, 5, 8, h, m)
+  const drain = () => vi.advanceTimersByTimeAsync(0)
+  const seedHistory = () => {
+    const now = useMew.getState().nowMs
+    const mkEv = (daysAgo: number, title: string) => ({
+      id: `dlg-${daysAgo}-${title}`,
+      ts: now - daysAgo * 24 * 60 * 60 * 1000,
+      kind: 'completed' as const,
+      dayKey: dayKey(new Date(now - daysAgo * 24 * 60 * 60 * 1000)),
+      title,
+    })
+    useMew.setState((st) => ({
+      memory: [
+        ...st.memory,
+        mkEv(2, 'Doc review — Robin'),
+        mkEv(7, 'Doc review — Robin'),
+        mkEv(12, 'Doc review — Robin'),
+        mkEv(4, 'Doc review'),
+      ],
+    }))
+  }
+
+  it('Monday morning, brain on: the opener lands first, the handoff rides the next tick; accept → a capture', async () => {
+    await fresh(MON(9, 0))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.links['task/doc-review'] = ['person/robin', 'week/2026-06-04']
+    seedHistory()
+    at(MON(9, 1)) // first window tick: links fetch kicks off; fresh-start owns the nudge
+    await drain()
+    expect(nudges('fresh-start').length).toBeGreaterThan(0)
+    expect(nudges('delegate')).toHaveLength(0)
+
+    at(MON(9, 2)) // links cached now; the opener is cooling — delegate's turn
+    const dlg = nudges('delegate')
+    expect(dlg).toHaveLength(1)
+    expect(dlg[0].body).toContain('doc review has run with Robin three times this month')
+    expect(dlg[0].body).not.toMatch(/missed|overdue|failed/)
+
+    act(dlg[0], 'capture')
+    await drain()
+    const cap = useMew.getState().captures.find((c) => /hand the doc review thread to robin/i.test(c.title))
+    expect(cap).toBeDefined()
+    expect(cap!.status).toBe('open')
+    /* suggest, don't seize: nothing was placed or reassigned by the accept itself */
+    expect(useMew.getState().blocks.some((b) => /hand the doc review/i.test(b.title))).toBe(false)
+
+    at(MON(9, 4)) // same pair, same week — once is once
+    expect(nudges('delegate')).toHaveLength(1)
+  })
+
+  it('brain off: same history, no graph, no nudge — silent, not degraded', async () => {
+    await fresh(MON(9, 0))
+    brainFake.links['task/doc-review'] = ['person/robin']
+    seedHistory()
+    at(MON(9, 1))
+    await drain()
+    at(MON(9, 2))
+    expect(nudges('delegate')).toHaveLength(0)
   })
 })
 

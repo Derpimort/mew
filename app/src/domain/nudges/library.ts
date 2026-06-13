@@ -7,7 +7,7 @@ import type { Block, Capture, NudgeAction, NudgeId, PrefPayload } from '../types
 import type { LiveNow } from '../liveNow'
 import type { MemoryAggregates } from '../memory'
 import { heavyCarryWeeks } from '../memory'
-import { prefKey, type Insights } from '../insights'
+import { prefKey, type DelegationCandidate, type Insights } from '../insights'
 import { addDaysKey, fmtDowLong, fmtTime, spell } from '../time'
 
 export interface NudgeCtx {
@@ -47,6 +47,9 @@ export interface NudgeCtx {
   nextUp: { kind: 'block' | 'capture'; id: string; title: string; durMin: number } | null
   /* GBrain */
   insights: Insights
+  /** Recurring task×person pairs worth handing over — receipts from the
+      graph, counts from the trailing 28d. Empty when the brain is off. */
+  delegations: DelegationCandidate[]
   /** Monday=0 … Sunday=6 (fresh-start landmark check). */
   dowMon0: number
   /** A chronic roller (≥3 rolls) that currently has an open block + a starter slot. */
@@ -399,6 +402,31 @@ export const NUDGES: NudgeDef[] = [
         ],
         payload: {},
         key: c.todayKey,
+      }
+    },
+  },
+  {
+    id: 'delegate',
+    label: 'delegation',
+    tone: 'opening, collaborative',
+    cooldownMs: 6 * 24 * H, // once per candidate per week; key scopes per pair
+    /* week-shaping moments only — the same window fresh-start owns. By
+       priority it rides one tick behind fresh-start, so the opener lands
+       first and the handoff idea second. */
+    trigger: (c) =>
+      c.delegations.length > 0 &&
+      (c.justCleared != null || (c.dowMon0 === 0 && c.nowMin >= 8 * 60 && c.nowMin < 11 * 60)),
+    build: (c) => {
+      const d = c.delegations[0]
+      return {
+        body: `${d.label} has run with ${d.personLabel} ${spell(d.count)} times this month — worth handing them the thread this week?`,
+        footnote: `Managers systematically under-delegate recurring work they have already co-staffed. (Akinola et al., 2018)`,
+        actions: [
+          { id: 'capture', label: 'Capture the handoff', kind: 'primary' },
+          { id: 'later', label: 'Not now', kind: 'secondary' },
+        ],
+        payload: { taskKind: d.taskKind, label: d.label, person: d.person, personLabel: d.personLabel },
+        key: `${d.person}:${d.taskKind}`,
       }
     },
   },

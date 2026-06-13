@@ -408,6 +408,52 @@ export const useMew = create<MewState>((set, get) => {
     }
   }
 
+  /* task→person link snapshot for the delegate nudge — fetched once per
+     week, on the first tick inside the fresh-start window (the only moment
+     the nudge can use it). The engine stays pure: it reads pairs as data.
+     Brain off → never fetched → the nudge cannot exist. */
+  let brainLinks: { weekOf: string; pairs: { from: string; to: string }[] } | null = null
+  let brainLinksPending = false
+  function primeBrainLinks(s: MewState, todayKey: string, nowMin: number, now: Date) {
+    if (!s.settings.brainEnabled) return
+    const dowMon0 = (now.getDay() + 6) % 7
+    if (dowMon0 !== 0 || nowMin < 8 * 60 || nowMin >= 11 * 60) return
+    if (brainLinks?.weekOf === todayKey || brainLinksPending) return
+    /* the kinds worth asking about: trailing-28d completed work, normalized */
+    const floor = s.nowMs - 28 * 24 * 60 * 60 * 1000
+    const kinds = [
+      ...new Set(
+        s.memory
+          .filter((e) => e.kind === 'completed' && e.ts >= floor && e.title)
+          .map((e) =>
+            e.title!
+              .split('—')[0]
+              .trim()
+              .toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, ''),
+          )
+          .filter(Boolean),
+      ),
+    ].slice(0, 12)
+    if (!kinds.length) return
+    brainLinksPending = true
+    void Promise.all(
+      kinds.map(async (k) => {
+        const targets = await brain.links(`task/${k}`).catch(() => [])
+        return targets
+          .filter((t) => t.startsWith('person/'))
+          .map((t) => ({ from: `task/${k}`, to: t }))
+      }),
+    )
+      .then((nested) => {
+        brainLinks = { weekOf: todayKey, pairs: nested.flat() }
+      })
+      .finally(() => {
+        brainLinksPending = false
+      })
+  }
+
   function runTickEngine() {
     const s = get()
     const now = new Date(s.nowMs)
@@ -415,6 +461,7 @@ export const useMew = create<MewState>((set, get) => {
     const nowMin = minOfDay(now)
     const agg = aggregates(s.memory, now)
     const guardActive = s.guardDayKey === todayKey ? s.guardUntilMin : null
+    primeBrainLinks(s, todayKey, nowMin, now)
     const ctx = buildCtx(
       {
         nowMs: s.nowMs,
@@ -429,6 +476,7 @@ export const useMew = create<MewState>((set, get) => {
         guardUntilMin: guardActive,
         quietStartMin: s.settings.quietHours.startMin,
         prefs: activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
+        brainLinks: s.settings.brainEnabled ? brainLinks?.pairs : undefined,
       },
       s.engine,
     )
@@ -1542,6 +1590,16 @@ export const useMew = create<MewState>((set, get) => {
         }
         case 'pref-drift:keep':
           decline() // outcome learning stretches the 7d cooldown toward 14d
+          break
+        /* delegate suggests, never seizes: accepting creates a capture for
+           the handoff — nothing is reassigned, MEW has no one to assign to */
+        case 'delegate:capture': {
+          execCapture(`Hand the ${String(payload.label)} thread to ${String(payload.personLabel)}`)
+          accept()
+          break
+        }
+        case 'delegate:later':
+          decline()
           break
         default:
           decline()

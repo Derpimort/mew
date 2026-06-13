@@ -37,4 +37,7 @@ export interface BrainPort {
   health(): Promise<boolean>
   /** Every stored preference (tag=preference), newest first; [] on failure. */
   listPrefs(): Promise<PrefPayload[]>
+  /** Outgoing link targets of a page (slugs). Empty on any failure —
+      silence, not error. */
+  links(slug: string): Promise<string[]>
 }

@@ -246,6 +246,35 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
       }
     },
 
+    async links(slug: string): Promise<string[]> {
+      if (!cfg.enabled()) return []
+      try {
+        const rpc = await call('get_links', { slug })
+        const text =
+          (rpc as { result?: { content?: { type: string; text?: string }[] } }).result?.content?.find(
+            (c) => c.type === 'text',
+          )?.text ?? ''
+        const arr = JSON.parse(text || '[]') as unknown
+        if (!Array.isArray(arr)) return []
+        /* engine shapes vary across versions — accept strings or objects
+           carrying the target under any of its observed names */
+        return arr
+          .map((l) =>
+            typeof l === 'string'
+              ? l
+              : ((l as { to?: string; to_slug?: string; target_slug?: string; slug?: string }).to ??
+                (l as { to_slug?: string }).to_slug ??
+                (l as { target_slug?: string }).target_slug ??
+                (l as { slug?: string }).slug ??
+                ''),
+          )
+          .filter(Boolean)
+      } catch (err) {
+        warnOnce(err)
+        return []
+      }
+    },
+
     async health(): Promise<boolean> {
       if (!cfg.enabled()) return false
       try {

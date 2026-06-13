@@ -4,6 +4,7 @@ import {
   cooldownMultiplier,
   evaluateEvent,
   evaluateTick,
+  type EngineState,
   type TickInputs,
 } from '../nudges/engine'
 import type { Block, MemoryEvent } from '../types'
@@ -384,5 +385,96 @@ describe('pref-drift — the rulebook keeps up with the life it describes', () =
     expect(pd!.key).toBe('time-default:deploy')
     expect(pd!.body).toContain('deploy')
     expect(pd!.body).not.toContain('gym') // the cooling rule waits its turn; never a list
+  })
+})
+
+describe('delegate — handoff suggestions at week-shaping moments', () => {
+  const MON = '2026-06-08'
+  const NOW = Date.UTC(2026, 5, 8, 9, 0)
+  const LINKS = [{ from: 'task/doc-review', to: 'person/robin' }]
+  const mkEv = (daysAgo: number, title: string): MemoryEvent => ({
+    id: `e${daysAgo}-${title}`,
+    ts: NOW - daysAgo * 24 * 60 * 60 * 1000,
+    kind: 'completed',
+    dayKey: MON,
+    title,
+  })
+  const EVENTS = [
+    mkEv(2, 'Doc review — Robin'),
+    mkEv(7, 'Doc review — Robin'),
+    mkEv(12, 'Doc review — Robin'),
+    mkEv(4, 'Doc review'),
+  ]
+  /* fresh-start owns the first tick of the window; delegate rides behind it */
+  const freshStartCooling: EngineState = {
+    lastFired: { 'fresh-start': { ts: NOW - 60_000, key: MON } },
+    lastDriftBlockId: null,
+  }
+  const at = (over: Partial<TickInputs>, engine: EngineState = freshStartCooling) =>
+    evaluateTick(
+      buildCtx(
+        tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events: EVENTS, brainLinks: LINKS, ...over }),
+        engine,
+      ),
+    )
+
+  it('fires in the Monday window with receipts: body, actions, per-pair key', () => {
+    const fired = at({})
+    expect(fired[0]?.type).toBe('delegate')
+    expect(fired[0].body).toBe(
+      'doc review has run with Robin three times this month — worth handing them the thread this week?',
+    )
+    expect(fired[0].actions.map((a) => a.id)).toEqual(['capture', 'later'])
+    expect(fired[0].key).toBe('robin:doc-review')
+  })
+
+  it('fresh-start outranks it on the same tick — the opener lands first', () => {
+    const fired = evaluateTick(
+      buildCtx(tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events: EVENTS, brainLinks: LINKS }), fresh),
+    )
+    expect(fired[0]?.type).toBe('fresh-start')
+  })
+
+  it('outside the week-shaping window it stays quiet (Tuesday, or Monday 11:30)', () => {
+    expect(at({ todayKey: D, nowMin: 9 * 60 })).toHaveLength(0)
+    expect(at({ nowMin: 11 * 60 + 30 }).some((n) => n.type === 'delegate')).toBe(false)
+  })
+
+  it('no brain links (brain off) → the nudge cannot exist', () => {
+    expect(at({ brainLinks: undefined })).toHaveLength(0)
+  })
+
+  it('once per pair per week: same key cools, a different pair still fires', () => {
+    const cooled = at({}, {
+      lastFired: {
+        'fresh-start': { ts: NOW - 60_000, key: MON },
+        delegate: { ts: NOW - 2 * 24 * 60 * 60 * 1000, key: 'robin:doc-review' },
+      },
+      lastDriftBlockId: null,
+    })
+    expect(cooled.some((n) => n.type === 'delegate')).toBe(false)
+
+    const other = at(
+      {
+        events: [
+          ...EVENTS,
+          mkEv(1, 'Sprint notes — Dana'),
+          mkEv(3, 'Sprint notes — Dana'),
+          mkEv(5, 'Sprint notes — Dana'),
+          mkEv(6, 'Sprint notes — Dana'),
+          mkEv(8, 'Sprint notes'),
+        ],
+        brainLinks: [...LINKS, { from: 'task/sprint-notes', to: 'person/dana' }],
+      },
+      {
+        lastFired: {
+          'fresh-start': { ts: NOW - 60_000, key: MON },
+          delegate: { ts: NOW - 2 * 24 * 60 * 60 * 1000, key: 'robin:doc-review' },
+        },
+        lastDriftBlockId: null,
+      },
+    )
+    expect(other[0]?.type).toBe('delegate')
+    expect(other[0].key).toBe('dana:sprint-notes')
   })
 })

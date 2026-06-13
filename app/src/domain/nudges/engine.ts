@@ -5,7 +5,7 @@
 import type { Block, Capture, MemoryEvent, NudgeId, PrefPayload } from '../types'
 import type { MemoryAggregates } from '../memory'
 import { liveNow, type LiveNow } from '../liveNow'
-import { computeInsights, prefContradictions, prefKey } from '../insights'
+import { computeInsights, delegationCandidates, prefContradictions, prefKey } from '../insights'
 import {
   blocksForDay,
   dayEndMin,
@@ -43,6 +43,9 @@ export interface TickInputs {
   quietStartMin?: number
   /** Unplaced intentions — next-up may offer one for a reclaimed gap. */
   captures?: Capture[]
+  /** task→person edges from the brain (the store fetches; absent = brain off,
+      and the delegate nudge stays silent — no degradation theater). */
+  brainLinks?: { from: string; to: string }[]
 }
 
 /** Heaviest day in the next 3 days whose planned deep work exceeds 1.2× realistic best. */
@@ -244,6 +247,7 @@ export function buildCtx(
     justCleared: event?.justCleared ?? null,
     ...earlyFinish(t, event?.justCompleted ?? null),
     insights,
+    delegations: t.brainLinks?.length ? delegationCandidates(events, t.brainLinks, t.nowMs) : [],
     dowMon0: (fromDayKey(t.todayKey).getDay() + 6) % 7,
     stalled,
     outcomeStats,
@@ -325,6 +329,7 @@ const TICK_NUDGES: NudgeId[] = [
   'close-loop',
   'protect-rest',
   'fresh-start',
+  'delegate', // rides the same window, one tick behind the opener
   'right-size',
   'break-smaller',
   'kinder-plan',
