@@ -68,3 +68,13 @@ Notes:
   MEW has it"). Sign-in prompts appear only on the first connect.
 - If the sign-in tab is abandoned, MEW gives up after 120s and shows the
   error in Settings → Calendars.
+
+## Brain endpoints and the CSP
+
+The desktop CSP already allows `http://localhost:3131` — the local
+`gbrain serve` (and the future managed sidecar). Pointing MEW at a REMOTE
+serve (e.g. one backed by your Supabase — recipe: repo README → "One brain
+across devices") needs that origin appended to `connect-src` in
+`src-tauri/tauri.conf.json`. The Supabase origin itself is never needed —
+the app talks to your serve, your serve talks to Supabase. Runtime-
+configurable CSP origins are deliberately not a feature; edit the conf.

@@ -561,6 +561,7 @@ function PrivacyModelCard() {
   const exportData = useMew((s) => s.exportData)
   const importData = useMew((s) => s.importData)
   const [editingKey, setEditingKey] = useState(false)
+  const [editingBrainToken, setEditingBrainToken] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   /* brain health: probed when the row is live, re-probed on edits */
@@ -672,16 +673,31 @@ function PrivacyModelCard() {
                   background: brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
                 }}
               />
-              <span className="keyfield">
-                <input
-                  defaultValue={settings.brainUrl}
-                  placeholder="http://localhost:3131"
-                  onBlur={(e) => updateSettings({ brainUrl: e.target.value.trim() || 'http://localhost:3131' })}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
-                  }}
-                />
-              </span>
+              <Segc
+                options={[
+                  { id: 'sidecar', label: 'Built-in' },
+                  { id: 'endpoint', label: 'My gbrain' },
+                  { id: 'supabase', label: 'Supabase' },
+                ]}
+                value={settings.brainMode}
+                onChange={(id) => updateSettings({ brainMode: id as 'sidecar' | 'endpoint' | 'supabase' })}
+              />
+              {settings.brainMode !== 'sidecar' && (
+                <span className="keyfield">
+                  <input
+                    defaultValue={settings.brainUrl}
+                    placeholder={
+                      settings.brainMode === 'supabase'
+                        ? 'https://brain.yourdomain.dev (serve over Supabase)'
+                        : 'http://localhost:3131'
+                    }
+                    onBlur={(e) => updateSettings({ brainUrl: e.target.value.trim() || 'http://localhost:3131' })}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    }}
+                  />
+                </span>
+              )}
             </>
           )}
           <Tgl
@@ -691,6 +707,47 @@ function PrivacyModelCard() {
           />
         </span>
       </SetRow>
+      {settings.brainEnabled && settings.brainMode !== 'sidecar' && (
+        <SetRow
+          t="Serve key"
+          s="Sent only to your gbrain serve (Authorization: Bearer). Stays on this device — backups never carry it. Blank is fine for a local, unauthed serve."
+        >
+          {editingBrainToken ? (
+            <span className="keyfield">
+              <input
+                autoFocus
+                type="password"
+                placeholder="serve API key"
+                defaultValue={settings.brainToken}
+                onBlur={(e) => {
+                  updateSettings({ brainToken: e.target.value.trim() })
+                  setEditingBrainToken(false)
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                }}
+              />
+            </span>
+          ) : (
+            <button type="button" className="keyfield" onClick={() => setEditingBrainToken(true)}>
+              {settings.brainToken ? `••••••••${settings.brainToken.slice(-4)}` : 'no key (local serve)'}
+            </button>
+          )}
+        </SetRow>
+      )}
+      {settings.brainEnabled && settings.brainMode === 'supabase' && (
+        <SetRow
+          t="Your brain, your Supabase"
+          s="Opt-in: MEW talks only to YOUR gbrain serve; the serve talks to YOUR Supabase (RLS keeps it yours). One brain across web, desktop, and every agent that fills it. Recipe in the README."
+        >
+          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>docs → README · One brain</span>
+        </SetRow>
+      )}
+      {settings.brainEnabled && settings.brainMode === 'sidecar' && (
+        <SetRow t="Built-in brain" s="The desktop app manages a private brain for you — no setup. (Arrives with the desktop sidecar; until then this behaves like My gbrain.)">
+          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>desktop-managed</span>
+        </SetRow>
+      )}
       <SetRow t="Backup &amp; restore" s="One .json with your week, memory, and chat. Keys never travel — each device keeps its own.">
         <span style={{ display: 'flex', gap: 8 }}>
           <button type="button" className="keyfield" onClick={() => void downloadBackup()}>

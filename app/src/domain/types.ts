@@ -181,6 +181,9 @@ export interface Settings {
   brainEnabled: boolean
   brainUrl: string
   brainToken: string
+  /** Where the brain lives: the desktop-managed sidecar, any gbrain serve
+      you run, or a Supabase-backed serve — all the same wire contract. */
+  brainMode: 'sidecar' | 'endpoint' | 'supabase'
 }
 
 /* The Rive "PixieMachine" input contract — PRD §6. The placeholder SVG and the
@@ -254,4 +257,5 @@ export const DEFAULT_SETTINGS: Settings = {
   brainEnabled: false,
   brainUrl: 'http://localhost:3131',
   brainToken: '',
+  brainMode: 'endpoint',
 }

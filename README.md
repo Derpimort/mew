@@ -70,6 +70,49 @@ keyless — degradation is graceful by construction.
 **Docker:** multi-stage build (tests + typecheck run inside it), static bundle on
 unprivileged nginx with a strict CSP, `/healthz`, config-free image — keys never touch it.
 
+## One brain across devices (Supabase, opt-in)
+
+MEW's optional brain speaks one wire contract — BrainPort → a `gbrain serve` —
+no matter which engine keeps the memory. The hosted recipe: put the brain's engine on
+**your** Supabase project, run the serve in front of it, and point every MEW (web, desktop,
+and any agent that fills the same brain) at the same URL.
+
+Why a serve and not Supabase directly: gbrain's hybrid ranking (keyword + vector legs, RRF
+fusion, expansion) runs inside gbrain, not in SQL that PostgREST could call — a browser-direct
+client would mean reimplementing that pipeline and keeping it in lockstep. One ranking
+implementation, every engine; the serve is where it lives.
+
+```sh
+# 1. The brain's engine on your Supabase — new brain, or migrate an existing one.
+#    Uses your project's Postgres connection string (prompted, or GBRAIN_DATABASE_URL).
+gbrain init --supabase
+gbrain migrate --to supabase      # …or move an existing local (PGLite) brain
+
+# 2. The serve, with auth on. Set your own admin bootstrap token (32+ chars,
+#    [A-Za-z0-9_-]) — without the env var the serve generates one and prints it.
+export GBRAIN_ADMIN_BOOTSTRAP_TOKEN="$(head -c 32 /dev/urandom | base64 | tr -d '+/=' | head -c 48)"
+gbrain serve --http --port 3131 --public-url https://brain.yourdomain.dev
+```
+
+Then mint MEW its own key: open `https://brain.yourdomain.dev/admin`, sign in with the
+bootstrap token, and create an API key (it'll look like `gbrain_…`; revocable any time).
+In MEW: **Settings → Privacy & model → Brain → on → Supabase** — paste the serve URL and
+that key. The key is sent only to your serve, as `Authorization: Bearer`. Self-hosting the
+web build? Append the serve's origin to `connect-src` in the CSP — the comment block in
+`app/docker/security-headers.conf` shows the exact line; the desktop shell documents the
+same edit in `desktop/README.md` (*Brain endpoints and the CSP*).
+
+**Auth & RLS:** row-level security on gbrain's tables keeps other Supabase clients out of
+your rows (`gbrain doctor` verifies it) — but MEW reaches the brain *through your serve*,
+which holds the Postgres credentials. The serve's API key is the lock on that door: always
+start it with a bootstrap token you set, put HTTPS in front, and give MEW its own key. The
+Supabase URL and anon/service keys never enter MEW — the browser talks only to your serve,
+your serve talks to your Supabase.
+
+**Your brain, your Supabase — opt-in.** The brain is off by default, and off means no
+network. The serve key stays on the device that entered it and never rides in backups —
+`exportJson` strips it, like every other key.
+
 ## License
 
 [MIT](LICENSE)

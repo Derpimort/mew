@@ -838,6 +838,36 @@ describe('desktop backup & restore', () => {
   })
 })
 
+/* ── brain engine choice: three doors, one wire contract ─────────────── */
+
+describe('brain mode setting', () => {
+  it('round-trips through settings persistence with the merge-defaults backfill', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().settings.brainMode).toBe('endpoint') // the default
+    useMew.getState().updateSettings({
+      brainMode: 'supabase',
+      brainEnabled: true,
+      brainUrl: 'https://brain.example.dev',
+      brainToken: 'mew-serve-key', // the serve's API key — persists locally, never rides in backups
+    })
+    expect(useMew.getState().settings.brainMode).toBe('supabase')
+    /* a fresh hydrate from the same storage keeps the choice */
+    await useMew.getState().hydrate()
+    expect(useMew.getState().settings.brainMode).toBe('supabase')
+    expect(useMew.getState().settings.brainUrl).toBe('https://brain.example.dev')
+    expect(useMew.getState().settings.brainToken).toBe('mew-serve-key')
+    await vi.advanceTimersByTimeAsync(60_000) // drain any batcher window
+  })
+
+  it('mode is presentation; placement is mode-independent and never waits on the brain', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainMode: 'supabase', brainEnabled: true })
+    await say('block 30m for inbox today at 15')
+    expect(useMew.getState().blocks.some((b) => /inbox/i.test(b.title))).toBe(true) // the week never blocks
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+})
+
 /* ── preferences change mechanics, not just prose ────────────────────── */
 
 describe('prefs applied at placement', () => {
