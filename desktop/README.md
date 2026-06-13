@@ -11,7 +11,44 @@ pnpm build    # production installers (CI builds the real artifacts per-OS)
 
 Storage: IndexedDB lives in the app-scoped webview profile. Phase 2 adds
 auto-backup to ~/Documents/MEW via the FS plugin; phase 3 the Google OAuth
-loopback; phase 4 the release CI + updater.
+loopback; phase 4 the release CI + updater; phase 5 the built-in brain.
+
+## Built-in brain (gbrain sidecar)
+
+The installer ships a bun-compiled `gbrain` binary as a Tauri sidecar — a
+user who has never heard of bun gets the full brain from one installer, no
+keys, no setup. The shell owns the whole lifecycle:
+
+- **First run**: `gbrain init --pglite --non-interactive --no-embedding`
+  against an app-managed brain at `app_data_dir()/brain` (PGLite, keyless —
+  recall rides keyword search, the adapter's existing fallback).
+- **Every launch**: mint a fresh API token (`auth revoke` + `auth create` —
+  self-healing, no plaintext secret ever touches disk), pick a free loopback
+  port, `gbrain serve --http --port <p> --suppress-bootstrap-token`, then hand
+  the webview `{url, token}` (the `mew://brain-endpoint` event + the
+  `brain_endpoint` command). Explicit Settings config outranks the sidecar —
+  point MEW at your own `gbrain serve --http` and the shell's stays untouched.
+- **Lifecycle**: unexpected exit → respawn with fresh port+token (max 3,
+  then give up quietly — the keyless floor carries the week); app exit →
+  the child is killed (gbrain's parent-watchdog backstops hard kills).
+- **Self-upgrade is inert by construction**: the sidecar's stdin is a pipe,
+  never a TTY, and the upgrade prompt only triggers on remote-brain banners —
+  MEW's own updater is the only thing that ships new sidecars.
+
+Build the sidecar locally before `pnpm dev`/`pnpm build` (CI does the same
+before `tauri build`):
+
+```sh
+node scripts/build-sidecar.mjs        # host target, from desktop/
+```
+
+The pin lives in `gbrain.version` (`owner/repo#ref`) — bumping the brain is a
+one-line PR that CI proves by compiling. Binaries land in
+`src-tauri/binaries/gbrain-<target-triple>` (gitignored).
+
+The webview's CSP allows `connect-src http://127.0.0.1:*` for this: the
+sidecar port is chosen fresh each launch, so the loopback origin can't be
+pinned tighter than the host. Nothing binds beyond 127.0.0.1.
 
 ## Self-update + release signing (one-time setup)
 
@@ -71,8 +108,9 @@ Notes:
 
 ## Brain endpoints and the CSP
 
-The desktop CSP already allows `http://localhost:3131` — the local
-`gbrain serve` (and the future managed sidecar). Pointing MEW at a REMOTE
+The desktop CSP already allows `http://localhost:3131` (a BYO local
+`gbrain serve` on its default port) and `http://127.0.0.1:*` (the managed
+sidecar's fresh-per-launch port — see above). Pointing MEW at a REMOTE
 serve (e.g. one backed by your Supabase — recipe: repo README → "One brain
 across devices") needs that origin appended to `connect-src` in
 `src-tauri/tauri.conf.json`. The Supabase origin itself is never needed —

@@ -30,11 +30,14 @@ import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
 import { blockEventPage, chatBatchPage, debriefPage, knownProjectsFrom, makeChatBatcher, peopleFrom, prefPage, slugify } from '../adapters/brain/senses'
+import { effectiveBrain, setSidecarBrain } from '../adapters/brain/sidecar'
 import { applyPrefs } from '../domain/prefs'
 import {
   applyUpdate,
+  brainEndpoint,
   isTauri,
   latestBackupDate,
+  onBrainEndpoint,
   onUpdateReady,
   readBackup,
   registerCloseFlush,
@@ -59,12 +62,15 @@ const storage: StoragePort = createDexieStorage()
 const notifier = createBrowserNotifier()
 
 /* the optional knowledge brain — config read per call so Settings edits
-   apply live; every method is a no-op while brainEnabled is off */
+   (and the desktop sidecar's handshake) apply live; every method is a no-op
+   while no brain is on. effectiveBrain ranks: Settings opt-in > sidecar > off */
 const brain: BrainPort = createGbrainHttp({
-  url: () => useMew.getState().settings.brainUrl,
-  token: () => useMew.getState().settings.brainToken,
-  enabled: () => useMew.getState().settings.brainEnabled,
+  url: () => effectiveBrain(useMew.getState().settings).url,
+  token: () => effectiveBrain(useMew.getState().settings).token,
+  enabled: () => effectiveBrain(useMew.getState().settings).on,
 })
+/** brain-on truth for the store's own gates — same ranking the port reads */
+const brainOn = () => effectiveBrain(useMew.getState().settings).on
 /** exposed for the Settings health dot — same instance the store writes through */
 export const mewBrain = brain
 
@@ -72,7 +78,7 @@ export const mewBrain = brain
    otherwise. Cached per session; refreshed after every remember. */
 let brainPrefs: PrefPayload[] | null = null
 function refreshBrainPrefs(): void {
-  if (!useMew.getState().settings.brainEnabled) {
+  if (!brainOn()) {
     brainPrefs = null
     return
   }
@@ -254,7 +260,7 @@ function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
     mewsToday: live.mewsToday,
     insightLines: computeInsights(s.memory, agg, now).lines,
     recallLines,
-    prefLines: prefLinesFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
+    prefLines: prefLinesFrom(s.memory, brainOn() ? brainPrefs : null),
   }
 }
 
@@ -342,6 +348,29 @@ export const useMew = create<MewState>((set, get) => {
     })
   }
 
+  /* desktop sidecar brain: the shell spawns `gbrain serve` and hands the
+     webview {url, token} — zero user setup. The endpoint can land before or
+     after hydrate (the shell both stores it and emits an event), and lands
+     again with fresh credentials after a health-restart; module state in
+     adapters/brain/sidecar absorbs every ordering. Each handshake also
+     refreshes the pref cache: the brain that just came on must serve the
+     always-on rulebook, not only receive the senses' writes. */
+  let sidecarSubscribed = false
+  function connectSidecarBrain() {
+    if (sidecarSubscribed || !isTauri()) return
+    sidecarSubscribed = true
+    onBrainEndpoint((e) => {
+      setSidecarBrain(e)
+      refreshBrainPrefs()
+    })
+    void brainEndpoint().then((e) => {
+      if (e) {
+        setSidecarBrain(e)
+        refreshBrainPrefs()
+      }
+    })
+  }
+
   /* chat → brain: user/mew turns batch into one timeline write per quiet
      minute (nudges stay out — engine chatter isn't the user's story) */
   const chatBatcher = makeChatBatcher((turns, day) => {
@@ -353,7 +382,7 @@ export const useMew = create<MewState>((set, get) => {
     if (!msgs.length) return
     set((s) => ({ chat: [...s.chat, ...msgs] }))
     persistChat(msgs)
-    if (get().settings.brainEnabled) {
+    if (brainOn()) {
       const day = dayKey(new Date(get().nowMs))
       for (const m of msgs) if (m.role !== 'nudge') chatBatcher.add(m, day)
     }
@@ -409,7 +438,7 @@ export const useMew = create<MewState>((set, get) => {
   let brainLinks: { weekOf: string; pairs: { from: string; to: string }[] } | null = null
   let brainLinksPending = false
   function primeBrainLinks(s: MewState, todayKey: string, nowMin: number, now: Date) {
-    if (!s.settings.brainEnabled) return
+    if (!brainOn()) return
     const dowMon0 = (now.getDay() + 6) % 7
     if (dowMon0 !== 0 || nowMin < 8 * 60 || nowMin >= 11 * 60) return
     if (brainLinks?.weekOf === todayKey || brainLinksPending) return
@@ -453,8 +482,8 @@ export const useMew = create<MewState>((set, get) => {
      review runs on local events alone. */
   let weekColor: { day: string; lines: string[] } | null = null
   let weekColorPending = false
-  function primeWeekColor(s: MewState, todayKey: string, now: Date) {
-    if (!s.settings.brainEnabled) return
+  function primeWeekColor(todayKey: string, now: Date) {
+    if (!brainOn()) return
     if ((now.getDay() + 6) % 7 !== 0) return
     if (weekColor?.day === todayKey || weekColorPending) return
     weekColorPending = true
@@ -478,7 +507,7 @@ export const useMew = create<MewState>((set, get) => {
   const personRecall: Record<string, string[]> = {}
   const personRecallPending = new Set<string>()
   function primePersonRecall(s: MewState, todayKey: string, nowMin: number) {
-    if (!s.settings.brainEnabled) return
+    if (!brainOn()) return
     for (const b of week.blocksForDay(s.blocks, todayKey)) {
       if (b.status !== 'open' || b.optional || !week.isFixedTime(b)) continue
       const lead = b.startMin - nowMin
@@ -508,7 +537,7 @@ export const useMew = create<MewState>((set, get) => {
     const agg = aggregates(s.memory, now)
     const guardActive = s.guardDayKey === todayKey ? s.guardUntilMin : null
     primeBrainLinks(s, todayKey, nowMin, now)
-    primeWeekColor(s, todayKey, now)
+    primeWeekColor(todayKey, now)
     primePersonRecall(s, todayKey, nowMin)
     const ctx = buildCtx(
       {
@@ -523,8 +552,8 @@ export const useMew = create<MewState>((set, get) => {
         interruptionsLastHour: interruptionsLastHour(s.memory, s.nowMs),
         guardUntilMin: guardActive,
         quietStartMin: s.settings.quietHours.startMin,
-        prefs: activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
-        brainLinks: s.settings.brainEnabled ? brainLinks?.pairs : undefined,
+        prefs: activePrefsFrom(s.memory, brainOn() ? brainPrefs : null),
+        brainLinks: brainOn() ? brainLinks?.pairs : undefined,
         brainWeekLines: weekColor?.day === todayKey ? weekColor.lines : undefined,
         personRecall,
       },
@@ -541,7 +570,7 @@ export const useMew = create<MewState>((set, get) => {
       }
       /* the day's story is durable knowledge, not just chat — when a brain
          is connected it lands on the day page for week-in-review to read */
-      if (n.type === 'debrief' && s.settings.brainEnabled) {
+      if (n.type === 'debrief' && brainOn()) {
         void brain.ingest(debriefPage(n.body, todayKey))
       }
     }
@@ -611,7 +640,7 @@ export const useMew = create<MewState>((set, get) => {
     const lines: string[] = []
     let placedDeep: Block | null = null
 
-    const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const hist = histDurations(s)
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
@@ -751,7 +780,7 @@ export const useMew = create<MewState>((set, get) => {
     }
     /* same rulebook as plan/edit — a move's collision wording must not
        contradict its siblings about whether the other side can shift */
-    const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const landed = week.conflictsWith(s.blocks, toKey, start, start + week.duration(target), target.id, prefs)
     setBlocks(week.move(s.blocks, target.id, toKey, start))
     return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed, prefs)}`
@@ -800,7 +829,7 @@ export const useMew = create<MewState>((set, get) => {
       ...(patch.attention ? { attention: patch.attention } : {}),
       ...(patch.due != null ? { due: patch.due } : {}),
     }
-    const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const clash =
       week.isBackground(next) ? [] : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id, prefs)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
@@ -812,7 +841,7 @@ export const useMew = create<MewState>((set, get) => {
        brain mirrors it when connected, and a restated rule upserts both
        sides (slug = kind+match in the brain; newest event wins locally) */
     logMemory({ kind: 'preference', dayKey: dayKey(new Date(get().nowMs)), pref })
-    if (get().settings.brainEnabled) {
+    if (brainOn()) {
       void brain.ingest(prefPage(pref)).then(() => refreshBrainPrefs())
     }
     return `Remembered — ${pref.match} ${pref.value}.`
@@ -840,7 +869,7 @@ export const useMew = create<MewState>((set, get) => {
 
     /* recall rides along when a brain is connected — capped, optional-path */
     let recall: string[] = []
-    if (s.settings.brainEnabled) {
+    if (brainOn()) {
       recall = await Promise.race([
         brain.recall(question, { limit: 3 }),
         new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1200)),
@@ -866,7 +895,7 @@ export const useMew = create<MewState>((set, get) => {
     /* no local numbers — recall may still know it; absent both, say so honestly */
     if (recall.length) return recall.join('\n')
     return `I can't see ${name ?? 'that'} yet — nothing in this week's blocks${
-      s.settings.brainEnabled ? ' or the brain' : ''
+      brainOn() ? ' or the brain' : ''
     } mentions it.`
   }
 
@@ -1050,6 +1079,7 @@ export const useMew = create<MewState>((set, get) => {
 
     async hydrate() {
       subscribeUpdateOffers()
+      connectSidecarBrain()
       const loaded = await storage.load()
       if (loaded.blocks.length === 0 && loaded.memory.length === 0) {
         const s = seed(new Date(nowFn()))
@@ -1218,7 +1248,7 @@ export const useMew = create<MewState>((set, get) => {
         /* hybrid recall rides into context — capped so a slow brain can
            never hold the turn hostage (history informs; liveNow decides) */
         let recallLines: string[] = []
-        if (get().settings.brainEnabled) {
+        if (brainOn()) {
           const today = week
             .blocksForDay(get().blocks, dayKey(new Date(get().nowMs)))
             .map((b) => b.title.split('—')[0].trim())
@@ -1257,8 +1287,8 @@ export const useMew = create<MewState>((set, get) => {
               if (final?.body.trim()) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
-                   same brainEnabled gate as post() */
-                if (get().settings.brainEnabled) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
+                   same brain-on gate as post() */
+                if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
               }
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
@@ -1278,8 +1308,8 @@ export const useMew = create<MewState>((set, get) => {
               if (final?.body.trim()) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
-                   same brainEnabled gate as post() */
-                if (get().settings.brainEnabled) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
+                   same brain-on gate as post() */
+                if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
               }
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }

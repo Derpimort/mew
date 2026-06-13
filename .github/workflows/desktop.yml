@@ -29,6 +29,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: desktop/src-tauri }
+      - uses: oven-sh/setup-bun@v2
+      # the bundled brain: compile the pinned gbrain into the sidecar slot so
+      # a PR that breaks the compile (or the pin) fails here, not at release
+      - run: node desktop/scripts/build-sidecar.mjs
       - run: pnpm --dir app install --frozen-lockfile
       - run: pnpm --dir app build
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
@@ -55,6 +59,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with: { workspaces: desktop/src-tauri }
+      - uses: oven-sh/setup-bun@v2
+      # each runner compiles its own sidecar (linux-gnu / windows-msvc) so
+      # `tauri build` finds binaries/gbrain-<host-triple> to bundle
+      - run: node desktop/scripts/build-sidecar.mjs
       - run: pnpm --dir app install --frozen-lockfile
       - run: pnpm --dir desktop install --frozen-lockfile
       - uses: tauri-apps/tauri-action@v0

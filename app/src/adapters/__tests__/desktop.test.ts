@@ -7,9 +7,11 @@ import {
   OAUTH_PORTS,
   applyUpdate,
   backupPath,
+  brainEndpoint,
   isTauri,
   latestBackupDate,
   oauthLoopback,
+  onBrainEndpoint,
   onUpdateReady,
   readBackup,
   registerCloseFlush,
@@ -229,6 +231,42 @@ describe('oauthLoopback', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('brain sidecar bridge', () => {
+  it('is inert outside the shell: endpoint null, listener a no-op', async () => {
+    vi.stubGlobal('window', {})
+    expect(await brainEndpoint()).toBeNull()
+    expect(() => onBrainEndpoint(() => {})).not.toThrow()
+  })
+
+  it('brainEndpoint asks the shell and forwards its answer', async () => {
+    const shell = fakeShell()
+    shell.win.__TAURI__.core.invoke = async (cmd: string) =>
+      cmd === 'brain_endpoint'
+        ? ({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' } as never)
+        : (undefined as never)
+    vi.stubGlobal('window', shell.win)
+    expect(await brainEndpoint()).toEqual({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
+  })
+
+  it('a shell without a brain up answers null, not an error', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    expect(await brainEndpoint()).toBeNull()
+  })
+
+  it('onBrainEndpoint forwards every (re)spawn handshake', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const seen: { url: string }[] = []
+    onBrainEndpoint((e) => seen.push(e))
+    await new Promise<void>((r) => setTimeout(r, 0))
+    const emit = shell.listeners.get('mew://brain-endpoint')!
+    emit({ payload: { url: 'http://127.0.0.1:1000', token: 'a' } })
+    emit({ payload: { url: 'http://127.0.0.1:2000', token: 'b' } })
+    expect(seen.map((e) => e.url)).toEqual(['http://127.0.0.1:1000', 'http://127.0.0.1:2000'])
   })
 })
 

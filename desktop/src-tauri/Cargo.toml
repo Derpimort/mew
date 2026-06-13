@@ -26,6 +26,11 @@ tauri-plugin-oauth = "2"
 # the human picks the restart moment; dialog ships for native fallbacks
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
+# phase 5 (built-in brain): the bundled gbrain sidecar is spawned and killed
+# from Rust only — the webview gets an endpoint handshake, never spawn rights
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["time"] }
 
 [profile.release]
 strip = true

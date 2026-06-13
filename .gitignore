@@ -20,3 +20,6 @@ app/app/
 
 # cargo build artifacts — never committed
 desktop/src-tauri/target/
+
+# gbrain sidecar scratch install (scripts/build-sidecar.mjs)
+desktop/.sidecar-build/

@@ -4,7 +4,7 @@
    keyless rules floor, so every scenario is deterministic and offline. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatMessage, MemoryEvent, Settings } from '../../domain/types'
+import type { ChatMessage, MemoryEvent, PrefPayload, Settings } from '../../domain/types'
 import { addDaysKey, dayKey, uid } from '../../domain/time'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
@@ -36,14 +36,17 @@ const desktopFake = {
   written: [] as string[],
   updateReady: null as ((v: string) => void) | null,
   applied: 0,
+  brain: null as { url: string; token: string } | null,
+  brainReady: null as ((e: { url: string; token: string }) => void) | null,
   reset() {
     this.tauri = false
     this.backup = null
     this.backupDate = null
     this.written = []
-    /* updateReady survives reset: the real listener registers once per app
-       process and outlives any data wipe — the fake models that lifetime */
+    /* updateReady/brainReady survive reset: the real listeners register once
+       per app process and outlive any data wipe — the fake models that lifetime */
     this.applied = 0
+    this.brain = null
   },
 }
 
@@ -109,6 +112,10 @@ vi.mock('../../adapters/desktop', () => ({
   applyUpdate: async () => {
     desktopFake.applied++
   },
+  brainEndpoint: async () => desktopFake.brain,
+  onBrainEndpoint: (cb: (e: { url: string; token: string }) => void) => {
+    desktopFake.brainReady = cb
+  },
 }))
 
 vi.mock('../../adapters/notify', () => ({
@@ -124,38 +131,50 @@ vi.mock('../../adapters/calendar/google', () => ({
 }))
 
 /* the brain, faked at the factory seam — scenarios count what MEW writes,
-   control what the graph holds, and what it asks back (recall is behavior) */
+   control what the graph holds and what it asks back (recall is behavior),
+   and read the live config closures to see where the port would point.
+   The cfg ref is hoisted: the factory runs during the store's module init,
+   before any const in this file initializes. */
+const brainCfg = vi.hoisted(() => ({
+  current: null as { url(): string; token(): string; enabled(): boolean } | null,
+}))
 const brainFake = {
   ingests: [] as { slug: string; links?: string[] }[],
   links: {} as Record<string, string[]>,
   recalls: [] as string[],
   recallImpl: null as null | ((q: string) => string[] | Promise<string[]>),
   recallLines: [] as string[],
+  prefs: [] as PrefPayload[],
   reset() {
     this.ingests = []
     this.links = {}
     this.recalls = []
     this.recallImpl = null
     this.recallLines = []
+    this.prefs = []
   },
 }
 vi.mock('../../adapters/brain/gbrainHttp', () => ({
-  createGbrainHttp: (cfg: { enabled(): boolean }) => ({
-    ingest: async (page: { slug: string }) => {
-      if (cfg.enabled()) brainFake.ingests.push(page)
-    },
-    recall: async (q: string) => {
-      if (!cfg.enabled()) return []
-      brainFake.recalls.push(q)
-      if (brainFake.recallImpl) return brainFake.recallImpl(q)
-      return brainFake.recallLines
-    },
-    health: async () => false,
-    listPrefs: async () => [],
-    links: async (slug: string) => (cfg.enabled() ? (brainFake.links[slug] ?? []) : []),
-  }),
+  createGbrainHttp: (cfg: { url(): string; token(): string; enabled(): boolean }) => {
+    brainCfg.current = cfg
+    return {
+      ingest: async (page: { slug: string }) => {
+        if (cfg.enabled()) brainFake.ingests.push(page)
+      },
+      recall: async (q: string) => {
+        if (!cfg.enabled()) return []
+        brainFake.recalls.push(q)
+        if (brainFake.recallImpl) return brainFake.recallImpl(q)
+        return brainFake.recallLines
+      },
+      health: async () => false,
+      listPrefs: async () => (cfg.enabled() ? brainFake.prefs : []),
+      links: async (slug: string) => (cfg.enabled() ? (brainFake.links[slug] ?? []) : []),
+    }
+  },
 }))
 
+import { setSidecarBrain } from '../../adapters/brain/sidecar'
 import { useMew } from '../store'
 
 /* ── harness ──────────────────────────────────────────────────────── */
@@ -199,6 +218,7 @@ afterEach(() => {
   vi.useRealTimers()
   brainFake.reset()
   desktopFake.reset()
+  setSidecarBrain(null) // module state — a sidecar from one scenario must not haunt the next
 })
 
 /* ── scenarios ────────────────────────────────────────────────────── */
@@ -557,6 +577,51 @@ describe('brain senses', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     const weekWrites = brainFake.ingests.filter((p) => p.slug.startsWith('week/'))
     expect(weekWrites).toHaveLength(1) // user turn + mew reply coalesced
+  })
+
+  it('desktop sidecar: the shell handshake turns the brain on, Settings untouched', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
+    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    useMew.getState().toggleComplete(deck.id)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(brainFake.ingests.map((p) => p.slug)).toContain('task/q3-deck')
+    expect(brainCfg.current!.url()).toBe('http://127.0.0.1:43217')
+    /* zero user setup also means zero settings mutation — suggest, don't seize */
+    expect(useMew.getState().settings.brainEnabled).toBe(false)
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher's window
+  })
+
+  it('desktop sidecar: a restart hands over fresh credentials; explicit Settings outrank both', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:1000', token: 'gbrain_a' })
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:2000', token: 'gbrain_b' })
+    expect(brainCfg.current!.url()).toBe('http://127.0.0.1:2000')
+    expect(brainCfg.current!.token()).toBe('gbrain_b')
+    useMew.getState().updateSettings({ brainEnabled: true, brainUrl: 'http://my-brain:9999', brainToken: 'mine' })
+    expect(brainCfg.current!.url()).toBe('http://my-brain:9999')
+    expect(brainCfg.current!.token()).toBe('mine')
+    await vi.advanceTimersByTimeAsync(30_000) // drain the queued desktop backup — no ghost timer across tests
+  })
+
+  it('desktop sidecar: the rulebook is live too — a brain-held rule shapes the plan, Settings still off', async () => {
+    /* the named failure mode of a half-on sidecar: senses writing while the
+       always-on rulebook stays dark. The rule lives ONLY in the brain, so the
+       sole path to the plan is handshake → pref-cache refresh → applyPrefs. */
+    desktopFake.tauri = true
+    brainFake.prefs = [{ kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always at 7am' }]
+    await fresh(TUE(9, 40))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
+    await vi.advanceTimersByTimeAsync(0) // the handshake's listPrefs settles
+    await say('add gym tomorrow')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const gym = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /gym/i.test(b.title))!
+    expect(gym.startMin).toBe(7 * 60) // the standing rule chose the slot
+    expect(lastMsg().body).toContain('(your standing rule)')
+    expect(useMew.getState().settings.brainEnabled).toBe(false) // sidecar-only, zero settings mutation
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
   })
 })
 

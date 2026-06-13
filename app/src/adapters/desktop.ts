@@ -206,6 +206,32 @@ export async function oauthLoopback(
   }
 }
 
+/* ── managed brain sidecar (the shell spawns gbrain; MEW just listens) ── */
+
+export interface BrainEndpoint {
+  url: string
+  token: string
+}
+
+/** The sidecar's current endpoint — null in a browser, before the first
+    handshake completes, or after the shell gave up on restarts. */
+export async function brainEndpoint(): Promise<BrainEndpoint | null> {
+  const t = api()
+  if (!t) return null
+  try {
+    return (await t.core.invoke<BrainEndpoint | null>('brain_endpoint')) ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Fires on every (re)spawn handshake — a restart means a new port+token. */
+export function onBrainEndpoint(cb: (e: BrainEndpoint) => void): void {
+  const t = api()
+  if (!t) return
+  void t.event.listen<BrainEndpoint>('mew://brain-endpoint', (e) => cb(e.payload))
+}
+
 /* ── self-update (the shell stages, the human decides) ────────────────── */
 
 /** Fires when the shell has an update downloaded and parked, with its version. */
