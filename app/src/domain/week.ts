@@ -1,7 +1,8 @@
 /* The week model — pure operations on blocks. The live week is the single
    source of truth; everything here is synchronous and side-effect free. */
 
-import type { Block, Capture, Tag } from './types'
+import type { Block, Capture, PrefPayload, Tag } from './types'
+import { flexOverride } from './prefs'
 import { addDaysKey, fmtTime, uid } from './time'
 
 /** Background holds the clock, not the user — a different axis from
@@ -60,8 +61,11 @@ const FIXED_WORDS =
   /\b(interview|call|meeting|meet|standup|stand-up|sync|1:1|one[- ]on[- ]one|demo|huddle|screening|onsite|panel|intro)\b/i
 /* "interview prep" is OUR work about their meeting — a flexible task */
 const PREP_WORDS = /\b(prep|prepare|preparation|practice|practise|debrief|notes|research|draft|write[- ]?up)\b/i
-export function isFixedTime(b: Block): boolean {
+export function isFixedTime(b: Block, prefs: PrefPayload[] = []): boolean {
   if (b.external) return true
+  /* the user's own rule outranks the word heuristic ("my syncs are movable") */
+  const override = flexOverride(b.title, prefs)
+  if (override) return override === 'fixed'
   if (PREP_WORDS.test(b.title)) return false
   return FIXED_WORDS.test(b.title)
 }
@@ -76,12 +80,13 @@ export function conflictsWith(
   startMin: number,
   endMin: number,
   excludeId?: string,
+  prefs: PrefPayload[] = [],
 ): Block[] {
   return blocksForDay(blocks, dayKey).filter(
     (b) =>
       b.id !== excludeId &&
       b.status === 'open' &&
-      (!b.optional || isFixedTime(b)) &&
+      (!b.optional || isFixedTime(b, prefs)) &&
       !isBackground(b) &&
       overlaps(b.startMin, b.endMin, startMin, endMin),
   )

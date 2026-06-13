@@ -281,7 +281,7 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
         dayOffset: day?.offset ?? 0,
         startMin: time ?? part?.start,
         endMin: time != null || part == null ? undefined : part.end,
-        durationMin: dur ?? (part && time == null ? part.end - part.start : 60),
+        durationMin: dur ?? (part && time == null ? part.end - part.start : undefined), // unstated stays open for duration prefs; place() still defaults 60
         protected: true,
         ...(background ? { attention: 'background' as const } : {}),
         ...(due != null ? { due } : {}),

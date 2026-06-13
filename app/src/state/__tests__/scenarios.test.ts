@@ -837,3 +837,46 @@ describe('desktop backup & restore', () => {
 
   })
 })
+
+/* ── preferences change mechanics, not just prose ────────────────────── */
+
+describe('prefs applied at placement', () => {
+  it('gym → 07:00 set: "add gym tomorrow" auto-places at 07:00 and credits the rule', async () => {
+    await fresh(TUE(9, 40))
+    await say('remember that gym is always at 7am')
+    await say('add gym tomorrow')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const gym = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /gym/i.test(b.title))!
+    expect(gym.startMin).toBe(7 * 60)
+    expect(lastMsg().body).toContain('(your standing rule)')
+  })
+
+  it('explicit wins: "add gym tomorrow at 6pm" places 18:00, no credit', async () => {
+    await fresh(TUE(9, 40))
+    await say('remember that gym is always at 7am')
+    await say('add gym tomorrow at 6pm')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const gym = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /gym/i.test(b.title))!
+    expect(gym.startMin).toBe(18 * 60)
+    expect(lastMsg().body).not.toContain('standing rule')
+  })
+
+  it('duration-default sizes an unstated block', async () => {
+    await fresh(TUE(9, 40))
+    await say('remember the deploy always takes 45 min')
+    await say('add deploy tomorrow at 9')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const dep = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /deploy/i.test(b.title))!
+    expect(dep.endMin - dep.startMin).toBe(45)
+  })
+
+  it('move-collision wording follows the rulebook: landing on a pref-flexed sync reads flexible', async () => {
+    await fresh(TUE(9, 40))
+    await say('remember that the design sync always moves')
+    await say('block design sync tomorrow at 10')
+    await say('block deck work tomorrow at 14')
+    await say('move deck work to tomorrow at 10')
+    expect(lastMsg().body).toContain('flexible — it can shift')
+    expect(lastMsg().body).not.toContain("can't move")
+  })
+})

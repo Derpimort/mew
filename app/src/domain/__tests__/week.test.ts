@@ -292,3 +292,26 @@ describe('looseThreads — a derived query, nothing persisted', () => {
     })
   })
 })
+
+describe('flexibility prefs override the fixed-time heuristic', () => {
+  const movableSyncs = [{ kind: 'flexibility' as const, match: 'sync', value: 'can always move', stated: 'my syncs are movable' }]
+
+  it('a "sync" title stops being fixed when the rule says so — and vice versa', () => {
+    const sync = mk({ title: 'Weekly sync' })
+    expect(isFixedTime(sync)).toBe(true)
+    expect(isFixedTime(sync, movableSyncs)).toBe(false)
+    const pages = mk({ title: 'Morning pages' })
+    expect(isFixedTime(pages, [{ kind: 'flexibility', match: 'pages', value: 'never moves', stated: 's' }])).toBe(true)
+  })
+
+  it('external events never flip — the calendar still owns them', () => {
+    const ext = mk({ title: 'Weekly sync', external: { calId: 'c', eventId: 'e' } })
+    expect(isFixedTime(ext, movableSyncs)).toBe(true)
+  })
+
+  it('conflictsWith follows: an optional movable sync goes transparent', () => {
+    const tentative = mk({ id: 'sy', title: 'Weekly sync', optional: true, startMin: 13 * 60, endMin: 14 * 60 })
+    expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60).map((b) => b.id)).toEqual(['sy'])
+    expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60, undefined, movableSyncs)).toHaveLength(0)
+  })
+})

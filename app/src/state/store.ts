@@ -39,6 +39,7 @@ import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
 import { blockEventPage, chatBatchPage, makeChatBatcher, prefPage } from '../adapters/brain/senses'
+import { applyPrefs } from '../domain/prefs'
 import {
   applyUpdate,
   isTauri,
@@ -89,8 +90,8 @@ function refreshBrainPrefs(): void {
   })
 }
 
-/** newest-first, deduped by kind+match, capped — the context rulebook */
-export function prefLinesFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | null): string[] {
+/** newest-first, deduped by kind+match — the standing rulebook, as data */
+export function activePrefsFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | null): PrefPayload[] {
   const source: PrefPayload[] = fromBrain?.length
     ? fromBrain
     : [...memory]
@@ -98,15 +99,20 @@ export function prefLinesFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | 
         .filter((e) => e.kind === 'preference' && e.pref)
         .map((e) => e.pref!)
   const seen = new Set<string>()
-  const out: string[] = []
+  const out: PrefPayload[] = []
   for (const p of source) {
     const key = `${p.kind}:${p.match.toLowerCase()}`
     if (seen.has(key)) continue
     seen.add(key)
-    out.push(`${p.match} → ${p.value} (stated: "${p.stated}")`)
+    out.push(p)
     if (out.length >= 15) break
   }
   return out
+}
+
+/** the same rulebook, rendered for the context block */
+export function prefLinesFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | null): string[] {
+  return activePrefsFrom(memory, fromBrain).map((p) => `${p.match} → ${p.value} (stated: "${p.stated}")`)
 }
 
 /* Dev/design affordance: `?t=HH:MM` shifts the app clock so any moment of the
@@ -219,11 +225,11 @@ function nudgeMsg(n: NudgeInstance): ChatMessage {
 
 /** Factual collision note for tool results — the model re-checks constraints
     against these and moves the flexible side. */
-function clashNote(clash: Block[]): string {
+function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   if (!clash.length) return ''
   const parts = clash.map((c) => {
     const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
-    return week.isFixedTime(c)
+    return week.isFixedTime(c, prefs)
       ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
       : `${base} (flexible — it can shift)`
   })
@@ -491,26 +497,34 @@ export const useMew = create<MewState>((set, get) => {
     const lines: string[] = []
     let placedDeep: Block | null = null
 
+    const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
+      /* the standing rulebook fills what the user left open this message —
+         their explicit times/durations always win over their own rules */
+      const { spec: prefd, applied } = applyPrefs(
+        { title: p.title, startMin: p.startMin, durationMin: p.durationMin },
+        prefs,
+      )
       /* short rests are pacing, not sacred rest: leave them unprotected so a
          reshape can absorb them instead of tripping protect-rest every move */
-      const microRest = p.tag === 'rest' && (p.durationMin ?? 60) <= 20
+      const microRest = p.tag === 'rest' && (prefd.durationMin ?? 60) <= 20
       /* a background block doesn't contend for the slot, so auto-placement
          doesn't hunt for free air — it starts now-ish (today) or at day
-         start, and runs over whatever else holds the clock */
+         start, and runs over whatever else holds the clock. A standing rule
+         outranks this heuristic the same way an explicit time does. */
       const bgAutoStart =
-        p.attention === 'background' && p.startMin == null
+        p.attention === 'background' && prefd.startMin == null
           ? key === todayKey
             ? Math.max(week.DAY_START, Math.ceil(minOfDay(now) / 5) * 5)
             : week.DAY_START
-          : p.startMin
+          : prefd.startMin
       const placed = week.place(blocks, {
         title: p.title,
         tag: p.tag,
         dayKey: key,
         startMin: bgAutoStart,
-        durationMin: p.durationMin,
+        durationMin: prefd.durationMin,
         protected: p.protected ?? !microRest,
         attention: p.attention,
         due: p.due,
@@ -523,11 +537,11 @@ export const useMew = create<MewState>((set, get) => {
          (or vice versa) is the point, never a collision to warn about */
       const clash = week.isBackground(placed)
         ? []
-        : week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id)
+        : week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id, prefs)
       blocks = [...blocks, placed]
       if (week.isDeep(placed)) placedDeep = placed
       lines.push(
-        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash)}`,
+        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`,
       )
     }
     for (const f of frees) {
@@ -619,9 +633,12 @@ export const useMew = create<MewState>((set, get) => {
       if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
       start = slot.startMin
     }
-    const landed = week.conflictsWith(s.blocks, toKey, start, start + week.duration(target), target.id)
+    /* same rulebook as plan/edit — a move's collision wording must not
+       contradict its siblings about whether the other side can shift */
+    const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
+    const landed = week.conflictsWith(s.blocks, toKey, start, start + week.duration(target), target.id, prefs)
     setBlocks(week.move(s.blocks, target.id, toKey, start))
-    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed)}`
+    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed, prefs)}`
   }
 
   function execCapture(title: string): string {
@@ -667,10 +684,11 @@ export const useMew = create<MewState>((set, get) => {
       ...(patch.attention ? { attention: patch.attention } : {}),
       ...(patch.due != null ? { due: patch.due } : {}),
     }
+    const prefs = activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null)
     const clash =
-      week.isBackground(next) ? [] : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id)
+      week.isBackground(next) ? [] : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id, prefs)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
-    return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash)}`
+    return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash, prefs)}`
   }
 
   function execRemember(pref: PrefPayload): string {
