@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeInsights, delegationCandidates, prefContradictions, proposeKinderPlan } from '../insights'
+import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, proposeKinderPlan } from '../insights'
 import { aggregates, consolidate } from '../memory'
 import { findFreeSlot } from '../week'
 import type { Block, MemoryEvent } from '../types'
@@ -283,5 +283,76 @@ describe('delegationCandidates — co-occurrence with receipts', () => {
     expect(out.map((c) => c.person)).toEqual(['dana-k', 'robin'])
     expect(out[0].personLabel).toBe('Dana K')
     expect(out[0].count).toBe(4)
+  })
+})
+
+describe('dayDebrief — the evening story, two kind lines', () => {
+  const D = todayKey
+  let bn = 0
+  const blk = (over: Partial<Block>): Block => ({
+    id: `b${bn++}`,
+    title: 'X',
+    tag: 'work',
+    dayKey: D,
+    startMin: 9 * 60,
+    endMin: 10 * 60,
+    protected: false,
+    status: 'open',
+    calendarRefs: [],
+    estimateSource: 'user',
+    ...over,
+  })
+  /* completion at hh:mm today (ts carries the slip signal) */
+  const done = (title: string, endMin: number, atH: number, atM: number): MemoryEvent => {
+    const d = new Date(D + 'T00:00:00')
+    d.setHours(atH, atM, 0, 0)
+    return { id: `e${bn++}`, ts: d.getTime(), kind: 'completed', dayKey: D, title, endMin, plannedMin: 60 }
+  }
+  it('mews, the biggest slip, rest held, and a heavy tomorrow — the full story', () => {
+    const blocks = [
+      blk({ tag: 'rest', startMin: 18 * 60, endMin: 19 * 60 }), // running at 18:15
+      blk({ dayKey: addDaysKey(D, 1), title: 'Spec review — deep work', startMin: 8 * 60, endMin: 12 * 60 }),
+      blk({ dayKey: addDaysKey(D, 1), title: 'Deck v2 — deep work', startMin: 13 * 60, endMin: 17 * 60 }),
+    ]
+    const events = [
+      done('Q3 deck — deep work', 11 * 60 + 30, 11, 30), // on time
+      done('Reply to Sam', 15 * 60, 15, 40), // +40
+      done('Standup', 12 * 60, 12, 15), // +15 (smaller slip)
+    ]
+    const lines = dayDebrief(blocks, events, D, { realisticBestH: 5.5 } as never, 18 * 60 + 15)
+    expect(lines).toEqual([
+      '3 mews; the reply to sam slipped 40 past its window; rest held.',
+      'tomorrow opens heavy — 8h against your 5.5.',
+    ])
+  })
+
+  it('an empty day stays silent', () => {
+    expect(dayDebrief([], [], D, { realisticBestH: 5.5 } as never, 18 * 60)).toEqual([])
+  })
+
+  it('rest still open and not reached = owed, kindly; a light tomorrow is named plainly', () => {
+    const blocks = [
+      blk({ tag: 'rest', startMin: 20 * 60, endMin: 21 * 60 }), // later tonight
+      blk({ dayKey: addDaysKey(D, 1), title: 'Review — deep work', startMin: 9 * 60, endMin: 11 * 60 }),
+    ]
+    const events = [done('Inbox', 10 * 60, 10, 0)]
+    const lines = dayDebrief(blocks, events, D, { realisticBestH: 5.5 } as never, 18 * 60 + 15)
+    expect(lines[0]).toBe('1 mew; rest is still owed tonight.')
+    expect(lines[1]).toBe('tomorrow holds 2h of deep work.')
+  })
+
+  it('checked off much later ≠ worked later: the +300 cap holds, and rolled days omit tomorrow', () => {
+    const events = [done('Old thing', 9 * 60, 18, 0)] // +540 → not a slip
+    const lines = dayDebrief([blk({ status: 'done' })], events, D, { realisticBestH: null } as never, 18 * 60 + 15)
+    expect(lines).toEqual(['1 mew.'])
+    expect(lines.join(' ')).not.toMatch(/slipped/)
+  })
+
+  it('no shame vocabulary, ever', () => {
+    const blocks = [blk({ tag: 'rest', startMin: 12 * 60, endMin: 13 * 60, status: 'rolled' })]
+    const events = [done('Deploy', 14 * 60, 14, 50)]
+    const lines = dayDebrief(blocks, events, D, { realisticBestH: 5.5 } as never, 18 * 60 + 15)
+    expect(lines.join('\n')).not.toMatch(/missed|overdue|failed|behind/i)
+    expect(lines[0]).toContain('slipped 50')
   })
 })

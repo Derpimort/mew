@@ -50,6 +50,9 @@ export interface NudgeCtx {
   /** Recurring task×person pairs worth handing over — receipts from the
       graph, counts from the trailing 28d. Empty when the brain is off. */
   delegations: DelegationCandidate[]
+  /** The evening story, composed by the engine when the day is past its end.
+      Empty = nothing worth narrating (the nudge stays silent). */
+  debriefLines: string[]
   /** Monday=0 … Sunday=6 (fresh-start landmark check). */
   dowMon0: number
   /** A chronic roller (≥3 rolls) that currently has an open block + a starter slot. */
@@ -225,6 +228,22 @@ export const NUDGES: NudgeDef[] = [
         key: c.todayKey,
       }
     },
+  },
+  {
+    id: 'debrief',
+    label: 'day debrief',
+    tone: 'reflective, factual',
+    cooldownMs: 20 * H, // once per evening; key scopes it to the day
+    /* the same wind-down window close-loop owns — and one priority slot
+       behind it, so the open thread gets a plan before the day gets a story */
+    trigger: (c) => c.pastDayEnd && c.debriefLines.length > 0,
+    build: (c) => ({
+      body: c.debriefLines.join('\n'),
+      footnote: `End-of-day reflection consolidates learning and closes the day's open loops — the story, not the scorecard.`,
+      actions: [], // pure information: nothing to accept, nothing to decline
+      payload: {},
+      key: c.todayKey,
+    }),
   },
   {
     id: 'when-where',

@@ -5,7 +5,7 @@
 import type { Block, Capture, MemoryEvent, NudgeId, PrefPayload } from '../types'
 import type { MemoryAggregates } from '../memory'
 import { liveNow, type LiveNow } from '../liveNow'
-import { computeInsights, delegationCandidates, prefContradictions, prefKey } from '../insights'
+import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, prefKey } from '../insights'
 import {
   blocksForDay,
   dayEndMin,
@@ -248,6 +248,7 @@ export function buildCtx(
     ...earlyFinish(t, event?.justCompleted ?? null),
     insights,
     delegations: t.brainLinks?.length ? delegationCandidates(events, t.brainLinks, t.nowMs) : [],
+    debriefLines: pastDayEnd ? dayDebrief(t.blocks, events, t.todayKey, t.agg, t.nowMin) : [],
     dowMon0: (fromDayKey(t.todayKey).getDay() + 6) % 7,
     stalled,
     outcomeStats,
@@ -327,6 +328,7 @@ const TICK_NUDGES: NudgeId[] = [
   'start-by', // a hard deadline outranks pacing suggestions
   'post-buffer',
   'close-loop',
+  'debrief', // the open thread gets a plan first; the story follows next tick
   'protect-rest',
   'fresh-start',
   'delegate', // rides the same window, one tick behind the opener

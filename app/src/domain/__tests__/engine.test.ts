@@ -478,3 +478,57 @@ describe('delegate — handoff suggestions at week-shaping moments', () => {
     expect(other[0].key).toBe('dana:sprint-notes')
   })
 })
+
+describe('debrief — the day gets its story after the loop closes', () => {
+  /* one open block (close-loop bait) + one completion (debrief material) */
+  const open = mk({ id: 'open1' })
+  const NOW = Date.UTC(2026, 5, 9, 19, 0)
+  const EVENTS: MemoryEvent[] = [
+    {
+      id: 'c1',
+      ts: new Date(2026, 5, 9, 15, 40).getTime(),
+      kind: 'completed',
+      dayKey: D,
+      title: 'Reply to Sam',
+      endMin: 15 * 60,
+      plannedMin: 30,
+    },
+  ]
+  const at = (nowMin: number, engine = fresh, over: Partial<TickInputs> = {}) =>
+    evaluateTick(
+      buildCtx(tick({ nowMs: NOW, nowMin, blocks: [open], events: EVENTS, ...over }), engine),
+    )
+
+  it('close-loop owns the first wind-down tick; the story follows once the loop is cooling', () => {
+    expect(at(19 * 60)[0]?.type).toBe('close-loop')
+    const next = at(19 * 60 + 1, {
+      lastFired: { 'close-loop': { ts: NOW - 60_000, key: D } },
+      lastDriftBlockId: null,
+    })
+    expect(next[0]?.type).toBe('debrief')
+    expect(next[0].body).toContain('1 mew; the reply to sam slipped 40 past its window.')
+    expect(next[0].actions).toEqual([]) // information, not a demand
+    expect(next[0].key).toBe(D)
+  })
+
+  it('nothing open → no close-loop to wait for; the story leads', () => {
+    const doneDay = [mk({ id: 'd1', status: 'done' })]
+    const out = at(19 * 60, fresh, { blocks: doneDay })
+    expect(out[0]?.type).toBe('debrief')
+  })
+
+  it('before day end there is no story to tell', () => {
+    expect(at(17 * 60).some((n) => n.type === 'debrief')).toBe(false)
+  })
+
+  it('once per evening: the day key holds it', () => {
+    const again = at(19 * 60 + 30, {
+      lastFired: {
+        'close-loop': { ts: NOW - 60_000, key: D },
+        debrief: { ts: NOW - 10 * 60_000, key: D },
+      },
+      lastDriftBlockId: null,
+    })
+    expect(again.some((n) => n.type === 'debrief')).toBe(false)
+  })
+})

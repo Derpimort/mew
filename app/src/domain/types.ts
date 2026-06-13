@@ -65,6 +65,7 @@ export type NudgeId =
   | 'start-by'
   | 'pref-drift'
   | 'delegate'
+  | 'debrief'
 
 export interface NudgeAction {
   id: string

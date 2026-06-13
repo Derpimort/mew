@@ -652,6 +652,64 @@ describe('delegate (handoff candidates)', () => {
   })
 })
 
+/* ── day debrief: the evening story, two kind lines ──────────────────── */
+
+describe('day debrief', () => {
+  const TUE_KEY = '2026-06-09'
+  const awake = (d: Date) => {
+    /* idle resets so drift can't outrank the wind-down nudges (one per tick) */
+    useMew.setState({ lastActivityMs: d.getTime() })
+    at(d)
+  }
+
+  it('TUE 18:15: close-loop gets the open thread first, then the story — exact two lines', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    /* the day happens: deck done on time, Sam reply slips 40 */
+    at(TUE(11, 30))
+    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === TUE_KEY)!
+    useMew.getState().toggleComplete(deck.id)
+    at(TUE(15, 40))
+    const sam = useMew.getState().blocks.find((b) => /Reply to Sam/.test(b.title))!
+    useMew.getState().toggleComplete(sam.id)
+
+    awake(TUE(18, 15)) // wind-down opens: the open standup gets its plan first
+    expect(nudges('close-loop').length).toBeGreaterThan(0)
+    expect(nudges('debrief')).toHaveLength(0)
+
+    awake(TUE(18, 16)) // loop is cooling — the story lands
+    const db = nudges('debrief')
+    expect(db).toHaveLength(1)
+    expect(db[0].body).toBe(
+      '2 mews; the reply to sam slipped 40 past its window; rest held.\ntomorrow opens heavy — 8h against your 5.5.',
+    )
+    expect(db[0].actions ?? []).toHaveLength(0)
+
+    /* durable, not just chat: the story lands on the day page's timeline */
+    await vi.advanceTimersByTimeAsync(0)
+    const page = brainFake.ingests.find(
+      (p) =>
+        p.slug === `week/${TUE_KEY}` &&
+        (p as { timeline?: { summary: string }[] }).timeline?.[0]?.summary.startsWith('debrief:'),
+    )
+    expect(page).toBeDefined()
+
+    awake(TUE(18, 20)) // once per evening
+    expect(nudges('debrief')).toHaveLength(1)
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+
+  it('inside quiet hours the story waits in the queue like every other nudge', async () => {
+    await fresh(TUE(9, 40))
+    awake(TUE(18, 45)) // quiet hours began 18:30 — close-loop queues
+    awake(TUE(18, 46)) // debrief queues behind it
+    const queued = useMew.getState().queuedNudges
+    expect(queued.some((m) => m.nudgeType === 'debrief')).toBe(true)
+    expect(nudges('debrief')).toHaveLength(0) // chat stays quiet
+  })
+})
+
 /* ── desktop self-update (phase 4 of the shell) ──────────────────────── */
 
 describe('desktop self-update', () => {

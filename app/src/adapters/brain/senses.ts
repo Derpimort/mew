@@ -97,6 +97,17 @@ export function parsePrefBody(body: string): PrefPayload | null {
   }
 }
 
+/** The evening debrief, landing on the day page's timeline — the same story
+    chat told, durable for week-in-review to read back. */
+export function debriefPage(body: string, dayKey: string): BrainPage {
+  return {
+    slug: `week/${dayKey}`,
+    timeline: [
+      { slug: `week/${dayKey}`, date: dayKey, summary: `debrief: ${body.replace(/\n/g, ' · ')}` },
+    ],
+  }
+}
+
 /** A batch of chat turns → one timeline-only write on the day page.
     Nudges never go in (engine chatter isn't the user's story). */
 export function chatBatchPage(turns: ChatMessage[], dayKey: string): BrainPage | null {

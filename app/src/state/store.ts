@@ -38,7 +38,7 @@ import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
-import { blockEventPage, chatBatchPage, makeChatBatcher, prefPage } from '../adapters/brain/senses'
+import { blockEventPage, chatBatchPage, debriefPage, makeChatBatcher, prefPage } from '../adapters/brain/senses'
 import { applyPrefs } from '../domain/prefs'
 import {
   applyUpdate,
@@ -488,6 +488,11 @@ export const useMew = create<MewState>((set, get) => {
         set((st) => ({ queuedNudges: [...st.queuedNudges, msg] }))
       } else {
         post([msg], { mirror: s.settings.browserMirror })
+      }
+      /* the day's story is durable knowledge, not just chat — when a brain
+         is connected it lands on the day page for week-in-review to read */
+      if (n.type === 'debrief' && s.settings.brainEnabled) {
+        void brain.ingest(debriefPage(n.body, todayKey))
       }
     }
   }

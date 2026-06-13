@@ -5,7 +5,7 @@
 
 import type { Block, MemoryEvent, PrefPayload } from './types'
 import { addDaysKey, dayKey, fmtDowLong, fmtTime, spell } from './time'
-import { blocksForDay, duration, isDeep } from './week'
+import { blocksForDay, duration, isDeep, plannedDeepMin } from './week'
 import { matchesPref, parseDurationValue, parseTimeValue } from './prefs'
 import type { MemoryAggregates } from './memory'
 
@@ -253,6 +253,65 @@ export function delegationCandidates(
     }
   }
   return out.sort((a, b) => b.count - a.count)
+}
+
+/** The evening story of today, in 2–3 kind lines — pure over local truth.
+    Empty array = nothing to say (an empty day stays silent). A mew is a
+    completion, slips are named without shame, and tomorrow gets one honest
+    look against the realistic best. */
+export function dayDebrief(
+  blocks: Block[],
+  events: MemoryEvent[],
+  todayKey: string,
+  agg: MemoryAggregates,
+  nowMin: number,
+): string[] {
+  const today = blocks.filter((b) => b.dayKey === todayKey)
+  const mews = events.filter((e) => e.kind === 'completed' && e.dayKey === todayKey)
+  if (!today.length && !mews.length) return []
+
+  const parts: string[] = []
+  if (mews.length) parts.push(`${mews.length} mew${mews.length === 1 ? '' : 's'}`)
+
+  /* the day's biggest slip — same-day completions only, same sanity caps as
+     the lateness aggregate (checked off much later ≠ worked later) */
+  let slip: { title: string; late: number } | null = null
+  for (const e of mews) {
+    if (e.endMin == null) continue
+    const done = new Date(e.ts)
+    if (dayKey(done) !== e.dayKey) continue
+    const late = done.getHours() * 60 + done.getMinutes() - e.endMin
+    if (late >= 10 && late <= 300 && (!slip || late > slip.late)) {
+      slip = { title: normTitle(e.title ?? 'it'), late }
+    }
+  }
+  if (slip) parts.push(`the ${slip.title} slipped ${slip.late} past its window`)
+
+  /* rest: held when a rest block is done or running right now; still open
+     and not yet reached = still owed (a promise, not a failure) */
+  const rests = today.filter((b) => b.tag === 'rest')
+  if (rests.length) {
+    const held = rests.some(
+      (b) => b.status === 'done' || (b.status === 'open' && b.startMin <= nowMin && nowMin < b.endMin),
+    )
+    parts.push(held ? 'rest held' : 'rest is still owed tonight')
+  }
+
+  const lines: string[] = []
+  if (parts.length) lines.push(`${parts.join('; ')}.`)
+
+  /* one look ahead: tomorrow's deep load vs the realistic best */
+  const tomorrow = addDaysKey(todayKey, 1)
+  const openTomorrow = blocks.some((b) => b.dayKey === tomorrow && b.status === 'open')
+  if (openTomorrow) {
+    const plannedH = Math.round((plannedDeepMin(blocks, tomorrow) / 60) * 2) / 2
+    if (plannedH > 0 && agg.realisticBestH != null && plannedH > agg.realisticBestH * 1.2) {
+      lines.push(`tomorrow opens heavy — ${plannedH}h against your ${agg.realisticBestH}.`)
+    } else if (plannedH > 0) {
+      lines.push(`tomorrow holds ${plannedH}h of deep work.`)
+    }
+  }
+  return lines
 }
 
 export interface KinderMove {
