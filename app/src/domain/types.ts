@@ -63,6 +63,7 @@ export type NudgeId =
   | 'update' // system offer (desktop update staged), not an engine nudge
   | 'restore' // system offer (desktop backup found on first boot), not an engine nudge
   | 'start-by'
+  | 'pref-drift'
 
 export interface NudgeAction {
   id: string

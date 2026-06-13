@@ -3,9 +3,10 @@
    user's OWN numbers, in MEW's voice. History informs; the live week decides:
    nothing here answers "now", it only parameterizes proposals and copy. */
 
-import type { Block, MemoryEvent } from './types'
-import { addDaysKey, dayKey, fmtDowLong, spell } from './time'
+import type { Block, MemoryEvent, PrefPayload } from './types'
+import { addDaysKey, dayKey, fmtDowLong, fmtTime, spell } from './time'
 import { blocksForDay, duration, isDeep } from './week'
+import { matchesPref, parseDurationValue, parseTimeValue } from './prefs'
 import type { MemoryAggregates } from './memory'
 
 export interface WeekdayLoad {
@@ -255,4 +256,64 @@ export function proposeKinderPlan(
         .join(', ')
     : ''
   return { moves, summary }
+}
+
+/* ── preference validation: rules that reality has outgrown ──────────── */
+
+export interface PrefContradiction {
+  pref: PrefPayload
+  /** what behavior actually shows — "starts 18:00" / "85m" */
+  observed: string
+  count: number
+}
+
+/** Cooldown identity of a rule — one home for the key grammar, shared by the
+    nudge's build (library) and the engine's candidate selection. */
+export function prefKey(p: PrefPayload): string {
+  return `${p.kind}:${p.match.toLowerCase()}`
+}
+
+/** Compare the standing rulebook against lived events, trailing 14 days.
+    A rule contradicted ≥3 times has been outgrown, not broken — surface it
+    kindly. Pref-driven placements land AT the rule, so they can never
+    self-confirm a contradiction; only real deviations count.
+    Matching and value parsing are imported from prefs.ts — validation must
+    read the rulebook with exactly the grammar placement applies it with. */
+export function prefContradictions(
+  prefs: PrefPayload[],
+  events: MemoryEvent[],
+  today: Date,
+): PrefContradiction[] {
+  const floor = addDaysKey(dayKey(today), -14)
+  const lived = events.filter(
+    (e) => e.kind === 'completed' && e.dayKey >= floor && e.title != null && e.startMin != null,
+  )
+  const out: PrefContradiction[] = []
+  for (const p of prefs) {
+    if (p.kind === 'time-default') {
+      const ruleMin = parseTimeValue(p.value)
+      if (ruleMin == null) continue
+      const off = lived.filter(
+        (e) => matchesPref(e.title!, p.match) && Math.abs(e.startMin! - ruleMin) >= 60,
+      )
+      if (off.length >= 3) {
+        const mid = [...off.map((e) => e.startMin!)].sort((a, b) => a - b)[Math.floor(off.length / 2)]
+        out.push({ pref: p, observed: `starts ${fmtTime(mid)}`, count: off.length })
+      }
+    }
+    if (p.kind === 'duration-default') {
+      const ruleDur = parseDurationValue(p.value)
+      if (ruleDur == null || ruleDur === 0) continue
+      const off = lived.filter((e) => {
+        if (!matchesPref(e.title!, p.match) || e.endMin == null) return false
+        const actual = e.endMin - e.startMin!
+        return actual > 0 && Math.abs(actual - ruleDur) / ruleDur >= 0.25
+      })
+      if (off.length >= 3) {
+        const mid = [...off.map((e) => e.endMin! - e.startMin!)].sort((a, b) => a - b)[Math.floor(off.length / 2)]
+        out.push({ pref: p, observed: `${mid}m`, count: off.length })
+      }
+    }
+  }
+  return out
 }

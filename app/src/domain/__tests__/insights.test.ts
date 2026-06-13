@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { computeInsights, proposeKinderPlan } from '../insights'
+import { computeInsights, prefContradictions, proposeKinderPlan } from '../insights'
 import { aggregates, consolidate } from '../memory'
 import { findFreeSlot } from '../week'
 import type { Block, MemoryEvent } from '../types'
 import { addDaysKey, dayKey } from '../time'
+import type { PrefPayload } from '../types'
 
 const TODAY = new Date(2026, 5, 10) // Wednesday
 const todayKey = dayKey(TODAY)
@@ -169,5 +170,66 @@ describe('overnight consolidation — the brain compacts while you sleep', () =>
     expect(out.kept).toContain(pref) // the brain-off rulebook never ages out
     expect(out.removedIds).toEqual([old.id]) // ordinary history still compacts
     expect(out.summaries[0].summary).toMatchObject({ completed: 1 }) // and the summary ignores prefs
+  })
+})
+
+describe('prefContradictions — rules reality has outgrown', () => {
+  const TODAY = new Date(2026, 5, 9, 12, 0)
+  const gymRule: PrefPayload = { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }
+  const deployRule: PrefPayload = { kind: 'duration-default', match: 'deploy', value: '45m', stated: 'deploys take 45' }
+
+  const done = (title: string, dayOffset: number, startMin: number, endMin?: number): MemoryEvent => ({
+    id: Math.random().toString(36).slice(2),
+    ts: 0,
+    kind: 'completed',
+    dayKey: addDaysKey('2026-06-09', dayOffset),
+    title,
+    startMin,
+    endMin: endMin ?? startMin + 60,
+  })
+
+  it('two misses stay silent; the third fires with the median observed', () => {
+    const twice = [done('Gym', -1, 18 * 60), done('Gym', -2, 18 * 60 + 30)]
+    expect(prefContradictions([gymRule], twice, TODAY)).toHaveLength(0)
+    const thrice = [...twice, done('Gym', -3, 19 * 60)]
+    const out = prefContradictions([gymRule], thrice, TODAY)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ count: 3, observed: 'starts 18:30' })
+  })
+
+  it('the 60-minute threshold is a real edge: 59 off is conforming, 60 contradicts', () => {
+    const near = [done('Gym', -1, 7 * 60 + 59), done('Gym', -2, 7 * 60 + 59), done('Gym', -3, 7 * 60 + 59)]
+    expect(prefContradictions([gymRule], near, TODAY)).toHaveLength(0)
+    const edge = [done('Gym', -1, 8 * 60), done('Gym', -2, 8 * 60), done('Gym', -3, 8 * 60)]
+    expect(prefContradictions([gymRule], edge, TODAY)).toHaveLength(1)
+  })
+
+  it('pref-driven placements cannot self-confirm: at-rule completions never count', () => {
+    const conforming = [done('Gym', -1, 7 * 60), done('Gym', -2, 7 * 60), done('Gym', -3, 7 * 60), done('Gym', -4, 7 * 60)]
+    expect(prefContradictions([gymRule], conforming, TODAY)).toHaveLength(0)
+  })
+
+  it('duration: ±25% is the line, three times over it fires with the median', () => {
+    const close = [done('Deploy api', -1, 600, 600 + 55), done('Deploy api', -2, 600, 600 + 55), done('Deploy api', -3, 600, 600 + 55)]
+    expect(prefContradictions([deployRule], close, TODAY)).toHaveLength(0) // 55m is within 25% of 45m
+    const over = [done('Deploy api', -1, 600, 600 + 90), done('Deploy api', -2, 600, 600 + 80), done('Deploy api', -3, 600, 600 + 85)]
+    const out = prefContradictions([deployRule], over, TODAY)
+    expect(out).toHaveLength(1)
+    expect(out[0].observed).toBe('85m')
+  })
+
+  it('the window is 14 days: ancient deviations are forgotten', () => {
+    const old = [done('Gym', -15, 18 * 60), done('Gym', -16, 18 * 60), done('Gym', -17, 18 * 60)]
+    expect(prefContradictions([gymRule], old, TODAY)).toHaveLength(0)
+  })
+
+  it('validation reads the rulebook with placement’s grammar: "starts 7am" values and punctuated titles are visible', () => {
+    /* both forms are applied at placement (prefs.ts); the old local parsers
+       dropped them — a rule could be enforced yet invisible to validation */
+    const sevenAm: PrefPayload = { kind: 'time-default', match: 'stand up', value: 'starts 7am', stated: 'standup is at 7' }
+    const lived = [done('Stand-up', -1, 18 * 60), done('Stand-up', -2, 18 * 60), done('Stand-up', -3, 18 * 60)]
+    const out = prefContradictions([sevenAm], lived, TODAY)
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ count: 3, observed: 'starts 18:00' })
   })
 })

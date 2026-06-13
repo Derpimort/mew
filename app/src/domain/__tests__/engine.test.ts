@@ -318,3 +318,71 @@ describe('start-by — latest-start intelligence for due-bearing background', ()
     expect(again.some((n) => n.type === 'start-by')).toBe(false)
   })
 })
+
+describe('pref-drift — the rulebook keeps up with the life it describes', () => {
+  const gymRule = { kind: 'time-default' as const, match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }
+  const lived = (offset: number): MemoryEvent => ({
+    id: `e${offset}`,
+    ts: 0,
+    kind: 'completed',
+    dayKey: `2026-06-0${9 + offset}`.replace('-010', '-10'),
+    title: 'Gym',
+    startMin: 18 * 60,
+    endMin: 19 * 60,
+  })
+
+  it('three lived contradictions fire one kind nudge with both actions', () => {
+    const events = [lived(-3 as never), lived(-2 as never), lived(-1 as never)].map((e, i) => ({
+      ...e,
+      dayKey: ['2026-06-06', '2026-06-07', '2026-06-08'][i],
+    }))
+    const fired = evaluateTick(
+      buildCtx(tick({ blocks: [], events, prefs: [gymRule] }), fresh),
+    )
+    const pd = fired.find((n) => n.type === 'pref-drift')
+    expect(pd).toBeDefined()
+    expect(pd!.body).toBe(
+      'your rule says gym starts 07:00, but it has lived near 18:00 three times running — update the rule, or keep 07:00?',
+    )
+    expect(pd!.actions.map((a) => a.id)).toEqual(['update', 'keep'])
+    expect(pd!.body).not.toMatch(/breaking|failed|broke/)
+  })
+
+  it('the per-pref key + 7d cooldown swallows a re-fire', () => {
+    const events = ['2026-06-06', '2026-06-07', '2026-06-08'].map((dayKey, i) => ({
+      ...lived(0 as never),
+      id: `e${i}`,
+      dayKey,
+    }))
+    const nowMs = Date.UTC(2026, 5, 9, 9, 52)
+    const again = evaluateTick(
+      buildCtx(tick({ blocks: [], events, prefs: [gymRule], nowMs }), {
+        lastFired: { 'pref-drift': { ts: nowMs - 60 * 60_000, key: 'time-default:gym' } },
+        lastDriftBlockId: null,
+      }),
+    )
+    expect(again.some((n) => n.type === 'pref-drift')).toBe(false)
+  })
+
+  it('a kept rule never starves the queue: a second drifted rule fires inside the first one’s window', () => {
+    const deployRule = { kind: 'time-default' as const, match: 'deploy', value: 'starts 09:00', stated: 'deploys at 9' }
+    const nowMs = Date.UTC(2026, 5, 9, 9, 52)
+    const events: MemoryEvent[] = ['2026-06-06', '2026-06-07', '2026-06-08'].flatMap((dk, i) => [
+      { ...lived(0 as never), id: `g${i}`, dayKey: dk }, // gym lives at 18:00 against 07:00
+      { ...lived(0 as never), id: `d${i}`, dayKey: dk, title: 'Deploy', startMin: 15 * 60, endMin: 16 * 60 },
+    ])
+    /* gym was kept an hour ago: declined outcome stretches its cooldown to 14d */
+    events.push({ id: 'o1', ts: nowMs - 60 * 60_000, kind: 'nudge_outcome', dayKey: '2026-06-09', nudgeType: 'pref-drift', outcome: 'declined' })
+    const fired = evaluateTick(
+      buildCtx(tick({ blocks: [], events, prefs: [gymRule, deployRule], nowMs }), {
+        lastFired: { 'pref-drift': { ts: nowMs - 60 * 60_000, key: 'time-default:gym' } },
+        lastDriftBlockId: null,
+      }),
+    )
+    const pd = fired.find((n) => n.type === 'pref-drift')
+    expect(pd).toBeDefined()
+    expect(pd!.key).toBe('time-default:deploy')
+    expect(pd!.body).toContain('deploy')
+    expect(pd!.body).not.toContain('gym') // the cooling rule waits its turn; never a list
+  })
+})

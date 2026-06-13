@@ -910,3 +910,65 @@ describe('prefs applied at placement', () => {
     expect(lastMsg().body).not.toContain("can't move")
   })
 })
+
+/* ── pref-drift: the rulebook follows the life it describes ──────────── */
+
+describe('pref-drift validation', () => {
+  /** seed the rule, then live three gym evenings against it */
+  async function liveAgainstTheRule() {
+    await fresh(TUE(9, 40))
+    await say('remember that gym is always at 7am')
+    for (const [day, hour] of [[-3, 18], [-2, 18.5], [-1, 19]] as const) {
+      useMew.setState((s) => ({
+        memory: [
+          ...s.memory,
+          {
+            id: uid(),
+            ts: TUE(12).getTime(),
+            kind: 'completed' as const,
+            dayKey: addDaysKey(dayKey(TUE(9, 40)), day),
+            title: 'Gym',
+            startMin: hour * 60,
+            endMin: hour * 60 + 60,
+          },
+        ],
+      }))
+    }
+    /* stay "active" so drift never outranks the rulebook check (one nudge
+       per tick, priority order) */
+    useMew.setState({ lastActivityMs: TUE(10, 29).getTime() })
+    at(TUE(10, 30)) // a later tick, past the seeded morning's right-size
+    useMew.setState({ lastActivityMs: TUE(10, 59).getTime() })
+    at(TUE(11, 0))
+  }
+
+  it('three contradictions → exactly one nudge with live update/keep actions', async () => {
+    await liveAgainstTheRule()
+    const drifts = nudges('pref-drift')
+    expect(drifts).toHaveLength(1)
+    expect(drifts[0].body).toContain('your rule says gym starts 07:00')
+    expect(drifts[0].actions!.map((a) => a.id)).toEqual(['update', 'keep'])
+  })
+
+  it('update rewrites the rule — the rulebook upserts to the observed value', async () => {
+    const { prefLinesFrom } = await import('../store')
+    await liveAgainstTheRule()
+    act(nudges('pref-drift')[0], 'update')
+    const lines = prefLinesFrom(useMew.getState().memory, null)
+    expect(lines.filter((l) => l.startsWith('gym →'))).toHaveLength(1)
+    expect(lines.find((l) => l.startsWith('gym →'))).toContain('starts 18:30')
+    expect(lastMsg().body).toBe('Remembered — gym starts 18:30.')
+  })
+
+  it('keep resolves quietly and the cooldown holds the peace', async () => {
+    await liveAgainstTheRule()
+    const offer = nudges('pref-drift')[0]
+    act(offer, 'keep')
+    expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
+    useMew.setState({ lastActivityMs: TUE(11, 29).getTime() })
+    at(TUE(11, 30))
+    useMew.setState({ lastActivityMs: TUE(11, 59).getTime() })
+    at(TUE(12, 0))
+    expect(nudges('pref-drift')).toHaveLength(1) // no re-fire inside the cooldown
+  })
+})

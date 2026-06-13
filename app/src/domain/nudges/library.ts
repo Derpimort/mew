@@ -3,11 +3,11 @@
    New research findings land here as new entries, not new code.
    Content source of truth: design_handoff_mew_mvp/mew-v4-research.jsx → NUDGES. */
 
-import type { Block, Capture, NudgeAction, NudgeId } from '../types'
+import type { Block, Capture, NudgeAction, NudgeId, PrefPayload } from '../types'
 import type { LiveNow } from '../liveNow'
 import type { MemoryAggregates } from '../memory'
 import { heavyCarryWeeks } from '../memory'
-import type { Insights } from '../insights'
+import { prefKey, type Insights } from '../insights'
 import { addDaysKey, fmtDowLong, fmtTime, spell } from '../time'
 
 export interface NudgeCtx {
@@ -31,6 +31,8 @@ export interface NudgeCtx {
   justEndedFixed: Block | null
   /** A due-bearing background block at its latest-start boundary, unstarted. */
   startBy: { block: Block; latestStart: number } | null
+  /** A standing rule that lived behavior has outgrown (trailing 14d, ≥3). */
+  prefDrift: { pref: PrefPayload; observed: string; count: number } | null
   /* event payloads (set only on the matching event) */
   justCompleted: Block | null
   newCapture: Capture | null
@@ -347,6 +349,28 @@ export const NUDGES: NudgeDef[] = [
         ],
         payload: { blockId: block.id },
         key: block.id,
+      }
+    },
+  },
+  {
+    id: 'pref-drift',
+    label: 'rule check',
+    tone: 'care, never blame',
+    cooldownMs: 7 * 24 * H, // keep stretches it toward 14d via outcome learning
+    trigger: (c) => c.prefDrift != null,
+    build: (c) => {
+      const { pref, observed, count } = c.prefDrift!
+      const obs = observed.replace(/^starts /, '')
+      const cur = pref.value.replace(/^starts /, '')
+      return {
+        body: `your rule says ${pref.match} ${pref.value}, but it has lived near ${obs} ${spell(count)} times running — update the rule, or keep ${cur}?`,
+        footnote: `Habits drift with context; rules that track reality get followed. (Wood & Neal, 2007)`,
+        actions: [
+          { id: 'update', label: `Update to ${obs}`, kind: 'primary' },
+          { id: 'keep', label: `Keep ${cur}`, kind: 'secondary' },
+        ],
+        payload: { kind: pref.kind, match: pref.match, value: pref.value, observed, stated: pref.stated },
+        key: prefKey(pref),
       }
     },
   },

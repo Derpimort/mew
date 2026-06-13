@@ -428,6 +428,7 @@ export const useMew = create<MewState>((set, get) => {
         interruptionsLastHour: interruptionsLastHour(s.memory, s.nowMs),
         guardUntilMin: guardActive,
         quietStartMin: s.settings.quietHours.startMin,
+        prefs: activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
       },
       s.engine,
     )
@@ -1523,6 +1524,24 @@ export const useMew = create<MewState>((set, get) => {
         }
         case 'start-by:ack':
           decline() // "I know" — learning stretches the cooldown, not the deadline
+          break
+        /* the rulebook keeps up with the life it describes */
+        case 'pref-drift:update': {
+          post([
+            mewMsg(
+              execRemember({
+                kind: payload.kind as PrefPayload['kind'],
+                match: String(payload.match),
+                value: String(payload.observed),
+                stated: `updated from how it actually lives (was: "${String(payload.stated)}")`,
+              }),
+            ),
+          ])
+          accept()
+          break
+        }
+        case 'pref-drift:keep':
+          decline() // outcome learning stretches the 7d cooldown toward 14d
           break
         default:
           decline()

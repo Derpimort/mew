@@ -2,10 +2,10 @@
    Posting, quiet-hour queueing, and outcome logging live in the state layer;
    this file only decides *what is true right now*. */
 
-import type { Block, Capture, MemoryEvent, NudgeId } from '../types'
+import type { Block, Capture, MemoryEvent, NudgeId, PrefPayload } from '../types'
 import type { MemoryAggregates } from '../memory'
 import { liveNow, type LiveNow } from '../liveNow'
-import { computeInsights } from '../insights'
+import { computeInsights, prefContradictions, prefKey } from '../insights'
 import {
   blocksForDay,
   dayEndMin,
@@ -37,6 +37,8 @@ export interface TickInputs {
   idleMin: number
   interruptionsLastHour: number
   guardUntilMin: number | null
+  /** the standing rulebook, for drift validation (optional: floor-safe) */
+  prefs?: PrefPayload[]
   /** Quiet hours, so close-the-loop can land in the wind-down before them. */
   quietStartMin?: number
   /** Unplaced intentions — next-up may offer one for a reclaimed gap. */
@@ -119,6 +121,14 @@ export function buildCtx(
   const tomorrow = addDaysKey(t.todayKey, 1)
   const events = t.events ?? []
   const insights = computeInsights(events, t.agg, new Date(t.nowMs))
+
+  /* drift candidates: a kept-but-still-contradicting rule sits in its
+     stretched cooldown — it must not starve the drifted rules behind it.
+     Surface the first candidate that isn't the cooling key; fire() then
+     applies the per-key cooldown exactly as it does for start-by. */
+  const drifts = prefContradictions(t.prefs ?? [], events, new Date(t.nowMs))
+  const coolingPrefKey = engine.lastFired['pref-drift']?.key
+  const prefDrift = drifts.find((d) => prefKey(d.pref) !== coolingPrefKey) ?? drifts[0] ?? null
 
   /* a chronic roller (≥3 rolls) that still has an open block → starter proposal */
   let stalled: NudgeCtx['stalled'] = null
@@ -227,6 +237,7 @@ export function buildCtx(
       null,
     justEndedFixed,
     startBy: findStartBy(t.blocks, t.todayKey, t.nowMin),
+    prefDrift,
     justCompleted: event?.justCompleted ?? null,
     newCapture: event?.newCapture ?? null,
     captureProposal,
@@ -317,6 +328,7 @@ const TICK_NUDGES: NudgeId[] = [
   'right-size',
   'break-smaller',
   'kinder-plan',
+  'pref-drift', // rulebook hygiene waits behind everything urgent
 ]
 const EVENT_NUDGES: NudgeId[] = ['celebrate', 'micro-break', 'next-up', 'when-where', 'fresh-start']
 
