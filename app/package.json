@@ -14,9 +14,12 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.0",
+    "@noble/ciphers": "^2.2.0",
+    "@noble/post-quantum": "^0.6.1",
     "@react-three/fiber": "^9.6.1",
     "clsx": "^2.1.1",
     "dexie": "^4.4.3",
+    "hash-wasm": "^4.12.0",
     "lucide-react": "^1.17.0",
     "motion": "^12.40.0",
     "react": "^19.2.6",
