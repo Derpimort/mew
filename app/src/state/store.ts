@@ -7,7 +7,9 @@ import type {
   Block,
   Capture,
   ChatMessage,
+  MemoryEvent,
   NudgeId,
+  PrefPayload,
   Settings,
   VisibleTag,
 } from '../domain/types'
@@ -73,6 +75,39 @@ const brain: BrainPort = createGbrainHttp({
 })
 /** exposed for the Settings health dot — same instance the store writes through */
 export const mewBrain = brain
+
+/* the always-on pref slice: brain-backed when connected, memory-backed
+   otherwise. Cached per session; refreshed after every remember. */
+let brainPrefs: PrefPayload[] | null = null
+function refreshBrainPrefs(): void {
+  if (!useMew.getState().settings.brainEnabled) {
+    brainPrefs = null
+    return
+  }
+  void brain.listPrefs().then((prefs) => {
+    brainPrefs = prefs
+  })
+}
+
+/** newest-first, deduped by kind+match, capped — the context rulebook */
+export function prefLinesFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | null): string[] {
+  const source: PrefPayload[] = fromBrain?.length
+    ? fromBrain
+    : [...memory]
+        .reverse()
+        .filter((e) => e.kind === 'preference' && e.pref)
+        .map((e) => e.pref!)
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const p of source) {
+    const key = `${p.kind}:${p.match.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(`${p.match} → ${p.value} (stated: "${p.stated}")`)
+    if (out.length >= 15) break
+  }
+  return out
+}
 
 /* Dev/design affordance: `?t=HH:MM` shifts the app clock so any moment of the
    day can be previewed deterministically (now-line, end-of-day, quiet hours). */
@@ -219,6 +254,7 @@ function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
     mewsToday: live.mewsToday,
     insightLines: computeInsights(s.memory, agg, now).lines,
     recallLines,
+    prefLines: prefLinesFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
   }
 }
 
@@ -637,11 +673,15 @@ export const useMew = create<MewState>((set, get) => {
     return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash)}`
   }
 
-  function execRemember(fact: string, kind: 'preference' | 'correction'): string {
-    void brain.ingest(prefPage(fact, kind))
-    return get().settings.brainEnabled
-      ? `Remembered — ${fact}`
-      : `Noted — ${fact} (connect a brain in Settings and this sticks across sessions)`
+  function execRemember(pref: PrefPayload): string {
+    /* the local memory is the always-on home (single-device floor); the
+       brain mirrors it when connected, and a restated rule upserts both
+       sides (slug = kind+match in the brain; newest event wins locally) */
+    logMemory({ kind: 'preference', dayKey: dayKey(new Date(get().nowMs)), pref })
+    if (get().settings.brainEnabled) {
+      void brain.ingest(prefPage(pref)).then(() => refreshBrainPrefs())
+    }
+    return `Remembered — ${pref.match} ${pref.value}.`
   }
 
   function execRemove(query: string): string {
@@ -878,6 +918,7 @@ export const useMew = create<MewState>((set, get) => {
         offerUpdate(stagedUpdateVersion)
         stagedUpdateVersion = null
       }
+      refreshBrainPrefs()
     },
 
     tick() {
@@ -976,9 +1017,9 @@ export const useMew = create<MewState>((set, get) => {
         },
         analyze: (d) => execAnalyze(d), // read-only: not an action
         findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only
-        remember: (fact, kind) => {
+        remember: (pref) => {
           acted = true
-          return execRemember(fact, kind)
+          return execRemember(pref)
         },
       }
 

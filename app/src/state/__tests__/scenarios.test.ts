@@ -137,6 +137,7 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
     },
     recall: async () => [],
     health: async () => false,
+    listPrefs: async () => [],
   }),
 }))
 
@@ -539,6 +540,47 @@ describe('brain senses', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     const weekWrites = brainFake.ingests.filter((p) => p.slug.startsWith('week/'))
     expect(weekWrites).toHaveLength(1) // user turn + mew reply coalesced
+  })
+})
+
+/* ── preferences: stated once, applied every turn ─────────────────────── */
+
+describe('remember (the standing rulebook)', () => {
+  it('floor path: "remember that gym is always at 7am" persists and reaches the pref slice', async () => {
+    const { prefLinesFrom } = await import('../store')
+    await fresh(TUE(9, 40))
+    await say('remember that gym is always at 7am')
+    expect(lastMsg().body).toBe('Remembered — gym starts 07:00.')
+    const ev = useMew.getState().memory.findLast((e: MemoryEvent) => e.kind === 'preference')!
+    expect(ev.pref).toMatchObject({ kind: 'time-default', match: 'gym', value: 'starts 07:00' })
+    const lines = prefLinesFrom(useMew.getState().memory, null)
+    expect(lines).toEqual(['gym → starts 07:00 (stated: "gym is always at 7am")'])
+  })
+
+  it('upsert: restating replaces — one line, newest value wins', async () => {
+    const { prefLinesFrom } = await import('../store')
+    await fresh(TUE(9, 40))
+    await say('remember that gym is always at 7am')
+    await say('remember that gym is always at 8am')
+    const lines = prefLinesFrom(useMew.getState().memory, null)
+    expect(lines.filter((l) => l.startsWith('gym →'))).toHaveLength(1)
+    expect(lines[0]).toContain('starts 08:00')
+  })
+
+  it('one-off moves write zero prefs', async () => {
+    await fresh(TUE(9, 40))
+    await say('move gym to 8 today')
+    expect(useMew.getState().memory.some((e: MemoryEvent) => e.kind === 'preference')).toBe(false)
+  })
+
+  it('brain on: the pref page rides to the brain with the upsert slug', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    await say('remember that the standup always takes 15 min')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(brainFake.ingests.map((p) => p.slug)).toContain('pref/duration-default-standup')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
   })
 })
 

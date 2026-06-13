@@ -182,14 +182,20 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'remember',
     description:
-      "Persist a durable fact, preference, or correction the user stated — 'gym is always 7am', 'order lunch is an errand, lunch is the meal', 'never schedule deep work after 4'. One plain sentence, present tense, the user's own rule in their own terms. Call it the moment they correct you or state a standing preference; re-teaching is a failure. Not for one-off scheduling (that's plan_blocks) or vague chatter.",
+      "Persist a standing rule or correction the user stated, structured so MEW can apply it later. Fire on corrections and standing rules — 'always', 'never', 'X means Y', 'from now on'. NOT for one-offs: 'move gym to 8 today' is a move, not a preference. Re-teaching is a failure; one-off noise in the rulebook is also a failure.",
     parameters: {
       type: 'object',
       properties: {
-        fact: { type: 'string', description: 'One present-tense sentence stating the rule or fact' },
-        kind: { type: 'string', enum: ['preference', 'correction'], description: 'preference = a standing rule; correction = you had it wrong' },
+        kind: {
+          type: 'string',
+          enum: ['time-default', 'duration-default', 'flexibility', 'ordering', 'fact'],
+          description: 'time-default = when it usually starts · duration-default = how long it really takes · flexibility = can it move · ordering = what comes before/after what · fact = anything else durable',
+        },
+        match: { type: 'string', description: 'What the rule is about — "gym", "order lunch", "deep work"' },
+        value: { type: 'string', description: 'The rule itself — "starts 07:00", "45m", "never moves", "before standup"' },
+        stated: { type: 'string', description: "The user's own words, verbatim" },
       },
-      required: ['fact'],
+      required: ['kind', 'match', 'value', 'stated'],
       additionalProperties: false,
     },
   },
@@ -262,10 +268,16 @@ export function runTool(name: string, input: unknown, exec: ToolExecutor): strin
       return exec.clear(scope)
     }
     case 'remember': {
-      const fact = String(o.fact ?? '').trim()
-      if (!fact) return 'nothing to remember — the call was empty'
-      const kind = o.kind === 'correction' ? ('correction' as const) : ('preference' as const)
-      return exec.remember(fact, kind)
+      const kinds = ['time-default', 'duration-default', 'flexibility', 'ordering', 'fact'] as const
+      const match = String(o.match ?? '').trim()
+      const value = String(o.value ?? '').trim()
+      if (!match || !value) return 'nothing to remember — the rule needs a subject and a value'
+      return exec.remember({
+        kind: kinds.includes(o.kind as never) ? (o.kind as (typeof kinds)[number]) : 'fact',
+        match,
+        value,
+        stated: String(o.stated ?? '').trim() || `${match} ${value}`,
+      })
     }
     default:
       return `unknown tool: ${name}`

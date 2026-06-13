@@ -106,10 +106,66 @@ function clauses(text: string): string[] {
     .filter(Boolean)
 }
 
+/* "gym is always at 7am" → a structured rule. Deliberate shapes only;
+   anything else lands as kind:'fact' with the words kept verbatim. */
+function parsePref(raw: string): NonNullable<ScheduleIntent['pref']> {
+  const text = raw.trim().replace(/\.+$/, '')
+  const stated = text
+  const timeM = text.match(/^(.*?)\s+(?:is|are|starts?|happens?)\s+always\s+(?:at\s+)?(\d{1,2}(?::(\d{2}))?)\s*(am|pm)?$/i)
+  if (timeM) {
+    let h = Number(timeM[2].split(':')[0])
+    const min = timeM[2].includes(':') ? Number(timeM[2].split(':')[1]) : 0
+    if (timeM[4]?.toLowerCase() === 'pm' && h < 12) h += 12
+    if (timeM[4]?.toLowerCase() === 'am' && h === 12) h = 0
+    return {
+      kind: 'time-default',
+      match: timeM[1].replace(/^(the|my)\s+/i, '').trim(),
+      value: `starts ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`,
+      stated,
+    }
+  }
+  const durM = text.match(/^(.*?)\s+(?:always\s+|really\s+)?takes\s+(\d+(?:\.\d+)?)\s*(m|min|mins|minutes|h|hr|hours?)\b/i)
+  if (durM) {
+    const n = Number(durM[2])
+    const mins = /^h/i.test(durM[3]) ? Math.round(n * 60) : Math.round(n)
+    return { kind: 'duration-default', match: durM[1].replace(/^(the|my)\s+/i, '').trim(), value: `${mins}m`, stated }
+  }
+  const flexM = text.match(/^(.*?)\s+(never|always)\s+(?:moves?|can move|flexes)$/i)
+  if (flexM) {
+    return {
+      kind: 'flexibility',
+      match: flexM[1].replace(/^(the|my)\s+/i, '').trim(),
+      value: flexM[2].toLowerCase() === 'never' ? 'never moves' : 'can always move',
+      stated,
+    }
+  }
+  const ordM = text.match(/^(.*?)\s+(?:always\s+)?(?:comes?\s+|goes?\s+)?(before|after)\s+(.+)$/i)
+  if (ordM) {
+    return {
+      kind: 'ordering',
+      match: ordM[1].replace(/^(the|my)\s+/i, '').trim(),
+      value: `${ordM[2].toLowerCase()} ${ordM[3].trim()}`,
+      stated,
+    }
+  }
+  const subject = cleanTitle(text.split(/\s+(?:is|are|means|=)\s+/i)[0]).slice(0, 40)
+  return { kind: 'fact', match: subject || 'note', value: text, stated }
+}
+
 export function parseCommand(text: string, now: Date): ScheduleIntent {
   const trimmed = text.trim()
   if (!trimmed) return { kind: 'chat', reply: '' }
   const lower = trimmed.toLowerCase()
+
+  /* "remember that gym is always at 7am" — a rule for the standing rulebook.
+     "remember to <do the thing>" is a TODO in disguise — capture intent, not
+     a rule; one-off noise in the rulebook is a failure. */
+  const remM = trimmed.match(/^remember\s+(?:that\s+)?(.+)$/i)
+  if (remM) {
+    const todoM = remM[1].match(/^to\s+(.+)$/i)
+    if (todoM) return { kind: 'capture', title: cleanTitle(todoM[1]) }
+    return { kind: 'remember', pref: parsePref(remM[1]) }
+  }
 
   /* clear / start over: "cleanup my calendar so I can restart and plan" */
   if (

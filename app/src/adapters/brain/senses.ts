@@ -4,7 +4,7 @@
 
 import type { Block, ChatMessage } from '../../domain/types'
 import { fmtTime } from '../../domain/time'
-import type { BrainPage } from './types'
+import type { BrainPage, PrefPayload } from './types'
 
 /** brain-safe slugs: lowercase alnum + hyphens, collapsed and trimmed */
 export function slugify(text: string): string {
@@ -72,14 +72,28 @@ export function blockEventPage(b: Block, kind: BlockEventKind, dayKey: string, a
   }
 }
 
-/** A durable fact the user stated ("gym is always 7am"). One sentence in,
-    one pref page out. */
-export function prefPage(fact: string, kind: 'preference' | 'correction'): BrainPage {
+/** A standing rule becomes one pref page. The slug is kind+match, so
+    restating the same rule upserts — newest wins, count stays one. The
+    payload travels as fenced JSON; the human line keeps it readable. */
+export function prefPage(p: PrefPayload): BrainPage {
   return {
-    slug: `pref/${slugify(fact)}`,
+    slug: `pref/${p.kind}-${slugify(p.match)}`,
     type: 'pref',
-    tags: ['preference', kind],
-    body: `${fact.trim()}\n`,
+    tags: ['preference', p.kind],
+    body: `${p.match} → ${p.value}\n\nstated: "${p.stated.trim()}"\n\n\`\`\`json\n${JSON.stringify(p)}\n\`\`\`\n`,
+  }
+}
+
+/** Parse a pref page body back into its payload (null on anything off). */
+export function parsePrefBody(body: string): PrefPayload | null {
+  const m = body.match(/```json\s*\n([\s\S]*?)\n```/)
+  if (!m) return null
+  try {
+    const p = JSON.parse(m[1]) as PrefPayload
+    if (typeof p.match === 'string' && typeof p.value === 'string' && typeof p.kind === 'string') return p
+    return null
+  } catch {
+    return null
   }
 }
 

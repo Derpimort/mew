@@ -64,6 +64,10 @@ export function runIntent(
       return exec.clear(intent.scope ?? 'upcoming')
     case 'edit':
       return exec.edit(intent.query ?? '', intent.edit ?? {})
+    case 'remember':
+      return intent.pref
+        ? exec.remember(intent.pref)
+        : 'nothing to remember — the rule needs a subject and a value'
     case 'remove':
       return exec.remove(intent.query ?? '')
     case 'chat': {
@@ -150,6 +154,22 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
   if (kind === 'clear') {
     const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
     return { kind, scope: scopes.includes(o.scope as never) ? (o.scope as 'today') : 'upcoming' }
+  }
+  if (kind === 'remember') {
+    const pr = (o.pref && typeof o.pref === 'object' ? o.pref : {}) as Record<string, unknown>
+    const kinds = ['time-default', 'duration-default', 'flexibility', 'ordering', 'fact'] as const
+    const match = typeof pr.match === 'string' ? pr.match.trim() : ''
+    const value = typeof pr.value === 'string' ? pr.value.trim() : ''
+    if (!match || !value) return null
+    return {
+      kind,
+      pref: {
+        kind: kinds.includes(pr.kind as never) ? (pr.kind as (typeof kinds)[number]) : 'fact',
+        match,
+        value,
+        stated: typeof pr.stated === 'string' && pr.stated.trim() ? pr.stated.trim() : `${match} ${value}`,
+      },
+    }
   }
   if (kind === 'chat') return { kind, reply: typeof o.reply === 'string' ? o.reply : undefined }
   return null

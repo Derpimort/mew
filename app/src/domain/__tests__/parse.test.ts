@@ -166,3 +166,47 @@ describe('background + due grammar (attention model)', () => {
     expect(out.places![0].due).toBeUndefined()
   })
 })
+
+describe('remember — the floor learns standing rules', () => {
+  it('"remember that gym is always at 7am" → structured time-default', () => {
+    expect(parseCommand('remember that gym is always at 7am', NOW)).toEqual({
+      kind: 'remember',
+      pref: { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always at 7am' },
+    })
+  })
+
+  it('duration, flexibility, and ordering shapes parse to their kinds', () => {
+    expect(parseCommand('remember the standup always takes 15 min', NOW).pref).toMatchObject({
+      kind: 'duration-default',
+      match: 'standup',
+      value: '15m',
+    })
+    expect(parseCommand('remember that the walk never moves', NOW).pref).toMatchObject({
+      kind: 'flexibility',
+      match: 'walk',
+      value: 'never moves',
+    })
+    expect(parseCommand('remember review always comes before standup', NOW).pref).toMatchObject({
+      kind: 'ordering',
+      match: 'review',
+      value: 'before standup',
+    })
+  })
+
+  it('anything else lands as a verbatim fact', () => {
+    const out = parseCommand('remember order lunch means the errand', NOW)
+    expect(out.pref).toMatchObject({ kind: 'fact', value: 'order lunch means the errand' })
+  })
+
+  it('one-offs never become rules: "move gym to 8 today" stays a move', () => {
+    expect(parseCommand('move gym to 8 today', NOW).kind).toBe('move')
+  })
+
+  it('"remember to <verb>" is a TODO, not a rule — it captures; "remember that" still rules', () => {
+    expect(parseCommand('remember to call the bank', NOW)).toMatchObject({ kind: 'capture', title: 'call the bank' })
+    expect(parseCommand('remember that gym is always 7am', NOW)).toMatchObject({
+      kind: 'remember',
+      pref: { kind: 'time-default', match: 'gym', value: 'starts 07:00' },
+    })
+  })
+})

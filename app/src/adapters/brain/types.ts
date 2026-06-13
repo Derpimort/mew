@@ -23,6 +23,10 @@ export interface RecallOpts {
   limit?: number
 }
 
+/** The structured rule shape lives in the domain (it outlives any brain). */
+export type { PrefKind, PrefPayload } from '../../domain/types'
+import type { PrefPayload } from '../../domain/types'
+
 export interface BrainPort {
   /** Fire-and-forget write; failures warn and flip health, never throw. */
   ingest(page: BrainPage): Promise<void>
@@ -31,4 +35,6 @@ export interface BrainPort {
   recall(question: string, opts?: RecallOpts): Promise<string[]>
   /** Cheap reachability probe (also flipped by every failed call). */
   health(): Promise<boolean>
+  /** Every stored preference (tag=preference), newest first; [] on failure. */
+  listPrefs(): Promise<PrefPayload[]>
 }

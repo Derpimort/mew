@@ -115,7 +115,9 @@ export function consolidate(events: MemoryEvent[], today: Date, uid: () => strin
   const kept: MemoryEvent[] = []
   const old: MemoryEvent[] = []
   for (const e of events) {
-    if (e.kind !== 'weekly_summary' && e.dayKey < floor) old.push(e)
+    /* preferences are state, not history — a standing rule never ages out
+       (it's the brain-off rulebook; compacting it un-teaches MEW) */
+    if (e.kind !== 'weekly_summary' && e.kind !== 'preference' && e.dayKey < floor) old.push(e)
     else kept.push(e)
   }
   if (!old.length) return { kept, removedIds: [], summaries: [] }

@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage } from '../../../domain/types'
-import { blockEventPage, chatBatchPage, makeChatBatcher, peopleFrom, prefPage, slugify, taskSlug } from '../senses'
+import { blockEventPage, chatBatchPage, makeChatBatcher, parsePrefBody, peopleFrom, prefPage, slugify, taskSlug } from '../senses'
 
 const D = '2026-06-09'
 
@@ -73,12 +73,21 @@ describe('blockEventPage', () => {
   })
 })
 
-describe('prefPage', () => {
-  it('one sentence in, one tagged pref page out', () => {
-    const page = prefPage('gym is always 7am', 'preference')
-    expect(page.slug).toBe('pref/gym-is-always-7am')
-    expect(page.tags).toEqual(['preference', 'preference'])
-    expect(page.body).toBe('gym is always 7am\n')
+describe('prefPage — structured, upsert-by-construction', () => {
+  const pref = { kind: 'time-default' as const, match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }
+
+  it('slug is kind+match so restating replaces instead of accumulating', () => {
+    const page = prefPage(pref)
+    expect(page.slug).toBe('pref/time-default-gym')
+    expect(prefPage({ ...pref, value: 'starts 08:00', stated: 'gym moved to 8' }).slug).toBe(page.slug)
+    expect(page.tags).toEqual(['preference', 'time-default'])
+  })
+
+  it('round-trips through the fenced JSON body', () => {
+    const page = prefPage(pref)
+    expect(parsePrefBody(page.body!)).toEqual(pref)
+    expect(parsePrefBody('no fence here')).toBeNull()
+    expect(parsePrefBody('```json\n{broken\n```')).toBeNull()
   })
 })
 

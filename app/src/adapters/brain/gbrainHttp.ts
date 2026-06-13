@@ -6,7 +6,8 @@
    3s timeouts, every failure swallowed to one console.warn + a health flip —
    the brain must never block the week. */
 
-import type { BrainPage, BrainPort, RecallOpts } from './types'
+import type { BrainPage, BrainPort, PrefPayload, RecallOpts } from './types'
+import { parsePrefBody } from './senses'
 
 const TIMEOUT_MS = 3000
 
@@ -194,6 +195,51 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
           lines = toLines(textOf(await call('search', { query: question, limit })))
         }
         return lines.slice(0, limit)
+      } catch (err) {
+        warnOnce(err)
+        return []
+      }
+    },
+
+    async listPrefs(): Promise<PrefPayload[]> {
+      if (!cfg.enabled()) return []
+      try {
+        const textOf = (rpc: unknown): string =>
+          (rpc as { result?: { content?: { type: string; text?: string }[] } }).result?.content?.find(
+            (c) => c.type === 'text',
+          )?.text ?? ''
+        const listed = textOf(await call('list_pages', { tag: 'preference', limit: 30 }))
+        let slugs: string[] = []
+        try {
+          const arr = JSON.parse(listed) as unknown
+          if (Array.isArray(arr)) {
+            slugs = arr
+              .map((e) => (typeof e === 'string' ? e : ((e as { slug?: string }).slug ?? '')))
+              .filter((sl) => sl.startsWith('pref/'))
+          }
+        } catch {
+          slugs = listed
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => l.startsWith('pref/'))
+        }
+        const out: PrefPayload[] = []
+        for (const slug of slugs.slice(0, 30)) {
+          const raw = textOf(await call('get_page', { slug }))
+          /* get_page wraps the page in a JSON envelope; the markdown body
+             lives in .content (fall back to the raw text for older shapes) */
+          let body = raw
+          try {
+            const env = JSON.parse(raw) as { compiled_truth?: string; content?: string; body?: string }
+            body = env.compiled_truth ?? env.content ?? env.body ?? raw
+          } catch {
+            /* raw markdown already */
+          }
+          const pref = parsePrefBody(body)
+          if (pref) out.push(pref)
+          else console.warn('mew: skipping malformed pref page', slug)
+        }
+        return out.reverse() // list is oldest-first; newest belongs on top
       } catch (err) {
         warnOnce(err)
         return []

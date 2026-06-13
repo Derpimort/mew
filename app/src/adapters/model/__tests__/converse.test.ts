@@ -13,6 +13,7 @@ const ctx: WeekContext = {
   realisticBestH: 5.5,
   mewsToday: 2,
   recallLines: [],
+  prefLines: [],
   insightLines: ['mornings hold: 9/10 finished there'],
 }
 
@@ -52,9 +53,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('findSlot')
       return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
     }),
-    remember: vi.fn((fact: string) => {
+    remember: vi.fn((pref: { match: string; value: string }) => {
       calls.push('remember')
-      return `Remembered — ${fact}`
+      return `Remembered — ${pref.match} ${pref.value}.`
     }),
     clear: vi.fn((scope) => {
       calls.push('clear')
@@ -164,19 +165,23 @@ describe('anthropic tool dispatch — runTool', () => {
 })
 
 describe('remember rides the tool registry', () => {
-  it('passes fact + kind through to the executor', () => {
+  it('passes the structured rule through to the executor', () => {
     const exec = mockExec()
-    const out = runTool('remember', { fact: 'gym is always 7am', kind: 'preference' }, exec)
-    expect(out).toBe('Remembered — gym is always 7am')
-    const [fact, kind] = (exec.remember as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(fact).toBe('gym is always 7am')
-    expect(kind).toBe('preference')
+    const out = runTool(
+      'remember',
+      { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' },
+      exec,
+    )
+    expect(out).toBe('Remembered — gym starts 07:00.')
+    const [pref] = (exec.remember as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(pref).toEqual({ kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' })
   })
 
-  it('an empty fact is refused factually, never persisted', () => {
+  it('an unknown kind degrades to fact; a subject-less rule is refused', () => {
     const exec = mockExec()
-    expect(runTool('remember', { fact: '   ' }, exec)).toMatch(/nothing to remember/)
-    expect(exec.remember).not.toHaveBeenCalled()
+    runTool('remember', { kind: 'sneaky', match: 'gym', value: 'x', stated: 's' }, exec)
+    expect((exec.remember as ReturnType<typeof vi.fn>).mock.calls[0][0].kind).toBe('fact')
+    expect(runTool('remember', { match: ' ', value: '' }, exec)).toMatch(/nothing to remember/)
   })
 })
 

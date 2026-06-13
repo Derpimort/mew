@@ -8,7 +8,7 @@ import { contextBlock, MEW_VOICE } from './types'
 import { runIntent, sanitizeIntent } from './rules'
 
 const INTENT_SPEC = `Decide what the user wants and respond ONLY with JSON matching:
-{"kind":"plan|complete|move|capture|clear|remove|edit|chat",
+{"kind":"plan|complete|move|capture|clear|remove|edit|remember|chat",
  "places":[{"title":str,"tag":"work|private|health|rest","dayOffset":int,"startMin":int?,"durationMin":int?,"protected":bool?,"attention":"focus|background"?,"dueMin":int?}],
  "frees":[{"dayOffset":int,"startMin":int,"endMin":int}],
  "query":str?,"toDayOffset":int?,"toStartMin":int?,"title":str?,"scope":"today|tomorrow|week|upcoming"?,
@@ -19,7 +19,8 @@ attention="background" when it runs without the user ("in the background","while
 kind="remove" to drop/delete/cancel specific named blocks (query = words from the title).
 kind="clear" when they ask to clean up / wipe / reset the calendar or start over (scope default "upcoming").
 kind="chat" for greetings/questions/anything conversational — put your short MEW-voice answer in "reply".
-kind="capture" only for a task mentioned without a time.`
+kind="capture" only for a task mentioned without a time.
+kind="remember" when they state a standing rule or correction ("always","never","from now on","X means Y") — include "pref":{"kind":"time-default|duration-default|flexibility|ordering|fact","match":str,"value":str,"stated":str}. One-offs ("move gym today") are never remember.`
 
 export function createOllamaAdapter(baseUrl: string, model: string): ModelPort {
   async function chatOnce(system: string, turns: ChatTurn[]): Promise<string> {

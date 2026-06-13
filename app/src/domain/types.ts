@@ -86,6 +86,18 @@ export interface ChatMessage {
   payload?: Record<string, string | number> // action context (blockId, dayKey, …)
 }
 
+/** A standing rule the user stated, structured enough to apply later. */
+export type PrefKind = 'time-default' | 'duration-default' | 'flexibility' | 'ordering' | 'fact'
+export interface PrefPayload {
+  kind: PrefKind
+  /** what the rule is about — "gym", "order lunch", "deep work" */
+  match: string
+  /** the rule itself — "starts 07:00", "45m", "never moves" */
+  value: string
+  /** the user's own words, kept verbatim */
+  stated: string
+}
+
 export type MemoryKind =
   | 'completed'
   | 'rolled'
@@ -94,6 +106,7 @@ export type MemoryKind =
   | 'nudge_outcome'
   | 'rest_kept'
   | 'rest_skipped'
+  | 'preference' // a stated standing rule (the brain-off home for remember)
   | 'weekly_summary' // consolidation artifact — old raw events compacted per ISO week
 
 export interface MemoryEvent {
@@ -110,6 +123,8 @@ export interface MemoryEvent {
   endMin?: number
   nudgeType?: NudgeId
   outcome?: 'accepted' | 'declined' | 'ignored'
+  /* preference payload (kind:'preference') */
+  pref?: PrefPayload
   /* weekly_summary payload */
   summary?: {
     completed: number
@@ -180,7 +195,7 @@ export interface PixieInputs {
 export type ClearScope = 'today' | 'tomorrow' | 'week' | 'upcoming'
 
 export interface ScheduleIntent {
-  kind: 'plan' | 'complete' | 'move' | 'capture' | 'clear' | 'remove' | 'edit' | 'chat'
+  kind: 'plan' | 'complete' | 'move' | 'capture' | 'clear' | 'remove' | 'edit' | 'remember' | 'chat'
   /** clear: which open MEW-placed blocks to remove (mews + calendar events never) */
   scope?: ClearScope
   /** edit: changes to apply to the matched block */
@@ -214,6 +229,8 @@ export interface ScheduleIntent {
   /* capture / chat */
   title?: string
   reply?: string
+  /* remember */
+  pref?: PrefPayload
 }
 
 export const DEFAULT_SETTINGS: Settings = {

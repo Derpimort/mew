@@ -157,4 +157,17 @@ describe('overnight consolidation — the brain compacts while you sleep', () =>
     expect(second.removedIds).toHaveLength(0)
     expect(second.kept).toEqual(first.kept)
   })
+
+  it('preferences are state, not history — a 90-day-old rule survives compaction intact', () => {
+    const pref = ev({
+      dayKey: addDaysKey(todayKey, -90),
+      kind: 'preference',
+      pref: { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' },
+    })
+    const old = ev({ dayKey: addDaysKey(todayKey, -90), kind: 'completed' })
+    const out = consolidate([pref, old], TODAY, () => `s${n++}`)
+    expect(out.kept).toContain(pref) // the brain-off rulebook never ages out
+    expect(out.removedIds).toEqual([old.id]) // ordinary history still compacts
+    expect(out.summaries[0].summary).toMatchObject({ completed: 1 }) // and the summary ignores prefs
+  })
 })
