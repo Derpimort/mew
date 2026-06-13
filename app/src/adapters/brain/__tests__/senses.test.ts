@@ -4,7 +4,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage } from '../../../domain/types'
-import { blockEventPage, chatBatchPage, explicitProjectFrom, knownProjectsFrom, makeChatBatcher, parsePrefBody, peopleFrom, prefPage, projectsFrom, slugify, taskSlug } from '../senses'
+import { blockEventPage, chatBatchPage, debriefPage, explicitProjectFrom, knownProjectsFrom, makeChatBatcher, parsePrefBody, peopleFrom, prefPage, projectsFrom, slugify, taskSlug } from '../senses'
 
 const D = '2026-06-09'
 
@@ -66,6 +66,11 @@ describe('blockEventPage', () => {
     expect(page.timeline).toEqual([{ slug: `week/${D}`, date: D, summary: '14:00 completed — Interview (60m, deep)' }])
   })
 
+  it('stamps every page MEW writes with the mew tag — the hook for a server-side scope filter', () => {
+    const b = mk({ title: 'Interview — Mira', startMin: 13 * 60, endMin: 14 * 60 })
+    expect(blockEventPage(b, 'completed', D, 14 * 60).tags?.[0]).toBe('mew')
+  })
+
   it('keeps the positive vocabulary: rolled, never missed', () => {
     const page = blockEventPage(mk({ title: 'Deck', endMin: 11 * 60 }), 'rolled', D, 18 * 60)
     expect(page.timeline![0].summary).toContain('rolled')
@@ -90,7 +95,7 @@ describe('prefPage — structured, upsert-by-construction', () => {
     const page = prefPage(pref)
     expect(page.slug).toBe('pref/time-default-gym')
     expect(prefPage({ ...pref, value: 'starts 08:00', stated: 'gym moved to 8' }).slug).toBe(page.slug)
-    expect(page.tags).toEqual(['preference', 'time-default'])
+    expect(page.tags).toEqual(['mew', 'preference', 'time-default'])
   })
 
   it('round-trips through the fenced JSON body', () => {
@@ -156,8 +161,22 @@ describe('chatBatchPage', () => {
     expect(page.timeline![1].summary).toBe('mew: done — thursday holds it')
   })
 
+  it('carries the mew tag — every page MEW writes is scope-filterable, timeline-only included', () => {
+    const page = chatBatchPage([{ id: '1', role: 'user', body: 'hi', ts: 1 }], D)!
+    expect(page.tags).toEqual(['mew'])
+  })
+
   it('nothing worth writing → null', () => {
     expect(chatBatchPage([{ id: '1', role: 'nudge', body: 'x', ts: 1 }], D)).toBeNull()
+  })
+})
+
+describe('debriefPage', () => {
+  it('lands on the day timeline and carries the mew tag', () => {
+    const page = debriefPage('shipped the deck · cleared inbox', D)
+    expect(page.slug).toBe(`week/${D}`)
+    expect(page.tags).toEqual(['mew'])
+    expect(page.timeline![0].summary).toContain('debrief: shipped the deck · cleared inbox')
   })
 })
 

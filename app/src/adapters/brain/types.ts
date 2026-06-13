@@ -21,6 +21,10 @@ export interface BrainPage {
 
 export interface RecallOpts {
   limit?: number
+  /** 'mew' (default): only the page namespaces MEW itself writes —
+      task/ week/ pref/ person/ project/. 'all': the whole brain, every
+      agent's pages, each line carrying its source. Strictly opt-in. */
+  scope?: 'mew' | 'all'
 }
 
 /** The structured rule shape lives in the domain (it outlives any brain). */

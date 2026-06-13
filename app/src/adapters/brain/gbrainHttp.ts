@@ -161,12 +161,25 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
     async recall(question: string, opts?: RecallOpts): Promise<string[]> {
       if (!cfg.enabled()) return []
       const limit = opts?.limit ?? 5
+      const scope = opts?.scope ?? 'mew'
+      /* the namespaces MEW itself writes — the read ops carry no tag filter
+         (verified against the pinned gbrain), so MEW-scope is enforced here;
+         the 'mew' tag senses stamps is the hook for a server-side filter later */
+      const MEW_PAGES = /^(task|week|pref|person|project)\//
+      /* MEW scope drops foreign pages *after* the fetch, so a brain busy with
+         other agents' pages could return an all-foreign top-N and starve MEW's
+         own recall to zero. Over-fetch in MEW scope so enough MEW pages survive
+         the filter to fill `limit`; 'all' keeps every page, so the base limit
+         already suffices and the wire call stays lean. */
+      const fetchLimit = scope === 'all' ? limit : Math.min(limit * 5, 50)
       const textOf = (rpc: unknown): string =>
         (rpc as { result?: { content?: { type: string; text?: string }[] } }).result?.content?.find(
           (c) => c.type === 'text',
         )?.text ?? ''
       /* results arrive as a JSON array or plain lines; both become short
-         citable "slug — snippet" lines for the context block */
+         citable lines for the context block. MEW pages keep "slug — snippet";
+         a foreign page (whole-brain scope only) is attributed "snippet · via
+         slug" so the model can cite where it came from. */
       const toLines = (text: string): string[] => {
         try {
           const arr = JSON.parse(text) as unknown
@@ -176,7 +189,10 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
                 if (typeof hit === 'string') return hit
                 const h = hit as { slug?: string; title?: string; snippet?: string; content?: string; summary?: string }
                 const snippet = (h.snippet ?? h.summary ?? h.title ?? h.content ?? '').replace(/\s+/g, ' ').slice(0, 120)
-                return h.slug ? `${h.slug} — ${snippet}` : snippet
+                if (!h.slug) return snippet
+                if (MEW_PAGES.test(h.slug)) return `${h.slug} — ${snippet}`
+                if (scope !== 'all') return '' // foreign page in MEW scope: never surfaces
+                return `${snippet} · via ${h.slug}`
               })
               .filter(Boolean)
           }
@@ -189,10 +205,10 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
           .filter((l) => l && !l.startsWith('#'))
       }
       try {
-        let lines = toLines(textOf(await call('query', { query: question, limit })))
+        let lines = toLines(textOf(await call('query', { query: question, limit: fetchLimit })))
         if (!lines.length) {
           /* embeddings may be absent (keyless brains) — keyword search still serves */
-          lines = toLines(textOf(await call('search', { query: question, limit })))
+          lines = toLines(textOf(await call('search', { query: question, limit: fetchLimit })))
         }
         return lines.slice(0, limit)
       } catch (err) {

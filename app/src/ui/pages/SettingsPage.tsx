@@ -707,6 +707,21 @@ function PrivacyModelCard() {
           />
         </span>
       </SetRow>
+      {settings.brainEnabled && (
+        <SetRow
+          t="Recall scope"
+          s="MEW only = recall reads just the pages MEW writes. Whole brain = your other agents' notes can inform the week (their lines arrive marked '· via <page>'). Opt-in, default narrow."
+        >
+          <Segc
+            options={[
+              { id: 'mew', label: 'MEW only' },
+              { id: 'all', label: 'Whole brain' },
+            ]}
+            value={settings.brainScope}
+            onChange={(id) => updateSettings({ brainScope: id as 'mew' | 'all' })}
+          />
+        </SetRow>
+      )}
       {settings.brainEnabled && settings.brainMode !== 'sidecar' && (
         <SetRow
           t="Serve key"

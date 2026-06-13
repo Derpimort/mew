@@ -188,6 +188,9 @@ export interface Settings {
   /** Where the brain lives: the desktop-managed sidecar, any gbrain serve
       you run, or a Supabase-backed serve — all the same wire contract. */
   brainMode: 'sidecar' | 'endpoint' | 'supabase'
+  /** Recall scope: MEW's own pages only (default) or the whole shared brain
+      — strictly opt-in; whole-brain in a calendar is noise until it isn't. */
+  brainScope: 'mew' | 'all'
 }
 
 /* The Rive "PixieMachine" input contract — PRD §6. The placeholder SVG and the
@@ -262,4 +265,5 @@ export const DEFAULT_SETTINGS: Settings = {
   brainUrl: 'http://localhost:3131',
   brainToken: '',
   brainMode: 'endpoint',
+  brainScope: 'mew',
 }

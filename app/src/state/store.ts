@@ -71,6 +71,9 @@ const brain: BrainPort = createGbrainHttp({
 })
 /** brain-on truth for the store's own gates — same ranking the port reads */
 const brainOn = () => effectiveBrain(useMew.getState().settings).on
+/** recall scope truth — the live toggle, so a 'Whole brain' choice reaches
+    every recall site (heads-up, week-review, rollups), not just chat */
+const brainScope = () => useMew.getState().settings.brainScope
 /** exposed for the Settings health dot — same instance the store writes through */
 export const mewBrain = brain
 
@@ -488,7 +491,7 @@ export const useMew = create<MewState>((set, get) => {
     if (weekColor?.day === todayKey || weekColorPending) return
     weekColorPending = true
     brain
-      .recall(`debrief last week — week of ${addDaysKey(todayKey, -7)}`, { limit: 2 })
+      .recall(`debrief last week — week of ${addDaysKey(todayKey, -7)}`, { limit: 2, scope: brainScope() })
       .then((lines) => {
         weekColor = { day: todayKey, lines }
       })
@@ -518,7 +521,7 @@ export const useMew = create<MewState>((set, get) => {
       personRecallPending.add(b.id)
       const names = people.map((p) => p.split('/')[1]).join(', ')
       brain
-        .recall(`person ${names} recent interactions and outcomes`, { limit: 2 })
+        .recall(`person ${names} recent interactions and outcomes`, { limit: 2, scope: brainScope() })
         .then((lines) => {
           personRecall[b.id] = lines
         })
@@ -871,7 +874,7 @@ export const useMew = create<MewState>((set, get) => {
     let recall: string[] = []
     if (brainOn()) {
       recall = await Promise.race([
-        brain.recall(question, { limit: 3 }),
+        brain.recall(question, { limit: 3, scope: brainScope() }),
         new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1200)),
       ]).catch(() => [])
     }
@@ -1254,7 +1257,7 @@ export const useMew = create<MewState>((set, get) => {
             .map((b) => b.title.split('—')[0].trim())
             .join(', ')
           recallLines = await Promise.race([
-            brain.recall(`${text} · today: ${today}`, { limit: 5 }),
+            brain.recall(`${text} · today: ${today}`, { limit: 5, scope: brainScope() }),
             new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1500)),
           ])
         }

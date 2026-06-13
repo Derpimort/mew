@@ -132,9 +132,9 @@ vi.mock('../../adapters/calendar/google', () => ({
 
 /* the brain, faked at the factory seam — scenarios count what MEW writes,
    control what the graph holds and what it asks back (recall is behavior),
-   and read the live config closures to see where the port would point.
-   The cfg ref is hoisted: the factory runs during the store's module init,
-   before any const in this file initializes. */
+   the scope it asks with, and read the live config closures to see where the
+   port would point. The cfg ref is hoisted: the factory runs during the
+   store's module init, before any const in this file initializes. */
 const brainCfg = vi.hoisted(() => ({
   current: null as { url(): string; token(): string; enabled(): boolean } | null,
 }))
@@ -142,6 +142,7 @@ const brainFake = {
   ingests: [] as { slug: string; links?: string[] }[],
   links: {} as Record<string, string[]>,
   recalls: [] as string[],
+  recallOpts: [] as { limit?: number; scope?: string }[],
   recallImpl: null as null | ((q: string) => string[] | Promise<string[]>),
   recallLines: [] as string[],
   prefs: [] as PrefPayload[],
@@ -149,6 +150,7 @@ const brainFake = {
     this.ingests = []
     this.links = {}
     this.recalls = []
+    this.recallOpts = []
     this.recallImpl = null
     this.recallLines = []
     this.prefs = []
@@ -161,9 +163,10 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
       ingest: async (page: { slug: string }) => {
         if (cfg.enabled()) brainFake.ingests.push(page)
       },
-      recall: async (q: string) => {
+      recall: async (q: string, opts?: { limit?: number; scope?: string }) => {
         if (!cfg.enabled()) return []
         brainFake.recalls.push(q)
+        brainFake.recallOpts.push(opts ?? {})
         if (brainFake.recallImpl) return brainFake.recallImpl(q)
         return brainFake.recallLines
       },
@@ -992,6 +995,27 @@ describe('entity-aware durations', () => {
     const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
     expect(placed!.endMin - placed!.startMin).toBe(60)
     expect(lastMsg().body).not.toContain('(your usual)')
+  })
+})
+
+/* ── cross-agent recall: scope is opt-in, default narrow ─────────────── */
+
+describe('recall scope (cross-agent)', () => {
+  it('defaults to MEW-only, round-trips through settings, and rides every recall', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().settings.brainScope).toBe('mew')
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    await say('what does tomorrow look like')
+    expect(brainFake.recallOpts.length).toBeGreaterThan(0)
+    expect(brainFake.recallOpts[0].scope).toBe('mew')
+
+    useMew.getState().updateSettings({ brainScope: 'all' })
+    expect(useMew.getState().settings.brainScope).toBe('all')
+    brainFake.reset()
+    await say('what shipped last week')
+    expect(brainFake.recallOpts[0].scope).toBe('all')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
   })
 })
 

@@ -116,7 +116,7 @@ export function blockEventPage(
   return {
     slug: taskSlug(b.title),
     type: 'task',
-    tags: [b.tag, kind],
+    tags: ['mew', b.tag, kind],
     body: `# ${title}\n\nlast: ${kind} on ${dayKey} · planned ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} (${dur}m)${ranOver}\n`,
     links: [`week/${dayKey}`, ...people, ...projects],
     timeline: [{ slug: `week/${dayKey}`, date: dayKey, summary }],
@@ -130,7 +130,7 @@ export function prefPage(p: PrefPayload): BrainPage {
   return {
     slug: `pref/${p.kind}-${slugify(p.match)}`,
     type: 'pref',
-    tags: ['preference', p.kind],
+    tags: ['mew', 'preference', p.kind],
     body: `${p.match} → ${p.value}\n\nstated: "${p.stated.trim()}"\n\n\`\`\`json\n${JSON.stringify(p)}\n\`\`\`\n`,
   }
 }
@@ -153,6 +153,7 @@ export function parsePrefBody(body: string): PrefPayload | null {
 export function debriefPage(body: string, dayKey: string): BrainPage {
   return {
     slug: `week/${dayKey}`,
+    tags: ['mew'],
     timeline: [
       { slug: `week/${dayKey}`, date: dayKey, summary: `debrief: ${body.replace(/\n/g, ' · ')}` },
     ],
@@ -166,6 +167,7 @@ export function chatBatchPage(turns: ChatMessage[], dayKey: string): BrainPage |
   if (!said.length) return null
   return {
     slug: `week/${dayKey}`,
+    tags: ['mew'],
     timeline: said.map((t) => ({
       slug: `week/${dayKey}`,
       date: dayKey,
