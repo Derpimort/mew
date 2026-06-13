@@ -5,7 +5,7 @@
 import type { Block, Capture, MemoryEvent, NudgeId, PrefPayload } from '../types'
 import type { MemoryAggregates } from '../memory'
 import { liveNow, type LiveNow } from '../liveNow'
-import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, prefKey } from '../insights'
+import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, prefKey, weekReview } from '../insights'
 import {
   blocksForDay,
   dayEndMin,
@@ -18,7 +18,7 @@ import {
   overlaps,
   plannedDeepMin,
 } from '../week'
-import { addDaysKey, fromDayKey } from '../time'
+import { addDaysKey, fromDayKey, weekKeys } from '../time'
 import { NUDGES, type NudgeCtx, type NudgeInstance } from './library'
 
 export interface EngineState {
@@ -46,6 +46,8 @@ export interface TickInputs {
   /** task→person edges from the brain (the store fetches; absent = brain off,
       and the delegate nudge stays silent — no degradation theater). */
   brainLinks?: { from: string; to: string }[]
+  /** Last week's debrief color from the brain (store-fetched, Monday only). */
+  brainWeekLines?: string[]
 }
 
 /** Heaviest day in the next 3 days whose planned deep work exceeds 1.2× realistic best. */
@@ -249,6 +251,10 @@ export function buildCtx(
     insights,
     delegations: t.brainLinks?.length ? delegationCandidates(events, t.brainLinks, t.nowMs) : [],
     debriefLines: pastDayEnd ? dayDebrief(t.blocks, events, t.todayKey, t.agg, t.nowMin) : [],
+    weekReview:
+      (fromDayKey(t.todayKey).getDay() + 6) % 7 === 0
+        ? weekReview(events, weekKeys(fromDayKey(addDaysKey(t.todayKey, -7))), t.brainWeekLines ?? [])
+        : null,
     dowMon0: (fromDayKey(t.todayKey).getDay() + 6) % 7,
     stalled,
     outcomeStats,

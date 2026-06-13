@@ -412,7 +412,9 @@ describe('clear → fresh start → replan (the restart journey)', () => {
     await fresh(new Date(2026, 5, 8, 9, 0)) // Monday 9:00
     const fs = lastNudge('fresh-start')
     expect(fs).toBeDefined()
-    expect(fs.body).toMatch(/Monday/)
+    /* with seeded history the opener now leads with last week's story (#36);
+       the window, the actions, and the footnote are what this test pins */
+    expect(fs.body).toMatch(/^last week: /)
     expect(fs.footnote).toContain('Dai, Milkman & Riis')
   })
 })
@@ -707,6 +709,41 @@ describe('day debrief', () => {
     const queued = useMew.getState().queuedNudges
     expect(queued.some((m) => m.nudgeType === 'debrief')).toBe(true)
     expect(nudges('debrief')).toHaveLength(0) // chat stays quiet
+  })
+})
+
+/* ── week-in-review: Monday opens with last week's truth ─────────────── */
+
+describe('week-in-review (fresh-start upgraded)', () => {
+  const MON = (h: number, m = 0) => new Date(2026, 5, 8, h, m)
+
+  it('seeded Monday: the opener leads with last week and keeps its actions', async () => {
+    await fresh(MON(9, 0))
+    const fs = lastNudge('fresh-start')
+    expect(fs).toBeDefined()
+    /* the seed's three prior weeks put 7 completions and 3 rolls in last week */
+    expect(fs.body).toMatch(/^last week: 7 mews, carry-over 30%/)
+    expect(fs.body).toContain('mornings held 5/5')
+    expect(fs.body).toContain('Shape this week the same?')
+    expect(fs.body).toContain('5.5h of deep work')
+    expect(fs.actions?.map((a) => a.id)).toEqual(['shape', 'later'])
+    expect(fs.body).not.toMatch(/missed|overdue|failed/)
+  })
+
+  it('week one (empty history): the original Monday copy, no invented claims', async () => {
+    await fresh(MON(9, 0))
+    /* wipe history and let the engine re-open the day fresh */
+    useMew.setState((st) => ({
+      memory: [],
+      chat: st.chat.filter((m) => m.nudgeType !== 'fresh-start'),
+      engine: { lastFired: {}, lastDriftBlockId: null },
+      lastActivityMs: MON(9, 5).getTime(),
+    }))
+    at(MON(9, 5))
+    const fs = lastNudge('fresh-start')
+    expect(fs).toBeDefined()
+    expect(fs.body).toMatch(/^Monday — a new accounting period/)
+    expect(fs.body).not.toContain('last week:')
   })
 })
 

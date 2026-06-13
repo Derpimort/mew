@@ -5,8 +5,7 @@
 
 import type { Block, Capture, NudgeAction, NudgeId, PrefPayload } from '../types'
 import type { LiveNow } from '../liveNow'
-import type { MemoryAggregates } from '../memory'
-import { heavyCarryWeeks } from '../memory'
+import { type MemoryAggregates, heavyCarryWeeks } from '../memory'
 import { prefKey, type DelegationCandidate, type Insights } from '../insights'
 import { addDaysKey, fmtDowLong, fmtTime, spell } from '../time'
 
@@ -53,6 +52,9 @@ export interface NudgeCtx {
   /** The evening story, composed by the engine when the day is past its end.
       Empty = nothing worth narrating (the nudge stays silent). */
   debriefLines: string[]
+  /** Last week's story, computed only in the Monday window — null elsewhere
+      and on week one (no events = no lines = the original copy stands). */
+  weekReview: { lines: string[]; kinder: boolean } | null
   /** Monday=0 … Sunday=6 (fresh-start landmark check). */
   dowMon0: number
   /** A chronic roller (≥3 rolls) that currently has an open block + a starter slot. */
@@ -405,9 +407,14 @@ export const NUDGES: NudgeDef[] = [
       c.justCleared != null ||
       (c.dowMon0 === 0 && c.nowMin >= 8 * 60 && c.nowMin < 11 * 60),
     build: (c) => {
+      /* with history, Monday opens with the story; justCleared keeps the
+         blank-page copy (mid-week clears aren't about last week) */
+      const review = !c.justCleared && c.weekReview?.lines.length ? c.weekReview : null
       const opening = c.justCleared
         ? `A blank page. Fresh starts open a real window — want to shape the week while it's soft?`
-        : `Monday — a new accounting period, the window where follow-through spikes. Want to shape the week while it's soft?`
+        : review
+          ? `${review.lines.join('\n')}\nShape this week the same${review.kinder ? ', or kinder' : ''}?`
+          : `Monday — a new accounting period, the window where follow-through spikes. Want to shape the week while it's soft?`
       const bestNote =
         c.agg.realisticBestH != null
           ? ` I'll keep the shape inside your realistic ~${c.agg.realisticBestH}h of deep work a day.`

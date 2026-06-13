@@ -314,6 +314,60 @@ export function dayDebrief(
   return lines
 }
 
+export interface WeekReview {
+  lines: string[]
+  /** carry-over past 30% — last week is asking for a kinder shape */
+  kinder: boolean
+}
+
+/** Last week's truth in one line — mews, carry, the band that held, the top
+    time-eater — plus one line of brain color when the store threads it in.
+    Pure over local events; an empty week returns empty lines (week one stays
+    honest). Carry-over is a request for a kinder shape, never a failure. */
+export function weekReview(
+  events: MemoryEvent[],
+  weekDayKeys: string[],
+  brainLines: string[] = [],
+): WeekReview {
+  const days = new Set(weekDayKeys)
+  const inWeek = events.filter((e) => days.has(e.dayKey))
+  const mews = inWeek.filter((e) => e.kind === 'completed')
+  const rolled = inWeek.filter((e) => e.kind === 'rolled')
+  if (!mews.length && !rolled.length) return { lines: [], kinder: false }
+
+  const carryPct = Math.round((rolled.length / (mews.length + rolled.length)) * 100)
+  const parts = [`${mews.length} mew${mews.length === 1 ? '' : 's'}`, `carry-over ${carryPct}%`]
+
+  /* the band that held best — needs enough outcomes to be a claim */
+  let best: { label: string; kept: number; total: number } | null = null
+  for (const b of BANDS) {
+    const kept = mews.filter((e) => e.startMin != null && e.startMin >= b.from && e.startMin < b.to).length
+    const lost = rolled.filter((e) => e.startMin != null && e.startMin >= b.from && e.startMin < b.to).length
+    const total = kept + lost
+    if (total >= 3 && kept / total >= 0.7 && (!best || kept / total > best.kept / best.total)) {
+      best = { label: b.label, kept, total }
+    }
+  }
+  if (best) parts.push(`${best.label} held ${best.kept}/${best.total}`)
+
+  /* the top time-eater, by hours actually completed — worth naming past 2h */
+  const eaten = new Map<string, number>()
+  for (const e of mews) {
+    if (!e.title || !e.plannedMin) continue
+    const k = normTitle(e.title)
+    eaten.set(k, (eaten.get(k) ?? 0) + e.plannedMin)
+  }
+  const top = [...eaten.entries()].sort((a, b) => b[1] - a[1])[0]
+  if (top && top[1] >= 120) {
+    const h = top[1] % 60 === 0 ? `${top[1] / 60}h` : `${Math.round((top[1] / 60) * 10) / 10}h`
+    parts.push(`${top[0]} ate ${h}`)
+  }
+
+  const lines = [`last week: ${parts.join(', ')}.`]
+  if (brainLines.length) lines.push(brainLines[0])
+  return { lines, kinder: carryPct > 30 }
+}
+
 export interface KinderMove {
   blockId: string
   title: string

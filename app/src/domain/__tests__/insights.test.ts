@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, proposeKinderPlan } from '../insights'
+import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, proposeKinderPlan, weekReview } from '../insights'
 import { aggregates, consolidate } from '../memory'
 import { findFreeSlot } from '../week'
 import type { Block, MemoryEvent } from '../types'
@@ -354,5 +354,64 @@ describe('dayDebrief — the evening story, two kind lines', () => {
     const lines = dayDebrief(blocks, events, D, { realisticBestH: 5.5 } as never, 18 * 60 + 15)
     expect(lines.join('\n')).not.toMatch(/missed|overdue|failed|behind/i)
     expect(lines[0]).toContain('slipped 50')
+  })
+})
+
+describe('weekReview — last week, one honest line', () => {
+  /* last week relative to Wednesday TODAY: Jun 1–7 */
+  const LAST = ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-06', '2026-06-07']
+  const on = (day: string, over: Partial<MemoryEvent>): MemoryEvent =>
+    ev({ dayKey: day, ...over })
+
+  it('mews, carry, the band that held, and the top eater — exact line', () => {
+    const events = [
+      /* 7 morning completions of the same deep block (9:00 start, 5h) */
+      ...LAST.slice(0, 5).map((d) =>
+        on(d, { title: 'Deep work', startMin: 9 * 60, plannedMin: 300 }),
+      ),
+      on(LAST[0], { title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 }),
+      on(LAST[1], { title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 }),
+      /* 3 rolls late in the day */
+      ...LAST.slice(2, 5).map((d) =>
+        on(d, { kind: 'rolled', title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 }),
+      ),
+    ]
+    const r = weekReview(events, LAST)
+    expect(r.lines).toEqual(['last week: 7 mews, carry-over 30%, mornings held 5/5, deep work ate 25h.'])
+    expect(r.kinder).toBe(false) // exactly 30 is not past 30
+  })
+
+  it('carry past 30% asks for a kinder shape', () => {
+    const events = [
+      on(LAST[0], { title: 'A', plannedMin: 60 }),
+      on(LAST[1], { kind: 'rolled' }),
+      on(LAST[2], { kind: 'rolled' }),
+    ]
+    const r = weekReview(events, LAST)
+    expect(r.kinder).toBe(true)
+    expect(r.lines[0]).toContain('carry-over 67%')
+  })
+
+  it('an empty week stays empty — week one makes no claims', () => {
+    expect(weekReview([], LAST)).toEqual({ lines: [], kinder: false })
+    /* events exist but outside the window */
+    const r = weekReview([ev({ dayKey: todayKey, title: 'X' })], LAST)
+    expect(r.lines).toEqual([])
+  })
+
+  it('thin bands and small eaters stay unnamed — claims need evidence', () => {
+    const events = [
+      on(LAST[0], { title: 'A', startMin: 9 * 60, plannedMin: 30 }),
+      on(LAST[1], { title: 'B', startMin: 9 * 60, plannedMin: 45 }),
+    ]
+    const r = weekReview(events, LAST)
+    expect(r.lines[0]).toBe('last week: 2 mews, carry-over 0%.')
+  })
+
+  it('brain color rides as one extra line, never more', () => {
+    const events = [on(LAST[0], { title: 'A', plannedMin: 60 })]
+    const r = weekReview(events, LAST, ['debrief: tuesday ran hot', 'debrief: wednesday calm'])
+    expect(r.lines).toHaveLength(2)
+    expect(r.lines[1]).toBe('debrief: tuesday ran hot')
   })
 })

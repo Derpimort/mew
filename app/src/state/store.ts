@@ -3,17 +3,7 @@
 
 import { useMemo } from 'react'
 import { create } from 'zustand'
-import type {
-  Block,
-  Capture,
-  ChatMessage,
-  MemoryEvent,
-  NudgeId,
-  PrefPayload,
-  Settings,
-  VisibleTag,
-} from '../domain/types'
-import { DEFAULT_SETTINGS } from '../domain/types'
+import { type Block, type Capture, type ChatMessage, DEFAULT_SETTINGS, type MemoryEvent, type NudgeId, type PrefPayload, type Settings, type VisibleTag } from '../domain/types'
 import {
   addDaysKey,
   dayKey,
@@ -454,6 +444,29 @@ export const useMew = create<MewState>((set, get) => {
       })
   }
 
+  /* Monday color for the week review: one recall per Monday, cached for the
+     day, threaded into the engine as data. Brain off → never asked, the
+     review runs on local events alone. */
+  let weekColor: { day: string; lines: string[] } | null = null
+  let weekColorPending = false
+  function primeWeekColor(s: MewState, todayKey: string, now: Date) {
+    if (!s.settings.brainEnabled) return
+    if ((now.getDay() + 6) % 7 !== 0) return
+    if (weekColor?.day === todayKey || weekColorPending) return
+    weekColorPending = true
+    brain
+      .recall(`debrief last week — week of ${addDaysKey(todayKey, -7)}`, { limit: 2 })
+      .then((lines) => {
+        weekColor = { day: todayKey, lines }
+      })
+      .catch(() => {
+        weekColor = { day: todayKey, lines: [] }
+      })
+      .finally(() => {
+        weekColorPending = false
+      })
+  }
+
   function runTickEngine() {
     const s = get()
     const now = new Date(s.nowMs)
@@ -462,6 +475,7 @@ export const useMew = create<MewState>((set, get) => {
     const agg = aggregates(s.memory, now)
     const guardActive = s.guardDayKey === todayKey ? s.guardUntilMin : null
     primeBrainLinks(s, todayKey, nowMin, now)
+    primeWeekColor(s, todayKey, now)
     const ctx = buildCtx(
       {
         nowMs: s.nowMs,
@@ -477,6 +491,7 @@ export const useMew = create<MewState>((set, get) => {
         quietStartMin: s.settings.quietHours.startMin,
         prefs: activePrefsFrom(s.memory, s.settings.brainEnabled ? brainPrefs : null),
         brainLinks: s.settings.brainEnabled ? brainLinks?.pairs : undefined,
+        brainWeekLines: weekColor?.day === todayKey ? weekColor.lines : undefined,
       },
       s.engine,
     )

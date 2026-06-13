@@ -532,3 +532,66 @@ describe('debrief — the day gets its story after the loop closes', () => {
     expect(again.some((n) => n.type === 'debrief')).toBe(false)
   })
 })
+
+describe('fresh-start carries the week review', () => {
+  const MON = '2026-06-08'
+  const NOW = Date.UTC(2026, 5, 8, 9, 0)
+  const LASTWEEK: MemoryEvent[] = [
+    ...[1, 2, 3, 4].map((d) => ({
+      id: `w${d}`,
+      ts: NOW - d * 24 * 60 * 60 * 1000,
+      kind: 'completed' as const,
+      dayKey: `2026-06-0${8 - d}`, // Jun 4–7
+      title: 'Deep work',
+      startMin: 9 * 60,
+      plannedMin: 300,
+    })),
+    {
+      id: 'r1',
+      ts: NOW - 3 * 24 * 60 * 60 * 1000,
+      kind: 'rolled' as const,
+      dayKey: '2026-06-05',
+      title: 'Inbox sweep',
+      startMin: 15 * 60 + 30,
+      plannedMin: 45,
+    },
+  ]
+  const monday = (events: MemoryEvent[], over: Partial<TickInputs> = {}) =>
+    evaluateTick(buildCtx(tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events, ...over }), fresh))
+
+  it('Monday with history: the body leads with last week and keeps the actions', () => {
+    const out = monday(LASTWEEK)
+    expect(out[0]?.type).toBe('fresh-start')
+    expect(out[0].body).toMatch(/^last week: 4 mews, carry-over 20%/)
+    expect(out[0].body).toContain('Shape this week the same?')
+    expect(out[0].actions.map((a) => a.id)).toEqual(['shape', 'later'])
+  })
+
+  it('heavy carry asks kinder', () => {
+    const heavyCarry = [
+      LASTWEEK[0],
+      ...[1, 2].map((i) => ({ ...LASTWEEK[4], id: `rr${i}`, kind: 'rolled' as const })),
+    ]
+    const out = monday(heavyCarry)
+    expect(out[0].body).toContain('Shape this week the same, or kinder?')
+  })
+
+  it('week one (no events): the original Monday copy stands', () => {
+    const out = monday([])
+    expect(out[0]?.type).toBe('fresh-start')
+    expect(out[0].body).toMatch(/^Monday — a new accounting period/)
+  })
+
+  it('a mid-week clear keeps the blank-page copy — last week is not the story', () => {
+    const out = evaluateTick(
+      buildCtx(
+        tick({ events: LASTWEEK }),
+        fresh,
+        { justCleared: { scope: 'week', count: 3 } },
+      ),
+    )
+    const fs = out.find((n) => n.type === 'fresh-start')
+    expect(fs).toBeDefined()
+    expect(fs!.body).toMatch(/^A blank page/)
+  })
+})
