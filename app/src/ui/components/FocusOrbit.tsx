@@ -1,22 +1,25 @@
-/* Focus — orbit lanes (FINAL, supersedes the bezel dial). A rolling next-12h
-   face: now pinned at top, every visible item the same thin labeled arc.
-   Hierarchy is brightness, never thickness: the focus item owns the outer
-   orbit at 100% + glow, everything else steps inward one lane at 40%
-   (85% on hover). One click on any arc/dot/label promotes it; the chip under
-   the task lets it run in background. Those clicks write `attention` on the
-   block — that's the whole mechanism. */
+/* Focus — a FIXED 12-hour clock face. 12 sits at the top and never moves; every
+   block rides an arc at its real start→end clock angle; now is a hand that
+   sweeps the face. Day progress is a quiet two-stage wash — the inner disk over
+   the first 12 h, the inner→outer band over the second — ending at the now
+   notch. Hierarchy is brightness, never thickness: the focus item glows on the
+   outer task ring, everyone else steps inward one compact lane so same-angle
+   arcs never share a radius. One click on any arc/dot/label promotes it; the
+   chip under the task lets it run in background. Those clicks write `attention`
+   on the block — that's the whole mechanism. */
 
 import { useEffect, useMemo, useState } from 'react'
 import { useMew, useLive, clockNow } from '../../state/store'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { isBackground, overlappingFocus } from '../../domain/week'
-import { rArc, rPolar, spDeg } from './dialGeometry'
-import { DAY_RING_R, dayFraction, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
+import { clockDeg, rArc, rPolar, sector } from './dialGeometry'
+import { dayFill, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
 
-/** Live wall clock — distinct from the center countdown (it's labeled). */
+/** Live wall clock, parked top-left of the stage clear of the face — the exact
+    readout the clock-face approximates. */
 function NxClock({ now }: { now: Date }) {
   return (
     <span className="nx-clock" title="current time">
@@ -30,6 +33,13 @@ function NxClock({ now }: { now: Date }) {
     </span>
   )
 }
+
+const NUMERALS: ReadonlyArray<readonly [string, number]> = [
+  ['12', 0],
+  ['3', 90],
+  ['6', 180],
+  ['9', 270],
+]
 
 export function FocusOrbit() {
   const blocks = useMew((s) => s.blocks)
@@ -50,7 +60,7 @@ export function FocusOrbit() {
   const vis = useMemo(() => visibleOrbit(blocks, todayKey, nowH), [blocks, todayKey, nowH])
   const focusId = live.current?.id ?? null
   const radii = useMemo(() => radiiFor(vis, focusId, nowH), [vis, focusId, nowH])
-  const labels = useMemo(() => resolveLabels(vis, radii, nowH), [vis, radii, nowH])
+  const labels = useMemo(() => resolveLabels(vis, radii), [vis, radii])
 
   const [hover, setHover] = useState<string | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
@@ -95,46 +105,56 @@ export function FocusOrbit() {
     <div className="nx-stage" style={{ width: OG.w, height: OG.h, position: 'relative' }} onClick={() => setCardId(null)}>
       <NxClock now={now} />
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
-        {/* one guide circle — the outer orbit the focus item rides */}
-        <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line)" strokeWidth="1.2" />
-
-        {/* day-progress rings: how much of today is done (00:00 → now), behind
-            the items — a quiet inner + outer gauge that fills clockwise from top */}
+        {/* day-progress wash: the inner disk fills over the first 12 h, then the
+            inner→outer band over the second — a quiet token wash, its leading
+            edge always at the now notch. The two faint rings are the time
+            layers the task arcs ride just above. */}
         {(() => {
-          const frac = dayFraction(minOfDay(now))
-          const sweep = frac * 359.999
-          return [DAY_RING_R.inner, DAY_RING_R.outer].map((r) => (
-            <g key={`dayring-${r}`} pointerEvents="none">
-              <circle cx={OG.cx} cy={OG.cy} r={r} fill="none" stroke="var(--line)" strokeWidth="2" opacity={0.4} />
-              {frac > 0 && (
-                <path
-                  d={rArc(OG.cx, OG.cy, r, 0, sweep)}
-                  fill="none"
-                  stroke="var(--ice)"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  opacity={0.5}
-                />
-              )}
+          const f = dayFill(minOfDay(now))
+          return (
+            <g pointerEvents="none">
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, 0, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.07} />}
+              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
+              <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line)" strokeWidth="1.4" opacity={0.55} />
+              <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line)" strokeWidth="1.4" opacity={0.55} />
             </g>
-          ))
+          )
         })()}
+
+        {/* fixed bezel: hour ticks at all 12 (12/3/6/9 major), 12 pinned at top */}
+        <g pointerEvents="none">
+          {Array.from({ length: 12 }, (_, i) => {
+            const deg = i * 30
+            const major = i % 3 === 0
+            const [x0, y0] = rPolar(OG.cx, OG.cy, OG.tick, deg)
+            const [x1, y1] = rPolar(OG.cx, OG.cy, OG.tick - (major ? 12 : 6), deg)
+            return (
+              <line key={`tk-${i}`} x1={x0} y1={y0} x2={x1} y2={y1} stroke="var(--line2)" strokeWidth={major ? 2 : 1} opacity={major ? 0.85 : 0.45} />
+            )
+          })}
+          {NUMERALS.map(([n, deg]) => {
+            const [x, y] = rPolar(OG.cx, OG.cy, OG.num, deg)
+            return (
+              <text key={`nm-${n}`} className="nx-num" x={x} y={y} textAnchor="middle" dominantBaseline="central">
+                {n}
+              </text>
+            )
+          })}
+        </g>
 
         {vis.map((b) => {
           const isF = b.id === focusId
-          const r = radii.get(b.id) ?? OG.ro
+          const r = radii.get(b.id) ?? OG.task
           const col = orbitColor(b, isF)
           const isH = hover === b.id
-          const op = isF ? 1 : isH ? 0.95 : 0.4
-          const d0 = spDeg(Math.max(b.startMin / 60, nowH), nowH)
-          /* a background block's runway runs to its DUE tick (the deadline is
-             the visual end); everything clamps at now+12h so nothing wraps
-             back through the pin */
-          const dueBgEnd = isBackground(b) && b.due != null ? b.due / 60 : b.endMin / 60
-          const d1 = spDeg(Math.min(dueBgEnd, nowH + 12), nowH)
+          const op = isF ? 1 : isH ? 0.95 : 0.42
+          const dueBg = isBackground(b) && b.due != null
+          /* the arc spans the block's REAL clock angles; a deadline-background
+             block runs to its due tick (the deadline is the visual end) */
+          const d0 = clockDeg(b.startMin / 60)
+          const d1 = clockDeg((dueBg ? b.due! : b.endMin) / 60)
           const [ex, ey] = rPolar(OG.cx, OG.cy, r, d1)
           const lbl = labels.get(b.id)!
-          const dueBg = isBackground(b) && b.due != null
           const handlers = {
             onMouseEnter: () => setHover(b.id),
             onMouseLeave: () => setHover(null),
@@ -163,7 +183,7 @@ export function FocusOrbit() {
                 style={isF ? { filter: 'drop-shadow(0 0 9px var(--glowc))' } : undefined}
                 {...handlers}
               />
-              {/* due tick: the deadline itself glows at the arc's end */}
+              {/* end tick: the block's end (or deadline) glows at the arc's end */}
               <circle
                 cx={ex}
                 cy={ey}
@@ -191,7 +211,7 @@ export function FocusOrbit() {
                 y={lbl.y}
                 textAnchor={lbl.right ? 'start' : 'end'}
                 dominantBaseline="central"
-                opacity={isF ? 1 : isH ? 0.95 : 0.55}
+                opacity={isF ? 1 : isH ? 0.95 : 0.6}
                 style={{
                   fill: isF ? 'var(--ink)' : col,
                   fontFamily: "'Hanken Grotesk',sans-serif",
@@ -200,7 +220,7 @@ export function FocusOrbit() {
                 }}
                 {...handlers}
               >
-                {title.length > 22 ? title.slice(0, 20) + '…' : title}{' '}
+                {title.length > 20 ? title.slice(0, 18) + '…' : title}{' '}
                 <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}>
                   {timeNote}
                 </tspan>
@@ -209,18 +229,25 @@ export function FocusOrbit() {
           )
         })}
 
-        {/* now — the ice dot pins the top of the rolling face; the wall clock
-            above is the single time readout (no duplicate label here) */}
+        {/* now — a hand that sweeps the fixed face to the current clock angle;
+            its rim notch is exactly where the day wash ends */}
         {(() => {
-          const [x, y] = rPolar(OG.cx, OG.cy, OG.ro, 0)
-          return <circle cx={x} cy={y} r="6.5" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
+          const deg = clockDeg(minOfDay(now) / 60)
+          const [hx, hy] = rPolar(OG.cx, OG.cy, OG.tick, deg)
+          const [tx, ty] = rPolar(OG.cx, OG.cy, OG.ri - 6, deg)
+          return (
+            <g pointerEvents="none">
+              <line x1={tx} y1={ty} x2={hx} y2={hy} stroke="var(--ice)" strokeWidth="2" opacity={0.85} style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }} />
+              <circle cx={hx} cy={hy} r="5.5" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
+            </g>
+          )
         })()}
       </svg>
 
       {/* center: countdown → meta → task → demote chip; or "Nothing holds you." */}
       {current ? (
         <div className="clk-center" style={cardId ? { opacity: 0, pointerEvents: 'none' } : undefined}>
-          <div className="nx-count" style={{ fontSize: count.length > 6 ? 62 : 84 }}>{count}</div>
+          <div className="nx-count" style={{ fontSize: count.length > 5 ? 48 : 64 }}>{count}</div>
           <div className="nx-meta">{meta}</div>
           <div
             className="nx-task"

@@ -1,22 +1,38 @@
-/* Orbit-lanes geometry (DESIGN_LANGUAGE §3, FINAL). A rolling next-12h face:
-   now pinned at top, deg = (h − nowH)/12 × 360. The focus item owns the outer
-   orbit; everything else steps inward one lane in priority order, so arc
-   overlap is geometrically impossible. Labels are instrument callouts outside
-   the dial with per-side greedy de-collision. All pure — tested like the
-   week model is. */
+/* Fixed 12-hour clock-face geometry. 12 sits at the top and never moves; a
+   block rides an arc at its real start→end clock angle; now is a hand that
+   sweeps the face. Same-angle blocks step inward one compact lane so arcs never
+   share a radius. Day progress is a two-stage wash — the inner disk fills over
+   the first 12 h, the inner→outer band over the second — ending at the now
+   notch. Labels are callouts outside the bezel with per-side greedy
+   de-collision. All pure — tested like the week model is. */
 
 import type { Block } from '../../domain/types'
 import { isBackground } from '../../domain/week'
-import { rPolar, spDeg } from './dialGeometry'
+import { clockDeg, rPolar } from './dialGeometry'
 
-export const OG = { cx: 300, cy: 300, ro: 252, w: 760, h: 600, ox: 110 }
-export const LANE_STEP = 14
-export const LABEL_R = OG.ro + 18
-export const LABEL_GAP = 17
+/* Radii, centre → out (SVG units around cx,cy):
+   countdown · inner-fill ring (ri) · outer-fill ring (ro) · task arcs (task,
+   just above ro with small padding) · hour ticks + now-hand (tick) · numerals
+   (num). The time layers and the task ring are close in scale — compact. */
+export const OG = {
+  cx: 300,
+  cy: 300,
+  w: 760,
+  h: 600,
+  ox: 110,
+  ri: 118,
+  ro: 174,
+  task: 196,
+  tick: 212,
+  num: 226,
+} as const
+export const LANE_STEP = 8
+export const LABEL_R = OG.tick + 16
+export const LABEL_GAP = 16
 
 /** Visible set: today's open blocks whose window intersects [now, now+12h).
-    11.2h forward keeps the last arc clear of the now pin instead of wrapping
-    into it. Done blocks leave the orbit — they're mews, not obligations. */
+    Forward-clipping at ~12h keeps a block and its 12-hours-later twin from
+    landing on the same clock angle. Done blocks leave — they're mews. */
 export function visibleOrbit(blocks: Block[], todayKey: string, nowH: number): Block[] {
   return blocks
     .filter(
@@ -33,19 +49,26 @@ export function isRunning(b: Block, nowH: number): boolean {
   return b.startMin / 60 <= nowH && nowH < b.endMin / 60
 }
 
-/** Lane radii: focus owns ro; everyone else steps inward LANE_STEP px in
-    priority order — running first, then by start. Promotion visibly
-    re-orbits the item outward because its radius IS its priority. */
-export function radiiFor(vis: Block[], focusId: string | null, nowH: number): Map<string, number> {
+/** Lane radii on a fixed face: blocks at different times sit at different
+    ANGLES, so they share the outer task ring — compact, hugging the time
+    layers. Only blocks that genuinely overlap in time would collide at a shared
+    radius, so each takes the outermost lane free of a time-overlap with what's
+    already there (greedy interval colouring). Focus is placed first, so it
+    keeps the outer ring; an overlapping sibling steps one lane inward. */
+export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): Map<string, number> {
   const order = [...vis].sort((a, b) => {
     if (a.id === focusId) return -1
     if (b.id === focusId) return 1
-    const runA = isRunning(a, nowH) ? 0 : 1
-    const runB = isRunning(b, nowH) ? 0 : 1
-    return runA - runB || a.startMin - b.startMin || a.endMin - b.endMin
+    return a.startMin - b.startMin || a.endMin - b.endMin
   })
+  const lanes: Block[][] = []
   const out = new Map<string, number>()
-  order.forEach((b, k) => out.set(b.id, OG.ro - k * LANE_STEP))
+  for (const b of order) {
+    let k = 0
+    while (lanes[k]?.some((o) => b.startMin < o.endMin && o.startMin < b.endMin)) k++
+    ;(lanes[k] ??= []).push(b)
+    out.set(b.id, OG.task - k * LANE_STEP)
+  }
   return out
 }
 
@@ -61,17 +84,14 @@ export interface OrbitLabel {
   moved: boolean
 }
 
-/** Callout labels at LABEL_R along each item's END angle, then a per-side
-    greedy sweep (top→bottom, LABEL_GAP minimum) — the same de-collision
-    discipline the old dial's labelLayout proved, shaped for callouts. */
-export function resolveLabels(
-  vis: Block[],
-  radii: Map<string, number>,
-  nowH: number,
-): Map<string, OrbitLabel> {
+/** Callout labels at LABEL_R along each item's END clock angle, then a per-side
+    greedy sweep (top→bottom, LABEL_GAP minimum) so same-side labels never
+    stack — the de-collision discipline the old dial proved, shaped for a fixed
+    face. */
+export function resolveLabels(vis: Block[], radii: Map<string, number>): Map<string, OrbitLabel> {
   const raw = vis.map((b) => {
-    const deg = spDeg(b.endMin / 60, nowH)
-    const [ex, ey] = rPolar(OG.cx, OG.cy, radii.get(b.id) ?? OG.ro, deg)
+    const deg = clockDeg(b.endMin / 60)
+    const [ex, ey] = rPolar(OG.cx, OG.cy, radii.get(b.id) ?? OG.task, deg)
     const [lx, ly] = rPolar(OG.cx, OG.cy, LABEL_R, deg)
     const right = lx >= OG.cx
     return { id: b.id, x: lx + (right ? 9 : -9), y: ly, right, ex, ey, baseY: ly }
@@ -96,12 +116,21 @@ export function orbitColor(b: Block, isFocus: boolean): string {
   return b.tag === 'work' ? 'var(--ice)' : 'var(--teal)'
 }
 
-/** Fraction of today elapsed (0 at 00:00 → 1 at 24:00) — the day-progress
-    rings fill to this. Pure: minutes-of-day in, clamped [0,1] out. */
-export function dayFraction(minutesOfDay: number): number {
-  return Math.max(0, Math.min(1, minutesOfDay / 1440))
+export interface DayFill {
+  /** inner-disk sweep degrees — fills 00:00 → 12:00 */
+  inner: number
+  /** inner→outer band sweep degrees — fills 12:00 → 24:00 */
+  outer: number
 }
 
-/** The two day-progress ring radii — a compact gauge inside the lanes, clear
-    of the center readout and the innermost lane (holds for ≤10 visible items). */
-export const DAY_RING_R = { inner: 104, outer: 120 } as const
+/** Two-stage day progress: a 12-h face can't show a 24-h day on angle alone, so
+    radius carries AM vs PM. The inner disk fills clockwise from the top over the
+    first 12 h; the inner→outer band fills over the second. Both reach a full
+    turn by 24:00. Pure: minutes-of-day in, two sweep angles out. */
+export function dayFill(minutesOfDay: number): DayFill {
+  const m = Math.max(0, Math.min(1440, minutesOfDay))
+  return {
+    inner: (Math.min(m, 720) / 720) * 360,
+    outer: (Math.max(0, m - 720) / 720) * 360,
+  }
+}

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "typecheck": "tsc -b",
-    "shoot": "node scripts/shoot.mjs"
+    "shoot": "node scripts/shoot.mjs",
+    "shoot:overlap": "node scripts/shoot-overlap.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.0",

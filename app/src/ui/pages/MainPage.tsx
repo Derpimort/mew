@@ -11,7 +11,6 @@ import { WeekColumns } from '../components/WeekColumns'
 import { CompanionStage } from '../components/CompanionStage'
 import { SessionLog } from '../components/SessionLog'
 import { usePetPalette } from '../components/petPalette'
-import GlitchText from '../react-bits/glitch-text'
 
 const AuroraBlur = lazy(() => import('../react-bits/aurora-blur'))
 
@@ -56,22 +55,10 @@ export function MainPage() {
           </div>
         </Suspense>
         <div style={{ position: 'absolute', top: 20, left: 28, zIndex: 10 }}>
-          <span
-            className="disp brand"
-            aria-label="MEW"
-            style={{ display: 'inline-block', width: 88, height: 22 }}
-          >
-            <GlitchText
-              text="MEW"
-              fontSize={15}
-              fontWeight="700"
-              letterSpacing={4.2}
-              lineHeight={1}
-              textColor={pal.ink}
-              colors={[pal.pa, pal.pb, pal.ink]}
-              radius={110}
-              fadeIn
-            />
+          {/* crisp wordmark — the GlitchText canvas mangled "MEW" at bold weight
+              (autoFit + scatter in an 88px box); brand text renders clean */}
+          <span className="disp brand" aria-label="MEW">
+            MEW
           </span>
         </div>
         <div style={{ position: 'absolute', top: 22, left: 0, right: 0, display: 'flex', justifyContent: 'center' }}>

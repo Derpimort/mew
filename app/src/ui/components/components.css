@@ -19,10 +19,13 @@
   min-height: 0;
 }
 .brand {
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.28em;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: 0.3em;
+  /* the 0.3em tracking adds a trailing gap; nudge so "MEW" stays optically left */
+  padding-left: 0.15em;
   color: var(--ink);
+  -webkit-font-smoothing: antialiased;
 }
 .navlink {
   font-family: 'JetBrains Mono', monospace;
@@ -163,19 +166,26 @@
 
 /* ── focus orbit (lanes — DESIGN_LANGUAGE §3 FINAL) ───────────── */
 .nx-stage { position: relative; }
-/* the live wall clock, top-center — distinct from the center countdown */
+/* the live wall clock, parked top-left of the stage — clear of the clock face
+   so a block label near 12 o'clock can never collide with the readout */
 .nx-clock {
   position: absolute;
-  top: 10px;
-  left: 410px; /* the dial axis: OG.cx (300) + OG.ox (110) — not the stage centre */
-  transform: translateX(-50%);
+  top: 8px;
+  left: 10px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 1px;
-  text-align: center;
+  text-align: left;
   pointer-events: none;
   z-index: 5;
+}
+/* hour numerals on the fixed bezel (12/3/6/9) */
+.nx-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--muted);
 }
 .nx-time { display: inline-flex; align-items: baseline; gap: 3px; }
 .nx-clock .hm { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: var(--ink); }
@@ -259,11 +269,13 @@
 .trow:hover .pin { opacity: 1; }
 .clk-center {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  /* the dial ring's true centre: OG.cx (300) + OG.ox (110), OG.cy (300) —
+     NOT the 760-wide stage's 50% (380), which sat the countdown 30px off-axis */
+  left: 410px;
+  top: 300px;
   transform: translate(-50%, -50%);
   text-align: center;
-  width: 330px;
+  width: 300px;
   pointer-events: none;
 }
 .nx-count {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../../../domain/types'
-import { dayFraction, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
+import { dayFill, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
+import { clockDeg } from '../dialGeometry'
 
 const D = '2026-06-09'
 
@@ -20,7 +21,19 @@ function mk(over: Partial<Block>): Block {
   }
 }
 
-describe('visibleOrbit — the rolling next-12h window', () => {
+describe('clockDeg — the fixed 12-hour face', () => {
+  it('12 at the top and never moving; 3/6/9 at right/bottom/left', () => {
+    expect(clockDeg(0)).toBe(0) // 12 midnight → top
+    expect(clockDeg(12)).toBe(0) // noon → same top (AM/PM share the face)
+    expect(clockDeg(3)).toBe(90)
+    expect(clockDeg(6)).toBe(180)
+    expect(clockDeg(9)).toBe(270)
+    expect(clockDeg(15)).toBe(90) // 3 PM lands on 3
+    expect(clockDeg(1.5)).toBeCloseTo(45, 5) // 1:30 → 45°
+  })
+})
+
+describe('visibleOrbit — today, open, ahead', () => {
   it('keeps what intersects [now, now+12h) today; drops done, past, and far-future', () => {
     const nowH = 9.67
     const live = mk({ id: 'live', startMin: 9 * 60, endMin: 11 * 60 })
@@ -32,49 +45,57 @@ describe('visibleOrbit — the rolling next-12h window', () => {
     expect(out.map((b) => b.id)).toEqual(['live', 'eve'])
   })
 
-  it('clips the forward horizon so the last arc never wraps into the now pin', () => {
+  it('clips the forward horizon so a block and its 12-h-later twin never share an angle', () => {
     const late = mk({ id: 'late', startMin: Math.round((9 + 11.5) * 60), endMin: 22 * 60 })
     expect(visibleOrbit([late], D, 9)).toHaveLength(0)
   })
 })
 
-describe('radiiFor — focus owns the outer orbit, lanes step inward', () => {
-  const a = mk({ id: 'a', startMin: 9 * 60, endMin: 11 * 60 }) // running at 10
-  const b = mk({ id: 'b', startMin: 9.5 * 60, endMin: 10.5 * 60 }) // running
-  const c = mk({ id: 'c', startMin: 14 * 60, endMin: 15 * 60 }) // later
+describe('radiiFor — tasks share the outer ring; only time-overlap steps inward', () => {
+  const a = mk({ id: 'a', startMin: 9 * 60, endMin: 11 * 60 })
+  const b = mk({ id: 'b', startMin: 9.5 * 60, endMin: 10.5 * 60 }) // overlaps a
+  const c = mk({ id: 'c', startMin: 14 * 60, endMin: 15 * 60 }) // disjoint
 
-  it('focus at ro; others inward 14px in priority order (running first)', () => {
+  it('focus at OG.task; an overlapping sibling steps inward; a disjoint block keeps the ring', () => {
     const radii = radiiFor([a, b, c], 'b', 10)
-    expect(radii.get('b')).toBe(OG.ro)
-    expect(radii.get('a')).toBe(OG.ro - LANE_STEP) // running beats later
-    expect(radii.get('c')).toBe(OG.ro - 2 * LANE_STEP)
+    expect(radii.get('b')).toBe(OG.task) // focus keeps the outer ring
+    expect(radii.get('a')).toBe(OG.task - LANE_STEP) // overlaps the focus → one lane in
+    expect(radii.get('c')).toBe(OG.task) // different time → different angle → same ring
   })
 
-  it('distinct radii for every item — arc overlap is geometrically impossible', () => {
-    const six = Array.from({ length: 6 }, (_, i) =>
-      mk({ id: `x${i}`, startMin: (9 + i * 0.25) * 60, endMin: (11 + i * 0.25) * 60 }),
+  it('disjoint blocks all ride the base ring — compact, hugging the time layers', () => {
+    const spread = Array.from({ length: 6 }, (_, i) =>
+      mk({ id: `s${i}`, startMin: (9 + i) * 60, endMin: (9 + i) * 60 + 30 }),
     )
-    const radii = radiiFor(six, 'x0', 10)
-    expect(new Set(radii.values()).size).toBe(6)
+    const radii = radiiFor(spread, 's0', 9)
+    expect(new Set(radii.values())).toEqual(new Set([OG.task]))
   })
 
-  it('promotion re-orbits: the new focus takes ro, the old one steps inward', () => {
+  it('a mutually-overlapping pileup gets distinct radii — no two arcs share a lane at one angle', () => {
+    const pile = Array.from({ length: 4 }, (_, i) =>
+      mk({ id: `o${i}`, startMin: (9 + i * 0.1) * 60, endMin: (12 + i * 0.1) * 60 }),
+    )
+    const radii = radiiFor(pile, 'o0', 10)
+    expect(new Set(radii.values()).size).toBe(4)
+  })
+
+  it('promotion re-orbits within a cluster: the new focus takes OG.task, the old steps inward', () => {
     const before = radiiFor([a, b], 'a', 10)
     const after = radiiFor([a, b], 'b', 10)
-    expect(before.get('a')).toBe(OG.ro)
-    expect(after.get('b')).toBe(OG.ro)
-    expect(after.get('a')).toBe(OG.ro - LANE_STEP)
+    expect(before.get('a')).toBe(OG.task)
+    expect(after.get('b')).toBe(OG.task)
+    expect(after.get('a')).toBe(OG.task - LANE_STEP)
   })
 })
 
-describe('resolveLabels — per-side callouts, never overlapping', () => {
+describe('resolveLabels — per-side callouts at the END clock angle, never overlapping', () => {
   it('a 6-deep pileup ends with every same-side pair ≥ LABEL_GAP apart', () => {
     /* six blocks ending within minutes of each other → labels pile on one side */
     const six = Array.from({ length: 6 }, (_, i) =>
-      mk({ id: `p${i}`, startMin: (9 + i * 0.05) * 60, endMin: (12 + i * 0.08) * 60 }),
+      mk({ id: `p${i}`, startMin: (9 + i * 0.05) * 60, endMin: (14 + i * 0.1) * 60 }),
     )
     const radii = radiiFor(six, 'p0', 10)
-    const labels = resolveLabels(six, radii, 10)
+    const labels = resolveLabels(six, radii)
     const all = [...labels.values()]
     for (const side of [true, false]) {
       const ys = all.filter((l) => l.right === side).map((l) => l.y).sort((x, y) => x - y)
@@ -82,20 +103,19 @@ describe('resolveLabels — per-side callouts, never overlapping', () => {
     }
   })
 
-  it('a lone label keeps its natural y — de-collision never displaces without cause', () => {
-    const lone = mk({ id: 'solo', startMin: 10 * 60, endMin: 13 * 60 }) // ends at deg 90 → y = cy
-    const labels = resolveLabels([lone], radiiFor([lone], 'solo', 10), 10)
+  it('a lone label sits at its end angle — de-collision never displaces without cause', () => {
+    const lone = mk({ id: 'solo', startMin: 13 * 60, endMin: 15 * 60 }) // ends 3 PM → 90° → y = cy, right
+    const labels = resolveLabels([lone], radiiFor([lone], 'solo', 14))
     expect(labels.get('solo')!.y).toBeCloseTo(OG.cy, 5)
+    expect(labels.get('solo')!.right).toBe(true)
   })
 
   it('inner-lane dots get leader lines out to the callout ring (the radial standoff)', () => {
     const twins = [
-      mk({ id: 't1', startMin: 9 * 60, endMin: 12 * 60 }),
-      mk({ id: 't2', startMin: 9.1 * 60, endMin: 12.05 * 60 }),
+      mk({ id: 't1', startMin: 9 * 60, endMin: 14 * 60 }),
+      mk({ id: 't2', startMin: 9.1 * 60, endMin: 14.05 * 60 }),
     ]
-    const labels = resolveLabels(twins, radiiFor(twins, 't1', 10), 10)
-    /* t2 rides an inner lane: its dot is a full LANE_STEP inside the callout
-       ring, and its label is pushed by the gap sweep — both demand a leader */
+    const labels = resolveLabels(twins, radiiFor(twins, 't1', 10))
     expect(labels.get('t2')!.moved).toBe(true)
   })
 })
@@ -114,13 +134,24 @@ describe('orbit semantics', () => {
   })
 })
 
-describe('dayFraction — day-progress ring fill', () => {
-  it('0 at midnight, ½ at noon, 1 at day end; clamps out-of-range minutes', () => {
-    expect(dayFraction(0)).toBe(0)
-    expect(dayFraction(12 * 60)).toBeCloseTo(0.5, 5)
-    expect(dayFraction(18 * 60)).toBeCloseTo(0.75, 5)
-    expect(dayFraction(1440)).toBe(1)
-    expect(dayFraction(-30)).toBe(0)
-    expect(dayFraction(9999)).toBe(1)
+describe('dayFill — two-stage day progress (inner disk, then outer band)', () => {
+  it('midnight: nothing filled', () => {
+    expect(dayFill(0)).toEqual({ inner: 0, outer: 0 })
+  })
+  it('first 12 h fill the inner disk only; outer stays empty', () => {
+    expect(dayFill(6 * 60)).toEqual({ inner: 180, outer: 0 }) // 6 AM → inner half-swept
+    expect(dayFill(9 * 60)).toEqual({ inner: 270, outer: 0 })
+  })
+  it('noon: inner full, outer just starting', () => {
+    expect(dayFill(12 * 60)).toEqual({ inner: 360, outer: 0 })
+  })
+  it('second 12 h: inner stays full, outer band sweeps', () => {
+    expect(dayFill(18 * 60)).toEqual({ inner: 360, outer: 180 }) // 6 PM
+    expect(dayFill(21 * 60)).toEqual({ inner: 360, outer: 270 })
+  })
+  it('day end: both zones full; out-of-range clamps', () => {
+    expect(dayFill(1440)).toEqual({ inner: 360, outer: 360 })
+    expect(dayFill(-30)).toEqual({ inner: 0, outer: 0 })
+    expect(dayFill(9999)).toEqual({ inner: 360, outer: 360 })
   })
 })

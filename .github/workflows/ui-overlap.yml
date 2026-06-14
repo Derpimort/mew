@@ -1,0 +1,38 @@
+name: ui-overlap
+
+# Text-overlap guard — the "for everything" net. shoot-overlap.mjs drives the
+# built app across the dial clock-sweep (incl. crowded times), week, and
+# settings, and fails the job if any two text runs collide (DOM or SVG). This is
+# what keeps overlapping text from shipping again.
+on:
+  pull_request:
+    paths: ['app/**', '.github/workflows/ui-overlap.yml']
+  workflow_dispatch:
+
+jobs:
+  overlap:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      # version-matched chromium for playwright-core (ephemeral npx — no dep added)
+      - run: npx -y playwright@1.60.0 install --with-deps chromium
+      - run: pnpm build
+      - name: serve + detect
+        run: |
+          pnpm exec vite preview --port 5199 --strictPort &
+          for i in $(seq 1 30); do curl -sf http://localhost:5199/ >/dev/null && break || sleep 1; done
+          node scripts/shoot-overlap.mjs http://localhost:5199
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: overlap-shots
+          path: app/shots/overlap
+          if-no-files-found: ignore
