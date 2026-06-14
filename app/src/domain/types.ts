@@ -170,6 +170,9 @@ export interface Settings {
   /** Which remote brain answers (BYO key either way). */
   remoteProvider: 'anthropic' | 'openai'
   anthropicKey: string
+  /** Active model per provider — chosen in Settings, or any id typed in
+      (model ids change often, so the picker is a convenience, not a fence). */
+  anthropicModel: string
   openaiKey: string
   openaiModel: string
   ollamaUrl: string
@@ -254,8 +257,9 @@ export const DEFAULT_SETTINGS: Settings = {
   modelLocation: 'remote',
   remoteProvider: 'anthropic',
   anthropicKey: '',
+  anthropicModel: 'claude-sonnet-4-6',
   openaiKey: '',
-  openaiModel: 'gpt-4o-mini',
+  openaiModel: 'gpt-5.4-mini',
   ollamaUrl: 'http://localhost:11434',
   ollamaModel: 'llama3.2',
   googleClientId: '',

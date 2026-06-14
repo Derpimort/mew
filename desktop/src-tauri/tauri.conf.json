@@ -27,14 +27,13 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": false,
     "externalBin": [
       "binaries/gbrain"
     ],
     "targets": [
       "msi",
       "nsis",
-      "appimage",
       "deb"
     ],
     "icon": [

@@ -11,10 +11,10 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 export type { ChatTurn, ModelPort, ToolExecutor, WeekContext, PlaceSpec, FreeSpec } from './types'
 
 /* The Anthropic SDK loads lazily — the app must not pay for it until a key exists. */
-function createLazyAnthropic(apiKey: string): ModelPort {
+function createLazyAnthropic(apiKey: string, model: string): ModelPort {
   let real: Promise<ModelPort> | null = null
   const get = () => {
-    real ??= import('./anthropic').then((m) => m.createAnthropicAdapter(apiKey))
+    real ??= import('./anthropic').then((m) => m.createAnthropicAdapter(apiKey, model))
     return real
   }
   return {
@@ -29,9 +29,9 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
   const chain: ModelPort[] = []
   if (settings.modelLocation === 'remote') {
     if (settings.remoteProvider === 'openai' && settings.openaiKey.trim()) {
-      chain.push(createOpenAIAdapter(settings.openaiKey.trim(), settings.openaiModel || 'gpt-4o-mini'))
+      chain.push(createOpenAIAdapter(settings.openaiKey.trim(), settings.openaiModel || 'gpt-5.4-mini'))
     } else if (settings.remoteProvider !== 'openai' && settings.anthropicKey.trim()) {
-      chain.push(createLazyAnthropic(settings.anthropicKey.trim()))
+      chain.push(createLazyAnthropic(settings.anthropicKey.trim(), settings.anthropicModel || 'claude-sonnet-4-6'))
     }
   }
   if (settings.modelLocation === 'local') {

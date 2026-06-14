@@ -78,4 +78,7 @@ jobs:
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('MEW {0}', github.ref_name) || '' }}
           releaseDraft: true
-          includeUpdaterJson: true
+          # self-update is off until signing is set up: emit latest.json only
+          # when a signing key exists (createUpdaterArtifacts is false meanwhile,
+          # so unsigned release builds don't fail looking for artifacts).
+          includeUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}

@@ -30,6 +30,73 @@ function SetRow({ t, s, children }: { t: string; s?: string; children: ReactNode
   )
 }
 
+/* Current models per provider (verified June 2026). Model ids change often, so
+   the list is a convenience over a freeform field — never the only way in. */
+const ANTHROPIC_MODELS = [
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 · balanced' },
+  { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 · most capable' },
+  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 · fast & cheap' },
+  { id: 'claude-fable-5', label: 'Claude Fable 5 · frontier (less stable)' },
+]
+const OPENAI_MODELS = [
+  { id: 'gpt-5.5', label: 'GPT-5.5 · most capable' },
+  { id: 'gpt-5.4', label: 'GPT-5.4 · balanced' },
+  { id: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap' },
+]
+
+/* Pick a known model or type any id. Selecting "Custom…" — or arriving with a
+   stored id that isn't in the list — reveals a freeform field. */
+function ModelPicker({
+  models,
+  value,
+  onChange,
+}: {
+  models: { id: string; label: string }[]
+  value: string
+  onChange: (id: string) => void
+}) {
+  const known = models.some((m) => m.id === value)
+  const [custom, setCustom] = useState(!known)
+  return (
+    <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+      <select
+        className="modelsel"
+        value={custom ? '__custom__' : value}
+        onChange={(e) => {
+          const v = e.target.value
+          if (v === '__custom__') setCustom(true)
+          else {
+            setCustom(false)
+            onChange(v)
+          }
+        }}
+      >
+        {models.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+        <option value="__custom__">Custom…</option>
+      </select>
+      {custom && (
+        <span className="keyfield">
+          <input
+            placeholder="exact model id"
+            defaultValue={known ? '' : value}
+            onBlur={(e) => {
+              const v = e.target.value.trim()
+              if (v) onChange(v)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+            }}
+          />
+        </span>
+      )}
+    </span>
+  )
+}
+
 export function SettingsPage() {
   const setPage = useMew((s) => s.setPage)
   return (
@@ -623,6 +690,25 @@ function PrivacyModelCard() {
               updateSettings({ remoteProvider: id as 'anthropic' | 'openai' })
               setEditingKey(false)
             }}
+          />
+        </SetRow>
+      )}
+      {settings.modelLocation === 'remote' && (
+        <SetRow
+          t="Model"
+          s={
+            provider === 'openai'
+              ? 'Pick a current OpenAI model, or type any model id.'
+              : 'Pick a current Claude model, or type any id. Fable is the frontier model — capable but less stable.'
+          }
+        >
+          <ModelPicker
+            key={provider}
+            models={provider === 'openai' ? OPENAI_MODELS : ANTHROPIC_MODELS}
+            value={provider === 'openai' ? settings.openaiModel : settings.anthropicModel}
+            onChange={(id) =>
+              updateSettings(provider === 'openai' ? { openaiModel: id } : { anthropicModel: id })
+            }
           />
         </SetRow>
       )}

@@ -10,7 +10,6 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
 
-const MODEL = 'claude-fable-5'
 const MAX_LOOP = 10
 
 const TOOLS: Anthropic.Tool[] = MEW_TOOLS.map((t) => ({
@@ -20,7 +19,7 @@ const TOOLS: Anthropic.Tool[] = MEW_TOOLS.map((t) => ({
   input_schema: t.parameters as Anthropic.Tool['input_schema'],
 }))
 
-export function createAnthropicAdapter(apiKey: string): ModelPort {
+export function createAnthropicAdapter(apiKey: string, model: string): ModelPort {
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true })
 
   return {
@@ -48,7 +47,7 @@ export function createAnthropicAdapter(apiKey: string): ModelPort {
       let yieldedText = false
       for (let i = 0; i < MAX_LOOP; i++) {
         const stream = client.messages.stream({
-          model: MODEL,
+          model,
           /* required by the API — streaming delivers tokens live but every call
              still declares a ceiling. 32k is unreachable for a MEW turn (the
              voice is 1–3 sentences); it exists purely as the runaway-cost guard
