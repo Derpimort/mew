@@ -11,7 +11,7 @@ import { useMew, useLive, clockNow } from '../../state/store'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { isBackground, overlappingFocus } from '../../domain/week'
 import { rArc, rPolar, spDeg } from './dialGeometry'
-import { LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
+import { DAY_RING_R, dayFraction, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
@@ -20,8 +20,10 @@ import StaggeredText from '../react-bits/staggered-text'
 function NxClock({ now }: { now: Date }) {
   return (
     <span className="nx-clock" title="current time">
-      <span className="hm">{fmtTime(minOfDay(now))}</span>
-      <span className="sc">:{String(now.getSeconds()).padStart(2, '0')}</span>
+      <span className="nx-time">
+        <span className="hm">{fmtTime(minOfDay(now))}</span>
+        <span className="sc">:{String(now.getSeconds()).padStart(2, '0')}</span>
+      </span>
       <span className="dt">
         {fmtDow(dayKey(now))} · {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
       </span>
@@ -96,11 +98,34 @@ export function FocusOrbit() {
         {/* one guide circle — the outer orbit the focus item rides */}
         <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line)" strokeWidth="1.2" />
 
+        {/* day-progress rings: how much of today is done (00:00 → now), behind
+            the items — a quiet inner + outer gauge that fills clockwise from top */}
+        {(() => {
+          const frac = dayFraction(minOfDay(now))
+          const sweep = frac * 359.999
+          return [DAY_RING_R.inner, DAY_RING_R.outer].map((r) => (
+            <g key={`dayring-${r}`} pointerEvents="none">
+              <circle cx={OG.cx} cy={OG.cy} r={r} fill="none" stroke="var(--line)" strokeWidth="2" opacity={0.4} />
+              {frac > 0 && (
+                <path
+                  d={rArc(OG.cx, OG.cy, r, 0, sweep)}
+                  fill="none"
+                  stroke="var(--ice)"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  opacity={0.5}
+                />
+              )}
+            </g>
+          ))
+        })()}
+
         {vis.map((b) => {
           const isF = b.id === focusId
           const r = radii.get(b.id) ?? OG.ro
           const col = orbitColor(b, isF)
-          const op = isF ? 1 : hover === b.id ? 0.85 : 0.4
+          const isH = hover === b.id
+          const op = isF ? 1 : isH ? 0.95 : 0.4
           const d0 = spDeg(Math.max(b.startMin / 60, nowH), nowH)
           /* a background block's runway runs to its DUE tick (the deadline is
              the visual end); everything clamps at now+12h so nothing wraps
@@ -123,7 +148,7 @@ export function FocusOrbit() {
             ? `due ${fmtTime(b.due!)}`
             : isRunning(b, nowH)
               ? `→ ${fmtTime(b.endMin)}`
-              : fmtTime(b.startMin)
+              : `@ ${fmtTime(b.startMin)}`
           return (
             <g key={b.id}>
               <path
@@ -131,7 +156,7 @@ export function FocusOrbit() {
                 d={rArc(OG.cx, OG.cy, r, d0, d1)}
                 fill="none"
                 stroke={col}
-                strokeWidth={isF ? 5 : 3.5}
+                strokeWidth={isF ? 5 : isH ? 5 : 3.5}
                 strokeLinecap="round"
                 strokeDasharray={dueBg ? '1 5' : b.tag === 'rest' ? '2 7' : 'none'}
                 opacity={op}
@@ -142,7 +167,7 @@ export function FocusOrbit() {
               <circle
                 cx={ex}
                 cy={ey}
-                r={isF ? 5 : dueBg ? 4.5 : 3.5}
+                r={isF ? 5 : isH ? 5 : dueBg ? 4.5 : 3.5}
                 fill={col}
                 opacity={Math.min(op + 0.15, 1)}
                 style={isF || dueBg ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : undefined}
@@ -166,12 +191,12 @@ export function FocusOrbit() {
                 y={lbl.y}
                 textAnchor={lbl.right ? 'start' : 'end'}
                 dominantBaseline="central"
-                opacity={isF ? 1 : 0.55}
+                opacity={isF ? 1 : isH ? 0.95 : 0.55}
                 style={{
                   fill: isF ? 'var(--ink)' : col,
                   fontFamily: "'Hanken Grotesk',sans-serif",
-                  fontSize: 11.5,
-                  fontWeight: 650,
+                  fontSize: isH ? 13 : 11.5,
+                  fontWeight: isH ? 760 : 650,
                 }}
                 {...handlers}
               >
@@ -184,22 +209,11 @@ export function FocusOrbit() {
           )
         })}
 
-        {/* now — pinned at the top of the rolling face */}
+        {/* now — the ice dot pins the top of the rolling face; the wall clock
+            above is the single time readout (no duplicate label here) */}
         {(() => {
           const [x, y] = rPolar(OG.cx, OG.cy, OG.ro, 0)
-          return (
-            <g>
-              <circle cx={x} cy={y} r="6.5" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
-              <text
-                x={x}
-                y={y - 18}
-                textAnchor="middle"
-                style={{ fill: 'var(--ice)', fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono',monospace" }}
-              >
-                now · {fmtTime(minOfDay(now))}
-              </text>
-            </g>
-          )
+          return <circle cx={x} cy={y} r="6.5" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
         })()}
       </svg>
 
@@ -255,7 +269,22 @@ export function FocusOrbit() {
       <ThreadRail onOpen={(id) => setCardId(id)} />
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center' }}>
-        <span className="pri-hint">click any item to focus it · click the chip to let it run</span>
+        {(() => {
+          const hb = hover ? vis.find((b) => b.id === hover) : null
+          if (hb) {
+            const t = hb.title.split('—')[0].trim()
+            const when =
+              isBackground(hb) && hb.due != null
+                ? `due ${fmtTime(hb.due)}`
+                : `${fmtTime(hb.startMin)}–${fmtTime(hb.endMin)}`
+            return (
+              <span className="pri-hint" style={{ color: 'var(--muted)' }}>
+                {t} · {when}
+              </span>
+            )
+          }
+          return <span className="pri-hint">click any item to focus it · click the chip to let it run</span>
+        })()}
       </div>
     </div>
   )

@@ -95,3 +95,13 @@ export function orbitColor(b: Block, isFocus: boolean): string {
   if (isBackground(b) && b.due != null && !isFocus) return 'var(--gold)'
   return b.tag === 'work' ? 'var(--ice)' : 'var(--teal)'
 }
+
+/** Fraction of today elapsed (0 at 00:00 → 1 at 24:00) — the day-progress
+    rings fill to this. Pure: minutes-of-day in, clamped [0,1] out. */
+export function dayFraction(minutesOfDay: number): number {
+  return Math.max(0, Math.min(1, minutesOfDay / 1440))
+}
+
+/** The two day-progress ring radii — a compact gauge inside the lanes, clear
+    of the center readout and the innermost lane (holds for ≤10 visible items). */
+export const DAY_RING_R = { inner: 104, outer: 120 } as const

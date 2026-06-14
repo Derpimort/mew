@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../../../domain/types'
-import { LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
+import { dayFraction, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
 
 const D = '2026-06-09'
 
@@ -111,5 +111,16 @@ describe('orbit semantics', () => {
     expect(orbitColor(dueBg, false)).toBe('var(--gold)')
     expect(orbitColor(dueBg, true)).toBe('var(--ice)')
     expect(orbitColor(mk({ tag: 'private' }), false)).toBe('var(--teal)')
+  })
+})
+
+describe('dayFraction — day-progress ring fill', () => {
+  it('0 at midnight, ½ at noon, 1 at day end; clamps out-of-range minutes', () => {
+    expect(dayFraction(0)).toBe(0)
+    expect(dayFraction(12 * 60)).toBeCloseTo(0.5, 5)
+    expect(dayFraction(18 * 60)).toBeCloseTo(0.75, 5)
+    expect(dayFraction(1440)).toBe(1)
+    expect(dayFraction(-30)).toBe(0)
+    expect(dayFraction(9999)).toBe(1)
   })
 })

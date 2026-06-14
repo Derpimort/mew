@@ -166,21 +166,24 @@
 /* the live wall clock, top-center — distinct from the center countdown */
 .nx-clock {
   position: absolute;
-  top: 16px;
-  left: 50%;
+  top: 10px;
+  left: 410px; /* the dial axis: OG.cx (300) + OG.ox (110) — not the stage centre */
   transform: translateX(-50%);
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  text-align: center;
   pointer-events: none;
   z-index: 5;
 }
+.nx-time { display: inline-flex; align-items: baseline; gap: 3px; }
 .nx-clock .hm { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: var(--ink); }
 .nx-clock .sc { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--gold); width: 16px; }
-.nx-clock .dt { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); margin-left: 7px; }
+.nx-clock .dt { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
 /* every item is the same thin arc; hierarchy is brightness, never thickness */
-.pri-arc { cursor: pointer; transition: opacity 0.18s; }
-.pri-lbl { cursor: pointer; }
+.pri-arc { cursor: pointer; transition: opacity 0.18s, stroke-width 0.15s ease, r 0.15s ease; }
+.pri-lbl { cursor: pointer; transition: opacity 0.15s ease, font-size 0.15s ease; }
 .pri-lbl:hover, .pri-lbl:hover tspan { opacity: 1 !important; }
 .pri-demote {
   display: inline-flex;
