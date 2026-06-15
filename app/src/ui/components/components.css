@@ -201,13 +201,24 @@
 .nx-clock .dt { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
 /* every item is the same thin arc; hierarchy is brightness, never thickness */
 .pri-arc { cursor: pointer; transition: opacity 0.18s, stroke-width 0.15s ease, r 0.15s ease; }
-.pri-lbl { cursor: pointer; transition: opacity 0.15s ease, font-size 0.15s ease; }
+/* one shared dial reveal (#88): hover-revealed elements fade via opacity, never
+   mount/unmount — same easing/duration everywhere so the dial reads as one system */
+.dial-reveal { transition: opacity 0.18s ease; }
+.pri-lbl { cursor: pointer; transition: opacity 0.18s ease, font-size 0.18s ease; }
 .pri-lbl:hover, .pri-lbl:hover tspan { opacity: 1 !important; }
 .pri-demote {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 13px;
+  /* out of the .clk-center flex flow: anchored just below the centre stack so the
+     reveal never reflows the countdown/meta/task (#88). pointer-events/opacity are
+     driven inline by dialHover; opacity timing matches .dial-reveal. */
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  margin-top: 11px;
+  white-space: nowrap;
   font-family: 'JetBrains Mono', monospace;
   font-size: 9.5px;
   color: var(--faint);
@@ -215,8 +226,7 @@
   border-radius: 999px;
   padding: 4px 11px;
   cursor: pointer;
-  pointer-events: auto;
-  transition: color 0.15s, border-color 0.15s;
+  transition: opacity 0.18s ease, color 0.15s, border-color 0.15s;
 }
 .pri-demote:hover { color: var(--gold); border-color: var(--ice-bd); }
 .pri-hint { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--faint); }

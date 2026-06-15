@@ -208,25 +208,28 @@ export function FocusOrbit() {
                 className="pri-arc"
                 {...handlers}
               />
-              {(dialHover || isH || isF) && lbl && lbl.moved && (
+              {lbl && lbl.moved && (
                 <line
+                  className="dial-reveal"
                   x1={ex}
                   y1={ey}
                   x2={lbl.x + (lbl.right ? -4 : 4)}
                   y2={lbl.y}
                   stroke={col}
                   strokeWidth="1"
-                  opacity={op * 0.5}
+                  opacity={dialHover || isH || isF ? op * 0.5 : 0}
+                  pointerEvents="none"
                 />
               )}
-              {(dialHover || isH || isF) && lbl && (
+              {lbl && (
                 <text
                   className="pri-lbl"
                   x={lbl.x}
                   y={lbl.y}
                   textAnchor={lbl.right ? 'start' : 'end'}
                   dominantBaseline="central"
-                  opacity={isF ? 1 : isH ? 0.95 : 0.6}
+                  opacity={dialHover || isH || isF ? (isF ? 1 : isH ? 0.95 : 0.6) : 0}
+                  pointerEvents={dialHover || isH || isF ? undefined : 'none'}
                   style={{
                     fill: isF ? 'var(--ink)' : col,
                     fontFamily: "'Hanken Grotesk',sans-serif",
@@ -275,17 +278,16 @@ export function FocusOrbit() {
           >
             <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
           </div>
-          {dialHover && (
-            <span
-              className="pri-demote"
-              onClick={(e) => {
-                e.stopPropagation()
-                demote()
-              }}
-            >
-              ↓ let it run in background
-            </span>
-          )}
+          <span
+            className="pri-demote"
+            style={{ opacity: dialHover ? 1 : 0, pointerEvents: dialHover ? 'auto' : 'none' }}
+            onClick={(e) => {
+              e.stopPropagation()
+              demote()
+            }}
+          >
+            ↓ let it run in background
+          </span>
         </div>
       ) : (
         <div className="clk-center" style={{ width: 310 }}>
@@ -311,9 +313,19 @@ export function FocusOrbit() {
         )
       })()}
 
-      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center' }}>
-        {dialHover &&
-          (() => {
+      <div
+        className="dial-reveal"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 18,
+          textAlign: 'center',
+          opacity: dialHover ? 1 : 0,
+          pointerEvents: dialHover ? 'auto' : 'none',
+        }}
+      >
+        {(() => {
           const hb = hover ? vis.find((b) => b.id === hover) : null
           if (hb) {
             const t = hb.title.split('—')[0].trim()
