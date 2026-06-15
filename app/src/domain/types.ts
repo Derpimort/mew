@@ -160,6 +160,9 @@ export type PetId = 'cat' | 'dog' | 'fox' | 'bunny' | 'bird'
 export interface Settings {
   calendars: ConnectedCalendar[]
   matrix: RoutingMatrix
+  /** `calId:eventId` of imported events the user deleted or took ownership of
+      (moved/edited). A re-sync must not resurrect them. Optional — absent ⇒ []. */
+  dismissedEvents?: string[]
   /** Theme follows pet (PRD §3b): the pet swaps only the accent pair. */
   pet: PetId
   themeMode: 'carbon' | 'white'

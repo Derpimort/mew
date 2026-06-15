@@ -1,19 +1,20 @@
 /* Fixed 12-hour clock-face geometry. 12 sits at the top and never moves; a
    block rides an arc at its real start→end clock angle; now is a hand that
-   sweeps the face. Same-angle blocks step inward one compact lane so arcs never
-   share a radius. Day progress is a two-stage wash — the inner disk fills over
-   the first 12 h, the inner→outer band over the second — ending at the now
-   notch. Labels are callouts outside the bezel with per-side greedy
-   de-collision. All pure — tested like the week model is. */
+   sweeps the face. The whole day fits on a 12-h face because RADIUS carries the
+   half: AM blocks (00:00–12:00) ride the band BETWEEN the inner and outer ring;
+   PM blocks (12:00–24:00) ride OUTSIDE the outer ring. So a 9 AM and a 9 PM
+   event share an angle but never a band. Within a band, time-overlapping blocks
+   step one lane (greedy). Done blocks stay on the face as completed markers.
+   Labels are callouts outside the bezel with per-side greedy de-collision.
+   All pure — tested like the week model is. */
 
 import type { Block } from '../../domain/types'
 import { isBackground } from '../../domain/week'
 import { clockDeg, rPolar } from './dialGeometry'
 
 /* Radii, centre → out (SVG units around cx,cy):
-   countdown · inner-fill ring (ri) · outer-fill ring (ro) · task arcs (task,
-   just above ro with small padding) · hour ticks + now-hand (tick) · numerals
-   (num). The time layers and the task ring are close in scale — compact. */
+   countdown (inside ri) · inner ring (ri) · AM band (ri→ro) · outer ring (ro) ·
+   PM band (ro→pm) · hour ticks + now-hand (tick) · numerals (num). */
 export const OG = {
   cx: 300,
   cy: 354,
@@ -22,28 +23,25 @@ export const OG = {
   // ox centres the dial axis (cx) in the stage: cx + ox = w/2, so the
   // countdown can anchor at left:50% and margins stay symmetric.
   ox: 80,
-  ri: 130,
-  ro: 192,
-  task: 220,
-  tick: 238,
-  num: 252,
+  ri: 104,
+  ro: 168,
+  pm: 234,
+  tick: 242,
+  num: 254,
 } as const
 export const LANE_STEP = 8
 export const LABEL_R = OG.num + 14 // callouts just outside the numerals
 export const LABEL_GAP = 16
 
-/** Visible set: today's open blocks whose window intersects [now, now+12h).
-    Forward-clipping at ~12h keeps a block and its 12-hours-later twin from
-    landing on the same clock angle. Done blocks leave — they're mews. */
-export function visibleOrbit(blocks: Block[], todayKey: string, nowH: number): Block[] {
+/** AM = the first half of the day; it rides the inner band. */
+export const isAM = (b: Block): boolean => b.startMin < 720
+
+/** Visible set: everything on today's face — open AND done, the whole day (no
+    forward clip; the AM/PM bands keep 12-hours-apart events off one radius).
+    Done blocks stay as completed markers. */
+export function visibleOrbit(blocks: Block[], todayKey: string, _nowH: number): Block[] {
   return blocks
-    .filter(
-      (b) =>
-        b.dayKey === todayKey &&
-        b.status === 'open' &&
-        b.endMin / 60 > nowH &&
-        b.startMin / 60 < nowH + 11.2,
-    )
+    .filter((b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done'))
     .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin)
 }
 
@@ -51,26 +49,29 @@ export function isRunning(b: Block, nowH: number): boolean {
   return b.startMin / 60 <= nowH && nowH < b.endMin / 60
 }
 
-/** Lane radii on a fixed face: blocks at different times sit at different
-    ANGLES, so they share the outer task ring — compact, hugging the time
-    layers. Only blocks that genuinely overlap in time would collide at a shared
-    radius, so each takes the outermost lane free of a time-overlap with what's
-    already there (greedy interval colouring). Focus is placed first, so it
-    keeps the outer ring; an overlapping sibling steps one lane inward. */
+/** Lane radii. AM blocks sit just inside the outer ring and step INWARD toward
+    the inner ring; PM blocks sit just outside it and step OUTWARD — so each
+    half owns its band. Within a band a block only leaves the base ring if it
+    time-overlaps something already placed (greedy interval colouring). Focus is
+    placed first in its half, so it keeps the base ring. */
 export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): Map<string, number> {
-  const order = [...vis].sort((a, b) => {
-    if (a.id === focusId) return -1
-    if (b.id === focusId) return 1
-    return a.startMin - b.startMin || a.endMin - b.endMin
-  })
-  const lanes: Block[][] = []
   const out = new Map<string, number>()
-  for (const b of order) {
-    let k = 0
-    while (lanes[k]?.some((o) => b.startMin < o.endMin && o.startMin < b.endMin)) k++
-    ;(lanes[k] ??= []).push(b)
-    out.set(b.id, OG.task - k * LANE_STEP)
+  const place = (group: Block[], base: number, dir: 1 | -1) => {
+    const order = [...group].sort((a, b) => {
+      if (a.id === focusId) return -1
+      if (b.id === focusId) return 1
+      return a.startMin - b.startMin || a.endMin - b.endMin
+    })
+    const lanes: Block[][] = []
+    for (const b of order) {
+      let k = 0
+      while (lanes[k]?.some((o) => b.startMin < o.endMin && o.startMin < b.endMin)) k++
+      ;(lanes[k] ??= []).push(b)
+      out.set(b.id, base + dir * k * LANE_STEP)
+    }
   }
+  place(vis.filter(isAM), OG.ro - 12, -1) // AM: inward through the inner band
+  place(vis.filter((b) => !isAM(b)), OG.ro + 12, 1) // PM: outward through the outer band
   return out
 }
 
@@ -93,7 +94,7 @@ export interface OrbitLabel {
 export function resolveLabels(vis: Block[], radii: Map<string, number>): Map<string, OrbitLabel> {
   const raw = vis.map((b) => {
     const deg = clockDeg(b.endMin / 60)
-    const [ex, ey] = rPolar(OG.cx, OG.cy, radii.get(b.id) ?? OG.task, deg)
+    const [ex, ey] = rPolar(OG.cx, OG.cy, radii.get(b.id) ?? OG.ro, deg)
     const [lx, ly] = rPolar(OG.cx, OG.cy, LABEL_R, deg)
     const right = lx >= OG.cx
     return { id: b.id, x: lx + (right ? 9 : -9), y: ly, right, ex, ey, baseY: ly }

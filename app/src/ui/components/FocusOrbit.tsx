@@ -60,7 +60,9 @@ export function FocusOrbit() {
   const vis = useMemo(() => visibleOrbit(blocks, todayKey, nowH), [blocks, todayKey, nowH])
   const focusId = live.current?.id ?? null
   const radii = useMemo(() => radiiFor(vis, focusId, nowH), [vis, focusId, nowH])
-  const labels = useMemo(() => resolveLabels(vis, radii), [vis, radii])
+  /* only open blocks carry a persistent callout — done ones are quiet markers
+     (title shows in the hover hint), keeping a full day's face uncluttered */
+  const labels = useMemo(() => resolveLabels(vis.filter((b) => b.status === 'open'), radii), [vis, radii])
 
   const [hover, setHover] = useState<string | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
@@ -109,18 +111,19 @@ export function FocusOrbit() {
         <ThreadRail onOpen={(id) => setCardId(id)} />
       </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
-        {/* day-progress wash: the inner disk fills over the first 12 h, then the
-            inner→outer band over the second — a quiet token wash, its leading
-            edge always at the now notch. The two faint rings are the time
-            layers the task arcs ride just above. */}
+        {/* the two bands: AM rides ri→ro, PM rides ro→pm. A quiet wash fills each
+            band with its half's progress (AM inner, PM outer), ending at the now
+            notch. Three rings draw the band edges — ro (the AM/PM divider) is the
+            firmest line. */}
         {(() => {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, 0, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.07} />}
-              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
-              <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line)" strokeWidth="1.4" opacity={0.55} />
-              <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line)" strokeWidth="1.4" opacity={0.55} />
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.inner)} fill="var(--ice)" opacity={0.06} />}
+              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ro, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.06} />}
+              <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.45} />
+              <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.75} />
+              <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.4} />
             </g>
           )
         })()}
@@ -148,23 +151,26 @@ export function FocusOrbit() {
 
         {vis.map((b) => {
           const isF = b.id === focusId
-          const r = radii.get(b.id) ?? OG.task
-          const col = orbitColor(b, isF)
+          const isDone = b.status === 'done'
+          const r = radii.get(b.id) ?? OG.ro
           const isH = hover === b.id
-          const op = isF ? 1 : isH ? 0.95 : 0.42
+          const col = isDone ? 'var(--faint)' : orbitColor(b, isF)
+          const op = isDone ? 0.34 : isF ? 1 : isH ? 0.95 : 0.42
           const dueBg = isBackground(b) && b.due != null
           /* the arc spans the block's REAL clock angles; a deadline-background
              block runs to its due tick (the deadline is the visual end) */
           const d0 = clockDeg(b.startMin / 60)
           const d1 = clockDeg((dueBg ? b.due! : b.endMin) / 60)
           const [ex, ey] = rPolar(OG.cx, OG.cy, r, d1)
-          const lbl = labels.get(b.id)!
+          const lbl = labels.get(b.id) // open blocks only; done are quiet markers
           const handlers = {
             onMouseEnter: () => setHover(b.id),
             onMouseLeave: () => setHover(null),
             onClick: (ev: React.MouseEvent) => {
               ev.stopPropagation()
-              promote(b.id)
+              // a done block opens its card (where it can be un-done); open blocks promote
+              if (isDone) setCardId((v) => (v === b.id ? null : b.id))
+              else promote(b.id)
             },
           }
           const title = b.title.split('—')[0].trim()
@@ -180,25 +186,25 @@ export function FocusOrbit() {
                 d={rArc(OG.cx, OG.cy, r, d0, d1)}
                 fill="none"
                 stroke={col}
-                strokeWidth={isF ? 5 : isH ? 5 : 3.5}
+                strokeWidth={isDone ? 2.5 : isF ? 5 : isH ? 5 : 3.5}
                 strokeLinecap="round"
-                strokeDasharray={dueBg ? '1 5' : b.tag === 'rest' ? '2 7' : 'none'}
+                strokeDasharray={isDone ? 'none' : dueBg ? '1 5' : b.tag === 'rest' ? '2 7' : 'none'}
                 opacity={op}
-                style={isF ? { filter: 'drop-shadow(0 0 9px var(--glowc))' } : undefined}
+                style={isF && !isDone ? { filter: 'drop-shadow(0 0 9px var(--glowc))' } : undefined}
                 {...handlers}
               />
-              {/* end tick: the block's end (or deadline) glows at the arc's end */}
+              {/* end marker: a glowing tick for open work, a quiet dot for done */}
               <circle
                 cx={ex}
                 cy={ey}
-                r={isF ? 5 : isH ? 5 : dueBg ? 4.5 : 3.5}
+                r={isDone ? 3 : isF ? 5 : isH ? 5 : dueBg ? 4.5 : 3.5}
                 fill={col}
                 opacity={Math.min(op + 0.15, 1)}
-                style={isF || dueBg ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : undefined}
+                style={isF && !isDone ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : dueBg ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : undefined}
                 className="pri-arc"
                 {...handlers}
               />
-              {lbl.moved && (
+              {lbl && lbl.moved && (
                 <line
                   x1={ex}
                   y1={ey}
@@ -209,26 +215,28 @@ export function FocusOrbit() {
                   opacity={op * 0.5}
                 />
               )}
-              <text
-                className="pri-lbl"
-                x={lbl.x}
-                y={lbl.y}
-                textAnchor={lbl.right ? 'start' : 'end'}
-                dominantBaseline="central"
-                opacity={isF ? 1 : isH ? 0.95 : 0.6}
-                style={{
-                  fill: isF ? 'var(--ink)' : col,
-                  fontFamily: "'Hanken Grotesk',sans-serif",
-                  fontSize: isH ? 13 : 11.5,
-                  fontWeight: isH ? 760 : 650,
-                }}
-                {...handlers}
-              >
-                {title.length > 20 ? title.slice(0, 18) + '…' : title}{' '}
-                <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}>
-                  {timeNote}
-                </tspan>
-              </text>
+              {lbl && (
+                <text
+                  className="pri-lbl"
+                  x={lbl.x}
+                  y={lbl.y}
+                  textAnchor={lbl.right ? 'start' : 'end'}
+                  dominantBaseline="central"
+                  opacity={isF ? 1 : isH ? 0.95 : 0.6}
+                  style={{
+                    fill: isF ? 'var(--ink)' : col,
+                    fontFamily: "'Hanken Grotesk',sans-serif",
+                    fontSize: isH ? 13 : 11.5,
+                    fontWeight: isH ? 760 : 650,
+                  }}
+                  {...handlers}
+                >
+                  {title.length > 20 ? title.slice(0, 18) + '…' : title}{' '}
+                  <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}>
+                    {timeNote}
+                  </tspan>
+                </text>
+              )}
             </g>
           )
         })}

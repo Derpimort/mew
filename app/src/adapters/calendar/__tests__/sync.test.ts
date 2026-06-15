@@ -85,6 +85,18 @@ describe('mergePull — inbound events', () => {
     expect(r.blocks).toHaveLength(0)
   })
 
+  it('a dismissed event is neither re-added nor kept — the user took it over', () => {
+    const dismissed = new Set(['work@acme:ev1'])
+    // a tombstoned incoming event is not re-added
+    const r1 = mergePull([], [remote({})], [CAL], W, dismissed)
+    expect(r1.added).toBe(0)
+    expect(r1.blocks).toHaveLength(0)
+    // and any lingering local copy of it is cleared
+    const existing = mk({ id: 'x1', dayKey: '2026-06-10', external: { calId: 'work@acme', eventId: 'ev1' } })
+    const r2 = mergePull([existing], [remote({})], [CAL], W, dismissed)
+    expect(r2.blocks.find((b) => b.id === 'x1')).toBeUndefined()
+  })
+
   it('leaves MEW-native blocks completely alone', () => {
     const native = mk({ id: 'n1' })
     const r = mergePull([native], [], [CAL], W)

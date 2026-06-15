@@ -33,58 +33,50 @@ describe('clockDeg — the fixed 12-hour face', () => {
   })
 })
 
-describe('visibleOrbit — today, open, ahead', () => {
-  it('keeps what intersects [now, now+12h) today; drops done, past, and far-future', () => {
-    const nowH = 9.67
-    const live = mk({ id: 'live', startMin: 9 * 60, endMin: 11 * 60 })
-    const past = mk({ id: 'past', startMin: 7 * 60, endMin: 9 * 60 })
-    const done = mk({ id: 'done', startMin: 10 * 60, endMin: 11 * 60, status: 'done' })
-    const evening = mk({ id: 'eve', startMin: 20 * 60, endMin: 21 * 60 })
+describe('visibleOrbit — today, the whole day, open and done', () => {
+  it('keeps today open AND done across the whole day; drops other days', () => {
+    const morning = mk({ id: 'am', startMin: 8 * 60, endMin: 9 * 60 })
+    const doneEarly = mk({ id: 'done', startMin: 7 * 60, endMin: 8 * 60, status: 'done' })
+    const evening = mk({ id: 'pm', startMin: 20 * 60, endMin: 21 * 60 })
     const tomorrow = mk({ id: 'tom', dayKey: '2026-06-10' })
-    const out = visibleOrbit([live, past, done, evening, tomorrow], D, nowH)
-    expect(out.map((b) => b.id)).toEqual(['live', 'eve'])
+    const out = visibleOrbit([morning, doneEarly, evening, tomorrow], D, 9.67)
+    expect(out.map((b) => b.id).sort()).toEqual(['am', 'done', 'pm'])
   })
 
-  it('clips the forward horizon so a block and its 12-h-later twin never share an angle', () => {
-    const late = mk({ id: 'late', startMin: Math.round((9 + 11.5) * 60), endMin: 22 * 60 })
-    expect(visibleOrbit([late], D, 9)).toHaveLength(0)
+  it('no forward clip — a late-evening block shows even early in the morning', () => {
+    const late = mk({ id: 'late', startMin: 20 * 60, endMin: 21 * 60 })
+    expect(visibleOrbit([late], D, 8).map((b) => b.id)).toEqual(['late'])
   })
 })
 
-describe('radiiFor — tasks share the outer ring; only time-overlap steps inward', () => {
-  const a = mk({ id: 'a', startMin: 9 * 60, endMin: 11 * 60 })
-  const b = mk({ id: 'b', startMin: 9.5 * 60, endMin: 10.5 * 60 }) // overlaps a
-  const c = mk({ id: 'c', startMin: 14 * 60, endMin: 15 * 60 }) // disjoint
+describe('radiiFor — AM rides the inner band, PM the outer band', () => {
+  const am1 = mk({ id: 'am1', startMin: 9 * 60, endMin: 11 * 60 })
+  const am2 = mk({ id: 'am2', startMin: 9.5 * 60, endMin: 10.5 * 60 }) // overlaps am1
+  const pm9 = mk({ id: 'pm9', startMin: 21 * 60, endMin: 22 * 60 }) // 9 PM — same angle as 9 AM
 
-  it('focus at OG.task; an overlapping sibling steps inward; a disjoint block keeps the ring', () => {
-    const radii = radiiFor([a, b, c], 'b', 10)
-    expect(radii.get('b')).toBe(OG.task) // focus keeps the outer ring
-    expect(radii.get('a')).toBe(OG.task - LANE_STEP) // overlaps the focus → one lane in
-    expect(radii.get('c')).toBe(OG.task) // different time → different angle → same ring
+  it('AM sits just inside the outer ring; PM just outside it', () => {
+    const radii = radiiFor([am1, pm9], null, 10)
+    expect(radii.get('am1')).toBe(OG.ro - 12)
+    expect(radii.get('pm9')).toBe(OG.ro + 12)
   })
 
-  it('disjoint blocks all ride the base ring — compact, hugging the time layers', () => {
-    const spread = Array.from({ length: 6 }, (_, i) =>
-      mk({ id: `s${i}`, startMin: (9 + i) * 60, endMin: (9 + i) * 60 + 30 }),
+  it('a 9 AM and a 9 PM event share an angle but never a band/radius', () => {
+    const radii = radiiFor([am1, pm9], null, 10)
+    expect(radii.get('am1')).not.toBe(radii.get('pm9'))
+  })
+
+  it('within a band, focus keeps the base ring; an overlapping sibling steps one lane', () => {
+    const radii = radiiFor([am1, am2], 'am1', 10)
+    expect(radii.get('am1')).toBe(OG.ro - 12)
+    expect(radii.get('am2')).toBe(OG.ro - 12 - LANE_STEP)
+  })
+
+  it('disjoint same-band blocks all ride the band base — compact', () => {
+    const spread = Array.from({ length: 4 }, (_, i) =>
+      mk({ id: `s${i}`, startMin: (8 + i) * 60, endMin: (8 + i) * 60 + 30 }), // all AM, disjoint
     )
     const radii = radiiFor(spread, 's0', 9)
-    expect(new Set(radii.values())).toEqual(new Set([OG.task]))
-  })
-
-  it('a mutually-overlapping pileup gets distinct radii — no two arcs share a lane at one angle', () => {
-    const pile = Array.from({ length: 4 }, (_, i) =>
-      mk({ id: `o${i}`, startMin: (9 + i * 0.1) * 60, endMin: (12 + i * 0.1) * 60 }),
-    )
-    const radii = radiiFor(pile, 'o0', 10)
-    expect(new Set(radii.values()).size).toBe(4)
-  })
-
-  it('promotion re-orbits within a cluster: the new focus takes OG.task, the old steps inward', () => {
-    const before = radiiFor([a, b], 'a', 10)
-    const after = radiiFor([a, b], 'b', 10)
-    expect(before.get('a')).toBe(OG.task)
-    expect(after.get('b')).toBe(OG.task)
-    expect(after.get('a')).toBe(OG.task - LANE_STEP)
+    expect(new Set(radii.values())).toEqual(new Set([OG.ro - 12]))
   })
 })
 

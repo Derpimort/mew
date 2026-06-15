@@ -29,13 +29,18 @@ export function mergePull(
   events: RemoteEvent[],
   calendars: ConnectedCalendar[],
   window: { startKey: string; endKey: string },
+  /** `calId:eventId` the user deleted or took ownership of — neither
+      re-added nor matched, so any lingering local copy is also cleared. */
+  dismissed?: ReadonlySet<string>,
 ): PullResult {
   const calIds = new Set(calendars.map((c) => c.id))
   const tagFor = new Map(calendars.map((c) => [c.id, c.defaultTag ?? 'work']))
   const remote = new Map<string, RemoteEvent>()
   for (const e of events) {
     if (e.mewBlockId) continue // ours — already in the week as the source block
-    remote.set(`${e.calId}:${e.eventId}`, e)
+    const key = `${e.calId}:${e.eventId}`
+    if (dismissed?.has(key)) continue // user deleted or took ownership — don't resurrect
+    remote.set(key, e)
   }
 
   let added = 0
@@ -169,6 +174,8 @@ export interface SyncDeps {
   calendars: ConnectedCalendar[] // live ones only
   matrix: RoutingMatrix
   now: Date
+  /** `calId:eventId` of imported events the user dismissed/took over */
+  dismissed?: ReadonlySet<string>
   getBlocks(): Block[]
   setBlocks(blocks: Block[], removedIds: string[]): void
   loadSyncMap(): Promise<SyncEntry[]>
@@ -196,7 +203,7 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
     ),
   )
   const before = deps.getBlocks()
-  const pulled = mergePull(before, eventLists.flat(), deps.calendars, window)
+  const pulled = mergePull(before, eventLists.flat(), deps.calendars, window, deps.dismissed)
   if (pulled.added || pulled.updated || pulled.removed) {
     const kept = new Set(pulled.blocks.map((b) => b.id))
     const removedIds = before.filter((b) => !kept.has(b.id)).map((b) => b.id)

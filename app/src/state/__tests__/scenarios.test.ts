@@ -949,6 +949,51 @@ describe('queryBrain (project rollups)', () => {
   })
 })
 
+/* ── calendar agency: chat can take over imported events ──────────────── */
+
+describe('calendar agency — chat takes over imported events', () => {
+  const ext = (over: Record<string, unknown> = {}) => ({
+    id: 'cal-1',
+    title: 'standup',
+    tag: 'work' as const,
+    dayKey: dayKey(TUE(10, 0)),
+    startMin: 9 * 60,
+    endMin: 9 * 60 + 30,
+    protected: false,
+    status: 'open' as const,
+    calendarRefs: ['work@acme'],
+    estimateSource: 'user' as const,
+    external: { calId: 'work@acme', eventId: 'ev-standup' },
+    ...over,
+  })
+
+  it('moving an imported event detaches it and tombstones the source', async () => {
+    await fresh(TUE(10, 0))
+    useMew.setState((st) => ({ blocks: [...st.blocks, ext()] }))
+    await say('move standup to thursday')
+    const b = useMew.getState().blocks.find((x) => x.id === 'cal-1')
+    expect(b).toBeDefined()
+    expect(b!.external).toBeUndefined() // taken over — no longer the calendar's
+    expect(b!.dayKey).not.toBe(dayKey(TUE(10, 0)))
+    expect(useMew.getState().settings.dismissedEvents).toContain('work@acme:ev-standup')
+  })
+
+  it('deleting an imported event removes it and tombstones it', async () => {
+    await fresh(TUE(10, 0))
+    useMew.setState((st) => ({ blocks: [...st.blocks, ext()] }))
+    await say('delete standup')
+    expect(useMew.getState().blocks.find((x) => x.id === 'cal-1')).toBeUndefined()
+    expect(useMew.getState().settings.dismissedEvents).toContain('work@acme:ev-standup')
+  })
+
+  it('marking an imported event done keeps it — status survives a re-sync', async () => {
+    await fresh(TUE(10, 0))
+    useMew.setState((st) => ({ blocks: [...st.blocks, ext()] }))
+    await say('done with standup')
+    expect(useMew.getState().blocks.find((x) => x.id === 'cal-1')!.status).toBe('done')
+  })
+})
+
 /* ── entity-aware durations: this task's real median sizes the block ──── */
 
 describe('entity-aware durations', () => {

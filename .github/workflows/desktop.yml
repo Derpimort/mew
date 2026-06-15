@@ -77,7 +77,8 @@ jobs:
           # on workflow_dispatch tagName is empty → build-only, no release
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('MEW {0}', github.ref_name) || '' }}
-          releaseDraft: true
+          # tagged releases publish straight away — these are real builds
+          releaseDraft: false
           # self-update is off until signing is set up: emit latest.json only
           # when a signing key exists (createUpdaterArtifacts is false meanwhile,
           # so unsigned release builds don't fail looking for artifacts).

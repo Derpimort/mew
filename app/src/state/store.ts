@@ -322,6 +322,22 @@ export const useMew = create<MewState>((set, get) => {
     storage.putCaptures(cs).catch(() => {})
     queueBackup()
   }
+  const dismissedSet = () => new Set(get().settings.dismissedEvents ?? [])
+  /* tombstone imported events the user deleted or took ownership of (moved/
+     edited) — a re-sync (mergePull reads dismissedEvents) won't resurrect them. */
+  const dismissExternal = (blocks: Block[]) => {
+    const keys = blocks
+      .filter((b) => b.external)
+      .map((b) => `${b.external!.calId}:${b.external!.eventId}`)
+    if (!keys.length) return
+    const cur = get().settings
+    const next = { ...cur, dismissedEvents: [...new Set([...(cur.dismissedEvents ?? []), ...keys])] }
+    set({ settings: next })
+    persistSettings(next)
+  }
+  /** detach an imported block from its source so the user's change sticks */
+  const detachExternal = (blocks: Block[], id: string): Block[] =>
+    blocks.map((b) => (b.id === id ? { ...b, external: undefined } : b))
 
   /* desktop self-update: the shell stages the download and announces it;
      MEW offers a restart in chat and installs only on accept — an update
@@ -772,12 +788,18 @@ export const useMew = create<MewState>((set, get) => {
     const todayKey = dayKey(now)
     const target = week.findByQuery(s.blocks, query, todayKey)
     if (!target) return `I couldn't find "${query}" to move — say it another way?`
-    if (target.external) return `${target.title.split('—')[0].trim()} came from a connected calendar — not MEW's to move. The user would need to move it there.`
+    /* an imported event CAN be moved — moving it takes ownership: detach from
+       the source and tombstone it so a re-sync leaves your placement alone */
+    let blocks = s.blocks
+    if (target.external) {
+      dismissExternal([target])
+      blocks = detachExternal(blocks, target.id)
+    }
     const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
     let start = toStartMin
     if (start == null) {
       const slot = week.findFreeSlot(
-        s.blocks.filter((b) => b.id !== target.id),
+        blocks.filter((b) => b.id !== target.id),
         toKey,
         week.duration(target),
         toKey === todayKey ? minOfDay(now) + 15 : undefined,
@@ -788,8 +810,8 @@ export const useMew = create<MewState>((set, get) => {
     /* same rulebook as plan/edit — a move's collision wording must not
        contradict its siblings about whether the other side can shift */
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
-    const landed = week.conflictsWith(s.blocks, toKey, start, start + week.duration(target), target.id, prefs)
-    setBlocks(week.move(s.blocks, target.id, toKey, start))
+    const landed = week.conflictsWith(blocks, toKey, start, start + week.duration(target), target.id, prefs)
+    setBlocks(week.move(blocks, target.id, toKey, start))
     return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed, prefs)}`
   }
 
@@ -819,7 +841,9 @@ export const useMew = create<MewState>((set, get) => {
     const todayKey = dayKey(new Date(s.nowMs))
     const target = week.findByQuery(s.blocks, query, todayKey)
     if (!target) return `I couldn't find "${query}" to change — say it another way?`
-    if (target.external) return `${target.title.split('—')[0].trim()} came from a connected calendar — not MEW's to edit.`
+    /* editing an imported event takes ownership (detach + tombstone) so the
+       change survives a re-sync */
+    if (target.external) dismissExternal([target])
     let startMin = patch.startMin ?? target.startMin
     let endMin = patch.endMin ?? target.endMin
     if (patch.durationMin != null) endMin = startMin + patch.durationMin
@@ -831,6 +855,7 @@ export const useMew = create<MewState>((set, get) => {
       ...target,
       startMin,
       endMin,
+      ...(target.external ? { external: undefined } : {}), // taken over — no longer the calendar's
       ...(patch.title ? { title: patch.title } : {}),
       ...(patch.tag ? { tag: patch.tag } : {}),
       ...(patch.attention ? { attention: patch.attention } : {}),
@@ -913,20 +938,19 @@ export const useMew = create<MewState>((set, get) => {
       .findAllByQuery(s.blocks, query)
       .filter((b) => b.dayKey >= todayKey)
     if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
-    const external = matches.filter((b) => b.external)
-    const removed = matches.filter((b) => !b.external)
-    if (!removed.length) {
-      return `${external.length === 1 ? 'That one' : 'Those'} came from a connected calendar — not MEW's to remove.`
-    }
-    const keep = new Set(removed.map((b) => b.id))
+    /* imported events CAN be removed now — tombstone them so a re-sync won't
+       resurrect them; everything else just deletes */
+    dismissExternal(matches)
+    const keep = new Set(matches.map((b) => b.id))
     const kept = s.blocks.filter((b) => !keep.has(b.id))
     set({ blocks: kept, nowMs: nowFn() })
     persistBlocks(kept)
-    storage.deleteBlocks(removed.map((b) => b.id)).catch(() => {})
-    const names = removed
+    storage.deleteBlocks(matches.map((b) => b.id)).catch(() => {})
+    const fromCal = matches.filter((b) => b.external).length
+    const names = matches
       .map((b) => `${b.title.split('—')[0].trim()} (${b.dayKey === todayKey ? 'today' : fmtDowLong(b.dayKey)} ${fmtTime(b.startMin)})`)
       .join(', ')
-    return `Removed — ${names}. Everything else stands${external.length ? `; ${external.length} calendar event${external.length === 1 ? '' : 's'} matching stayed (not mine to delete)` : ''}.`
+    return `Removed — ${names}.${fromCal ? ` (${fromCal} from a connected calendar — won't come back on the next sync.)` : ''}`
   }
 
   /** ONE home for "a capture becomes a 30-min block": place, mark, announce.
@@ -1993,7 +2017,7 @@ export const useMew = create<MewState>((set, get) => {
       }
 
       const before = get().blocks
-      const merged = mergePull(before, events, [cal], win)
+      const merged = mergePull(before, events, [cal], win, dismissedSet())
       const kept = new Set(merged.blocks.map((b) => b.id))
       const removedIds = before.filter((b) => !kept.has(b.id)).map((b) => b.id)
       set({ blocks: merged.blocks })
@@ -2099,6 +2123,7 @@ export const useMew = create<MewState>((set, get) => {
           calendars: live,
           matrix: get().settings.matrix,
           now: new Date(nowFn()),
+          dismissed: dismissedSet(),
           getBlocks: () => get().blocks,
           setBlocks: (blocks, removedIds) => {
             set({ blocks })
