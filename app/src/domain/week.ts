@@ -323,7 +323,65 @@ export function move(blocks: Block[], id: string, toDayKey: string, toStartMin: 
   )
 }
 
-/** Find a block by fuzzy title query (open blocks first, nearest day first). */
+/* Fuzzy title matching (#81) — pure, keyless. findByQuery keeps its exact →
+   prefix → substring tiers; this token-overlap fallback fires ONLY when
+   substring finds nothing, so "management sync" can reach "Management Team
+   Monday" while existing matches never regress. */
+const QUERY_STOP = new Set([
+  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'with', 'on', 'in', 'at', 'my', 'me',
+  'meeting', 'sync', 'call', 'session', 'chat', 'time',
+])
+/** title/query → meaningful lowercase word tokens; stopwords dropped, but never
+    to empty (an all-stopword query keeps its raw words so it still has signal). */
+function queryTokens(s: string): string[] {
+  const raw = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean)
+  const kept = raw.filter((w) => !QUERY_STOP.has(w))
+  return kept.length ? kept : raw
+}
+/** Levenshtein edit distance — tokens are short, so the O(m·n) DP is cheap. */
+function editDistance(a: string, b: string): number {
+  if (a === b) return 0
+  const m = a.length
+  const n = b.length
+  if (!m || !n) return m || n
+  let prev = Array.from({ length: n + 1 }, (_, j) => j)
+  for (let i = 1; i <= m; i++) {
+    const cur = [i]
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+    }
+    prev = cur
+  }
+  return prev[n]
+}
+/** token similarity in [0,1]: 1 = identical, high for a typo, ~0 for unrelated. */
+function tokenSim(a: string, b: string): number {
+  if (a === b) return 1
+  const longer = Math.max(a.length, b.length)
+  return longer ? 1 - editDistance(a, b) / longer : 0
+}
+/** Fuzzy score [0,1]: the fraction of query tokens that find a near-match
+    (sim ≥ 0.8) in the title, weighted by closeness. Recall-oriented — naming
+    one real word of a longer title ("management" → "Management Team Monday")
+    scores high; unrelated words score ~0. */
+function fuzzyScore(query: string, title: string): number {
+  const q = queryTokens(query)
+  const t = queryTokens(title.split('—')[0])
+  if (!q.length || !t.length) return 0
+  let acc = 0
+  for (const qt of q) {
+    let best = 0
+    for (const tt of t) best = Math.max(best, tokenSim(qt, tt))
+    if (best >= 0.8) acc += best
+  }
+  return acc / q.length
+}
+const FUZZY_MIN = 0.6 // confident-match floor
+const FUZZY_TIE = 0.08 // two DIFFERENT blocks within this → ambiguous, don't guess
+
+/** Find a block by title query: exact → prefix → substring, then a fuzzy
+    token-overlap fallback (#81). A weak or ambiguous fuzzy match returns
+    undefined so the caller asks rather than acting on the wrong block. */
 export function findByQuery(blocks: Block[], query: string, todayKey: string): Block | undefined {
   const q = query.toLowerCase().trim()
   if (!q) return undefined
@@ -351,7 +409,28 @@ export function findByQuery(blocks: Block[], query: string, todayKey: string): B
       const bd = Math.abs(b.dayKey.localeCompare(todayKey))
       return ad - bd || a.startMin - b.startMin
     })
-  return candidates[0]
+  if (candidates.length) return candidates[0]
+
+  /* substring found nothing → fuzzy fallback. Return the best ONLY if it clears
+     the floor and isn't a near-tie with a DIFFERENT block; a weak/ambiguous
+     score returns undefined, and the executor's "say it another way?" path
+     keeps us from silently mutating the wrong block. */
+  const scored = blocks
+    .filter((b) => b.status !== 'rolled')
+    .map((b) => ({ b, score: fuzzyScore(q, b.title) }))
+    .filter((x) => x.score >= FUZZY_MIN)
+    .sort((a, z) => {
+      if (z.score !== a.score) return z.score - a.score
+      const ao = a.b.status === 'open' ? 0 : 1
+      const zo = z.b.status === 'open' ? 0 : 1
+      if (ao !== zo) return ao - zo
+      return a.b.title.length - z.b.title.length
+    })
+  if (!scored.length) return undefined
+  if (scored.length > 1 && scored[0].b.id !== scored[1].b.id && scored[0].score - scored[1].score < FUZZY_TIE) {
+    return undefined // two plausible, different blocks — ask, don't guess
+  }
+  return scored[0].b
 }
 
 /** Every open block matching the query — for targeted removal ("drop both
@@ -359,7 +438,16 @@ export function findByQuery(blocks: Block[], query: string, todayKey: string): B
 export function findAllByQuery(blocks: Block[], query: string): Block[] {
   const q = query.toLowerCase().trim()
   if (!q) return []
-  return blocks.filter((b) => b.status === 'open' && b.title.toLowerCase().includes(q))
+  const substring = blocks.filter((b) => b.status === 'open' && b.title.toLowerCase().includes(q))
+  if (substring.length) return substring
+  /* substring missed → fuzzy fallback, ranked best-first (#81), so a caller can
+     act on or offer the candidates when the literal words don't appear */
+  return blocks
+    .filter((b) => b.status === 'open')
+    .map((b) => ({ b, score: fuzzyScore(q, b.title) }))
+    .filter((x) => x.score >= FUZZY_MIN)
+    .sort((a, z) => z.score - a.score || a.b.title.length - z.b.title.length)
+    .map((x) => x.b)
 }
 
 /** All of the day's non-rest items are done → the day is clear, rest is earned. */

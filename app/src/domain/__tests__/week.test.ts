@@ -6,6 +6,7 @@ import {
   conflictsWith,
   contextMarkers,
   dayEndMin,
+  findAllByQuery,
   findByQuery,
   findFreeSlot,
   freeWindows,
@@ -118,6 +119,39 @@ describe('week model', () => {
 
     it('the longer phrase still finds its own block', () => {
       expect(findByQuery([lunch, order], 'order lunch', D)?.id).toBe(order.id)
+    })
+  })
+
+  describe('findByQuery — fuzzy fallback when substring misses (#81)', () => {
+    const mgmt = mk({ title: 'Management Team Monday', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
+    const oneOnOne = mk({ title: 'Mira 1:1', tag: 'work', startMin: 15 * 60, endMin: 15 * 60 + 30 })
+
+    it("'management sync' finds 'Management Team Monday' (the reported bug)", () => {
+      expect(findByQuery([mgmt, oneOnOne], 'management sync', D)?.id).toBe(mgmt.id)
+    })
+
+    it('tolerates a typo — "managment team" still finds it', () => {
+      expect(findByQuery([mgmt, oneOnOne], 'managment team', D)?.id).toBe(mgmt.id)
+    })
+
+    it('no regression — substring still wins, fuzzy never fires when it hits', () => {
+      const standup = mk({ title: 'Order standup notes', tag: 'work' })
+      expect(findByQuery([standup], 'standup', D)?.id).toBe(standup.id)
+    })
+
+    it('an ambiguous fuzzy match returns undefined — ask, do not guess', () => {
+      const sprint = mk({ title: 'Sprint Planning', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
+      const release = mk({ title: 'Release Planning', tag: 'work', startMin: 11 * 60, endMin: 12 * 60 })
+      // "planing" (typo) is a substring of neither but fuzzy-matches both equally
+      expect(findByQuery([sprint, release], 'planing', D)).toBeUndefined()
+      // findAllByQuery still surfaces both ranked candidates for a caller to offer
+      expect(findAllByQuery([sprint, release], 'planing').map((b) => b.id).sort()).toEqual(
+        [sprint.id, release.id].sort(),
+      )
+    })
+
+    it('no false positive — an unrelated query finds nothing', () => {
+      expect(findByQuery([mgmt], 'dentist appointment', D)).toBeUndefined()
     })
   })
 
