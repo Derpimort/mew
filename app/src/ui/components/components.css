@@ -299,6 +299,9 @@
   font-weight: 600;
   letter-spacing: -0.018em;
 }
+/* the task is a StaggeredText (flex flex-wrap) — center its words under the
+   countdown (text-align doesn't reach a flex container) */
+.nx-task .staggered-text { justify-content: center; }
 .nx-meta {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;

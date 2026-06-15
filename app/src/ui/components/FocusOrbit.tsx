@@ -11,7 +11,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMew, useLive, clockNow } from '../../state/store'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
-import { isBackground, overlappingFocus } from '../../domain/week'
+import { isBackground } from '../../domain/week'
 import { clockDeg, rArc, rPolar, sector } from './dialGeometry'
 import { dayFill, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
@@ -66,23 +66,14 @@ export function FocusOrbit() {
 
   const [hover, setHover] = useState<string | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
+  /* declutter: at rest the face shows only arcs + now-hand + the centre. Hovering
+     the dial reveals the labels, leader pointers, and the chip — details on
+     demand, not always-on. */
+  const [dialHover, setDialHover] = useState(false)
 
-  /* promote: the clicked block holds the user now; if something else held
-     them, it keeps running — in background, one lane in. Both are attention
-     writes; the center swap falls out of liveNow. */
-  const promote = (id: string) => {
-    if (id === focusId) {
-      setCardId((v) => (v === id ? null : id)) // the focus item's click opens its detail card
-      return
-    }
-    const target = blocks.find((b) => b.id === id)
-    if (!target) return
-    setAttention(id, 'focus')
-    /* exactly one focus inside any overlapping cluster — demoting only
-       live.current left siblings to win the center by sort order */
-    for (const o of overlappingFocus(blocks, target)) setAttention(o.id, 'background')
-    setCardId(null)
-  }
+  /* a click on any item opens its detail card (centred, with actions —
+     Start now / Done / Interrupt / Move). The card is where the week changes. */
+  const openCard = (id: string) => setCardId((v) => (v === id ? null : id))
   const demote = () => {
     if (focusId) setAttention(focusId, 'background')
     setCardId(null)
@@ -104,24 +95,29 @@ export function FocusOrbit() {
     : (live.meta[0] ?? '')
 
   return (
-    <div className="nx-stage" style={{ width: OG.w, height: OG.h, position: 'relative' }} onClick={() => setCardId(null)}>
+    <div
+      className="nx-stage"
+      style={{ width: OG.w, height: OG.h, position: 'relative' }}
+      onClick={() => setCardId(null)}
+      onMouseEnter={() => setDialHover(true)}
+      onMouseLeave={() => setDialHover(false)}
+    >
       {/* top-center: the live clock and the loose-threads pill, side by side */}
       <div className="nx-topbar">
         <NxClock now={now} />
         <ThreadRail onOpen={(id) => setCardId(id)} />
       </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
-        {/* the two bands: AM rides ri→ro, PM rides ro→pm. A quiet wash fills each
-            band with its half's progress (AM inner, PM outer), ending at the now
-            notch. Three rings draw the band edges — ro (the AM/PM divider) is the
-            firmest line. */}
+        {/* day progress: the inner DISK fills over the first 12 h, then the
+            inner→outer band over the second — a quiet accent wash ending at the
+            now notch. Two rings (the AM/PM divider ro, and the outer pm) frame
+            it; the innermost ring around the countdown is intentionally gone. */}
         {(() => {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.inner)} fill="var(--ice)" opacity={0.06} />}
-              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ro, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.06} />}
-              <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.45} />
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, 0, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.08} />}
+              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.outer)} fill="var(--ice)" opacity={0.07} />}
               <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.75} />
               <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.4} />
             </g>
@@ -168,9 +164,7 @@ export function FocusOrbit() {
             onMouseLeave: () => setHover(null),
             onClick: (ev: React.MouseEvent) => {
               ev.stopPropagation()
-              // a done block opens its card (where it can be un-done); open blocks promote
-              if (isDone) setCardId((v) => (v === b.id ? null : b.id))
-              else promote(b.id)
+              openCard(b.id) // every item opens its centred card with actions
             },
           }
           const title = b.title.split('—')[0].trim()
@@ -193,6 +187,16 @@ export function FocusOrbit() {
                 style={isF && !isDone ? { filter: 'drop-shadow(0 0 9px var(--glowc))' } : undefined}
                 {...handlers}
               />
+              {/* fat invisible hit-target — the visible arc is thin; this makes
+                  hover + click forgiving so an item is easy to grab */}
+              <path
+                d={rArc(OG.cx, OG.cy, r, d0, d1)}
+                fill="none"
+                stroke="transparent"
+                strokeWidth={18}
+                style={{ cursor: 'pointer' }}
+                {...handlers}
+              />
               {/* end marker: a glowing tick for open work, a quiet dot for done */}
               <circle
                 cx={ex}
@@ -204,7 +208,7 @@ export function FocusOrbit() {
                 className="pri-arc"
                 {...handlers}
               />
-              {lbl && lbl.moved && (
+              {(dialHover || isH || isF) && lbl && lbl.moved && (
                 <line
                   x1={ex}
                   y1={ey}
@@ -215,7 +219,7 @@ export function FocusOrbit() {
                   opacity={op * 0.5}
                 />
               )}
-              {lbl && (
+              {(dialHover || isH || isF) && lbl && (
                 <text
                   className="pri-lbl"
                   x={lbl.x}
@@ -271,15 +275,17 @@ export function FocusOrbit() {
           >
             <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
           </div>
-          <span
-            className="pri-demote"
-            onClick={(e) => {
-              e.stopPropagation()
-              demote()
-            }}
-          >
-            ↓ let it run in background
-          </span>
+          {dialHover && (
+            <span
+              className="pri-demote"
+              onClick={(e) => {
+                e.stopPropagation()
+                demote()
+              }}
+            >
+              ↓ let it run in background
+            </span>
+          )}
         </div>
       ) : (
         <div className="clk-center" style={{ width: 310 }}>
@@ -306,7 +312,8 @@ export function FocusOrbit() {
       })()}
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center' }}>
-        {(() => {
+        {dialHover &&
+          (() => {
           const hb = hover ? vis.find((b) => b.id === hover) : null
           if (hb) {
             const t = hb.title.split('—')[0].trim()
@@ -320,7 +327,7 @@ export function FocusOrbit() {
               </span>
             )
           }
-          return <span className="pri-hint">click any item to focus it · click the chip to let it run</span>
+          return <span className="pri-hint">click any item for its card · hover to read the day</span>
         })()}
       </div>
     </div>
