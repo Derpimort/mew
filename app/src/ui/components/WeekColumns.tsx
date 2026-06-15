@@ -179,21 +179,25 @@ export function WeekColumns() {
               {day.map((b) => {
                 const sH = b.startMin / 60
                 const eH = Math.min(b.endMin / 60, 24)
-                const dur = eH - sH
                 const isNow = isToday && live.current?.id === b.id
                 const done = b.status === 'done'
-                const showT = (isSel ? dur >= 0.55 : dur >= 1.5) && (slots.get(b.id)?.lanes ?? 1) <= (isSel ? 3 : 2)
-                const showM = isSel && dur >= 1.15 && (slots.get(b.id)?.lanes ?? 1) <= 2
                 const { lane, lanes } = slots.get(b.id) ?? { lane: 0, lanes: 1 }
+                // px height drives what fits, like Google: every block shows its title
+                // (clipped to its box), centred; the time gets its own line once two lines
+                // fit, else rides inline ahead of the title when a wide single line has room.
+                const blkH = Math.max(10, nxwY(eH, H) - nxwY(sH, H) - 4)
+                const twoLine = blkH >= 24
+                const tiny = blkH < 15
+                const inlineTime = !twoLine && !tiny && lanes === 1
                 return (
                   <div
                     key={b.id}
                     className={
-                      'nxb-blk ' + b.tag + (isNow ? ' now' : '') + (done ? ' done' : '') + (b.optional ? ' optional' : '')
+                      'nxb-blk ' + b.tag + (isNow ? ' now' : '') + (done ? ' done' : '') + (b.optional ? ' optional' : '') + (twoLine ? '' : ' thin')
                     }
                     style={{
                       top: nxwY(sH, H) + 1.5,
-                      height: Math.max(10, nxwY(eH, H) - nxwY(sH, H) - 4),
+                      height: blkH,
                       left: `calc(${(lane / lanes) * 100}% + 4px)`,
                       width: `calc(${100 / lanes}% - ${lanes > 1 ? 6 : 8}px)`,
                       right: 'auto',
@@ -206,13 +210,12 @@ export function WeekColumns() {
                       setCard(b)
                     }}
                   >
-                    {showT && (
-                      <div className={'t' + (isSel ? '' : ' small')}>
-                        {done ? '✓ ' : ''}
-                        {b.title}
-                      </div>
-                    )}
-                    {showM && (
+                    <div className={'t' + (isSel ? '' : ' small') + (tiny ? ' tiny' : '')}>
+                      {done ? '✓ ' : ''}
+                      {inlineTime && <span className="ti">{fmtTime(b.startMin)} </span>}
+                      {b.title}
+                    </div>
+                    {twoLine && (
                       <div className="m">
                         {fmtTime(b.startMin)}–{fmtTime(b.endMin)}
                         {b.protected ? ' · held' : ''}
