@@ -108,16 +108,16 @@ export function FocusOrbit() {
         <ThreadRail onOpen={(id) => setCardId(id)} />
       </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
-        {/* day progress: the inner DISK fills over the first 12 h, then the
-            inner→outer band over the second — a quiet accent wash ending at the
-            now notch. Two rings (the AM/PM divider ro, and the outer pm) frame
-            it; the innermost ring around the countdown is intentionally gone. */}
+        {/* day progress: AM fills the inner ring (ri→ro) over the first 12 h, PM
+            the outer ring (ro→pm) over the second — a quiet accent wash ending at
+            the now notch. The disk (r<ri) stays clear for the countdown; the ro and
+            pm rings frame the two filled bands. */}
         {(() => {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, 0, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.08} />}
-              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.outer)} fill="var(--ice)" opacity={0.07} />}
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.inner)} fill="var(--ice)" opacity={0.14} />}
+              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ro, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
               <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.75} />
               <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.4} />
             </g>
