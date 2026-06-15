@@ -20,13 +20,17 @@ export const THREAD_STATES: Record<ThreadState, { glyph: string; label: string; 
   unplaced: { glyph: '○', label: 'unplaced', color: 'var(--faint)' },
 }
 
+interface RowAction {
+  label: string
+  run: () => void
+}
+
 interface Row {
   state: ThreadState
   id: string
   title: string
   meta: string
-  action: string
-  run: () => void
+  actions: RowAction[]
 }
 
 export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
@@ -35,6 +39,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
   const nowMs = useMew((s) => s.nowMs)
   const startNow = useMew((s) => s.startNow)
   const placeCapture = useMew((s) => s.placeCapture)
+  const toggleComplete = useMew((s) => s.toggleComplete)
   const [open, setOpen] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
 
@@ -66,35 +71,35 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
     const base = t.split('—')[0].trim()
     return base.length > 24 ? base.slice(0, 22) + '…' : base
   }
-  const blockRow = (state: ThreadState, b: Block, meta: string, action: string, run: () => void): Row => ({
+  const blockRow = (state: ThreadState, b: Block, meta: string, actions: RowAction[]): Row => ({
     state,
     id: b.id,
     title: short(b.title),
     meta,
-    action,
-    run,
+    actions,
   })
+  /* done = complete in place (the slot is right, it just wasn't marked); resume
+     = move it to now. A just-ended or parked item needs the first, not the
+     second — offering both stops "resume then done" creating a wrong slot. */
+  const done = (b: Block): RowAction => ({ label: 'done', run: () => toggleComplete(b.id) })
+  const resume = (b: Block): RowAction => ({ label: 'resume', run: () => startNow(b.id) })
 
   const rows: Row[] = [
     ...threads.running.map((b) =>
-      blockRow(
-        'running',
-        b,
-        `→ ${fmtTime(b.endMin)}${b.due != null ? ` · due ${fmtTime(b.due)}` : ''}`,
-        'open',
-        () => onOpen(b.id),
-      ),
+      blockRow('running', b, `→ ${fmtTime(b.endMin)}${b.due != null ? ` · due ${fmtTime(b.due)}` : ''}`, [
+        { label: 'open', run: () => onOpen(b.id) },
+        done(b),
+      ]),
     ),
     ...threads.slipped.map((b) =>
-      blockRow('slipped', b, `was ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`, 'resume', () => startNow(b.id)),
+      blockRow('slipped', b, `was ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`, [done(b), resume(b)]),
     ),
     ...threads.paused.map((b) =>
       blockRow(
         'paused',
         b,
         `parked · ${b.dayKey === todayKey ? fmtTime(b.startMin) : `${fmtDow(b.dayKey)} ${fmtTime(b.startMin)}`}`,
-        'resume',
-        () => startNow(b.id),
+        [done(b), resume(b)],
       ),
     ),
     ...threads.unplaced.map(
@@ -103,8 +108,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
         id: c.id,
         title: short(c.title),
         meta: 'captured · no time yet',
-        action: 'place',
-        run: () => placeCapture(c.id),
+        actions: [{ label: 'place', run: () => placeCapture(c.id) }],
       }),
     ),
   ]
@@ -134,7 +138,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
     <div
       ref={boxRef}
       className="tbox"
-      style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', zIndex: 9 }}
+      style={{ position: 'absolute', left: '50%', top: 'calc(100% + 8px)', transform: 'translateX(-50%)', zIndex: 9 }}
     >
       <div className="tbox-h">
         <span className="t">Loose threads</span>
@@ -155,23 +159,30 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
           <div key={grp}>
             <div className="tgrp">{THREAD_STATES[grp].label}</div>
             {grpRows.map((r) => (
-              <div
-                key={r.id}
-                className="trow"
-                onClick={(e) => {
-                  e.stopPropagation() // open() sets a card the stage click would instantly clear
-                  r.run()
-                  setOpen(false)
-                }}
-              >
+              <div key={r.id} className="trow">
                 <span className="g" style={{ color: THREAD_STATES[r.state].color }}>
                   {THREAD_STATES[r.state].glyph}
                 </span>
-                <span style={{ minWidth: 0 }}>
+                <span style={{ minWidth: 0, flex: 1 }}>
                   <div className="tt">{r.title}</div>
                   <div className="mm">{r.meta}</div>
                 </span>
-                <span className="pin">{r.action}</span>
+                <span className="tacts">
+                  {r.actions.map((a) => (
+                    <button
+                      key={a.label}
+                      type="button"
+                      className="tact"
+                      onClick={(e) => {
+                        e.stopPropagation() // some actions set a card the stage click would clear
+                        a.run()
+                        setOpen(false)
+                      }}
+                    >
+                      {a.label}
+                    </button>
+                  ))}
+                </span>
               </div>
             ))}
           </div>

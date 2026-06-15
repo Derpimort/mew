@@ -99,7 +99,8 @@ describe('resolveLabels — per-side callouts at the END clock angle, never over
     const all = [...labels.values()]
     for (const side of [true, false]) {
       const ys = all.filter((l) => l.right === side).map((l) => l.y).sort((x, y) => x - y)
-      for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBeGreaterThanOrEqual(LABEL_GAP)
+      // the sweep guarantees ≥ LABEL_GAP; (x+GAP)-x carries float noise, so allow ε
+      for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBeGreaterThanOrEqual(LABEL_GAP - 1e-6)
     }
   })
 

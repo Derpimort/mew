@@ -5,7 +5,6 @@
 
 import { Suspense, lazy } from 'react'
 import { useMew } from '../../state/store'
-import { fmtTime, dayKey, minOfDay } from '../../domain/time'
 import { FocusOrbit } from '../components/FocusOrbit'
 import { WeekColumns } from '../components/WeekColumns'
 import { CompanionStage } from '../components/CompanionStage'
@@ -18,15 +17,7 @@ export function MainPage() {
   const view = useMew((s) => s.view)
   const setView = useMew((s) => s.setView)
   const setPage = useMew((s) => s.setPage)
-  const quiet = useMew((s) => s.settings.quietHours)
-  const guardDayKey = useMew((s) => s.guardDayKey)
-  const guardUntilMin = useMew((s) => s.guardUntilMin)
-  const nowMs = useMew((s) => s.nowMs)
   const pal = usePetPalette()
-
-  const now = new Date(nowMs)
-  const guardOn =
-    guardDayKey === dayKey(now) && guardUntilMin != null && minOfDay(now) < guardUntilMin
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 452px', height: '100%', minHeight: 0 }}>
@@ -59,11 +50,6 @@ export function MainPage() {
               (autoFit + scatter in an 88px box); brand text renders clean */}
           <span className="disp brand" aria-label="MEW">
             MEW
-          </span>
-        </div>
-        <div style={{ position: 'absolute', top: 22, left: 0, right: 0, display: 'flex', justifyContent: 'center' }}>
-          <span className="agent">
-            watching · {guardOn ? 'guard on' : 'drift armed'} · quiet {fmtTime(quiet.startMin)}
           </span>
         </div>
         <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 7 }}>

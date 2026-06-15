@@ -16,18 +16,20 @@ import { clockDeg, rPolar } from './dialGeometry'
    (num). The time layers and the task ring are close in scale — compact. */
 export const OG = {
   cx: 300,
-  cy: 300,
+  cy: 354,
   w: 760,
-  h: 600,
-  ox: 110,
-  ri: 118,
-  ro: 174,
-  task: 196,
-  tick: 212,
-  num: 226,
+  h: 664,
+  // ox centres the dial axis (cx) in the stage: cx + ox = w/2, so the
+  // countdown can anchor at left:50% and margins stay symmetric.
+  ox: 80,
+  ri: 130,
+  ro: 192,
+  task: 220,
+  tick: 238,
+  num: 252,
 } as const
 export const LANE_STEP = 8
-export const LABEL_R = OG.tick + 16
+export const LABEL_R = OG.num + 14 // callouts just outside the numerals
 export const LABEL_GAP = 16
 
 /** Visible set: today's open blocks whose window intersects [now, now+12h).

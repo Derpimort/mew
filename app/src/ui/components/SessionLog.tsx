@@ -159,7 +159,9 @@ function LogLine({ msg }: { msg: ChatMessage }) {
 function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | null> }) {
   const speak = useMew((s) => s.speak)
   const thinking = useMew((s) => s.thinking)
-  const [text, setText] = useState('')
+  /* draft lives in the store so a Focus/Week/Settings switch doesn't drop it */
+  const text = useMew((s) => s.promptDraft)
+  const setText = useMew((s) => s.setPromptDraft)
   const [focused, setFocused] = useState(false)
 
   /* auto-grow: the box follows the content up to ~6 comfortable rows, then

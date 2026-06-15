@@ -147,6 +147,9 @@ export interface MewState {
   scrollToMsgId: string | null
   celebratePulse: number
   thinking: boolean
+  /** Draft prompt text — held in the store so it survives a screen switch
+      (Focus/Week/Settings unmount the composer, which would drop local state). */
+  promptDraft: string
 
   engine: EngineState
   lastActivityMs: number
@@ -175,6 +178,7 @@ export interface MewState {
   focusDay(key: string | null): void
   setPage(page: 'week' | 'settings'): void
   setView(view: 'focus' | 'week'): void
+  setPromptDraft(text: string): void
   setWeekOffset(offset: number): void
   /** Pull a block to start at the current minute (detail-card "Start now"). */
   startNow(blockId: string): void
@@ -1062,6 +1066,7 @@ export const useMew = create<MewState>((set, get) => {
     scrollToMsgId: null,
     celebratePulse: 0,
     thinking: false,
+    promptDraft: '',
 
     engine: { lastFired: {}, lastDriftBlockId: null },
     lastActivityMs: nowFn(),
@@ -1780,6 +1785,9 @@ export const useMew = create<MewState>((set, get) => {
     },
     setView(view) {
       set({ view })
+    },
+    setPromptDraft(text) {
+      set({ promptDraft: text })
     },
     setWeekOffset(offset) {
       set({ weekOffset: offset, focusedDayKey: null })

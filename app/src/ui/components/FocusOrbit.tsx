@@ -103,7 +103,11 @@ export function FocusOrbit() {
 
   return (
     <div className="nx-stage" style={{ width: OG.w, height: OG.h, position: 'relative' }} onClick={() => setCardId(null)}>
-      <NxClock now={now} />
+      {/* top-center: the live clock and the loose-threads pill, side by side */}
+      <div className="nx-topbar">
+        <NxClock now={now} />
+        <ThreadRail onOpen={(id) => setCardId(id)} />
+      </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
         {/* day-progress wash: the inner disk fills over the first 12 h, then the
             inner→outer band over the second — a quiet token wash, its leading
@@ -292,8 +296,6 @@ export function FocusOrbit() {
           />
         )
       })()}
-
-      <ThreadRail onOpen={(id) => setCardId(id)} />
 
       <div style={{ position: 'absolute', left: 0, right: 0, bottom: 18, textAlign: 'center' }}>
         {(() => {

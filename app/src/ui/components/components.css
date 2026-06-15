@@ -166,19 +166,27 @@
 
 /* ── focus orbit (lanes — DESIGN_LANGUAGE §3 FINAL) ───────────── */
 .nx-stage { position: relative; }
-/* the live wall clock, parked top-left of the stage — clear of the clock face
-   so a block label near 12 o'clock can never collide with the readout */
-.nx-clock {
+/* top-center bar: the live clock readout + the loose-threads pill, side by
+   side and centred above the dial (clicks pass through except on the pill) */
+.nx-topbar {
   position: absolute;
-  top: 8px;
-  left: 10px;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  align-items: center;
+  gap: 14px;
+  pointer-events: none;
+  z-index: 8;
+}
+/* the live wall clock — a single horizontal readout (time · date) */
+.nx-clock {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: baseline;
+  gap: 9px;
   text-align: left;
   pointer-events: none;
-  z-index: 5;
 }
 /* hour numerals on the fixed bezel (12/3/6/9) */
 .nx-num {
@@ -212,28 +220,24 @@
 }
 .pri-demote:hover { color: var(--gold); border-color: var(--ice-bd); }
 .pri-hint { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--faint); }
-/* loose-threads rail: the collapsed pill on the stage's left edge */
+/* loose-threads pill — sits in the top bar beside the clock (horizontal) */
 .frail {
-  position: absolute;
-  left: 18px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: flex;
-  flex-direction: column;
+  display: inline-flex;
+  flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   border: 1px solid var(--line);
   border-radius: 999px;
-  padding: 12px 9px;
+  padding: 5px 11px;
   cursor: pointer;
+  pointer-events: auto;
   transition: border-color 0.18s;
-  z-index: 8;
 }
 .frail:hover { border-color: var(--ice-bd); }
-.frail .cnt { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 15px; color: var(--ink); }
-.frail .dot { width: 8px; height: 8px; border-radius: 50%; }
-.frail .vlabel { writing-mode: vertical-rl; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+.frail .cnt { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px; color: var(--ink); }
+.frail .dot { width: 7px; height: 7px; border-radius: 50%; }
+.frail .vlabel { font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
 /* the thread box the pill expands into */
 .tbox {
   width: 262px;
@@ -260,22 +264,33 @@
 }
 .tgrp:first-of-type { margin-top: 2px; }
 .tgrp::after { content: ''; flex: 1; height: 1px; background: var(--line2); }
-.trow { display: flex; align-items: center; gap: 9px; padding: 6px 7px; border-radius: 9px; cursor: pointer; }
+.trow { display: flex; align-items: center; gap: 9px; padding: 6px 7px; border-radius: 9px; }
 .trow:hover { background: var(--bg); }
 .trow .g { font-family: 'JetBrains Mono', monospace; font-size: 11px; width: 13px; text-align: center; flex: none; }
 .trow .tt { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .trow .mm { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 1px; }
-.trow .pin { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 8.5px; color: var(--faint); opacity: 0; }
-.trow:hover .pin { opacity: 1; }
+.tacts { margin-left: auto; display: flex; gap: 5px; flex: none; }
+.tact {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tact:hover { color: var(--gold); border-color: var(--ice-bd); }
 .clk-center {
   position: absolute;
-  /* the dial ring's true centre: OG.cx (300) + OG.ox (110), OG.cy (300) —
-     NOT the 760-wide stage's 50% (380), which sat the countdown 30px off-axis */
-  left: 410px;
-  top: 300px;
+  /* the dial ring's true centre. OG.ox (80) is chosen so cx + ox = w/2, so the
+     dial axis IS the stage's 50%; top tracks OG.cy. */
+  left: 50%;
+  top: 354px;
   transform: translate(-50%, -50%);
   text-align: center;
-  width: 300px;
+  width: 320px;
   pointer-events: none;
 }
 .nx-count {
