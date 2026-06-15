@@ -77,9 +77,26 @@ jobs:
           # on workflow_dispatch tagName is empty → build-only, no release
           tagName: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/v') && format('MEW {0}', github.ref_name) || '' }}
-          # tagged releases publish straight away — these are real builds
-          releaseDraft: false
+          # build into a DRAFT: concurrent matrix jobs can't both create a
+          # PUBLISHED release for the same tag (the second 404s its lookup and
+          # conflicts on create, dropping that platform's installers). They
+          # coalesce into one shared draft instead; the publish job below flips
+          # it live once every platform's assets are in.
+          releaseDraft: true
           # self-update is off until signing is set up: emit latest.json only
           # when a signing key exists (createUpdaterArtifacts is false meanwhile,
           # so unsigned release builds don't fail looking for artifacts).
           includeUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+
+  # flip the shared draft to a published release once all platforms have
+  # uploaded — these are real builds, so they go live (no manual publish step).
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh release edit "$TAG" --repo "$REPO" --draft=false --latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
