@@ -139,15 +139,25 @@ describe('week model', () => {
       expect(findByQuery([standup], 'standup', D)?.id).toBe(standup.id)
     })
 
-    it('an ambiguous fuzzy match returns undefined — ask, do not guess', () => {
+    it('an ambiguous fuzzy match is gated — ask, do not guess (and never bulk-delete)', () => {
       const sprint = mk({ title: 'Sprint Planning', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
       const release = mk({ title: 'Release Planning', tag: 'work', startMin: 11 * 60, endMin: 12 * 60 })
       // "planing" (typo) is a substring of neither but fuzzy-matches both equally
       expect(findByQuery([sprint, release], 'planing', D)).toBeUndefined()
-      // findAllByQuery still surfaces both ranked candidates for a caller to offer
-      expect(findAllByQuery([sprint, release], 'planing').map((b) => b.id).sort()).toEqual(
-        [sprint.id, release.id].sort(),
-      )
+      // findAllByQuery feeds execRemove's BULK delete — an ambiguous fuzzy spread
+      // must resolve to nothing, never silently delete two different blocks
+      expect(findAllByQuery([sprint, release], 'planing')).toEqual([])
+    })
+
+    it('fuzzy bulk-remove is single-or-none; only explicit substring bulk-removes (#84 review)', () => {
+      const mgmt = mk({ title: 'Management Team Monday', tag: 'work' })
+      const gym = mk({ title: 'Gym', tag: 'health', startMin: 7 * 60, endMin: 8 * 60 })
+      // fuzzy (no substring hit) → at most the one confident block, never a spread
+      expect(findAllByQuery([mgmt, gym], 'managment team').map((b) => b.id)).toEqual([mgmt.id])
+      // explicit substring → genuine bulk removal still works
+      const p1 = mk({ title: 'Prod release', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
+      const p2 = mk({ title: 'Prod release checklist', tag: 'work', startMin: 14 * 60, endMin: 15 * 60 })
+      expect(findAllByQuery([p1, p2], 'prod release').map((b) => b.id).sort()).toEqual([p1.id, p2.id].sort())
     })
 
     it('no false positive — an unrelated query finds nothing', () => {

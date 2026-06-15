@@ -440,14 +440,22 @@ export function findAllByQuery(blocks: Block[], query: string): Block[] {
   if (!q) return []
   const substring = blocks.filter((b) => b.status === 'open' && b.title.toLowerCase().includes(q))
   if (substring.length) return substring
-  /* substring missed → fuzzy fallback, ranked best-first (#81), so a caller can
-     act on or offer the candidates when the literal words don't appear */
-  return blocks
+  /* substring missed → fuzzy fallback. This feeds execRemove's bulk delete, and
+     a fuzzy match across SEVERAL different blocks is inherently a guess — so
+     never return an ambiguous fuzzy spread (it would silently delete several
+     blocks). Resolve to the single confident block, or nothing (caller then
+     asks). Genuine bulk removal goes through the explicit substring tier above
+     ("drop both prod release blocks"). (#81, #84 review) */
+  const scored = blocks
     .filter((b) => b.status === 'open')
     .map((b) => ({ b, score: fuzzyScore(q, b.title) }))
     .filter((x) => x.score >= FUZZY_MIN)
     .sort((a, z) => z.score - a.score || a.b.title.length - z.b.title.length)
-    .map((x) => x.b)
+  if (!scored.length) return []
+  if (scored.length > 1 && scored[0].b.id !== scored[1].b.id && scored[0].score - scored[1].score < FUZZY_TIE) {
+    return [] // ambiguous fuzzy spread — don't silently bulk-act on a guess
+  }
+  return [scored[0].b]
 }
 
 /** All of the day's non-rest items are done → the day is clear, rest is earned. */
