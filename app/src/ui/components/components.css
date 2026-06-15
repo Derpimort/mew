@@ -241,7 +241,10 @@
 /* the thread box the pill expands into */
 .tbox {
   width: 300px;
-  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  /* sit the box on a DARKER surface than the chips (panel2) so the chip
+     buttons raise above it — the same figure/ground the click-card .ca.sec
+     buttons get on a card; otherwise chip-on-panel2 reads as bare text */
+  background: linear-gradient(180deg, var(--panel), var(--bg));
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 13px 15px;
