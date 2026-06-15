@@ -1452,3 +1452,39 @@ describe('pref-drift validation', () => {
     expect(nudges('pref-drift')).toHaveLength(1) // no re-fire inside the cooldown
   })
 })
+
+describe('scheduler slice 2 — scored placement + de-dup (#80, #89)', () => {
+  it('re-planning an existing block moves it instead of leaving a twin (#89)', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 1h for sprint planning today at 2pm')
+    expect(
+      useMew.getState().blocks.filter((b) => /sprint planning/i.test(b.title) && b.status === 'open'),
+    ).toHaveLength(1)
+    await say('block 1h for sprint planning today at 4pm') // plan-not-move: would have twinned
+    const open = useMew.getState().blocks.filter((b) => /sprint planning/i.test(b.title) && b.status === 'open')
+    expect(open).toHaveLength(1) // moved onto the new slot, no second copy
+    expect(open[0].startMin).toBe(16 * 60)
+    expect(lastMsg().body.toLowerCase()).toContain('moved')
+  })
+
+  it('a distinct errand is never collapsed into a similarly-named block', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 15m for order lunch today at 11')
+    await say('block 45m for lunch today at 1pm')
+    const open = useMew.getState().blocks.filter((b) => b.status === 'open')
+    expect(open.some((b) => /^order lunch/i.test(b.title.trim()))).toBe(true)
+    expect(open.some((b) => b.title.split('—')[0].trim().toLowerCase() === 'lunch')).toBe(true) // both survive
+  })
+
+  it('auto-placed work lands in free air, never over an existing block (#80 floor)', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 1h for standup today at 10am')
+    await say('block 1h for deep work today') // no time → the oracle picks a conflict-free slot
+    const open = useMew.getState().blocks.filter((b) => b.status === 'open')
+    const standup = open.find((b) => /standup/i.test(b.title))!
+    const deep = open.find((b) => /deep work/i.test(b.title))!
+    expect(deep).toBeDefined()
+    const overlaps = deep.startMin < standup.endMin && standup.startMin < deep.endMin
+    expect(overlaps).toBe(false)
+  })
+})

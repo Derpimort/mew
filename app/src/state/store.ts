@@ -23,6 +23,7 @@ import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory
 import { computeInsights, proposeKinderPlan, taskDurations, type TaskDuration } from '../domain/insights'
 import { pixieInputs } from '../domain/pixie'
 import { dayShape } from '../domain/dayShape'
+import { scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
@@ -677,21 +678,66 @@ export const useMew = create<MewState>((set, get) => {
       /* short rests are pacing, not sacred rest: leave them unprotected so a
          reshape can absorb them instead of tripping protect-rest every move */
       const microRest = p.tag === 'rest' && (prefd.durationMin ?? 60) <= 20
+      const bg = p.attention === 'background'
       /* a background block doesn't contend for the slot, so auto-placement
          doesn't hunt for free air — it starts now-ish (today) or at day
          start, and runs over whatever else holds the clock. A standing rule
          outranks this heuristic the same way an explicit time does. */
       const bgAutoStart =
-        p.attention === 'background' && prefd.startMin == null
+        bg && prefd.startMin == null
           ? key === todayKey
             ? Math.max(week.DAY_START, Math.ceil(minOfDay(now) / 5) * 5)
             : week.DAY_START
           : prefd.startMin
+      /* de-dup (#89): re-planning a block that already lives in the target day
+         is a MOVE, not a twin. Match on the EXACT base title (before any "—"
+         qualifier), not a fuzzy/substring tier — so "lunch" never collapses the
+         distinct "order lunch" errand. Generic pacing rests repeat freely
+         (exempt), and a background hold doesn't contend for a slot. */
+      const reBase = p.title.split('—')[0].trim().toLowerCase()
+      const existing =
+        !bg && p.tag !== 'rest'
+          ? blocks.find(
+              (b) =>
+                b.dayKey === key &&
+                b.status === 'open' &&
+                !week.isBackground(b) &&
+                !b.external &&
+                b.title.split('—')[0].trim().toLowerCase() === reBase,
+            )
+          : undefined
+      /* the deterministic floor: with no explicit/ruled time (and not a
+         background hold), the scoring oracle (#80) picks the slot —
+         conflict-free by construction and rest-aware — so even a model that
+         skips suggest_slots can't stack work into a busy gap. */
+      let start = bgAutoStart
+      if (start == null && !bg) {
+        const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
+        const q: SlotQuery = {
+          title: p.title,
+          tag: p.tag,
+          durationMin: prefd.durationMin ?? 60,
+          ...(p.due != null ? { due: p.due } : {}),
+        }
+        const best = scoreSlots(occupied, q, todayKey, minOfDay(now), prefs).find((c) => c.dayKey === key)
+        if (best) start = best.startMin
+      }
+      if (existing) {
+        const landStart = start ?? existing.startMin
+        blocks = week.move(blocks, existing.id, key, landStart)
+        const moved = blocks.find((b) => b.id === existing.id)!
+        const clash = week.conflictsWith(blocks, key, moved.startMin, moved.endMin, moved.id, prefs)
+        if (week.isDeep(moved)) placedDeep = moved
+        lines.push(
+          `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashNote(clash, prefs)}`,
+        )
+        continue
+      }
       const placed = week.place(blocks, {
         title: p.title,
         tag: p.tag,
         dayKey: key,
-        startMin: bgAutoStart,
+        startMin: start,
         durationMin: prefd.durationMin,
         protected: p.protected ?? !microRest,
         attention: p.attention,
@@ -796,20 +842,30 @@ export const useMew = create<MewState>((set, get) => {
       blocks = detachExternal(blocks, target.id)
     }
     const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
-    let start = toStartMin
-    if (start == null) {
-      const slot = week.findFreeSlot(
-        blocks.filter((b) => b.id !== target.id),
-        toKey,
-        week.duration(target),
-        toKey === todayKey ? minOfDay(now) + 15 : undefined,
-      )
-      if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
-      start = slot.startMin
-    }
     /* same rulebook as plan/edit — a move's collision wording must not
        contradict its siblings about whether the other side can shift */
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    let start = toStartMin
+    if (start == null) {
+      /* the scoring oracle picks the destination — rest-aware and conflict-free
+         — instead of the first open hole; fall back to first-fit if it finds
+         none (e.g. the asked day is past the scorer horizon) (#80) */
+      const q: SlotQuery = { title: target.title, tag: target.tag, durationMin: week.duration(target) }
+      const best = scoreSlots(blocks.filter((b) => b.id !== target.id), q, todayKey, minOfDay(now), prefs).find(
+        (c) => c.dayKey === toKey,
+      )
+      if (best) start = best.startMin
+      else {
+        const slot = week.findFreeSlot(
+          blocks.filter((b) => b.id !== target.id),
+          toKey,
+          week.duration(target),
+          toKey === todayKey ? minOfDay(now) + 15 : undefined,
+        )
+        if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
+        start = slot.startMin
+      }
+    }
     const landed = week.conflictsWith(blocks, toKey, start, start + week.duration(target), target.id, prefs)
     setBlocks(week.move(blocks, target.id, toKey, start))
     return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed, prefs)}`
@@ -1028,6 +1084,41 @@ export const useMew = create<MewState>((set, get) => {
       nextDay ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}` : null,
     ].filter(Boolean)
     return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''}`
+  }
+
+  /* suggest_slots: hand the model the scoring oracle's ranked, conflict-free
+     candidates (#80) so it places into vetted air. Read-only and keyless —
+     scoreSlots scores deterministically; a brain only enriches later. */
+  function execSuggestSlots(
+    title: string,
+    tag: import('../domain/types').Tag,
+    durationMin: number,
+    dueMin?: number,
+    window?: TimeWindow,
+  ): string {
+    const clean = title.trim()
+    if (!clean) return 'name the task and I will rank where it fits best.'
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const q: SlotQuery = {
+      title: clean,
+      tag,
+      durationMin,
+      ...(dueMin != null ? { due: dueMin } : {}),
+      ...(window ? { window } : {}),
+    }
+    const ranked = scoreSlots(s.blocks, q, todayKey, minOfDay(now), prefs)
+    if (!ranked.length) {
+      return `No conflict-free ${durationMin}-min slot for "${clean}"${dueMin != null ? ' before its deadline today' : ' in the next week'} — every fit is held by something fixed. Shorten it or free some time.`
+    }
+    const label = (k: string) =>
+      k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(k)
+    const top = ranked
+      .slice(0, 4)
+      .map((c) => `${label(c.dayKey)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.why})`)
+    return `Best slots for "${clean}", highest first: ${joinHuman(top)}. Place the first unless the user wants another.`
   }
 
   function execClear(scope: import('../domain/types').ClearScope): string {
@@ -1269,6 +1360,7 @@ export const useMew = create<MewState>((set, get) => {
         },
         analyze: (d) => execAnalyze(d), // read-only: not an action
         findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only
+        suggestSlots: (t, tag, dur, due, win) => execSuggestSlots(t, tag, dur, due, win), // read-only
         queryBrain: (q) => execQueryBrain(q), // read-only
         remember: (pref) => {
           acted = true

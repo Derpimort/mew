@@ -137,6 +137,23 @@ export const MEW_TOOLS: NeutralTool[] = [
     },
   },
   {
+    name: 'suggest_slots',
+    description:
+      "Rank the best places to put a flexible task BEFORE scheduling or moving it: returns conflict-free candidate slots scored for time-of-day fit, breathing room around other work, and the user's standing rules. Read-only — changes nothing. Call it for any 'when should X go', 'fit X in', or reschedule decision, then plan_blocks (or move_task) the slot it ranks first. A same-day deadline (dueMin) confines the search to today.",
+    parameters: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short task title — what you intend to place' },
+        tag: { ...TAG_SCHEMA, description: 'walks/meals/family → private; appointments → health; recovery → rest; else work' },
+        durationMin: { type: 'integer', description: 'Minutes needed (default 60)' },
+        dueMin: { type: 'integer', description: 'Optional same-day deadline, minutes from midnight — confines candidates to today' },
+        window: { type: 'string', enum: ['morning', 'afternoon', 'evening'], description: 'Optional preferred time of day' },
+      },
+      required: ['title', 'durationMin'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'analyze_day',
     description:
       "X-ray one day's shape before optimizing it: dead gaps, unbroken stretches past the ~90-minute focus ceiling, big meetings missing a post-buffer, and load vs the user's realistic best. Read-only — it changes nothing. Call it when asked to optimize, tidy, or review a day, then fix the findings with the other tools.",
@@ -271,6 +288,13 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         optInt(o.notBeforeMin, 0, 1439),
         optInt(o.notAfterMin, 1, 1440),
       )
+    case 'suggest_slots': {
+      const win = (['morning', 'afternoon', 'evening'] as const).includes(o.window as never)
+        ? (o.window as 'morning')
+        : undefined
+      const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never) ? (o.tag as 'work') : 'work'
+      return exec.suggestSlots(String(o.title ?? '').trim(), tag, clampInt(o.durationMin, 5, 600, 60), optInt(o.dueMin, 0, 1439), win)
+    }
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
     case 'remove_blocks':

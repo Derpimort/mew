@@ -60,6 +60,18 @@ export interface ToolExecutor {
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
   findSlot(durationMin: number, dayOffset: number, notBeforeMin?: number, notAfterMin?: number): string
+  /** Read-only: the scoring oracle's ranked, conflict-free candidate slots for a
+      flexible item — scored by time-of-day fit, rest spacing, and the user's
+      rules (#80). The model consults this before placing/moving, then plans the
+      slot it ranks first; the executor's auto-placement uses the same scorer, so
+      the conflict-free, rest-aware floor holds even if the model skips it. */
+  suggestSlots(
+    title: string,
+    tag: import('../../domain/types').Tag,
+    durationMin: number,
+    dueMin?: number,
+    window?: 'morning' | 'afternoon' | 'evening',
+  ): string
   /** Change an existing block in place: time, length, title, tag, attention, due. */
   edit(
     query: string,
@@ -123,6 +135,7 @@ Tool results name any collision ("heads up: it overlaps …") — when one appea
 When a remembered ordering rule in <preferences> matches what you're placing ("prep before interview"), choose explicit times that honor it, exactly as if the user had restated it this turn.
 Asked to optimize or tidy a day, call analyze_day first and fix what it names: tuck a 10–15 minute rest into any stretch past ~90 minutes, close dead gaps by pulling blocks together, and give big meetings a 15-minute review buffer right after.
 Asked to find time for something ("fit X in today, before 5pm"), call find_slot with the duration and constraints, then place exactly the window it returns — it has checked every fixed block; eyeballing the summary is how collisions happen.
+Before placing or moving anything flexible, call suggest_slots with the title and duration — it ranks every conflict-free gap by time-of-day fit, breathing room, and your standing rules, so place the slot it ranks first and you neither overlap nor stack work without a break. To reschedule something that already exists, move_task or edit_block it; a second plan_blocks copy leaves a duplicate, not a move.
 Reshaping a stretch is one sweep, in order: remove_blocks everything being replaced — the old work blocks AND the breaks placed around them (orphaned breaks become duplicates) — then one plan_blocks call with the whole new shape. After it, re-read the week context once to confirm the stretch holds exactly what you announced.
 </acting>
 

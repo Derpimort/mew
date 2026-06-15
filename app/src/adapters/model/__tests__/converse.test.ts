@@ -53,6 +53,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('findSlot')
       return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
     }),
+    suggestSlots: vi.fn((title, _tag, dur) => {
+      calls.push('suggestSlots')
+      return `Best slots for "${title}" (${dur}m): today 09:00–10:00.`
+    }),
     remember: vi.fn((pref: { match: string; value: string }) => {
       calls.push('remember')
       return `Remembered — ${pref.match} ${pref.value}.`
