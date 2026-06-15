@@ -9,7 +9,7 @@ import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
 import { computeInsights } from '../../domain/insights'
-import { PETS, petById, Segc, Tgl } from '../primitives'
+import { Button, PETS, petById, Segc, Tgl } from '../primitives'
 import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
 import { usePetPalette } from '../components/petPalette'
 import SimpleGraph from '../react-bits/simple-graph'
@@ -499,9 +499,9 @@ function CalendarsCard() {
       )}
 
       <div className="mono" style={{ fontSize: 10.5, marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          style={{ color: 'var(--gold)', font: 'inherit' }}
+        <Button
+          variant="ghost"
+          size="sm"
           disabled={connecting}
           onClick={() => {
             if (!settings.googleClientId) setAskClientId(true)
@@ -509,14 +509,10 @@ function CalendarsCard() {
           }}
         >
           {connecting ? 'opening google sign-in…' : '+ connect a calendar'}
-        </button>
-        <button
-          type="button"
-          style={{ color: 'var(--gold)', font: 'inherit' }}
-          onClick={() => fileRef.current?.click()}
-        >
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}>
           + import .ics
-        </button>
+        </Button>
         <input
           ref={fileRef}
           type="file"
@@ -851,12 +847,12 @@ function PrivacyModelCard() {
       )}
       <SetRow t="Backup &amp; restore" s="One .json with your week, memory, and chat. Keys never travel — each device keeps its own.">
         <span style={{ display: 'flex', gap: 8 }}>
-          <button type="button" className="keyfield" onClick={() => void downloadBackup()}>
+          <Button variant="ghost" size="sm" onClick={() => void downloadBackup()}>
             download
-          </button>
-          <button type="button" className="keyfield" onClick={() => fileRef.current?.click()}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}>
             restore…
-          </button>
+          </Button>
           <input
             ref={fileRef}
             type="file"
@@ -872,9 +868,9 @@ function PrivacyModelCard() {
       </SetRow>
       {isTauri() && (
         <SetRow t="Desktop auto-backup" s={`Every change lands in ${backupPath()} within a minute — 14 daily rotations kept.`}>
-          <button type="button" className="keyfield" onClick={() => void openBackupFolder()}>
+          <Button variant="ghost" size="sm" onClick={() => void openBackupFolder()}>
             open folder
-          </button>
+          </Button>
         </SetRow>
       )}
     </div>

@@ -240,7 +240,7 @@
 .frail .vlabel { font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
 /* the thread box the pill expands into */
 .tbox {
-  width: 262px;
+  width: 300px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -264,24 +264,13 @@
 }
 .tgrp:first-of-type { margin-top: 2px; }
 .tgrp::after { content: ''; flex: 1; height: 1px; background: var(--line2); }
-.trow { display: flex; align-items: center; gap: 9px; padding: 6px 7px; border-radius: 9px; }
+.trow { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 9px; }
 .trow:hover { background: var(--bg); }
 .trow .g { font-family: 'JetBrains Mono', monospace; font-size: 11px; width: 13px; text-align: center; flex: none; }
 .trow .tt { font-size: 12.5px; font-weight: 600; color: var(--ink); }
 .trow .mm { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 1px; }
-.tacts { margin-left: auto; display: flex; gap: 5px; flex: none; }
-.tact {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  color: var(--muted);
-  background: none;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 2px 8px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-.tact:hover { color: var(--gold); border-color: var(--ice-bd); }
+/* row actions now use the shared <Button variant="chip" size="sm"> (#68) —
+   the old thin .tact/.tacts chips are retired in favour of the primitive */
 .clk-center {
   position: absolute;
   /* the dial ring's true centre. OG.ox (80) is chosen so cx + ox = w/2, so the

@@ -1,5 +1,7 @@
 import type { PetId } from '../../domain/types'
 
+export { Button, type ButtonProps } from './Button'
+
 /* Pet registry (PRD §3b) — the pet swaps only the accent pair; structure never changes.
    Swatch colors mirror the data-pet token registry in tokens.css. */
 export const PETS: { id: PetId; name: string; c1: string; c2: string; who: string }[] = [

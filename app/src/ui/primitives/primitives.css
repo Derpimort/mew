@@ -398,6 +398,31 @@
 .nx-card .ca.pri { background: var(--ice); color: var(--on-acc); }
 .nx-card .ca.sec { border: 1px solid var(--line); color: var(--ink); background: var(--panel2); }
 
+/* shared Button primitive (#68) — the machined click-card affordance (.ca above),
+   made reusable so buttons stop being styled per site. Tokens only; theme
+   (carbon/white) + pet accent ride the CSS vars. */
+.btn {
+  font-family: 'Hanken Grotesk', sans-serif;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  transition: all 0.18s ease;
+}
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn-md { font-size: 11.5px; padding: 7px 14px; }
+.btn-sm { font-size: 10.5px; padding: 4px 10px; border-radius: 8px; }
+.btn-primary { background: var(--ice); color: var(--on-acc); }
+.btn-primary:hover:not(:disabled) { filter: brightness(1.07); }
+.btn-ghost { background: var(--panel2); color: var(--ink); border-color: var(--line); }
+.btn-ghost:hover:not(:disabled) { border-color: var(--ice-bd); }
+.btn-chip { background: var(--panel2); color: var(--ink); border-color: var(--line); }
+.btn-chip:hover:not(:disabled) { color: var(--ice); border-color: var(--ice-bd); }
+.btn-danger { background: transparent; color: var(--gold); border-color: var(--ice-bd); }
+.btn-danger:hover:not(:disabled) { background: var(--gold-soft); }
+
 .nx-card .cx {
   position: absolute;
   top: 6px;

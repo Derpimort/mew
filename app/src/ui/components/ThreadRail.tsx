@@ -10,6 +10,7 @@ import { useMew } from '../../state/store'
 import type { Block, Capture } from '../../domain/types'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { looseThreads } from '../../domain/week'
+import { Button } from '../primitives'
 
 export type ThreadState = 'running' | 'slipped' | 'paused' | 'unplaced'
 
@@ -167,12 +168,12 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
                   <div className="tt">{r.title}</div>
                   <div className="mm">{r.meta}</div>
                 </span>
-                <span className="tacts">
+                <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flex: 'none' }}>
                   {r.actions.map((a) => (
-                    <button
+                    <Button
                       key={a.label}
-                      type="button"
-                      className="tact"
+                      variant="chip"
+                      size="sm"
                       onClick={(e) => {
                         e.stopPropagation() // some actions set a card the stage click would clear
                         a.run()
@@ -180,7 +181,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
                       }}
                     >
                       {a.label}
-                    </button>
+                    </Button>
                   ))}
                 </span>
               </div>
