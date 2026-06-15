@@ -241,6 +241,9 @@
 /* the thread box the pill expands into */
 .tbox {
   width: 300px;
+  /* .nx-topbar is pointer-events:none (gaps pass clicks through to the dial);
+     the open box must re-enable them or its buttons + close ✕ are dead (#78) */
+  pointer-events: auto;
   /* sit the box on a DARKER surface than the chips (panel2) so the chip
      buttons raise above it — the same figure/ground the click-card .ca.sec
      buttons get on a card; otherwise chip-on-panel2 reads as bare text */
