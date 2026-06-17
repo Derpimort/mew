@@ -6,6 +6,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { useMew, useLive } from '../../state/store'
+import { Markdown } from './Markdown'
 import type { ChatMessage } from '../../domain/types'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
 import { blocksForDay } from '../../domain/week'
@@ -118,7 +119,7 @@ function LogLine({ msg }: { msg: ChatMessage }) {
         <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
         {isMew && <span className="mw">★ </span>}
         {isOk && <span className="ok">✓ </span>}
-        <span style={{ color: isAside ? undefined : 'var(--muted)', whiteSpace: 'pre-wrap' }}>{msg.body}</span>
+        <Markdown source={msg.body} />
         {msg.observation && (
           <div className="cm" style={{ paddingLeft: 34 }}># {msg.observation}</div>
         )}
@@ -133,7 +134,7 @@ function LogLine({ msg }: { msg: ChatMessage }) {
       <div className="h">
         ▸ nudge/{msg.nudgeType} — {time}
       </div>
-      {msg.body.toLowerCase()}
+      <Markdown source={msg.body.toLowerCase()} />
       {showScience && msg.footnote && (
         <div className="research"># {msg.footnote.toLowerCase()}</div>
       )}

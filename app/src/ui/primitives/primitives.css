@@ -229,6 +229,59 @@
 .log .p-you { color: var(--ice); font-weight: 600; }
 .log .p-arr { color: var(--faint); }
 
+/* ── markdown subset for mew replies (Markdown.tsx) ──────────────────────────
+   The first paragraph flows inline so a one-line reply still reads as a single
+   `mew ❯ …` line; structural blocks (lists, code, extra paragraphs) break and
+   indent to the gutter so they never blow out the column. Color inherits, so a
+   `.cm` aside stays faint while a normal reply stays muted. */
+.md { display: inline; color: var(--muted); }
+.md-p { display: inline; margin: 0; white-space: pre-wrap; }
+/* once structure follows, the gutter line is "spent" — break the rest below it */
+.md-p ~ .md-p,
+.md > .md-ul,
+.md > .md-ol,
+.md > .md-pre,
+.md > .md-quote { display: block; margin: 4px 0 0; }
+.md > :first-child { margin-top: 0; }
+
+.md-ul,
+.md-ol { padding-left: 34px; }
+.md-ul { list-style: '– ' outside; }
+.md-ol { list-style: decimal outside; }
+.md-ul li,
+.md-ol li { margin: 1px 0; }
+.md-ul li::marker,
+.md-ol li::marker { color: var(--faint); }
+
+.md-pre {
+  margin: 4px 0 0 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  overflow-x: auto;
+  white-space: pre;
+}
+.md-pre code { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink); }
+.md-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.92em;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--gold-soft);
+  color: var(--ink);
+}
+.md strong { color: var(--ink); font-weight: 600; }
+.md em { font-style: italic; }
+.md-link { color: var(--gold); text-decoration: underline; text-underline-offset: 2px; }
+.md-link:hover { color: var(--ink); }
+.md-quote {
+  margin: 4px 0 0 34px;
+  padding-left: 10px;
+  border-left: 2px solid var(--line);
+  color: var(--faint);
+}
+
 .blink {
   display: inline-block;
   width: 8px;

@@ -2342,6 +2342,8 @@ declare global {
     __mewReset?: () => Promise<void>
     /** Dev/scenario helper: patch settings programmatically (e.g. inject a test key). */
     __mewConfigure?: (patch: Partial<Settings>) => void
+    /** Dev/scenario helper: push a mew reply into the log (visual/markdown proofs). */
+    __mewSay?: (body: string, role?: ChatMessage['role']) => void
   }
 }
 if (typeof window !== 'undefined') {
@@ -2351,5 +2353,8 @@ if (typeof window !== 'undefined') {
   }
   window.__mewConfigure = (patch) => {
     useMew.getState().updateSettings(patch)
+  }
+  window.__mewSay = (body, role = 'mew') => {
+    useMew.setState((s) => ({ chat: [...s.chat, { id: uid(), role, body, ts: Date.now() }] }))
   }
 }
