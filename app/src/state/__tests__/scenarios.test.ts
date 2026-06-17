@@ -317,7 +317,7 @@ describe('a seeded Tuesday morning', () => {
     await fresh(TUE(9, 40))
     await say('block 1h for interview with pooran today at 1:30pm')
     await say('block 15m for pooran prep today at 1:30pm')
-    expect(lastMsg().body).toMatch(/heads up: it overlaps .*interview with pooran 13:30–14:30 \(fixed — it can't move\)/i)
+    expect(lastMsg().body).toMatch(/note: it overlaps .*interview with pooran 13:30–14:30 \(fixed — it can't move\)/i)
   })
 
   it('a chat completion celebrates exactly once (no duplicate mew lines)', async () => {
@@ -1386,7 +1386,7 @@ describe('prefs applied at placement', () => {
     await say('block design sync tomorrow at 10')
     await say('block deck work tomorrow at 14')
     await say('move deck work to tomorrow at 10')
-    expect(lastMsg().body).toContain('flexible — it can shift')
+    expect(lastMsg().body).toContain('flexible — offer to drift it')
     expect(lastMsg().body).not.toContain("can't move")
   })
 })
@@ -1486,5 +1486,23 @@ describe('scheduler slice 2 — scored placement + de-dup (#80, #89)', () => {
     expect(deep).toBeDefined()
     const overlaps = deep.startMin < standup.endMin && standup.startMin < deep.endMin
     expect(overlaps).toBe(false)
+  })
+})
+
+describe('scheduler: honor explicit times, place-then-offer-drift (#102)', () => {
+  it('an explicit time lands as asked over a soft conflict and offers to drift, not reshape', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 1h for deep work today at 2pm') // a flexible work block at 14:00
+    await say('block 1h for call with sam today at 2pm') // explicit time, same slot
+    const open = useMew.getState().blocks.filter((b) => b.status === 'open')
+    // exact-title match — the demo seed carries several "… — deep work" blocks; mine is titled exactly "deep work"
+    const call = open.find((b) => b.title.toLowerCase() === 'call with sam')!
+    const deep = open.find((b) => b.title.toLowerCase() === 'deep work')!
+    expect(call).toBeDefined()
+    expect(deep).toBeDefined()
+    expect(call.startMin).toBe(14 * 60) // placed exactly as the user asked
+    expect(deep.startMin).toBe(14 * 60) // the flexible block was NOT auto-moved out from under it
+    // the reply offers to drift the flexible side rather than silently reshaping
+    expect(lastMsg().body.toLowerCase()).toMatch(/overlap|drift|nudge/)
   })
 })

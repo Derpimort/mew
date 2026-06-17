@@ -10,7 +10,9 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
 
-const MAX_LOOP = 10
+/* one upfront sweep should place a day in ≤2 rounds (#102); 14 is headroom for a
+   genuinely large multi-item plan, not room to thrash clash-by-clash */
+const MAX_LOOP = 14
 
 const TOOLS: Anthropic.Tool[] = MEW_TOOLS.map((t) => ({
   name: t.name,
@@ -113,8 +115,9 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
         }
         messages.push({ role: 'user', content: results })
       }
-      /* the loop cap hit mid-flow — say so instead of trailing off */
-      yield `\n(i hit my per-turn action limit before finishing — say "continue" and i'll pick it up right there.)`
+      /* the loop cap hit mid-flow — pause gracefully with progress kept, not a
+         dead "say continue" stop (#102): everything placed is already saved */
+      yield `\n(that's a full turn of changes — everything I placed is saved and your plan's intact, I just paused here so nothing's half-done. say "keep going" and I'll pick the plan up right where I left off.)`
     },
   }
 }

@@ -231,17 +231,19 @@ function nudgeMsg(n: NudgeInstance): ChatMessage {
   }
 }
 
-/** Factual collision note for tool results — the model re-checks constraints
-    against these and moves the flexible side. */
+/** Factual collision note for tool results — names what the placement overlaps
+    and whether each side can shift, so the model OFFERS to drift the flexible
+    side rather than reactively re-placing the block it was just asked to set
+    (#102: an explicit time is the user's judgment — place it, then offer). */
 function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   if (!clash.length) return ''
   const parts = clash.map((c) => {
     const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
     return week.isFixedTime(c, prefs)
       ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
-      : `${base} (flexible — it can shift)`
+      : `${base} (flexible — offer to drift it, don't move it unasked)`
   })
-  return ` — heads up: it overlaps ${parts.join(' and ')}`
+  return ` — note: it overlaps ${parts.join(' and ')}`
 }
 
 function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
