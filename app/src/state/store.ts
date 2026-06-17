@@ -26,6 +26,7 @@ import { dayShape } from '../domain/dayShape'
 import { restInsertion, scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
+import { coalesceNudges } from '../domain/nudges/queue'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
@@ -630,10 +631,33 @@ export const useMew = create<MewState>((set, get) => {
          celebrate line too would say the same thing twice in a row */
       if (n.type === 'celebrate' && chatCompletion) continue
       markFired(n, s.nowMs)
+      /* mid-turn (#115): park the nudge so it lands after the reply, not spliced
+         into the stream. The flush in speak's finally drains the queue. */
+      if (turnInFlight) {
+        pendingNudgeQueue.push(n)
+        continue
+      }
       // event nudges answer the user's own action — straight to chat, no mirror.
       // celebrations are brief and concrete (voice law): a plain line, not a card.
-      post([n.type === 'celebrate' ? mewMsg(n.body) : nudgeMsg(n)])
+      post([eventNudgeMsg(n)])
     }
+  }
+
+  /* event nudges answer the user's own action — celebrations are a brief plain
+     line (voice law), every other nudge a card. One place so the immediate path
+     and the deferred flush (#115) phrase them identically. */
+  function eventNudgeMsg(n: NudgeInstance): ChatMessage {
+    return n.type === 'celebrate' ? mewMsg(n.body) : nudgeMsg(n)
+  }
+
+  /* drain parked nudges once the turn is done (#115): coalesce exact dupes so a
+     multi-action plan that re-triggers the same nudge speaks it once, then post
+     in order. Idempotent and safe on the error path — an empty queue is a no-op. */
+  function flushPendingNudges() {
+    if (!pendingNudgeQueue.length) return
+    const drained = pendingNudgeQueue
+    pendingNudgeQueue = []
+    post(coalesceNudges(drained).map(eventNudgeMsg))
   }
 
   function setBlocks(blocks: Block[]) {
@@ -843,6 +867,15 @@ export const useMew = create<MewState>((set, get) => {
   /* completions through CHAT celebrate in the reply itself — the celebrate
      nudge stays quiet so one mew speaks once (UI clicks still get the nudge) */
   let chatCompletion = false
+
+  /* a nudge is reflection, not an interrupt (#115): while a turn is in flight
+     the executors' nudges park here instead of splicing into the live stream;
+     speak's finally flushes them once the reply is done. turnInFlight (not
+     `thinking`) is the gate — thinking flips false on the first streamed token,
+     but the turn keeps mutating after that, so an executor firing post-stream
+     must still defer. Idle ticks/timers leave it false and post at once. */
+  let turnInFlight = false
+  let pendingNudgeQueue: NudgeInstance[] = []
   function execComplete(query: string): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -1374,6 +1407,7 @@ export const useMew = create<MewState>((set, get) => {
       if (!trimmed) return
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
+      turnInFlight = true // executors' nudges park until this turn finishes (#115)
 
       let acted = false // once the week mutated, never re-run the message through a fallback
       const exec: ToolExecutor = {
@@ -1495,7 +1529,13 @@ export const useMew = create<MewState>((set, get) => {
           }
         }
       } finally {
+        /* the turn is over (success or hiccup): flip the gate, then drain the
+           parked nudges so nothing fired mid-stream is lost (#115). Order
+           matters — flushPendingNudges posts straight to chat only with the
+           gate already down. */
         set({ thinking: false })
+        turnInFlight = false
+        flushPendingNudges()
       }
     },
 

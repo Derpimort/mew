@@ -177,6 +177,38 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
   },
 }))
 
+/* a scripted model adapter (#115): lets a test stream reply text and fire a
+   tool call mid-turn, then observe whether the nudge was held until the turn
+   completes. Default chain stays the keyless rules floor; only the deferral
+   scenarios opt in via modelLocation:'local'. */
+const scriptedModel = {
+  chunks: [] as string[],
+  /** runs between the first and last chunk — fire executors, snapshot state */
+  midTurn: null as null | ((exec: import('../../adapters/model').ToolExecutor) => void),
+  throwAfter: false, // simulate a connection hiccup once the tool has acted
+  reset() {
+    this.chunks = []
+    this.midTurn = null
+    this.throwAfter = false
+  },
+}
+vi.mock('../../adapters/model/ollama', () => ({
+  createOllamaAdapter: () => ({
+    id: 'ollama',
+    async *converse(
+      _thread: unknown,
+      _ctx: unknown,
+      exec: import('../../adapters/model').ToolExecutor,
+    ) {
+      const [first, ...rest] = scriptedModel.chunks
+      if (first) yield first
+      scriptedModel.midTurn?.(exec)
+      if (scriptedModel.throwAfter) throw new Error('connection hiccup')
+      for (const c of rest) yield c
+    },
+  }),
+}))
+
 import { setSidecarBrain } from '../../adapters/brain/sidecar'
 import { useMew } from '../store'
 
@@ -221,6 +253,7 @@ afterEach(() => {
   vi.useRealTimers()
   brainFake.reset()
   desktopFake.reset()
+  scriptedModel.reset()
   setSidecarBrain(null) // module state — a sidecar from one scenario must not haunt the next
 })
 
@@ -1570,5 +1603,72 @@ describe('scheduler: a long continuous run earns a pacing rest (#103)', () => {
     // Reading ≥15:00) — a 45-min run, well under the cap, nothing to pace
     await say('block 45m for a quick fix on saturday at 13')
     expect(restsOn(SAT())).toHaveLength(0)
+  })
+})
+
+/* #115 — a nudge is reflection, not an interrupt: executors' nudges are held
+   until the assistant turn finishes, never spliced into the live stream. */
+
+describe('nudges defer until the turn completes', () => {
+  const deckToday = () =>
+    useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+
+  it('a model-driven completion parks its nudge after the streamed reply, in order', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const target = deckToday() // 9:00–11:30 deck; completing at 9:40 reclaims ~110 min → next-up
+    /* the model streams a two-part reply and completes the deck between the
+       parts — exactly the mid-stream tool call that used to splice a card in */
+    scriptedModel.chunks = ['On it — ', 'marked done.']
+    scriptedModel.midTurn = (exec) => exec.complete(target.title)
+    await say('finish the deck')
+
+    const nu = lastNudge('next-up')
+    expect(nu).toBeDefined()
+    const c = chat()
+    const replyIdx = c.findIndex((m) => m.role === 'mew' && m.body.includes('marked done'))
+    const nudgeIdx = c.findIndex((m) => m.id === nu.id)
+    expect(replyIdx).toBeGreaterThanOrEqual(0)
+    // the card lands AFTER the whole reply — parked, not spliced into the stream
+    expect(nudgeIdx).toBeGreaterThan(replyIdx)
+  })
+
+  it('observes mid-stream that no nudge card exists until the turn ends', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' }) // route through the scripted adapter
+    const target = deckToday()
+    let midTurnCount = -1
+    scriptedModel.chunks = ['Marking that done… ', 'done.']
+    scriptedModel.midTurn = (exec) => {
+      // first chunk already streamed (thinking flipped false) — the nudge fired
+      // here must STILL be held by the in-flight turn, not posted
+      exec.complete(target.title)
+      midTurnCount = chat().filter((m) => m.role === 'nudge' && m.nudgeType === 'next-up').length
+    }
+    await say('finish the deck')
+    expect(midTurnCount).toBe(0) // held during the turn, even after the first token
+    expect(lastNudge('next-up')).toBeDefined() // … then flushed once it ended
+  })
+
+  it('a turn that errors after acting still flushes its parked nudges', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const target = deckToday()
+    scriptedModel.chunks = ['Working on it… ']
+    scriptedModel.throwAfter = true // hiccup after the tool call
+    scriptedModel.midTurn = (exec) => {
+      exec.complete(target.title)
+    }
+    await say('finish the deck')
+    expect(useMew.getState().thinking).toBe(false)
+    // the connection hiccuped, but nothing fired mid-turn is lost
+    expect(lastNudge('next-up')).toBeDefined()
+  })
+
+  it('an idle tick nudge (no turn in flight) still posts immediately', async () => {
+    // the seeded Tuesday-morning right-size nudge fires from a tick, not a turn
+    await fresh(TUE(9, 40))
+    expect(lastNudge('right-size')).toBeDefined()
+    expect(useMew.getState().queuedNudges).toHaveLength(0)
   })
 })
