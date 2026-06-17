@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createOpenAIAdapter } from '../openai'
 import { createRulesAdapter } from '../rules'
 import { runTool } from '../tools'
 import type { ToolExecutor, WeekContext } from '../types'
@@ -230,5 +231,73 @@ describe('attention + due ride the tool registry', () => {
     const [q, patch] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(q).toBe('restore')
     expect(patch).toMatchObject({ attention: 'background', due: 780 })
+  })
+})
+
+describe('openai adapter — abort', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  /** A fetch stub that speaks the chat-completions JSON shape. Round 1 returns a
+      tool_call (so the loop runs the executor and commits a real action, then
+      loops); from round 2 on it behaves like the browser does once a request is
+      aborted — rejecting with an AbortError DOMException — and records the
+      `signal` it was handed so we can prove the adapter threaded it through. */
+  function abortingFetch() {
+    const signals: (AbortSignal | undefined)[] = []
+    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      signals.push(init?.signal ?? undefined)
+      if (fetch.mock.calls.length === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  role: 'assistant',
+                  content: 'on it.',
+                  tool_calls: [
+                    { id: 'c1', type: 'function', function: { name: 'complete_task', arguments: '{"query":"deck"}' } },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      if (init?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
+      throw new Error('round 2 fetch ran without the abort signal')
+    })
+    return { fetch, signals }
+  }
+
+  it('stops cleanly when the signal aborts mid-loop — no retry, no replay', async () => {
+    const { fetch, signals } = abortingFetch()
+    vi.stubGlobal('fetch', fetch)
+
+    const exec = mockExec()
+    const abort = new AbortController()
+    const adapter = createOpenAIAdapter('sk-test', 'gpt-test')
+    const it = adapter
+      .converse([{ role: 'user', text: 'done with the deck' }], ctx, exec, abort.signal)
+      [Symbol.asyncIterator]()
+
+    /* drive round 1 (commits the tool action), then stop before round 2 — the
+       store's ■/Esc fires between rounds, exactly as in the live loop. */
+    await it.next()
+    abort.abort()
+
+    await expect(it.next()).rejects.toMatchObject({ name: 'AbortError' })
+
+    /* round 2's fetch was reached once and handed the signal — and the
+       non-transient AbortError short-circuited withRetry: no 3rd attempt. */
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(signals[1]).toBe(abort.signal)
+
+    /* the action committed in round 1 stays — the abort keeps partial work,
+       it never rolls back or replays the turn (store.ts honesty guard). */
+    expect(exec.calls).toEqual(['complete'])
+    expect(exec.complete).toHaveBeenCalledTimes(1)
   })
 })

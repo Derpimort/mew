@@ -37,7 +37,7 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
      before that round's first yield — it can never replay a turn that already
      spoke or acted (store.ts honesty guard). An AbortError isn't transient, so a
      user cancel propagates through unchanged. */
-  async function complete(messages: OaMessage[]): Promise<OaMessage> {
+  async function complete(messages: OaMessage[], signal?: AbortSignal): Promise<OaMessage> {
     return withRetry(async () => {
       const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
         method: 'POST',
@@ -52,6 +52,10 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
           tool_choice: 'auto',
           max_tokens: 1024,
         }),
+        /* the user's stop aborts the in-flight request; fetch rejects with an
+           AbortError, which the store reads as a clean stop (never a failure →
+           never the rules fallback). */
+        signal,
       })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
@@ -69,7 +73,7 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
   return {
     id: 'openai',
 
-    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor) {
+    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
       const messages: OaMessage[] = [
         { role: 'system', content: [MEW_VOICE, '', contextBlock(ctx)].join('\n') },
         ...thread.slice(-16).map((t) => ({ role: t.role, content: t.text }) as OaMessage),
@@ -77,7 +81,7 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
 
       let yieldedText = false
       for (let i = 0; i < MAX_LOOP; i++) {
-        const msg = await complete(messages)
+        const msg = await complete(messages, signal)
 
         if (msg.content) {
           if (yieldedText) yield '\n'
