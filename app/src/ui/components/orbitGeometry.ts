@@ -115,11 +115,14 @@ export function crossDaySpan(startMin: number, endMin: number): CrossDaySpan {
 
 /** Visible set: everything on today's face — open AND done, the whole day (no
     forward clip; the AM/PM bands keep 12-hours-apart events off one radius).
-    Done blocks stay as completed markers. */
+    Done blocks stay as completed markers. Equal-start blocks tie-break on the
+    DRAWN end (crossDaySpan), so a folded overnight block — whose raw endMin
+    wrapped below its start — orders by the arc it actually paints, not the
+    collapsed wrap. */
 export function visibleOrbit(blocks: Block[], todayKey: string, _nowH: number): Block[] {
   return blocks
     .filter((b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done'))
-    .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin)
+    .sort((a, b) => a.startMin - b.startMin || crossDaySpan(a.startMin, a.endMin).drawEnd - crossDaySpan(b.startMin, b.endMin).drawEnd)
 }
 
 export function isRunning(b: Block, nowH: number): boolean {
@@ -136,16 +139,24 @@ export function isRunning(b: Block, nowH: number): boolean {
     keeps its band's base lane (and stays visually dominant via glow, not radius). */
 export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): Map<string, number> {
   const out = new Map<string, number>()
+  // De-collision runs on each block's DRAWN today-arc, not raw start/end: a
+  // folded overnight block (endMin wrapped below startMin) would otherwise test
+  // as a near-empty interval and mis-lane against neighbours it truly overlaps.
+  // crossDaySpan is the single source of that folding — compute once per block
+  // (this is the O(n²) lane loop's inner test) and read drawStart/drawEnd.
+  const arc = new Map<string, CrossDaySpan>(vis.map((b) => [b.id, crossDaySpan(b.startMin, b.endMin)]))
+  const span = (b: Block) => arc.get(b.id) ?? crossDaySpan(b.startMin, b.endMin)
   const place = (group: Block[], dir: 1 | -1) => {
     const order = [...group].sort((a, b) => {
       if (a.id === focusId) return -1
       if (b.id === focusId) return 1
-      return a.startMin - b.startMin || a.endMin - b.endMin
+      return a.startMin - b.startMin || span(a).drawEnd - span(b).drawEnd
     })
     const lanes: Block[][] = []
     for (const b of order) {
+      const bs = span(b)
       let k = 0
-      while (lanes[k]?.some((o) => b.startMin < o.endMin && o.startMin < b.endMin)) k++
+      while (lanes[k]?.some((o) => bs.drawStart < span(o).drawEnd && span(o).drawStart < bs.drawEnd)) k++
       ;(lanes[k] ??= []).push(b)
       out.set(b.id, bandBaseFor(b) + dir * k * LANE_STEP)
     }

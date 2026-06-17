@@ -47,6 +47,15 @@ describe('visibleOrbit — today, the whole day, open and done', () => {
     const late = mk({ id: 'late', startMin: 20 * 60, endMin: 21 * 60 })
     expect(visibleOrbit([late], D, 8).map((b) => b.id)).toEqual(['late'])
   })
+
+  it('equal-start blocks tie-break on the DRAWN end, so a folded overnight sorts by its painted arc', () => {
+    // both start 22:00; the folded one paints to midnight (drawEnd 1440), the
+    // short one stops at 22:30 — raw endMin (360) would have wrongly ordered the
+    // overnight first.
+    const overnight = mk({ id: 'over', startMin: 22 * 60, endMin: 6 * 60 }) // folded, paints [1320,1440]
+    const short = mk({ id: 'short', startMin: 22 * 60, endMin: 22 * 60 + 30 })
+    expect(visibleOrbit([overnight, short], D, 23).map((b) => b.id)).toEqual(['short', 'over'])
+  })
 })
 
 describe('isCommitted — held & not background / optional / rest', () => {
@@ -141,6 +150,48 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
     expect(maxAmBg).toBeLessThan(OG.mid)
     expect(minPmCf).toBeGreaterThanOrEqual(OG.mid)
     expect(maxAmBg).toBeLessThan(minPmCf)
+  })
+
+  it('a folded overnight block lanes against its DRAWN arc, not the collapsed raw interval', () => {
+    // 22:00→06:00 stored folded (endMin 360 ≤ startMin) truly overlaps a
+    // 20:00→23:00 evening block on [22:00,23:00]. Raw endMin would test as the
+    // empty interval [1320,360] and let both sit on the PM-confirmed base ring;
+    // clipped to [1320,1440] they collide and the second steps a lane inward.
+    const overnight = mk({ id: 'over', startMin: 22 * 60, endMin: 6 * 60, tag: 'work' })
+    const evening = mk({ id: 'eve', startMin: 20 * 60, endMin: 23 * 60, tag: 'work' })
+    const radii = radiiFor([evening, overnight], null, 22)
+    expect(radii.get('eve')).toBe(OG.ro - BAND) // first PM-confirmed keeps the base
+    expect(radii.get('over')).toBe(OG.ro - BAND - LANE_STEP) // pushed onto its own ring
+    expect(radii.get('over')).not.toBe(radii.get('eve'))
+  })
+
+  it('a folded overnight whose DRAWN head is disjoint from a neighbour stays on one ring (no false collision)', () => {
+    // both PM-confirmed: 13:00→14:00 paints [780,840]; 23:00→01:00 folds to
+    // [1380,1440]. The clipped arcs don't touch, so neither steps a lane —
+    // folding must not invent an overlap any more than it hides a real one.
+    const afternoon = mk({ id: 'a', startMin: 13 * 60, endMin: 14 * 60, tag: 'work' })
+    const fold = mk({ id: 'b', startMin: 23 * 60, endMin: 1 * 60, tag: 'work' })
+    const radii = radiiFor([afternoon, fold], null, 13)
+    expect(radii.get('a')).toBe(OG.ro - BAND)
+    expect(radii.get('b')).toBe(OG.ro - BAND)
+  })
+
+  it('a started-yesterday tail (startMin < 0) lanes against its [0, endMin] today head', () => {
+    // started 23:00 yesterday, ends 02:00 today → today head [0,120]; collides
+    // with an early 00:30→01:30 block, so the tail steps off the base ring.
+    const tail = mk({ id: 'tail', startMin: -60, endMin: 2 * 60, tag: 'work' }) // draws [0,120]
+    const early = mk({ id: 'early', startMin: 30, endMin: 90, tag: 'work' }) // [30,90] ⊂ [0,120]
+    const radii = radiiFor([tail, early], null, 1)
+    // both AM-confirmed; the overlap on [30,90] forces a second lane
+    expect(new Set(radii.values()).size).toBe(2)
+  })
+
+  it('same-day, non-overlapping blocks keep their single-ring assignment (no regression)', () => {
+    const spread = Array.from({ length: 4 }, (_, i) =>
+      mk({ id: `d${i}`, startMin: (13 + i) * 60, endMin: (13 + i) * 60 + 30, tag: 'work' }), // PM confirmed, disjoint
+    )
+    const radii = radiiFor(spread, null, 14)
+    expect(new Set(radii.values())).toEqual(new Set([OG.ro - BAND]))
   })
 })
 
