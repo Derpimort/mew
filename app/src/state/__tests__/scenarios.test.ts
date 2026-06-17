@@ -1533,3 +1533,42 @@ describe('scheduler: honor explicit times, place-then-offer-drift (#102)', () =>
     expect(lastMsg().body.toLowerCase()).toMatch(/overlap|drift|nudge/)
   })
 })
+
+describe('scheduler: a long continuous run earns a pacing rest (#103)', () => {
+  const SAT = () => addDaysKey(dayKey(TUE(9, 40)), 4) // Saturday — clear afternoon air
+
+  const restsOn = (key: string) =>
+    useMew.getState().blocks.filter((b) => b.dayKey === key && b.tag === 'rest' && b.status === 'open')
+
+  it('inserts exactly one short, unprotected breather into a >90-min stretch', async () => {
+    await fresh(TUE(9, 40))
+    // two back-to-back work blocks → 11:30–14:30 continuous (180 min), seam after at 14:30
+    await say('block 1.5h for the migration on saturday at 11:30')
+    await say('block 1.5h for the rollout on saturday at 13')
+    const rests = restsOn(SAT())
+    expect(rests).toHaveLength(1)
+    const breather = rests[0]
+    expect(breather.protected).toBe(false) // absorbable on the next reshape, not sacred rest
+    expect(breather.endMin - breather.startMin).toBeLessThanOrEqual(20)
+    expect(breather.endMin - breather.startMin).toBeGreaterThanOrEqual(10)
+    expect(lastMsg().body.toLowerCase()).toContain('breather')
+  })
+
+  it('re-running a reshape over the same day stacks no second rest (idempotent)', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 1.5h for the migration on saturday at 11:30')
+    await say('block 1.5h for the rollout on saturday at 13')
+    expect(restsOn(SAT())).toHaveLength(1)
+    // a later plan touches the same day again — the pass must not add a twin
+    await say('block 30m for inbox on saturday at 16:30')
+    expect(restsOn(SAT())).toHaveLength(1)
+  })
+
+  it('a short, isolated block gets no breather added', async () => {
+    await fresh(TUE(9, 40))
+    // 13:00–13:45 sits clear of the seed's Saturday blocks (Groceries ≤11:30,
+    // Reading ≥15:00) — a 45-min run, well under the cap, nothing to pace
+    await say('block 45m for a quick fix on saturday at 13')
+    expect(restsOn(SAT())).toHaveLength(0)
+  })
+})

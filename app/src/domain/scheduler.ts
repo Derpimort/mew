@@ -166,3 +166,126 @@ export function scoreSlots(
     })
     .sort((a, b) => b.score - a.score || a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
 }
+
+/* ── rest insertion (#103) — the #80 follow-up ────────────────────────
+   #80 made placement rest-AWARE (the REST_RUN_CAP scoring factor biases away
+   from long back-to-back runs) but never INSERTS a rest. This pass closes the
+   loop: after a plan/reshape, if a day holds a continuous committed-work run
+   past the cap with no break, find a short pacing rest to sit inside it.
+
+   Rationale, not a cadence: a long unbroken stretch erodes focus (Pomodoro;
+   WHO ICD-11 burn-out QD85 is the *why* MEW protects rest) — NOT a literal
+   90-min clock (the round number is popularised, not physiological). So the
+   rest is short and UNPROTECTED: a later reshape can absorb it, never an
+   orphaned-break duplicate. The executor (store) is the only mutation path —
+   this pass just says where (or that it'd have to displace, so only offer). */
+
+/** a short pacing rest stays absorbable: ≤20m so a reshape can dissolve it */
+export const PACING_REST_MIN = 15
+const PACING_REST_MAX = 20
+/** below this a break isn't worth a block; mirrors dayShape's rest threshold */
+const PACING_REST_FLOOR = 10
+/** <15m of air doesn't break a run — same continuity notion as dayShape */
+const RUN_GAP = 15
+
+/** the committed work that forms a run: open, focus, non-rest, non-optional —
+    the same set the day's load and streak math already trust. */
+function committedWork(blocks: Block[], dayKey: string): Block[] {
+  return blocksForDay(blocks, dayKey).filter(
+    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest',
+  )
+}
+
+interface WorkRun {
+  startMin: number
+  endMin: number
+}
+
+/** Continuous committed-work runs: consecutive work blocks with <RUN_GAP of
+    air between them, split by any real rest (≥floor) — a rest already breaks
+    the run, so a day that's broken up yields only short runs and no insertion. */
+function workRuns(blocks: Block[], dayKey: string): WorkRun[] {
+  const day = blocksForDay(blocks, dayKey).filter(
+    (b) => b.status === 'open' && !b.optional && !isBackground(b),
+  )
+  const runs: WorkRun[] = []
+  let cur: WorkRun | null = null
+  for (const b of day) {
+    if (b.tag === 'rest') {
+      if (b.endMin - b.startMin >= PACING_REST_FLOOR) cur = null // a real break ends the run
+      continue
+    }
+    if (cur && b.startMin - cur.endMin < RUN_GAP) cur.endMin = Math.max(cur.endMin, b.endMin)
+    else runs.push((cur = { startMin: b.startMin, endMin: b.endMin }))
+  }
+  return runs
+}
+
+export interface RestInsertion {
+  dayKey: string
+  /** where the pacing rest goes (place), or the run that needs one (suggest) */
+  startMin: number
+  endMin: number
+  /** auto-place into a free seam, or only offer (inserting would displace work) */
+  kind: 'place' | 'suggest'
+  why: string
+}
+
+/** The pacing-rest pass over one already-placed day. Pure + idempotent: returns
+    at most one rest for the LONGEST over-cap run that has no break, and nothing
+    once a rest sits inside that run (re-running a reshape can't stack rests).
+
+    Prefer the natural seam — a free gap touching the run that fits the rest
+    without moving anything (auto `place`). If the run is wall-to-wall so the
+    only way in is to displace a committed block, `suggest` instead: MEW offers
+    it in chat rather than seizing time. `freeWindows` already excludes fixed,
+    external, optional and background blocks, so a placed rest never overlaps. */
+export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | null {
+  const work = committedWork(blocks, dayKey)
+  if (!work.length) return null
+  /* a run is the unbroken non-rest stretch (dayShape's notion: errands abutting
+     work extend the same stretch), but only one ANCHORED BY WORK earns a rest —
+     a long string of pure errands isn't the focus fatigue this paces. */
+  const runs = workRuns(blocks, dayKey)
+    .filter((r) => r.endMin - r.startMin > REST_RUN_CAP)
+    .filter((r) => work.some((w) => w.startMin < r.endMin && w.endMin > r.startMin))
+  if (!runs.length) return null
+  // the longest over-cap run is the one most in need of a break
+  const run = runs.sort((a, b) => b.endMin - b.startMin - (a.endMin - a.startMin))[0]
+
+  const rests = blocksForDay(blocks, dayKey).filter((b) => b.tag === 'rest' && b.status === 'open')
+  /* idempotent: any rest inside the run OR touching its edge (the breather we
+     tuck right after a stretch sits at run.endMin) already paces it — re-running
+     a reshape must never stack a second. Inclusive bounds make adjacency count. */
+  if (rests.some((r) => r.startMin <= run.endMin && r.endMin >= run.startMin)) return null
+
+  /* candidate seams: free gaps from inside the run through the moment it ends —
+     never before it (a breather ahead of the work breaks nothing). Leftmost
+     first, so an internal split wins over the gap right after the stretch; a
+     sliver only counts if it clears the floor. The run being continuous means
+     internal gaps are <RUN_GAP, so the usual seam is the air just after it. */
+  const fits = freeWindows(blocks, dayKey, DAY_START, DAY_END)
+    .filter((w) => w.startMin >= run.startMin && w.startMin <= run.endMin)
+    .filter((w) => w.endMin - w.startMin >= PACING_REST_FLOOR)
+    .sort((a, b) => a.startMin - b.startMin)
+
+  if (fits.length) {
+    const seam = fits[0]
+    const dur = Math.min(PACING_REST_MAX, Math.max(PACING_REST_FLOOR, PACING_REST_MIN), seam.endMin - seam.startMin)
+    return {
+      dayKey,
+      startMin: seam.startMin,
+      endMin: seam.startMin + dur,
+      kind: 'place',
+      why: 'a short breather inside a long stretch',
+    }
+  }
+  // no seam — breaking the run means moving committed work, so only offer it
+  return {
+    dayKey,
+    startMin: run.startMin,
+    endMin: run.endMin,
+    kind: 'suggest',
+    why: 'a long unbroken stretch with no room for a break',
+  }
+}

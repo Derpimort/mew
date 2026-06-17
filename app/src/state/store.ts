@@ -23,7 +23,7 @@ import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory
 import { computeInsights, proposeKinderPlan, taskDurations, type TaskDuration } from '../domain/insights'
 import { pixieInputs } from '../domain/pixie'
 import { dayShape } from '../domain/dayShape'
-import { scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
+import { restInsertion, scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
@@ -665,6 +665,7 @@ export const useMew = create<MewState>((set, get) => {
     let blocks = s.blocks
     const lines: string[] = []
     let placedDeep: Block | null = null
+    const touchedDays = new Set<string>() // days a rest-pacing pass should re-check (#103)
 
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const hist = histDurations(s)
@@ -730,6 +731,7 @@ export const useMew = create<MewState>((set, get) => {
         const moved = blocks.find((b) => b.id === existing.id)!
         const clash = week.conflictsWith(blocks, key, moved.startMin, moved.endMin, moved.id, prefs)
         if (week.isDeep(moved)) placedDeep = moved
+        if (moved.tag === 'work' && !week.isBackground(moved)) touchedDays.add(key)
         lines.push(
           `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashNote(clash, prefs)}`,
         )
@@ -756,6 +758,7 @@ export const useMew = create<MewState>((set, get) => {
         : week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id, prefs)
       blocks = [...blocks, placed]
       if (week.isDeep(placed)) placedDeep = placed
+      if (placed.tag === 'work' && !week.isBackground(placed)) touchedDays.add(key)
       lines.push(
         `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`,
       )
@@ -778,6 +781,35 @@ export const useMew = create<MewState>((set, get) => {
       lines.push(`${fmtDowLong(key)} ${f.startMin === 13 * 60 ? 'afternoon ' : ''}kept free`)
     }
     if (!lines.length) return 'nothing was placed'
+
+    /* pacing rest (#103): a long unbroken work run earns one short breather.
+       The pass is pure and idempotent — it returns at most one rest per day
+       and nothing once one sits inside the run, so re-running a reshape never
+       stacks rests. A free seam gets an UNPROTECTED micro-rest (≤20m, the same
+       absorbable pacing rest a reshape can dissolve); a wall-to-wall run that
+       would need a committed block displaced is only OFFERED, never seized. */
+    const restNotes: string[] = []
+    for (const key of touchedDays) {
+      const r = restInsertion(blocks, key)
+      if (!r) continue
+      const when = key === todayKey ? 'today' : fmtDowLong(key)
+      if (r.kind === 'place') {
+        const rest = week.place(blocks, {
+          title: 'Breather',
+          tag: 'rest',
+          dayKey: key,
+          startMin: r.startMin,
+          endMin: r.endMin,
+          protected: false,
+        })
+        if (rest) {
+          blocks = [...blocks, rest]
+          restNotes.push(`tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`)
+        }
+      } else {
+        restNotes.push(`${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`)
+      }
+    }
     setBlocks(blocks)
 
     /* one contextual observation, from the user's own numbers */
@@ -800,7 +832,12 @@ export const useMew = create<MewState>((set, get) => {
         }
       }
     }
-    return `Done — ${joinHuman(lines)}.${observation}`
+    let pacing = ''
+    if (restNotes.length) {
+      const joined = joinHuman(restNotes)
+      pacing = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
+    }
+    return `Done — ${joinHuman(lines)}.${observation}${pacing}`
   }
 
   /* completions through CHAT celebrate in the reply itself — the celebrate

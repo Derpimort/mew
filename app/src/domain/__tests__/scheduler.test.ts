@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../types'
 import { overlaps } from '../week'
-import { candidateSlots, scoreSlots } from '../scheduler'
+import { candidateSlots, PACING_REST_MIN, restInsertion, scoreSlots } from '../scheduler'
 
 const D = '2026-06-09' // Tuesday
 const NOW = 8 * 60 // 08:00 — the working-day start
@@ -90,5 +90,88 @@ describe('scheduler — scoreSlots (ranking)', () => {
     const b = scoreSlots(blocks, { title: 'x', tag: 'work', durationMin: 60 }, D, NOW)
     expect(a).toEqual(b)
     expect(a.every((c) => c.score >= 0 && c.score <= 1)).toBe(true)
+  })
+})
+
+describe('scheduler — restInsertion (pacing rest in a long run, #103)', () => {
+  it('a >90-min continuous run earns one short breather right after the stretch', () => {
+    const run = mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 + 30 }) // 150 min, > cap
+    const r = restInsertion([run], D)
+    expect(r).not.toBeNull()
+    expect(r!.kind).toBe('place')
+    expect(r!.startMin).toBe(11 * 60 + 30) // the air just after the run
+    expect(r!.endMin - r!.startMin).toBe(PACING_REST_MIN)
+  })
+
+  it('a run built from back-to-back blocks (<15-min air) is one continuous stretch', () => {
+    // 09:00–10:30 then 10:35–12:00: 5-min air doesn't break the run → 180 min total
+    const blocks = [
+      mk({ title: 'A', startMin: 9 * 60, endMin: 10 * 60 + 30 }),
+      mk({ title: 'B', startMin: 10 * 60 + 35, endMin: 12 * 60 }),
+    ]
+    const r = restInsertion(blocks, D)
+    expect(r).not.toBeNull()
+    expect(r!.kind).toBe('place')
+    expect(r!.startMin).toBe(12 * 60) // after the whole stretch
+  })
+
+  it('a day already broken by a rest gets nothing added', () => {
+    const blocks = [
+      mk({ title: 'Morning', startMin: 9 * 60, endMin: 10 * 60 + 30 }),
+      mk({ title: 'Lunch', tag: 'rest', startMin: 12 * 60, endMin: 13 * 60 }),
+      mk({ title: 'Afternoon', startMin: 13 * 60, endMin: 14 * 60 + 30 }),
+    ]
+    expect(restInsertion(blocks, D)).toBeNull()
+  })
+
+  it('a run under the cap earns nothing', () => {
+    const run = mk({ title: 'Short', startMin: 9 * 60, endMin: 10 * 60 + 15 }) // 75 min, < cap
+    expect(restInsertion([run], D)).toBeNull()
+  })
+
+  it('is idempotent — re-running after the breather lands inserts no second rest', () => {
+    const run = mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 + 30 })
+    const r = restInsertion([run], D)!
+    const breather = mk({ title: 'Breather', tag: 'rest', startMin: r.startMin, endMin: r.endMin, protected: false })
+    expect(restInsertion([run, breather], D)).toBeNull()
+  })
+
+  it('only offers (suggest) when a wall-to-wall run leaves no room without displacing work', () => {
+    // work fills the whole day to its end — no free seam at or after the run
+    const run = mk({ title: 'All day', startMin: 8 * 60, endMin: 18 * 60 + 30 })
+    const r = restInsertion([run], D)
+    expect(r).not.toBeNull()
+    expect(r!.kind).toBe('suggest')
+    expect(r!.startMin).toBe(8 * 60)
+    expect(r!.endMin).toBe(18 * 60 + 30)
+  })
+
+  it('the inserted breather is short and absorbable (≤20 min)', () => {
+    const run = mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 })
+    const r = restInsertion([run], D)!
+    expect(r.endMin - r.startMin).toBeLessThanOrEqual(20)
+    expect(r.endMin - r.startMin).toBeGreaterThanOrEqual(10)
+  })
+
+  it('a background hold over the run is transparent — it neither forms nor breaks a run', () => {
+    const blocks = [
+      mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 + 30 }),
+      mk({ title: 'Spotify', tag: 'private', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 }),
+    ]
+    const r = restInsertion(blocks, D)
+    expect(r).not.toBeNull()
+    expect(r!.kind).toBe('place') // the background hold doesn't fill the seam
+  })
+
+  it('an optional (tentative) block neither counts as the run nor blocks the seam', () => {
+    // 150-min run, then an OPTIONAL block sitting in the air after it
+    const blocks = [
+      mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 + 30 }),
+      mk({ title: 'Maybe coffee', optional: true, startMin: 11 * 60 + 30, endMin: 12 * 60 }),
+    ]
+    const r = restInsertion(blocks, D)
+    expect(r).not.toBeNull()
+    expect(r!.kind).toBe('place')
+    expect(r!.startMin).toBe(11 * 60 + 30) // the optional block is transparent to the seam
   })
 })
