@@ -1167,6 +1167,30 @@ describe('desktop self-update', () => {
     expect(desktopFake.applied).toBe(0)
     expect(chat().find((m) => m.id === offer.id)?.resolved).toBeTruthy()
   })
+
+  it('"not now" never falls through into a backup-restore', async () => {
+    /* the update arm sat above restore:accept with no break — "later" silently
+       ran readBackup + importData, wiping the live week with a stale backup.
+       Seed a backup that would inject a block; "later" must leave it untouched. */
+    const ghost = {
+      id: uid(),
+      title: 'the backup ghost — should never restore',
+      tag: 'work',
+      dayKey: dayKey(TUE(9)),
+      startMin: 9 * 60,
+      endMin: 10 * 60,
+      status: 'open',
+    }
+    desktopFake.tauri = true
+    desktopFake.backup = JSON.stringify({ blocks: [ghost], captures: [], chat: [], memory: [], settings: null })
+    await fresh(TUE(9, 40))
+    desktopFake.updateReady?.('0.2.0')
+    const offer = nudges('update')[0]
+    useMew.getState().nudgeAction(offer.id, 'later')
+    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(useMew.getState().blocks.some((b) => b.title === ghost.title)).toBe(false)
+  })
 })
 
 /* ── the attention model: background blocks, due, start-by ───────────── */

@@ -989,7 +989,7 @@ export const useMew = create<MewState>((set, get) => {
     /* editing an imported event takes ownership (detach + tombstone) so the
        change survives a re-sync */
     if (target.external) dismissExternal([target])
-    let startMin = patch.startMin ?? target.startMin
+    const startMin = patch.startMin ?? target.startMin
     let endMin = patch.endMin ?? target.endMin
     if (patch.durationMin != null) endMin = startMin + patch.durationMin
     if (patch.startMin != null && patch.endMin == null && patch.durationMin == null) {
@@ -1987,6 +1987,9 @@ export const useMew = create<MewState>((set, get) => {
           break
         }
         case 'update:later':
+          /* "later" defers the staged update — a pure dismissal, no restore, no
+             outcome stats (update is a system offer, not an engine nudge) */
+          break
         /* restore is a system offer, not an engine nudge — no outcome stats */
         case 'restore:accept': {
           void (async () => {
