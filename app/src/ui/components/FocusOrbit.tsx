@@ -361,34 +361,50 @@ export function FocusOrbit() {
         )
       })()}
 
+      {/* Hover readout — a glanceable timeslot, parked in the dial's clear lower
+          interior (below the centre stack + demote chip, above the lowest arc
+          labels) so it never sits under an event the way the old bottom strip
+          did. Calendar-tooltip hierarchy: the TIME RANGE is the hero (mono,
+          full-contrast --ink, ~14px); the title is the quiet second line. When
+          nothing's hovered the same slot carries a faint affordance, so there's
+          never a separate strip crossing the arcs. */}
       <div
-        className="dial-reveal"
+        className="pri-readout dial-reveal"
         style={{
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          bottom: 18,
-          textAlign: 'center',
+          left: OG.cx + OG.ox,
+          top: OG.cy + 112,
           opacity: dialHover ? 1 : 0,
-          pointerEvents: dialHover ? 'auto' : 'none',
+          pointerEvents: 'none',
         }}
       >
         {(() => {
           const hb = hover ? vis.find((b) => b.id === hover) : null
           if (hb) {
             const t = hb.title.split('—')[0].trim()
+            const dueOnly = isBackground(hb) && hb.due != null
+            /* crossDaySpan is the single source of truth for "spills into
+               tomorrow": continuesAfter covers BOTH stored shapes (unfolded
+               endMin>1440 and folded endMin<=startMin), and endLabelMin is the
+               true end folded into [0,24h) — so the +1d cue and the end time
+               agree no matter how the block was stored. */
             const hSpan = crossDaySpan(hb.startMin, hb.endMin)
-            const when =
-              isBackground(hb) && hb.due != null
-                ? `due ${fmtTime(hb.due)}`
-                : `${fmtTime(hb.startMin)}–${fmtTime(hb.endMin)}${hSpan.continuesAfter ? ' (+1 day)' : ''}`
             return (
-              <span className="pri-hint" style={{ color: 'var(--muted)' }}>
-                {t} · {when}
-              </span>
+              <>
+                <span className="pri-range">
+                  {dueOnly ? (
+                    <>due {fmtTime(hb.due!)}</>
+                  ) : (
+                    <>
+                      {fmtTime(hb.startMin)}<span className="dash">–</span>{fmtTime(hSpan.endLabelMin)}
+                      {hSpan.continuesAfter && <span className="xd">+1d</span>}
+                    </>
+                  )}
+                </span>
+                <span className="pri-sub">{t}</span>
+              </>
             )
           }
-          return <span className="pri-hint">click any item for its card · hover to read the day</span>
+          return <span className="pri-idle">hover any item for its time · click to open</span>
         })()}
       </div>
     </div>

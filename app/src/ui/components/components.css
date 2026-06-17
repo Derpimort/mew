@@ -229,7 +229,46 @@
   transition: opacity 0.18s ease, color 0.15s, border-color 0.15s;
 }
 .pri-demote:hover { color: var(--gold); border-color: var(--ice-bd); }
-.pri-hint { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--faint); }
+/* hover readout — fixed in the dial's clear lower interior (positioned inline by
+   FocusOrbit at the dial axis). Time range is the hero; title the quiet second
+   line. Reveal opacity is driven inline by dialHover (shares .dial-reveal). */
+.pri-readout {
+  position: absolute;
+  transform: translate(-50%, 0);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  white-space: nowrap;
+}
+.pri-range {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+.pri-range .dash { margin: 0 0.18em; color: var(--muted); }
+.pri-range .xd {
+  margin-left: 0.4em;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--gold);
+  vertical-align: 0.12em;
+}
+.pri-sub {
+  font-family: 'Hanken Grotesk', sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--muted);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pri-idle { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--faint); letter-spacing: 0.04em; }
 /* loose-threads pill — sits in the top bar beside the clock (horizontal) */
 .frail {
   display: inline-flex;
