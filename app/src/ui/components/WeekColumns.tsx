@@ -10,11 +10,20 @@ import { dayKey, fmtDow, fmtShortDate, fmtTime, minOfDay, weekKeys, addDaysKey }
 import { blocksForDay, duration } from '../../domain/week'
 import { aggregates } from '../../domain/memory'
 import { findHeavyDay } from '../../domain/nudges/engine'
-import { nxwY } from './dialGeometry'
+import { clockDeg, nxwY, rPolar, sector } from './dialGeometry'
+import { sidePlacement, type Rect } from './hoverPreview'
 import { layoutLanes } from './lanes'
 import { BlockCard } from './BlockCard'
 
 const H = 560
+
+/* Hover preview card box (must match .wk-preview in components.css so
+   sidePlacement positions the real footprint). */
+const PREVIEW_W = 196
+const PREVIEW_H = 92
+/* Mini focus-clock thumbnail: a ~52px face echoing the FocusOrbit dial. Local
+   SVG coords — the block's single arc rides one ring at its real clock angle. */
+const MC = { size: 52, cx: 26, cy: 26, r: 19, band: 5 }
 
 export function WeekColumns() {
   const blocks = useMew((s) => s.blocks)
@@ -47,23 +56,45 @@ export function WeekColumns() {
     [blocks, todayKey, agg.realisticBestH],
   )
 
-  /* hovered/clicked block details land in the footer dock — reserved space,
-     so the card can never sit on top of other blocks and steal their hover.
-     Hover swaps only after a short dwell (crossing blocks en route won't churn
-     the card); a click pins the selection until × or a background click. */
+  /* Clicking a block pins its interactive details in the footer dock — reserved
+     space, so the pinned card never sits on top of other blocks. */
   const [card, setCard] = useState<Block | null>(null)
   const [pinnedId, setPinnedId] = useState<string | null>(null)
+  /* Hover pops a read-only preview BESIDE the block (a tiny block can't show its
+     name+time inline). It's pointer-events:none and floats above the grid, so it
+     never steals hover from the blocks underneath. Swaps only after a short dwell
+     (crossing blocks en route won't churn it); a pin freezes hover. */
+  const [preview, setPreview] = useState<{ block: Block; rect: Rect } | null>(null)
   const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const hoverCard = (b: Block) => {
+  const hoverPreview = (b: Block, el: HTMLElement) => {
     if (pinnedId) return
     if (dwellTimer.current) clearTimeout(dwellTimer.current)
-    if (card && card.id !== b.id) {
-      dwellTimer.current = setTimeout(() => setCard(b), 150)
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const wr = wrap.getBoundingClientRect()
+    const br = el.getBoundingClientRect()
+    const rect: Rect = { left: br.left - wr.left, top: br.top - wr.top, width: br.width, height: br.height }
+    const next = { block: b, rect }
+    if (preview && preview.block.id !== b.id) {
+      dwellTimer.current = setTimeout(() => setPreview(next), 150)
     } else {
-      setCard(b)
+      setPreview(next)
     }
   }
+  const clearPreview = () => {
+    if (dwellTimer.current) clearTimeout(dwellTimer.current)
+    setPreview(null)
+  }
   useEffect(() => () => { if (dwellTimer.current) clearTimeout(dwellTimer.current) }, [])
+  /* a scroll moves the blocks but not the captured rect — clear so the preview
+     never strands away from its block. (A pin already clears at the click site,
+     and hover early-returns while pinned, so no preview survives a pin.) */
+  useEffect(() => {
+    if (!preview) return
+    const onScroll = () => setPreview(null)
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true })
+    return () => window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
+  }, [preview])
   const [scrubY, setScrubY] = useState<number | null>(null)
 
   const plannedH = useMemo(() => {
@@ -149,7 +180,7 @@ export function WeekColumns() {
           if (y >= 0 && y <= H) setScrubY(y)
           else setScrubY(null)
         }}
-        onMouseLeave={() => setScrubY(null)}
+        onMouseLeave={() => { setScrubY(null); clearPreview() }}
       >
         <div style={{ position: 'relative' }}>
           {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (
@@ -202,10 +233,10 @@ export function WeekColumns() {
                       width: `calc(${100 / lanes}% - ${lanes > 1 ? 6 : 8}px)`,
                       right: 'auto',
                     }}
-                    onMouseEnter={() => hoverCard(b)}
+                    onMouseEnter={(e) => hoverPreview(b, e.currentTarget)}
                     onClick={(e) => {
                       e.stopPropagation()
-                      if (dwellTimer.current) clearTimeout(dwellTimer.current)
+                      clearPreview()
                       setPinnedId(pinnedId === b.id ? null : b.id)
                       setCard(b)
                     }}
@@ -239,7 +270,42 @@ export function WeekColumns() {
         )}
       </div>
 
-      {/* the dock: details live HERE, never floating over the grid */}
+      {/* hover preview — read-only, beside the block, never over it. pointer-events
+          none keeps every block underneath hoverable (preserves the dock's old
+          invariant for a now-safe floating card). */}
+      {preview && (() => {
+        const b = preview.block
+        const place = sidePlacement(preview.rect, { width: PREVIEW_W, height: PREVIEW_H }, { width: 730, height: H })
+        const life = b.tag !== 'work'
+        const stroke = life ? 'var(--teal)' : 'var(--ice)'
+        const isNow = todayKey === b.dayKey && live.current?.id === b.id
+        // single-block arc at its real clock angle (clockDeg); a thin annular
+        // wedge (sector) between two mini-rings — no new geometry.
+        const d0 = clockDeg(b.startMin / 60)
+        const d1 = clockDeg(Math.min(b.endMin, 24 * 60) / 60)
+        const arc = sector(MC.cx, MC.cy, MC.r - MC.band, MC.r, d0, d1 <= d0 ? d0 + 2 : d1)
+        const [tx, ty] = rPolar(MC.cx, MC.cy, MC.r + 1, 0) // 12-o'clock tick
+        const state = b.protected ? ' · held' : isNow ? ' · now' : b.due != null ? ` · due ${fmtTime(b.due)}` : b.optional ? ' · optional' : ''
+        return (
+          <div
+            className={'wk-preview' + (life ? ' life' : '')}
+            style={{ left: place.x, top: place.y, width: PREVIEW_W }}
+          >
+            <svg className="wk-preview-clock" width={MC.size} height={MC.size} viewBox={`0 0 ${MC.size} ${MC.size}`}>
+              <circle cx={MC.cx} cy={MC.cy} r={MC.r} fill="none" stroke="var(--line)" strokeWidth="1.2" />
+              <circle cx={MC.cx} cy={MC.cy} r={MC.r - MC.band} fill="none" stroke="var(--line2)" strokeWidth="1" />
+              <line x1={tx} y1={ty} x2={tx} y2={ty - 3} stroke="var(--faint)" strokeWidth="1.4" />
+              <path d={arc} fill={stroke} opacity={0.9} />
+            </svg>
+            <div className="wk-preview-body">
+              <div className="wk-preview-t">{b.status === 'done' ? '✓ ' : ''}{b.title}</div>
+              <div className="wk-preview-m">{fmtTime(b.startMin)}–{fmtTime(b.endMin)}{state}</div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* the dock: pinned details live HERE on click, never floating over the grid */}
       <div className="wk-dock">
         {card ? (
           <BlockCard
@@ -253,7 +319,7 @@ export function WeekColumns() {
             }}
           />
         ) : (
-          <span className="wk-dock-hint">hover a block — its details and actions land here</span>
+          <span className="wk-dock-hint">click a block — its details and actions land here</span>
         )}
       </div>
 

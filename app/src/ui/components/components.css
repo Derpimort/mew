@@ -534,6 +534,48 @@
   z-index: 7;
   background: var(--bg);
 }
+
+/* ── hover preview (S1 material; read-only, floats BESIDE a block) ──────
+   pointer-events:none so the block underneath stays hoverable; above the grid
+   so it's never occluded. Position (left/top) is set inline by sidePlacement. */
+.wk-preview {
+  position: absolute;
+  z-index: 30;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--glass);
+  border: 1px solid var(--ice-bd);
+  border-radius: 12px;
+  box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.7);
+}
+.sys--light .wk-preview { box-shadow: 0 18px 44px -24px rgba(60, 45, 15, 0.32); }
+.wk-preview.life { border-color: var(--teal-bd); }
+.wk-preview-clock { flex: 0 0 auto; }
+.wk-preview-body { min-width: 0; }
+.wk-preview-t {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  line-height: 1.25;
+  /* full name — wrap to two lines rather than clip (a tiny block can't show it) */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wk-preview-m {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9.5px;
+  color: var(--muted);
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
 .week-summary {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10.5px;
