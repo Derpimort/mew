@@ -20,6 +20,7 @@
     "jsx": "react-jsx",
 
     /* Linting */
+    "forceConsistentCasingInFileNames": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,

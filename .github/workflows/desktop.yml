@@ -21,6 +21,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ubuntu is case-sensitive, so two paths differing only in case (e.g.
+      # markdown.ts vs Markdown.tsx) coexist here but collide on case-insensitive
+      # Windows — that's the class that broke the v0.1.7 release (#144). Catch it
+      # at PR time: fail if any tracked paths fold to the same lowercase string.
+      - name: Guard against filename case-collisions
+        run: |
+          dupes=$(git ls-files | tr '[:upper:]' '[:lower:]' | sort | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "case-colliding paths (would break case-insensitive Windows):"
+            echo "$dupes"
+            exit 1
+          fi
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
       - uses: actions/setup-node@v4
