@@ -114,6 +114,13 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
     ),
   ]
 
+  /* When the last thread clears, the box unmounts (below) but `open` lingers.
+     Reset it here — in an effect, never during render — so a later thread
+     appears collapsed and still honors the click-to-expand invariant. */
+  useEffect(() => {
+    if (!rows.length) setOpen(false)
+  }, [rows.length])
+
   if (!rows.length) return null // no threads, no chrome
 
   if (!open) {
@@ -177,7 +184,6 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
                       onClick={(e) => {
                         e.stopPropagation() // some actions set a card the stage click would clear
                         a.run()
-                        setOpen(false)
                       }}
                     >
                       {a.label}
