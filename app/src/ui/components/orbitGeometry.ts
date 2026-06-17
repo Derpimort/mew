@@ -36,6 +36,51 @@ export const LABEL_GAP = 16
 /** AM = the first half of the day; it rides the inner band. */
 export const isAM = (b: Block): boolean => b.startMin < 720
 
+export const DAY_MIN = 1440
+
+/** How a block sits relative to today's [0,1440] window once it spans midnight.
+    A 12-h face has no angle for "tomorrow", so a multi-day block is drawn only
+    for its today-segment and the carry-over is marked, not swept — the analog
+    Google/Outlook use when they clip a multi-day event per day. */
+export interface CrossDaySpan {
+  /** today-segment start in minutes (the arc's d0 maps from this) */
+  drawStart: number
+  /** today-segment end in minutes (the arc's d1 maps from this) */
+  drawEnd: number
+  /** runs past today's midnight → mark the day-end edge "continues" */
+  continuesAfter: boolean
+  /** began before today's midnight → mark the day-start edge "from yesterday" */
+  continuesFrom: boolean
+  /** real end clock-minute for a "→ 6:00" cue (endMin folded into [0,1440)) */
+  endLabelMin: number
+}
+
+/** Clip a block to today's [0,1440] window so a cross-midnight block draws as a
+    today-only wedge, never a giant wrap-around arc.
+
+    Two stored shapes both mean "spills into tomorrow": an unfolded `endMin >
+    1440` (start + a long duration, e.g. 22:00 + 8h = 1800) and a folded `endMin
+    <= startMin` (a wrapped wall-clock end, e.g. start 1320, end 360). Either way
+    we render `[startMin, 1440]` and flag `continuesAfter`. A block whose start is
+    itself before midnight (`startMin < 0`, the "started yesterday" tail) renders
+    `[0, endMin]` with `continuesFrom`. Same-day blocks (including one ending
+    exactly at 24:00) pass through unclipped with no cue. Pure: minutes in,
+    today-segment + carry flags out. */
+export function crossDaySpan(startMin: number, endMin: number): CrossDaySpan {
+  const endLabelMin = ((endMin % DAY_MIN) + DAY_MIN) % DAY_MIN
+  // tail of a block that began yesterday: draw its today head [0, endMin]
+  if (startMin < 0) {
+    return { drawStart: 0, drawEnd: Math.min(endMin, DAY_MIN), continuesAfter: false, continuesFrom: true, endLabelMin }
+  }
+  // spills past midnight, either stored shape — clip the drawn arc to day-end
+  const spills = endMin > DAY_MIN || endMin <= startMin
+  if (spills) {
+    return { drawStart: startMin, drawEnd: DAY_MIN, continuesAfter: true, continuesFrom: false, endLabelMin }
+  }
+  // same-day (24:00 end included): unclipped, no carry
+  return { drawStart: startMin, drawEnd: endMin, continuesAfter: false, continuesFrom: false, endLabelMin }
+}
+
 /** Visible set: everything on today's face — open AND done, the whole day (no
     forward clip; the AM/PM bands keep 12-hours-apart events off one radius).
     Done blocks stay as completed markers. */
@@ -93,7 +138,9 @@ export interface OrbitLabel {
     face. */
 export function resolveLabels(vis: Block[], radii: Map<string, number>): Map<string, OrbitLabel> {
   const raw = vis.map((b) => {
-    const deg = clockDeg(b.endMin / 60)
+    // anchor at the DRAWN end: a cross-midnight block's arc stops at day-end, so
+    // its callout/leader belong there too, not at the phantom next-day angle
+    const deg = clockDeg(crossDaySpan(b.startMin, b.endMin).drawEnd / 60)
     const [ex, ey] = rPolar(OG.cx, OG.cy, radii.get(b.id) ?? OG.ro, deg)
     const [lx, ly] = rPolar(OG.cx, OG.cy, LABEL_R, deg)
     const right = lx >= OG.cx

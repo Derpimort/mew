@@ -13,7 +13,7 @@ import { useMew, useLive, clockNow } from '../../state/store'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { isBackground } from '../../domain/week'
 import { clockDeg, rArc, rPolar, sector } from './dialGeometry'
-import { dayFill, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
+import { crossDaySpan, dayFill, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
@@ -153,10 +153,16 @@ export function FocusOrbit() {
           const col = isDone ? 'var(--faint)' : orbitColor(b, isF)
           const op = isDone ? 0.34 : isF ? 1 : isH ? 0.95 : 0.42
           const dueBg = isBackground(b) && b.due != null
-          /* the arc spans the block's REAL clock angles; a deadline-background
-             block runs to its due tick (the deadline is the visual end) */
-          const d0 = clockDeg(b.startMin / 60)
-          const d1 = clockDeg((dueBg ? b.due! : b.endMin) / 60)
+          /* the arc spans the block's REAL clock angles, but a block that runs
+             past midnight is clipped to today's segment — a 12-h face has no
+             angle for tomorrow, so we draw start→day-end and mark the carry
+             rather than sweeping a giant wrap-around arc. A deadline-background
+             block runs to its same-day due tick (the deadline is its end), so it
+             never clips or carries — only the real duration end can cross days. */
+          const span = crossDaySpan(b.startMin, b.endMin)
+          const carry = !dueBg && (span.continuesAfter || span.continuesFrom)
+          const d0 = clockDeg(span.drawStart / 60)
+          const d1 = clockDeg((dueBg ? b.due! : span.drawEnd) / 60)
           const [ex, ey] = rPolar(OG.cx, OG.cy, r, d1)
           const lbl = labels.get(b.id) // open blocks only; done are quiet markers
           const handlers = {
@@ -170,9 +176,13 @@ export function FocusOrbit() {
           const title = b.title.split('—')[0].trim()
           const timeNote = dueBg
             ? `due ${fmtTime(b.due!)}`
-            : isRunning(b, nowH)
-              ? `→ ${fmtTime(b.endMin)}`
-              : `@ ${fmtTime(b.startMin)}`
+            : span.continuesAfter
+              ? `→ ${fmtTime(span.endLabelMin)}` // runs into tomorrow; show its real end
+              : span.continuesFrom
+                ? `ends ${fmtTime(span.endLabelMin)}` // tail of a block that began yesterday
+                : isRunning(b, nowH)
+                  ? `→ ${fmtTime(b.endMin)}`
+                  : `@ ${fmtTime(b.startMin)}`
           return (
             <g key={b.id}>
               <path
@@ -208,6 +218,44 @@ export function FocusOrbit() {
                 className="pri-arc"
                 {...handlers}
               />
+              {/* continuation cue: a multi-day block is clipped to today, so the
+                  clipped edge wears a small chevron in the sweep direction —
+                  forward (›) when it carries into tomorrow, back (‹) when it
+                  arrived from yesterday — so the wedge reads "continues", never
+                  "ends at midnight". The "→ H:MM" follows the same hover-reveal
+                  discipline as labels; the chevron itself stays quietly on. */}
+              {carry &&
+                (() => {
+                  const edgeDeg = clockDeg((span.continuesAfter ? span.drawEnd : span.drawStart) / 60)
+                  const fwd = span.continuesAfter // forward = clockwise into tomorrow
+                  const [cxp, cyp] = rPolar(OG.cx, OG.cy, r, edgeDeg + (fwd ? 5 : -5))
+                  const [txp, typ] = rPolar(OG.cx, OG.cy, r + 13, edgeDeg + (fwd ? 7 : -7))
+                  return (
+                    <g pointerEvents="none">
+                      <text
+                        x={cxp}
+                        y={cyp}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        style={{ fill: col, fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 700 }}
+                        opacity={Math.min(op + 0.2, 1)}
+                      >
+                        {fwd ? '›' : '‹'}
+                      </text>
+                      <text
+                        className="dial-reveal"
+                        x={txp}
+                        y={typ}
+                        textAnchor="middle"
+                        dominantBaseline="central"
+                        style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}
+                        opacity={dialHover || isH || isF ? 0.85 : 0}
+                      >
+                        {fwd ? `→ ${fmtTime(span.endLabelMin)}` : `${fmtTime(span.endLabelMin)} →`}
+                      </text>
+                    </g>
+                  )
+                })()}
               {lbl && lbl.moved && (
                 <line
                   className="dial-reveal"
@@ -329,10 +377,11 @@ export function FocusOrbit() {
           const hb = hover ? vis.find((b) => b.id === hover) : null
           if (hb) {
             const t = hb.title.split('—')[0].trim()
+            const hSpan = crossDaySpan(hb.startMin, hb.endMin)
             const when =
               isBackground(hb) && hb.due != null
                 ? `due ${fmtTime(hb.due)}`
-                : `${fmtTime(hb.startMin)}–${fmtTime(hb.endMin)}`
+                : `${fmtTime(hb.startMin)}–${fmtTime(hb.endMin)}${hSpan.continuesAfter ? ' (+1 day)' : ''}`
             return (
               <span className="pri-hint" style={{ color: 'var(--muted)' }}>
                 {t} · {when}

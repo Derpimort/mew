@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../../../domain/types'
-import { dayFill, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
+import { crossDaySpan, DAY_MIN, dayFill, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
 import { clockDeg } from '../dialGeometry'
 
 const D = '2026-06-09'
@@ -146,5 +146,44 @@ describe('dayFill — two-stage day progress (inner disk, then outer band)', () 
     expect(dayFill(1440)).toEqual({ inner: 360, outer: 360 })
     expect(dayFill(-30)).toEqual({ inner: 0, outer: 0 })
     expect(dayFill(9999)).toEqual({ inner: 360, outer: 360 })
+  })
+})
+
+describe('crossDaySpan — clip a multi-day block to today, mark the carry', () => {
+  it('22:00→06:00 stored UNFOLDED (endMin 1800) clips to [1320,1440] and flags continues', () => {
+    const s = crossDaySpan(22 * 60, 30 * 60) // 1320 → 1800
+    expect(s.drawStart).toBe(22 * 60)
+    expect(s.drawEnd).toBe(DAY_MIN) // arc ends at midnight/top, not 240° around the dial
+    expect(s.continuesAfter).toBe(true)
+    expect(s.continuesFrom).toBe(false)
+    expect(s.endLabelMin).toBe(6 * 60) // the "→ 6:00" cue reads the real end
+  })
+
+  it('22:00→06:00 stored FOLDED (endMin 360 ≤ startMin) clips identically — both shapes handled', () => {
+    const s = crossDaySpan(22 * 60, 6 * 60) // 1320, 360 (wrapped)
+    expect(s.drawStart).toBe(22 * 60)
+    expect(s.drawEnd).toBe(DAY_MIN)
+    expect(s.continuesAfter).toBe(true)
+    expect(s.endLabelMin).toBe(6 * 60)
+  })
+
+  it('a block that began yesterday (startMin < 0) draws its today head [0, endMin] with a from-yesterday cue', () => {
+    const s = crossDaySpan(-2 * 60, 6 * 60) // started 22:00 yesterday, ends 06:00 today
+    expect(s.drawStart).toBe(0)
+    expect(s.drawEnd).toBe(6 * 60)
+    expect(s.continuesFrom).toBe(true)
+    expect(s.continuesAfter).toBe(false)
+  })
+
+  it('a same-day block passes through unclipped with no carry (no regression)', () => {
+    const s = crossDaySpan(9 * 60, 11 * 60)
+    expect(s).toEqual({ drawStart: 9 * 60, drawEnd: 11 * 60, continuesAfter: false, continuesFrom: false, endLabelMin: 11 * 60 })
+  })
+
+  it('a block ending exactly at 24:00 is same-day, not a cross-day wrap (boundary)', () => {
+    const s = crossDaySpan(22 * 60, DAY_MIN) // ends at midnight, no next-day portion
+    expect(s.drawEnd).toBe(DAY_MIN)
+    expect(s.continuesAfter).toBe(false)
+    expect(s.endLabelMin).toBe(0) // 24:00 folds to 0:00
   })
 })
