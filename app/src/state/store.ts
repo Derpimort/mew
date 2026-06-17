@@ -989,12 +989,20 @@ export const useMew = create<MewState>((set, get) => {
     } mentions it.`
   }
 
-  function execRemove(query: string): string {
+  function execRemove(query: string, opts: { at?: string; all?: boolean } = {}): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
-    const matches = week
-      .findAllByQuery(s.blocks, query)
-      .filter((b) => b.dayKey >= todayKey)
+    const { remove: matches, candidates } = week.resolveRemoval(s.blocks, query, opts, todayKey)
+    /* several share the title and nothing singled one out — name them with
+       their times and ask, rather than dropping a block they didn't mean */
+    if (!matches.length && candidates.length > 1) {
+      const when = (b: Block) =>
+        `the ${fmtTime(b.startMin)} (${b.dayKey === todayKey ? '' : `${fmtDowLong(b.dayKey)} `}${fmtTime(b.startMin)}–${fmtTime(b.endMin)})`
+      const list = candidates.map(when)
+      const tail = list.length === 2 ? `${list[0]} or ${list[1]}` : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
+      const base = query.split('—')[0].trim()
+      return `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`
+    }
     if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
     /* imported events CAN be removed now — tombstone them so a re-sync won't
        resurrect them; everything else just deletes */
@@ -1356,9 +1364,9 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           return execEdit(q, patch)
         },
-        remove: (q) => {
+        remove: (q, opts) => {
           acted = true
-          return execRemove(q)
+          return execRemove(q, opts)
         },
         analyze: (d) => execAnalyze(d), // read-only: not an action
         findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only

@@ -161,6 +161,13 @@ describe('anthropic tool dispatch — runTool', () => {
       { durationMin: 45 },
     ])
     expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe('Removed prod release.')
+    /* the at/all disambiguators reach the executor; bare call carries empty opts */
+    await runTool('remove_blocks', { query: 'sleep', at: '22:30' }, exec)
+    await runTool('remove_blocks', { query: 'prod release', all: true }, exec)
+    const removeCalls = (exec.remove as ReturnType<typeof vi.fn>).mock.calls
+    expect(removeCalls[0]).toEqual(['prod release', { at: undefined, all: false }])
+    expect(removeCalls[1]).toEqual(['sleep', { at: '22:30', all: false }])
+    expect(removeCalls[2]).toEqual(['prod release', { at: undefined, all: true }])
     expect(await runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
     expect(await runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
       'Slot 45m day 0 [-,1020].',

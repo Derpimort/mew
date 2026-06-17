@@ -169,11 +169,13 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'remove_blocks',
     description:
-      'Take specific blocks off the week — when the user asks to drop, remove, delete, or cancel a named block ("drop the prod release", "drop both prod release blocks"). Removes every open block matching the query and leaves everything else standing. For wiping a whole day or week, clear_blocks is the broom.',
+      'Take a specific block off the week — when the user asks to drop, remove, delete, or cancel a named one ("drop the prod release"). By default this removes the single intended block. When several blocks share that title, pass `at` (its start time) to identify which one — resolve "the larger/earlier/morning one" to a clock time from the week context you already see. Set `all:true` ONLY when the user explicitly says "both/all/every" ("drop both prod release blocks"). For wiping a whole day or week, clear_blocks is the broom.',
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: 'A few words from the block title; all open matches are removed' },
+        query: { type: 'string', description: 'A few words from the block title' },
+        at: { type: 'string', description: 'Start time of the one to remove ("22:30", "10am") — pins which when several share the title' },
+        all: { type: 'boolean', description: 'Remove every match, not just one. Default false; set true only on an explicit "both/all".' },
       },
       required: ['query'],
       additionalProperties: false,
@@ -297,8 +299,11 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
     }
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
-    case 'remove_blocks':
-      return exec.remove(String(o.query ?? ''))
+    case 'remove_blocks': {
+      const at = typeof o.at === 'string' && o.at.trim() ? o.at.trim() : undefined
+      const all = o.all === true
+      return exec.remove(String(o.query ?? ''), { at, all })
+    }
     case 'clear_blocks': {
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
       const scope = scopes.includes(o.scope as never) ? (o.scope as 'upcoming') : 'upcoming'

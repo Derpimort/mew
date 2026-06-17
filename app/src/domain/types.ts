@@ -238,10 +238,12 @@ export interface ScheduleIntent {
     due?: number
   }[]
   frees?: { dayKey: string; startMin: number; endMin: number; label: string }[]
-  /* complete / move */
+  /* complete / move / remove */
   query?: string
   toDayKey?: string
   toStartMin?: number
+  /** remove: pin which of several same-named blocks ("22:30"), or drop all */
+  remove?: { at?: string; all?: boolean }
   /* capture / chat */
   title?: string
   reply?: string

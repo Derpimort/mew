@@ -201,15 +201,27 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
     return { kind: 'edit', query: cleanTitle(rangeEdit[1]), edit: { startMin: s1, endMin: e1 } }
   }
 
-  /* targeted removal: "drop the prod release" · "remove both doc reviews" */
+  /* targeted removal: "drop the prod release" · "remove both doc reviews" ·
+     "remove the sleep block 22:30-5" (a start time pins which of several) */
   const dropM = lower.match(/^(?:drop|remove|delete|cancel|scrap)\s+(.+)$/)
   if (dropM && !/\bfree\b/.test(dropM[1])) {
+    const all = /\b(?:both|all|every|each)\b/i.test(dropM[1])
+    /* a start time pins which of several same-named blocks. Read it with the
+       same keyless clock grammar used elsewhere ("at 9", "at 9:30", "9am") and
+       a bare "22:30", then hand resolveRemoval a canonical HH:MM string so its
+       own parser (prefs.parseTimeValue) is the single authority on the value. */
+    const bare = dropM[1].match(/\b(\d{1,2}):(\d{2})\b/)
+    const atMin =
+      parseTime(dropM[1]) ??
+      (bare ? Number(bare[1]) * 60 + Number(bare[2]) : null)
+    const at = atMin != null ? `${Math.floor(atMin / 60)}:${String(atMin % 60).padStart(2, '0')}` : undefined
     const q = cleanTitle(
       stripTimeWords(dropM[1])
-        .replace(/^(?:both|all|the|my)\s+/i, '')
+        .replace(/\b\d{1,2}:\d{2}\b(?:\s*(?:-|–|to)\s*\d{1,2}(?::\d{2})?)?/g, ' ') // bare clock / range
+        .replace(/^(?:both|all|every|each|the|my)\s+/i, '')
         .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, ''),
     )
-    if (q) return { kind: 'remove', query: q }
+    if (q) return { kind: 'remove', query: q, ...(at || all ? { remove: { ...(at ? { at } : {}), ...(all ? { all: true } : {}) } } : {}) }
   }
 
   /* completions: "done with the deck", "finished the walk" */

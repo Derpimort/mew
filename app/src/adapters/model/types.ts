@@ -53,8 +53,12 @@ export interface ToolExecutor {
   /** Remove open MEW-placed blocks in scope. Done mews and external calendar
       events are never touched — positive-only, and not ours to delete. */
   clear(scope: import('../../domain/types').ClearScope): string
-  /** Remove the specific open blocks matching the query (external events survive). */
-  remove(query: string): string
+  /** Remove the specific open blocks matching the query (external events
+      survive). `at` pins which of several same-named blocks to drop (its start
+      time); `all` drops every match. With neither and more than one match, the
+      executor asks instead of guessing — a block the user didn't name is never
+      removed. */
+  remove(query: string, opts?: { at?: string; all?: boolean }): string
   /** Read-only day x-ray: dead gaps, overlong streaks, missing buffers, load. */
   analyze(dayOffset: number): string
   /** Read-only slot query: the first clear window of durationMin within the
@@ -125,6 +129,7 @@ Act on what the user asked this turn, exactly and completely — an action they 
 When one message asks for several things, count them and carry out every one; a single plan_blocks call can hold the whole list.
 To change an existing block's time, length, or title, call edit_block — editing keeps the block's identity and history.
 To take specific named blocks off the week, call remove_blocks — it removes only what matches; clear_blocks is the broom for a whole day or week.
+When several blocks share a title and the user singled one out (a time, "the longer one", "the morning one"), pass that block's start time as the remove_blocks "at" so you drop only that one; only an explicit "both/all/every" sets "all" true. With neither, removing one of several would guess — so let the executor ask which they meant rather than dropping a block they didn't name.
 Blocks live one day at a time; recurrence doesn't exist here. Say "every day" only after you have placed each day yourself.
 Interviews, calls, and meetings are fixed points — schedule around them, never over them. Plain tasks are flexible: they can shift or end early to make room, so when something has to give, move the task.
 A block can run in the background — it holds the clock, not the user (a 3h phone restore): set attention "background" and the center stays on what actually holds them; give it dueMin when the user states a hard deadline and MEW watches the latest start.

@@ -2,7 +2,7 @@
    source of truth; everything here is synchronous and side-effect free. */
 
 import type { Block, Capture, PrefPayload, Tag } from './types'
-import { flexOverride } from './prefs'
+import { flexOverride, parseTimeValue } from './prefs'
 import { addDaysKey, fmtTime, uid } from './time'
 
 /** Background holds the clock, not the user — a different axis from
@@ -456,6 +456,44 @@ export function findAllByQuery(blocks: Block[], query: string): Block[] {
     return [] // ambiguous fuzzy spread — don't silently bulk-act on a guess
   }
   return [scored[0].b]
+}
+
+export interface RemovalOpts {
+  /** A clock start time ("22:30", "10am") pinning which of several same-named
+      blocks to drop — resolved against the block's startMin, exact minute. */
+  at?: string
+  /** Remove every match, not just one — only when the user explicitly says
+      "both/all/every" ("drop both prod release blocks"). */
+  all?: boolean
+}
+
+/** Resolve which open, ahead blocks a removal actually touches — pure, so the
+    caller mutates only what was unambiguously identified. Removing a block the
+    user didn't name is silent data loss, so when several share a title and
+    nothing singles one out, this REPORTS the candidates instead of guessing
+    (caller asks). `at` pins by start minute (cross-midnight is irrelevant —
+    only the start enters the match); `all` keeps every match. */
+export function resolveRemoval(
+  blocks: Block[],
+  query: string,
+  opts: RemovalOpts,
+  todayKey: string,
+): { remove: Block[]; candidates: Block[] } {
+  const matches = findAllByQuery(blocks, query).filter((b) => b.dayKey >= todayKey)
+  if (matches.length <= 1) return { remove: matches, candidates: [] }
+
+  const at = opts.at != null ? parseTimeValue(opts.at) : null
+  if (at != null) {
+    const pinned = matches.filter((b) => b.startMin === at)
+    /* an `at` that hits nothing is a miss, not a license to drop all — report
+       the matches so the caller can ask which one they meant */
+    return pinned.length ? { remove: pinned, candidates: [] } : { remove: [], candidates: matches }
+  }
+
+  if (opts.all) return { remove: matches, candidates: [] }
+
+  /* several matches, no pin, no explicit "all" → ask, never nuke */
+  return { remove: [], candidates: matches }
 }
 
 /** All of the day's non-rest items are done → the day is clear, rest is earned. */

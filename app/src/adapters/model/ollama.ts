@@ -11,12 +11,12 @@ const INTENT_SPEC = `Decide what the user wants and respond ONLY with JSON match
 {"kind":"plan|complete|move|capture|clear|remove|edit|remember|chat",
  "places":[{"title":str,"tag":"work|private|health|rest","dayOffset":int,"startMin":int?,"durationMin":int?,"protected":bool?,"attention":"focus|background"?,"dueMin":int?}],
  "frees":[{"dayOffset":int,"startMin":int,"endMin":int}],
- "query":str?,"toDayOffset":int?,"toStartMin":int?,"title":str?,"scope":"today|tomorrow|week|upcoming"?,
+ "query":str?,"toDayOffset":int?,"toStartMin":int?,"title":str?,"scope":"today|tomorrow|week|upcoming"?,"at":str?,"all":bool?,
  "edit":{"startMin":int?,"endMin":int?,"durationMin":int?,"title":str?,"attention":"focus|background"?,"dueMin":int?}?,"reply":str?}
 kind="edit" to change an existing block's time/length/title in place ("make X 45 minutes","X should be 6:00-6:30").
 dayOffset = days from today. startMin = minutes from midnight (9:00 = 540). "thursday morning" = that weekday's offset, startMin 540, durationMin 180.
 attention="background" when it runs without the user ("in the background","while I work" — a 3h restore); dueMin when they state a hard deadline ("due by 1pm" = 780).
-kind="remove" to drop/delete/cancel specific named blocks (query = words from the title).
+kind="remove" to drop/delete/cancel a specific named block (query = words from the title). When several share that title, set "at" to the one's start time ("22:30","10am"); set "all":true only on an explicit "both/all/every".
 kind="clear" when they ask to clean up / wipe / reset the calendar or start over (scope default "upcoming").
 kind="chat" for greetings/questions/anything conversational — put your short MEW-voice answer in "reply".
 kind="capture" only for a task mentioned without a time.

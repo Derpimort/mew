@@ -301,15 +301,39 @@ describe('a seeded Tuesday morning', () => {
     expect(errand.status).toBe('open')
   })
 
-  it('"drop the prod release" removes both matching blocks and nothing else', async () => {
+  it('"drop both prod release blocks" removes both matching blocks and nothing else', async () => {
     await fresh(TUE(9, 40))
     await say('block 45m for prod release today at 2pm')
     await say('block 45m for prod release tomorrow at 10am')
     const before = useMew.getState().blocks.filter((b) => b.status === 'open').length
-    await say('drop the prod release')
+    await say('drop both prod release blocks')
     const after = useMew.getState().blocks
     expect(after.filter((b) => /prod release/i.test(b.title))).toHaveLength(0)
     expect(after.filter((b) => b.status === 'open')).toHaveLength(before - 2)
+    expect(lastMsg().body).toMatch(/^Removed — /)
+  })
+
+  it('"drop the prod release" with two matches asks which, dropping nothing', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 45m for prod release today at 2pm')
+    await say('block 45m for prod release tomorrow at 10am')
+    const before = useMew.getState().blocks.filter((b) => /prod release/i.test(b.title))
+    await say('drop the prod release')
+    const after = useMew.getState().blocks.filter((b) => /prod release/i.test(b.title))
+    expect(after).toHaveLength(before.length) // nothing dropped — a guess would be data loss
+    expect(lastMsg().body).toMatch(/2 "prod release" blocks ahead/)
+    expect(lastMsg().body).toMatch(/14:00/)
+    expect(lastMsg().body).toMatch(/10:00/)
+  })
+
+  it('a start time pins which of several same-named blocks to drop', async () => {
+    await fresh(TUE(9, 40))
+    await say('block 45m for prod release today at 2pm')
+    await say('block 45m for prod release tomorrow at 10am')
+    await say('drop the prod release at 2pm')
+    const after = useMew.getState().blocks.filter((b) => /prod release/i.test(b.title) && b.status === 'open')
+    expect(after).toHaveLength(1)
+    expect(after[0].startMin).toBe(10 * 60) // the 14:00 went; tomorrow's 10:00 stands
     expect(lastMsg().body).toMatch(/^Removed — /)
   })
 
@@ -981,9 +1005,12 @@ describe('calendar agency — chat takes over imported events', () => {
   it('deleting an imported event removes it and tombstones it', async () => {
     await fresh(TUE(10, 0))
     useMew.setState((st) => ({ blocks: [...st.blocks, ext()] }))
-    await say('delete standup')
+    // seed already holds "Team standup" at 11:30 — the start time pins the
+    // imported 9:00 one, so only it is dropped (and tombstoned)
+    await say('delete standup at 9')
     expect(useMew.getState().blocks.find((x) => x.id === 'cal-1')).toBeUndefined()
     expect(useMew.getState().settings.dismissedEvents).toContain('work@acme:ev-standup')
+    expect(useMew.getState().blocks.find((b) => /Team standup/.test(b.title))).toBeDefined()
   })
 
   it('marking an imported event done keeps it — status survives a re-sync', async () => {

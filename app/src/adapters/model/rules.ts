@@ -69,7 +69,7 @@ export function runIntent(
         ? exec.remember(intent.pref)
         : 'nothing to remember — the rule needs a subject and a value'
     case 'remove':
-      return exec.remove(intent.query ?? '')
+      return exec.remove(intent.query ?? '', intent.remove ?? {})
     case 'chat': {
       if (intent.reply) return intent.reply
       const hit = CHAT_REPLIES.find(([re]) => re.test(rawText))
@@ -134,7 +134,11 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
       toStartMin: optInt(o.toStartMin, 0, 1439),
     }
   if (kind === 'capture' && typeof o.title === 'string') return { kind, title: o.title }
-  if (kind === 'remove' && typeof o.query === 'string' && o.query.trim()) return { kind, query: o.query }
+  if (kind === 'remove' && typeof o.query === 'string' && o.query.trim()) {
+    const at = typeof o.at === 'string' && o.at.trim() ? o.at.trim() : undefined
+    const all = o.all === true
+    return { kind, query: o.query, ...(at || all ? { remove: { at, all } } : {}) }
+  }
   if (kind === 'edit' && typeof o.query === 'string') {
     const e = (o.edit && typeof o.edit === 'object' ? o.edit : {}) as Record<string, unknown>
     const edit: NonNullable<ScheduleIntent['edit']> = {}

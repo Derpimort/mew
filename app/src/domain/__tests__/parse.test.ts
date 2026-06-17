@@ -117,12 +117,29 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
       expect(parseCommand('drop the prod release', NOW)).toMatchObject({ kind: 'remove', query: 'prod release' })
     })
 
-    it('"remove both doc review blocks" strips the plural scaffolding', () => {
-      expect(parseCommand('remove both doc review blocks', NOW)).toMatchObject({ kind: 'remove', query: 'doc review' })
+    it('"remove both doc review blocks" strips the scaffolding and flags all', () => {
+      expect(parseCommand('remove both doc review blocks', NOW)).toMatchObject({
+        kind: 'remove',
+        query: 'doc review',
+        remove: { all: true },
+      })
     })
 
     it('"cancel gym tomorrow" stays a removal, with time words stripped', () => {
       expect(parseCommand('cancel gym tomorrow', NOW)).toMatchObject({ kind: 'remove', query: 'gym' })
+    })
+
+    it('a start time pins which one and stays out of the title (#105)', () => {
+      const out = parseCommand('remove the sleep block 22:30-5', NOW)
+      expect(out).toMatchObject({ kind: 'remove', query: 'sleep', remove: { at: '22:30' } })
+      expect(out.query).not.toMatch(/22:30|:/) // the clock never leaks into the title
+      expect(out.remove?.all).toBeFalsy() // a single pin is not "all"
+    })
+
+    it('a bare "drop the prod release" carries no opts — the executor will ask', () => {
+      const out = parseCommand('drop the prod release', NOW)
+      expect(out).toMatchObject({ kind: 'remove', query: 'prod release' })
+      expect(out.remove).toBeUndefined()
     })
   })
 })

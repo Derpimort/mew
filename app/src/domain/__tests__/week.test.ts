@@ -18,6 +18,7 @@ import {
   looseThreads,
   place,
   plannedDeepMin,
+  resolveRemoval,
   roll,
   rollup,
 } from '../week'
@@ -162,6 +163,58 @@ describe('week model', () => {
 
     it('no false positive — an unrelated query finds nothing', () => {
       expect(findByQuery([mgmt], 'dentist appointment', D)).toBeUndefined()
+    })
+  })
+
+  describe('resolveRemoval — drop the named one, never a guess (#105)', () => {
+    // two same-titled sleep blocks: the long night one and the short morning one
+    const night = mk({ title: 'Sleep', tag: 'rest', startMin: 22 * 60 + 30, endMin: 5 * 60 })
+    const morning = mk({ title: 'Sleep', tag: 'rest', startMin: 6 * 60 + 45, endMin: 8 * 60 })
+
+    it('a start-time pin drops only that instance, leaving the other (the repro)', () => {
+      const { remove, candidates } = resolveRemoval([night, morning], 'sleep', { at: '22:30' }, D)
+      expect(remove.map((b) => b.id)).toEqual([night.id])
+      expect(candidates).toEqual([])
+    })
+
+    it('reuses the am-pm clock parser, not just HH:MM', () => {
+      const { remove } = resolveRemoval([night, morning], 'sleep', { at: '6:45am' }, D)
+      expect(remove.map((b) => b.id)).toEqual([morning.id])
+    })
+
+    it('all:true keeps every match — "drop both" still works', () => {
+      const { remove, candidates } = resolveRemoval([night, morning], 'sleep', { all: true }, D)
+      expect(remove.map((b) => b.id).sort()).toEqual([night.id, morning.id].sort())
+      expect(candidates).toEqual([])
+    })
+
+    it('exactly one match removes it with no opts — single-block behavior unchanged', () => {
+      const { remove, candidates } = resolveRemoval([night], 'sleep', {}, D)
+      expect(remove.map((b) => b.id)).toEqual([night.id])
+      expect(candidates).toEqual([])
+    })
+
+    it('several matches, no pin and no all → removes nothing, reports candidates', () => {
+      const { remove, candidates } = resolveRemoval([night, morning], 'sleep', {}, D)
+      expect(remove).toEqual([])
+      expect(candidates.map((b) => b.id).sort()).toEqual([night.id, morning.id].sort())
+    })
+
+    it('an at that matches nothing reports candidates, never drops all', () => {
+      const { remove, candidates } = resolveRemoval([night, morning], 'sleep', { at: '13:00' }, D)
+      expect(remove).toEqual([]) // a missed pin is a miss, not a license to nuke
+      expect(candidates.map((b) => b.id).sort()).toEqual([night.id, morning.id].sort())
+    })
+
+    it('only counts open, ahead blocks — past days and the resolution stay in one place', () => {
+      const past = mk({ title: 'Sleep', tag: 'rest', dayKey: '2026-06-08', startMin: 22 * 60 + 30, endMin: 5 * 60 })
+      // the past instance is filtered out, so today's single match removes cleanly
+      const { remove } = resolveRemoval([past, morning], 'sleep', {}, D)
+      expect(remove.map((b) => b.id)).toEqual([morning.id])
+    })
+
+    it('no match at all → nothing to remove, nothing to ask', () => {
+      expect(resolveRemoval([night], 'dentist', {}, D)).toEqual({ remove: [], candidates: [] })
     })
   })
 
