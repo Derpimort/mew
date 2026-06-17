@@ -152,6 +152,14 @@
 }
 
 /* session column under the stage */
+/* the scroller's positioning context — the "↓ new" pill floats over it */
+.session-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .session-scroll {
   flex: 1;
   padding: 14px 20px;
@@ -161,7 +169,59 @@
   gap: 12px;
   overflow-y: auto;
   justify-content: flex-start;
+  scroll-behavior: smooth;
 }
+/* "↓ new" — appears only when the user has scrolled up while output streams;
+   one tap returns to the live bottom and resumes the stick. */
+.scroll-new {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--ice);
+  background: var(--ice-soft);
+  border: 1px solid var(--ice-bd);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.scroll-new:hover { transform: translateX(-50%) translateY(-1px); }
+
+/* MEW's turn-in-flight row: the 3-dot typing pulse + a short working label */
+.mew-thinking {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mew-thinking .typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 11px;
+  margin-left: 1px;
+}
+.mew-thinking .typing .dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--gold);
+  animation: mewTyping 1.2s ease-in-out infinite;
+}
+.mew-thinking .typing .dot:nth-child(2) { animation-delay: 0.18s; }
+.mew-thinking .typing .dot:nth-child(3) { animation-delay: 0.36s; }
+.mew-thinking .working { color: var(--muted); margin-left: 4px; }
+@media (prefers-reduced-motion: reduce) {
+  .mew-thinking .typing .dot { animation-duration: 2.4s; }
+}
+
 .session-compose { padding: 0 16px 16px; flex: none; }
 
 /* ── focus orbit (lanes — DESIGN_LANGUAGE §3 FINAL) ───────────── */

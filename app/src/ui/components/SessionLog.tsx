@@ -1,9 +1,9 @@
 /* The session — `mew session — tty1` (DESIGN_LANGUAGE §4). The chat thread as
    a terminal log: you ❯ / mew ❯ lines, ★ mews, ✓ confirmations, nudges as
-   steel cards with machined buttons, a prompt with a blinking cursor.
+   steel cards with machined buttons, a composer that follows your typing.
    Same store, same nudge engine — only the skin changed. */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { useMew, useLive } from '../../state/store'
 import { Markdown } from './Markdown'
@@ -11,24 +11,57 @@ import type { ChatMessage } from '../../domain/types'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
 import { blocksForDay } from '../../domain/week'
 
+/** How close to the bottom (px) still counts as "stuck to the bottom" — within
+    this band new output auto-scrolls; scroll up past it and MEW stops yanking. */
+const STICK_THRESHOLD = 80
+
 export function SessionLog() {
   const chat = useMew((s) => s.chat)
   const thinking = useMew((s) => s.thinking)
+  const workingStatus = useMew((s) => s.workingStatus)
   const scrollToMsgId = useMew((s) => s.scrollToMsgId)
   const clearScroll = useMew((s) => s.clearScroll)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  /* sticky-bottom state: are we pinned to the latest line, or has the user
+     scrolled up to read history? `atBottom` drives both the auto-scroll and
+     the "↓ new" affordance. A ref mirrors it so the chat-growth effect reads
+     the live value without re-subscribing. */
+  const [atBottom, setAtBottom] = useState(true)
+  const atBottomRef = useRef(true)
 
+  const isNearBottom = (el: HTMLDivElement) =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_THRESHOLD
+
+  const stickToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior })
+    atBottomRef.current = true
+    setAtBottom(true)
+  }, [])
+
+  const onScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const near = isNearBottom(el)
+    atBottomRef.current = near
+    setAtBottom(near)
+  }, [])
+
+  /* an explicit jump (a nudge clicked elsewhere) always wins; otherwise new
+     output only follows when we're already at the bottom — reading history
+     mid-stream is never interrupted. */
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
     if (scrollToMsgId) {
       el.querySelector(`[data-msg="${scrollToMsgId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       clearScroll()
-    } else {
+    } else if (atBottomRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [chat.length, thinking, scrollToMsgId, clearScroll])
+  }, [chat, thinking, workingStatus, scrollToMsgId, clearScroll])
 
   /* ⌘K / Ctrl+K focuses the prompt */
   useEffect(() => {
@@ -55,31 +88,52 @@ export function SessionLog() {
           <kbd>⌘K</kbd>
         </span>
       </div>
-      <div className="session-scroll" ref={scrollRef}>
-        <DayHeader />
-        <div className="log" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {chat.map((m) => (
-            /* each line lands like terminal output: blur-up entrance, once */
-            <motion.div
-              key={m.id}
-              initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
-              animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-              transition={{ duration: 0.25, ease: 'easeOut' }}
-            >
-              <LogLine msg={m} />
-            </motion.div>
-          ))}
-          {thinking && (
-            <div>
-              <span className="p-mew">mew</span> <span className="p-arr">❯</span> <span className="blink" style={{ height: 11, width: 6 }} />
-            </div>
-          )}
+      <div className="session-wrap">
+        <div className="session-scroll" ref={scrollRef} onScroll={onScroll}>
+          <DayHeader />
+          <div className="log" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {chat.map((m) => (
+              /* each line lands like terminal output: blur-up entrance, once */
+              <motion.div
+                key={m.id}
+                initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
+                animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                transition={{ duration: 0.25, ease: 'easeOut' }}
+              >
+                <LogLine msg={m} />
+              </motion.div>
+            ))}
+            {thinking && <ThinkingRow status={workingStatus} />}
+          </div>
         </div>
+        {!atBottom && (
+          <button type="button" className="scroll-new" onClick={() => stickToBottom('smooth')}>
+            ↓ new
+          </button>
+        )}
       </div>
       <div className="session-compose">
         <Prompt inputRef={inputRef} />
       </div>
     </>
+  )
+}
+
+/* MEW's turn-in-flight line. Until tokens stream, a tasteful 3-dot pulse is the
+   "typing" signal; a short working-status label (set by the executors) rides
+   alongside it. aria-live lets a screen reader announce both. Once tokens land
+   the reply text itself takes over and this row disappears. */
+function ThinkingRow({ status }: { status: string | null }) {
+  return (
+    <div className="mew-thinking" aria-live="polite">
+      <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
+      <span className="typing" aria-label="mew is typing" role="status">
+        <span className="dot" />
+        <span className="dot" />
+        <span className="dot" />
+      </span>
+      {status && <span className="working">{status}</span>}
+    </div>
   )
 }
 
@@ -163,10 +217,13 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
   /* draft lives in the store so a Focus/Week/Settings switch doesn't drop it */
   const text = useMew((s) => s.promptDraft)
   const setText = useMew((s) => s.setPromptDraft)
-  const [focused, setFocused] = useState(false)
+  /* mid-composition (IME / dead keys): Enter is committing a character, not
+     sending — never submit while a composition is open. */
+  const composing = useRef(false)
 
   /* auto-grow: the box follows the content up to ~6 comfortable rows, then
-     scrolls internally — multi-line asks stop fighting a single-line slit */
+     scrolls internally — multi-line asks (and pastes) stop fighting a
+     single-line slit. Runs after every value change, paste included. */
   useLayoutEffect(() => {
     const el = inputRef.current
     if (!el) return
@@ -188,19 +245,22 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
           ref={inputRef}
           value={text}
           rows={1}
+          disabled={thinking}
           onChange={(e) => setText(e.target.value)}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onCompositionStart={() => (composing.current = true)}
+          onCompositionEnd={() => (composing.current = false)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            /* Enter sends; Shift+Enter keeps the newline. `isComposing` (plus
+               our own ref, for engines that fire keydown before the flag) guards
+               the IME path so committing a glyph never fires the turn. */
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !composing.current) {
               e.preventDefault()
               submit()
             }
           }}
           aria-label="talk to MEW"
-          placeholder={focused || text ? '' : undefined}
+          placeholder="talk to MEW…"
         />
-        {!focused && !text && <span className="blink" />}
       </div>
       <div className="prompt-hints">
         <span className="hint">

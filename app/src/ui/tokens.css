@@ -177,14 +177,17 @@ body,
     transform: translateX(-50%) translateY(-7px) scale(1.012);
   }
 }
-@keyframes devBlink {
+/* the typing pulse — three dots breathe in sequence while MEW is mid-turn */
+@keyframes mewTyping {
   0%,
-  49% {
-    opacity: 1;
-  }
-  50%,
+  60%,
   100% {
-    opacity: 0;
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
   }
 }
 

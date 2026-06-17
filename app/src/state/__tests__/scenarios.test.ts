@@ -1702,3 +1702,63 @@ describe('nudges defer until the turn completes', () => {
     expect(useMew.getState().queuedNudges).toHaveLength(0)
   })
 })
+
+/* #118 — the live working status: each tool sets a short, positive label while
+   MEW is mid-turn; speak's finally clears it so the composer is never left
+   showing a stale "doing…". */
+
+describe('the working-status label tracks the turn', () => {
+  const deckToday = () =>
+    useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+  const working = () => useMew.getState().workingStatus
+
+  it('is null at rest, set while a tool runs, and cleared once the turn ends', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' }) // route through the scripted adapter
+    expect(working()).toBe(null) // nothing in flight
+
+    const target = deckToday()
+    let midTurnLabel: string | null = '<unset>'
+    scriptedModel.chunks = ['On it — ', 'marked done.']
+    scriptedModel.midTurn = (exec) => {
+      exec.complete(target.title) // the executor sets the live label
+      midTurnLabel = working()
+    }
+    await say('finish the deck')
+
+    expect(midTurnLabel).toBe('marking it done…') // shown while the tool ran
+    expect(working()).toBe(null) // cleared in speak's finally
+  })
+
+  it('shows the latest tool in a multi-step turn (last label wins)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const target = deckToday()
+    const labels: (string | null)[] = []
+    scriptedModel.chunks = ['Working… ', 'all set.']
+    scriptedModel.midTurn = (exec) => {
+      exec.capture('a stray thought')
+      labels.push(working())
+      exec.complete(target.title)
+      labels.push(working())
+    }
+    await say('jot a thought then finish the deck')
+
+    expect(labels).toEqual(['jotting it down…', 'marking it done…'])
+    expect(working()).toBe(null)
+  })
+
+  it('stays null through a chat-only turn (no tool fired)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    let midTurnLabel: string | null = '<unset>'
+    scriptedModel.chunks = ['Hey — ', 'what should the week hold?']
+    scriptedModel.midTurn = () => {
+      midTurnLabel = working() // no executor ran, so no label was set
+    }
+    await say('hi')
+
+    expect(midTurnLabel).toBe(null)
+    expect(working()).toBe(null)
+  })
+})

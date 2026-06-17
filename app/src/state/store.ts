@@ -149,6 +149,10 @@ export interface MewState {
   scrollToMsgId: string | null
   celebratePulse: number
   thinking: boolean
+  /** Non-persisted: a short, positive label for what MEW is doing this turn
+      ("placing blocks…", "checking your week…"). Set by the executors as each
+      tool fires, rendered by the thinking row, cleared in speak's finally. */
+  workingStatus: string | null
   /** Draft prompt text — held in the store so it survives a screen switch
       (Focus/Week/Settings unmount the composer, which would drop local state). */
   promptDraft: string
@@ -181,6 +185,9 @@ export interface MewState {
   setPage(page: 'week' | 'settings'): void
   setView(view: 'focus' | 'week'): void
   setPromptDraft(text: string): void
+  /** Set the live working label for the current turn (null clears it). The
+      executors call this; the thinking row reads it. Non-persisted. */
+  setWorking(label: string | null): void
   setWeekOffset(offset: number): void
   /** Pull a block to start at the current minute (detail-card "Start now"). */
   startNow(blockId: string): void
@@ -1261,6 +1268,7 @@ export const useMew = create<MewState>((set, get) => {
     scrollToMsgId: null,
     celebratePulse: 0,
     thinking: false,
+    workingStatus: null,
     promptDraft: '',
 
     engine: { lastFired: {}, lastDriftBlockId: null },
@@ -1410,41 +1418,64 @@ export const useMew = create<MewState>((set, get) => {
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
 
       let acted = false // once the week mutated, never re-run the message through a fallback
+      /* one short, positive label per tool — what MEW is doing right now. The
+         thinking row shows it while `thinking`; speak's finally clears it. */
+      const working = (label: string) => set({ workingStatus: label })
       const exec: ToolExecutor = {
         plan: (places, frees) => {
           acted = true
+          working('placing blocks…')
           return execPlan(places, frees)
         },
         complete: (q) => {
           acted = true
+          working('marking it done…')
           return execComplete(q)
         },
         move: (q, d, t) => {
           acted = true
+          working('moving it…')
           return execMove(q, d, t)
         },
         capture: (t) => {
           acted = true
+          working('jotting it down…')
           return execCapture(t)
         },
         clear: (scope) => {
           acted = true
+          working('clearing the time…')
           return execClear(scope)
         },
         edit: (q, patch) => {
           acted = true
+          working('reshaping it…')
           return execEdit(q, patch)
         },
         remove: (q, opts) => {
           acted = true
+          working('taking it off…')
           return execRemove(q, opts)
         },
-        analyze: (d) => execAnalyze(d), // read-only: not an action
-        findSlot: (dur, d, nb, na) => execFindSlot(dur, d, nb, na), // read-only
-        suggestSlots: (t, tag, dur, due, win) => execSuggestSlots(t, tag, dur, due, win), // read-only
-        queryBrain: (q) => execQueryBrain(q), // read-only
+        analyze: (d) => {
+          working('reading your week…')
+          return execAnalyze(d) // read-only: not an action
+        },
+        findSlot: (dur, d, nb, na) => {
+          working('finding a slot…')
+          return execFindSlot(dur, d, nb, na) // read-only
+        },
+        suggestSlots: (t, tag, dur, due, win) => {
+          working('finding a slot…')
+          return execSuggestSlots(t, tag, dur, due, win) // read-only
+        },
+        queryBrain: (q) => {
+          working('checking what I know…')
+          return execQueryBrain(q) // read-only
+        },
         remember: (pref) => {
           acted = true
+          working('remembering that…')
           return execRemember(pref)
         },
       }
@@ -1533,7 +1564,7 @@ export const useMew = create<MewState>((set, get) => {
            parked nudges so nothing fired mid-stream is lost (#115). Order
            matters — flushPendingNudges posts straight to chat only with the
            gate already down. */
-        set({ thinking: false })
+        set({ thinking: false, workingStatus: null })
         turnInFlight = false
         flushPendingNudges()
       }
@@ -1994,6 +2025,9 @@ export const useMew = create<MewState>((set, get) => {
     setPromptDraft(text) {
       set({ promptDraft: text })
     },
+    setWorking(label) {
+      set({ workingStatus: label })
+    },
     setWeekOffset(offset) {
       set({ weekOffset: offset, focusedDayKey: null })
     },
@@ -2384,6 +2418,9 @@ declare global {
     __mewConfigure?: (patch: Partial<Settings>) => void
     /** Dev/scenario helper: push a mew reply into the log (visual/markdown proofs). */
     __mewSay?: (body: string, role?: ChatMessage['role']) => void
+    /** Dev/scenario helper: drive the turn-in-flight UI (typing-indicator /
+        working-status visual proofs) without a live model. */
+    __mewSetTurn?: (thinking: boolean, workingStatus?: string | null) => void
   }
 }
 if (typeof window !== 'undefined') {
@@ -2396,5 +2433,8 @@ if (typeof window !== 'undefined') {
   }
   window.__mewSay = (body, role = 'mew') => {
     useMew.setState((s) => ({ chat: [...s.chat, { id: uid(), role, body, ts: Date.now() }] }))
+  }
+  window.__mewSetTurn = (thinking, workingStatus = null) => {
+    useMew.setState({ thinking, workingStatus })
   }
 }
