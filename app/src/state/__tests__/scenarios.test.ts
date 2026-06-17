@@ -183,8 +183,11 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
    scenarios opt in via modelLocation:'local'. */
 const scriptedModel = {
   chunks: [] as string[],
-  /** runs between the first and last chunk — fire executors, snapshot state */
-  midTurn: null as null | ((exec: import('../../adapters/model').ToolExecutor) => void),
+  /** runs between the first and last chunk — fire executors, snapshot state.
+      Gets the turn's abort signal too, so a test can press stop mid-stream. */
+  midTurn: null as
+    | null
+    | ((exec: import('../../adapters/model').ToolExecutor, signal?: AbortSignal) => void),
   throwAfter: false, // simulate a connection hiccup once the tool has acted
   reset() {
     this.chunks = []
@@ -199,10 +202,14 @@ vi.mock('../../adapters/model/ollama', () => ({
       _thread: unknown,
       _ctx: unknown,
       exec: import('../../adapters/model').ToolExecutor,
+      signal?: AbortSignal,
     ) {
       const [first, ...rest] = scriptedModel.chunks
       if (first) yield first
-      scriptedModel.midTurn?.(exec)
+      scriptedModel.midTurn?.(exec, signal)
+      /* a real stream rejects with an AbortError once the user stops; model the
+         same so the store's signal.aborted branch is exercised end-to-end */
+      if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
       if (scriptedModel.throwAfter) throw new Error('connection hiccup')
       for (const c of rest) yield c
     },
@@ -1760,5 +1767,91 @@ describe('the working-status label tracks the turn', () => {
 
     expect(midTurnLabel).toBe(null)
     expect(working()).toBe(null)
+  })
+})
+
+/* #117 — cancellable turns: a stop control aborts the in-flight turn. The abort
+   reaches the adapter's stream; the turn ends within a beat, the partial reply
+   stays, committed actions stay, and nothing replays through the rules floor. */
+
+describe('a turn can be stopped mid-stream', () => {
+  const deckToday = () =>
+    useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+
+  it('stops cleanly: keeps the partial, clears turn state, fires no fallback', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    /* the model streams the first part, then the user presses stop before the
+       rest — the partial that already landed must stay */
+    scriptedModel.chunks = ['Working on it — ', 'here is the rest.']
+    scriptedModel.midTurn = () => useMew.getState().stopSpeaking()
+    await say('plan my afternoon')
+
+    const partial = chat().find((m) => m.role === 'mew' && m.body.includes('Working on it'))
+    expect(partial).toBeDefined() // the streamed partial is kept
+    expect(partial!.body).not.toContain('here is the rest') // … only what arrived before stop
+    // a kind, positive stop note — not a failure, not a "say continue"
+    expect(lastMsg().body).toMatch(/stopped — what's above stands/i)
+    // never the rules-fallback apology (#116): an abort is not a model failure
+    expect(chat().some((m) => /handled it myself|connection hiccuped/i.test(m.body))).toBe(false)
+    // turn state is fully cleared
+    expect(useMew.getState().thinking).toBe(false)
+    expect(useMew.getState().workingStatus).toBe(null)
+  })
+
+  it('keeps actions committed before the stop — no rollback', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const target = deckToday()
+    /* the tool fires (the week mutates), then the user stops mid-turn */
+    scriptedModel.chunks = ['On it — ', 'and more.']
+    scriptedModel.midTurn = (exec) => {
+      exec.complete(target.title)
+      useMew.getState().stopSpeaking()
+    }
+    await say('finish the deck and tidy the rest')
+
+    // the completion that already committed stays done (honest: tools are the
+    // only way the week changes, and a stop never rolls one back)
+    const after = useMew.getState().blocks.find((b) => b.id === target.id)!
+    expect(after.status).toBe('done')
+    // the stop note posted; a parked reflection nudge (#115) may flush after it,
+    // so assert presence, not that it's the very last line
+    expect(chat().some((m) => /stopped — what's above stands/i.test(m.body))).toBe(true)
+    expect(chat().some((m) => /handled it myself|connection hiccuped/i.test(m.body))).toBe(false)
+  })
+
+  it('threads the abort signal into the adapter', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    let sawSignal = false
+    let abortedInTurn = false
+    scriptedModel.chunks = ['Thinking… ', 'done.']
+    scriptedModel.midTurn = (_exec, signal) => {
+      sawSignal = signal instanceof AbortSignal
+      useMew.getState().stopSpeaking()
+      abortedInTurn = signal?.aborted ?? false
+    }
+    await say('what should I do next')
+
+    expect(sawSignal).toBe(true) // the store passes a real signal through
+    expect(abortedInTurn).toBe(true) // stopSpeaking() aborts the live turn's signal
+  })
+
+  it('a fresh turn after a stop is not aborted by the prior stop', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    // turn 1: stopped mid-stream
+    scriptedModel.chunks = ['First — ', 'tail.']
+    scriptedModel.midTurn = () => useMew.getState().stopSpeaking()
+    await say('start something')
+    expect(lastMsg().body).toMatch(/stopped — what's above stands/i)
+
+    // turn 2: runs to completion — the cleared handle must not abort it
+    scriptedModel.chunks = ['Second turn — ', 'all done.']
+    scriptedModel.midTurn = null
+    await say('now finish it')
+    expect(lastMsg().body).toContain('all done')
+    expect(useMew.getState().thinking).toBe(false)
   })
 })

@@ -382,6 +382,8 @@
 .prompt-hints .hint.dim { opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .prompt-hints .spacer { flex: 1; }
 .prompt-hints .mewing { color: var(--ice); font-weight: 700; }
+/* the live-turn footer: "mewing…" beside its ■ stop control (#117) */
+.prompt-hints .mewing-row { display: inline-flex; align-items: center; gap: 10px; }
 .prompt-hints .send {
   font-family: inherit;
   white-space: nowrap;

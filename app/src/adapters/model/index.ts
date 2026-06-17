@@ -19,8 +19,8 @@ function createLazyAnthropic(apiKey: string, model: string): ModelPort {
   }
   return {
     id: 'anthropic',
-    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor) {
-      yield* (await get()).converse(thread, ctx, exec)
+    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
+      yield* (await get()).converse(thread, ctx, exec, signal)
     },
   }
 }

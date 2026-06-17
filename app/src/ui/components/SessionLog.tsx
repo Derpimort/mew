@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { motion } from 'motion/react'
 import { useMew, useLive } from '../../state/store'
+import { Button } from '../primitives/Button'
 import { Markdown } from './Markdown'
 import type { ChatMessage } from '../../domain/types'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
@@ -213,6 +214,7 @@ function LogLine({ msg }: { msg: ChatMessage }) {
 
 function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | null> }) {
   const speak = useMew((s) => s.speak)
+  const stopSpeaking = useMew((s) => s.stopSpeaking)
   const thinking = useMew((s) => s.thinking)
   /* draft lives in the store so a Focus/Week/Settings switch doesn't drop it */
   const text = useMew((s) => s.promptDraft)
@@ -257,6 +259,11 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
               e.preventDefault()
               submit()
             }
+            /* Esc while mewing stops the turn — the keyboard twin of the ■ button (#117) */
+            if (e.key === 'Escape' && thinking) {
+              e.preventDefault()
+              stopSpeaking()
+            }
           }}
           aria-label="talk to MEW"
           placeholder="talk to MEW…"
@@ -269,7 +276,13 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
         <span className="hint dim">"block thursday morning for the deck"</span>
         <span className="spacer" />
         {thinking ? (
-          <span className="hint mewing">mewing…</span>
+          <span className="mewing-row">
+            <span className="hint mewing">mewing…</span>
+            {/* the kill switch while a turn runs; Esc does the same (#117) */}
+            <Button variant="chip" size="sm" onClick={stopSpeaking} aria-label="stop">
+              ■ stop
+            </Button>
+          </span>
         ) : (
           <button
             type="button"

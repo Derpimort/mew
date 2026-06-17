@@ -176,6 +176,11 @@ export interface MewState {
   activity(): void
   interruption(): void
   speak(text: string): Promise<void>
+  /** Stop the in-flight turn (the composer's ■ / Esc). Aborts the live
+      stream/fetch and clears the turn state; whatever already streamed or
+      committed stays — an abort is the user's call, never a rollback, and
+      never replayed through a fallback. No-op when nothing is mewing. */
+  stopSpeaking(): void
   /** Read-only history answer: real sums from the live week + brain recall
       color. Never mutates — chat is where the reply lands, via the tool. */
   queryBrain(question: string): Promise<string>
@@ -882,6 +887,11 @@ export const useMew = create<MewState>((set, get) => {
      but the turn keeps mutating after that, so an executor firing post-stream
      must still defer. Idle ticks/timers leave it false and post at once. */
   let turnInFlight = false
+  /* the live turn's cancel handle (#117): speak owns it for the turn, the
+     composer's stopSpeaking() aborts it. The adapter wires .signal into its
+     stream/fetch, so an abort ends the turn within a beat. Cleared in speak's
+     finally — a stale controller must never abort the next turn. */
+  let turnAbort: AbortController | null = null
   let pendingNudgeQueue: NudgeInstance[] = []
   function execComplete(query: string): string {
     const s = get()
@@ -1416,6 +1426,10 @@ export const useMew = create<MewState>((set, get) => {
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
+      /* fresh cancel handle for this turn; .signal rides into the adapter so a
+         user 'stop' aborts the live stream/fetch (#117) */
+      const abort = new AbortController()
+      turnAbort = abort
 
       let acted = false // once the week mutated, never re-run the message through a fallback
       /* one short, positive label per tool — what MEW is doing right now. The
@@ -1513,7 +1527,7 @@ export const useMew = create<MewState>((set, get) => {
             }
           }
           try {
-            for await (const chunk of adapter.converse(thread, ctx, exec)) {
+            for await (const chunk of adapter.converse(thread, ctx, exec, abort.signal)) {
               if (!chunk) continue
               buffer += chunk
               flush()
@@ -1551,6 +1565,14 @@ export const useMew = create<MewState>((set, get) => {
               }
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
+            if (abort.signal.aborted) {
+              /* the user pressed stop — a clean end, not a failure. Whatever
+                 streamed or committed stays; never retry, never fall to the
+                 rules floor (#117). The signal is the truth here, not the error
+                 type, so a stop reads the same however the stream rejected. */
+              post([mewMsg(`(stopped — what's above stands.)`)])
+              return
+            }
             if (acted || buffer.trim()) {
               /* the week already changed (or MEW already spoke) — finish honestly, don't replay */
               post([mewMsg(`(The connection hiccuped mid-thought — everything above did go through.)`)])
@@ -1560,14 +1582,24 @@ export const useMew = create<MewState>((set, get) => {
           }
         }
       } finally {
-        /* the turn is over (success or hiccup): flip the gate, then drain the
-           parked nudges so nothing fired mid-stream is lost (#115). Order
+        /* the turn is over (success, hiccup, or stop): flip the gate, then drain
+           the parked nudges so nothing fired mid-stream is lost (#115). Order
            matters — flushPendingNudges posts straight to chat only with the
-           gate already down. */
+           gate already down. Drop this turn's cancel handle so a later
+           stopSpeaking() can't abort the next turn (#117). */
         set({ thinking: false, workingStatus: null })
         turnInFlight = false
+        if (turnAbort === abort) turnAbort = null
         flushPendingNudges()
       }
+    },
+
+    stopSpeaking() {
+      /* abort the live turn; speak's catch sees signal.aborted, keeps whatever
+         streamed or committed, and ends cleanly without a fallback. No turn in
+         flight → nothing to stop. The finally clears turnAbort, so a second
+         press is a harmless no-op. */
+      turnAbort?.abort()
     },
 
     toggleComplete(blockId: string) {

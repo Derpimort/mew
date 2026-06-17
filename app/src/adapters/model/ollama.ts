@@ -29,7 +29,7 @@ export function createOllamaAdapter(baseUrl: string, model: string): ModelPort {
      local server reloading a model 503s, the socket flakes. The HTTP error
      carries `.status` so the shared classifier retries 5xx but not a 4xx, and
      a JSON parse of a 200 body is a logic failure, never retried. */
-  async function chatOnce(system: string, turns: ChatTurn[]): Promise<string> {
+  async function chatOnce(system: string, turns: ChatTurn[], signal?: AbortSignal): Promise<string> {
     return withRetry(async () => {
       const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
         method: 'POST',
@@ -43,6 +43,10 @@ export function createOllamaAdapter(baseUrl: string, model: string): ModelPort {
             ...turns.slice(-8).map((t) => ({ role: t.role, content: t.text })),
           ],
         }),
+        /* the user's stop aborts the in-flight request; fetch rejects with an
+           AbortError, which the store reads as a clean stop (never a failure →
+           never the rules fallback). */
+        signal,
       })
       if (!res.ok) throw Object.assign(new Error(`ollama ${res.status}`), { status: res.status })
       const data = (await res.json()) as { message?: { content?: string } }
@@ -53,10 +57,11 @@ export function createOllamaAdapter(baseUrl: string, model: string): ModelPort {
   return {
     id: 'ollama',
 
-    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor) {
+    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
       const raw = await chatOnce(
         [MEW_VOICE, '', INTENT_SPEC, '', contextBlock(ctx)].join('\n'),
         thread,
+        signal,
       )
       const intent = sanitizeIntent(JSON.parse(raw))
       if (!intent) throw new Error('local model returned no usable intent')

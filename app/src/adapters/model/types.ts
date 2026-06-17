@@ -103,8 +103,11 @@ export interface ToolExecutor {
 
 export interface ModelPort {
   readonly id: 'anthropic' | 'openai' | 'ollama' | 'rules'
-  /** Streams MEW's reply text; calls the executor for any actions. */
-  converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor): AsyncIterable<string>
+  /** Streams MEW's reply text; calls the executor for any actions. `signal`,
+      when given, cancels an in-flight turn: the adapter wires it into its
+      stream/fetch so a user 'stop' ends the turn within a beat. An abort is the
+      user's decision, never a model failure — work already committed stays. */
+  converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal): AsyncIterable<string>
 }
 
 export const MEW_VOICE = `You are MEW ("My Entire Week"), a calm companion who runs the user's week with them.

@@ -28,7 +28,7 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
   return {
     id: 'anthropic',
 
-    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor) {
+    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
       /* history: first message must be user; consecutive same-role is fine */
       const firstUser = thread.findIndex((t) => t.role === 'user')
       const messages: Anthropic.MessageParam[] = thread
@@ -50,19 +50,25 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
       let yieldedText = false
       for (let i = 0; i < MAX_LOOP; i++) {
         const open = () =>
-          client.messages.stream({
-            model,
-            /* required by the API — streaming delivers tokens live but every call
-               still declares a ceiling. 32k is unreachable for a MEW turn (the
-               voice is 1–3 sentences); it exists purely as the runaway-cost guard
-               on the user's own key, with the continuation handler below as the
-               never-end-mid-word backstop. */
-            max_tokens: 32000,
-            cache_control: { type: 'ephemeral' },
-            system,
-            tools: TOOLS,
-            messages,
-          })
+          client.messages.stream(
+            {
+              model,
+              /* required by the API — streaming delivers tokens live but every call
+                 still declares a ceiling. 32k is unreachable for a MEW turn (the
+                 voice is 1–3 sentences); it exists purely as the runaway-cost guard
+                 on the user's own key, with the continuation handler below as the
+                 never-end-mid-word backstop. */
+              max_tokens: 32000,
+              cache_control: { type: 'ephemeral' },
+              system,
+              tools: TOOLS,
+              messages,
+            },
+            /* the user's stop aborts the live request; the SDK rejects the
+               stream with an APIUserAbortError, which the store reads as a
+               clean stop (never a failure → never the rules fallback). */
+            { signal },
+          )
 
         /* Retry only stream-creation + the first event — a transient 429 / 529 /
            5xx / network blip before any token here is safely replayable; once a
