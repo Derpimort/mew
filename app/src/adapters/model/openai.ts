@@ -6,6 +6,7 @@
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
+import { withRetry } from './retry'
 
 const MAX_LOOP = 6
 
@@ -27,29 +28,42 @@ const TOOLS = MEW_TOOLS.map((t) => ({
 }))
 
 export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'https://api.openai.com'): ModelPort {
+  /* One buffered round-trip per round of the loop, nothing yielded until it
+     returns — so the whole call (fetch + parse) is safely retryable on a
+     transient blip (a 429, a 5xx, a network drop) before any token reaches the
+     caller. The non-OK throw carries `.status` so the shared classifier retries
+     429/5xx but not a 4xx; a JSON parse of a 200 body is a logic failure, never
+     retried. Each loop round creates a fresh request, so retry wraps strictly
+     before that round's first yield — it can never replay a turn that already
+     spoke or acted (store.ts honesty guard). An AbortError isn't transient, so a
+     user cancel propagates through unchanged. */
   async function complete(messages: OaMessage[]): Promise<OaMessage> {
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        tools: TOOLS,
-        tool_choice: 'auto',
-        max_tokens: 1024,
-      }),
+    return withRetry(async () => {
+      const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          tools: TOOLS,
+          tool_choice: 'auto',
+          max_tokens: 1024,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.text().catch(() => '')
+        throw Object.assign(new Error(`openai ${res.status}${body ? `: ${body.slice(0, 140)}` : ''}`), {
+          status: res.status,
+        })
+      }
+      const data = (await res.json()) as { choices?: { message?: OaMessage }[] }
+      const msg = data.choices?.[0]?.message
+      if (!msg) throw new Error('openai returned no message')
+      return msg
     })
-    if (!res.ok) {
-      const body = await res.text().catch(() => '')
-      throw new Error(`openai ${res.status}${body ? `: ${body.slice(0, 140)}` : ''}`)
-    }
-    const data = (await res.json()) as { choices?: { message?: OaMessage }[] }
-    const msg = data.choices?.[0]?.message
-    if (!msg) throw new Error('openai returned no message')
-    return msg
   }
 
   return {
