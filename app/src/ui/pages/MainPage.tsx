@@ -9,6 +9,7 @@ import { FocusOrbit } from '../components/FocusOrbit'
 import { WeekColumns } from '../components/WeekColumns'
 import { CompanionStage } from '../components/CompanionStage'
 import { SessionLog } from '../components/SessionLog'
+import { ErrorBoundary } from '../components/ErrorBoundary'
 import { usePetPalette } from '../components/petPalette'
 
 const AuroraBlur = lazy(() => import('../react-bits/aurora-blur'))
@@ -65,11 +66,19 @@ export function MainPage() {
             settings
           </button>
         </div>
-        {view === 'focus' ? <FocusOrbit /> : <WeekColumns />}
+        {/* the stage (Focus dial / Week grid) is the heaviest render — canvas,
+            geometry, motion. Contain a crash here so the session stays usable. */}
+        <ErrorBoundary label="the stage">
+          {view === 'focus' ? <FocusOrbit /> : <WeekColumns />}
+        </ErrorBoundary>
       </div>
       <div className="right-col">
         <CompanionStage />
-        <SessionLog />
+        {/* the chat is the other independent panel — its own boundary so a bad
+            message render never takes the stage down with it */}
+        <ErrorBoundary label="the session">
+          <SessionLog />
+        </ErrorBoundary>
       </div>
     </div>
   )

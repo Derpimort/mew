@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useMew } from './state/store'
 import { MainPage } from './ui/pages/MainPage'
 import { SettingsPage } from './ui/pages/SettingsPage'
+import { ErrorBoundary } from './ui/components/ErrorBoundary'
 import Preloader from './ui/react-bits/preloader'
 
 /* 5s keeps liveNow's current/next flips feeling immediate; the dial's own
@@ -81,7 +82,11 @@ export default function App() {
         {hydrated && (
           <>
             <div className="sys-wash" />
-            {page === 'week' ? <MainPage /> : <SettingsPage />}
+            {/* outermost last-resort catch: a render error nothing else caught
+                still lands on a calm fallback, never a white screen */}
+            <ErrorBoundary variant="full" label="mew">
+              {page === 'week' ? <MainPage /> : <ErrorBoundary label="settings"><SettingsPage /></ErrorBoundary>}
+            </ErrorBoundary>
           </>
         )}
       </Preloader>

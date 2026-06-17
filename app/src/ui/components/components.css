@@ -586,3 +586,51 @@
 }
 .week-summary .life { color: var(--teal); font-weight: 700; }
 .week-summary .att { color: var(--gold); font-weight: 700; cursor: pointer; }
+
+/* ── error boundary fallback (#122) ───────────────────────────────
+   A contained panel crash reads as a calm steel card in place — same
+   panel/line tokens as the tty nudge, never a stack dump. The outermost
+   catch (.err-full) centers in the viewport as the last resort. */
+.err-boundary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  box-shadow: 0 6px 20px -10px rgba(0, 0, 0, 0.5);
+}
+.err-boundary .err-mark {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gold);
+  flex: none;
+}
+.err-boundary .err-body { min-width: 0; flex: 1; }
+.err-boundary .err-head {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.err-boundary .err-msg {
+  margin: 3px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.err-boundary.err-full {
+  flex-direction: column;
+  text-align: center;
+  gap: 12px;
+  max-width: 360px;
+  margin: auto;
+  position: absolute;
+  inset: 0;
+  height: max-content;
+  padding: 26px;
+}
+.err-boundary.err-full .err-body { flex: none; }
