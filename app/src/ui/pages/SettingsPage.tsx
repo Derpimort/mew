@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { mewBrain, useMew } from '../../state/store'
-import type { PetId, VisibleTag } from '../../domain/types'
+import type { PetId, Settings, VisibleTag } from '../../domain/types'
 import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
@@ -542,10 +542,19 @@ function FragmentRow({ children }: { children: ReactNode }) {
   return <>{children}</>
 }
 
+/* The sans/prose face is self-hosted (issue #120); mono/numerals never change.
+   Preview text renders in the candidate font so the choice reads before applying. */
+const UI_FONTS: { id: Settings['uiFont']; label: string; stack: string }[] = [
+  { id: 'hanken', label: 'Hanken', stack: "'Hanken Grotesk', ui-sans-serif, sans-serif" },
+  { id: 'open-sans', label: 'Open Sans', stack: "'Open Sans', ui-sans-serif, sans-serif" },
+  { id: 'system', label: 'System', stack: 'ui-sans-serif, system-ui, sans-serif' },
+]
+
 function AppearanceCard() {
   const settings = useMew((s) => s.settings)
   const updateSettings = useMew((s) => s.updateSettings)
   const pet = petById(settings.pet)
+  const fontStack = (UI_FONTS.find((f) => f.id === settings.uiFont) ?? UI_FONTS[0]).stack
   return (
     <div className="set-card">
       <h2>Appearance</h2>
@@ -566,6 +575,29 @@ function AppearanceCard() {
           <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--teal)' }} />
         </div>
       </SetRow>
+      <SetRow t="Interface font" s="Sets the prose font everywhere — self-hosted, no fetch. Numerals and code stay monospaced.">
+        <Segc
+          options={UI_FONTS.map((f) => ({ id: f.id, label: f.label }))}
+          value={settings.uiFont}
+          onChange={(id) => updateSettings({ uiFont: id as Settings['uiFont'] })}
+        />
+      </SetRow>
+      <div
+        style={{
+          marginTop: 2,
+          padding: '9px 12px',
+          background: 'var(--bg)',
+          border: '1px solid var(--line2)',
+          borderRadius: 10,
+          fontFamily: fontStack,
+          fontSize: 14,
+          lineHeight: 1.5,
+          color: 'var(--ink)',
+        }}
+      >
+        Your week, in your words.{' '}
+        <span style={{ color: 'var(--muted)' }}>Tuesday at 9:00 — deep work, 90 minutes.</span>
+      </div>
     </div>
   )
 }

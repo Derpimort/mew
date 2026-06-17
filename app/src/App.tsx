@@ -14,6 +14,7 @@ export default function App() {
   const page = useMew((s) => s.page)
   const pet = useMew((s) => s.settings.pet)
   const themeMode = useMew((s) => s.settings.themeMode)
+  const uiFont = useMew((s) => s.settings.uiFont)
   const hydrate = useMew((s) => s.hydrate)
   const tick = useMew((s) => s.tick)
   const activity = useMew((s) => s.activity)
@@ -66,7 +67,7 @@ export default function App() {
      wipes away — the app lives inside it as children (kept invisible until
      the wipe), so layout is already settled when the curtain moves */
   return (
-    <div className={rootClass} data-pet={pet} style={{ height: '100%' }}>
+    <div className={rootClass} data-pet={pet} data-uifont={uiFont} style={{ height: '100%' }}>
       <Preloader
         loading={!hydrated}
         variant="slide"

@@ -3,6 +3,27 @@
    The one rule: the interface is monochrome carbon (or warm white) — only the
    pet carries color. --pa = work & attention, --pb = life & rest. */
 
+/* ---- self-hosted webfonts (latin, woff2) ----
+   MEW is offline-first and runs under a desktop CSP, so every face is bundled in
+   /public/fonts — no Google-CDN fetch, nothing leaves the device. font-display:
+   swap keeps first paint instant. Open Sans is the user-selectable interface
+   alternative (issue #120); Hanken/Space are the default sans/display; JetBrains
+   Mono stays fixed for terminal text and numerals. SIL Open Font License. */
+@font-face { font-family: 'Hanken Grotesk'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/hanken-grotesk-400.woff2') format('woff2'); }
+@font-face { font-family: 'Hanken Grotesk'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/hanken-grotesk-500.woff2') format('woff2'); }
+@font-face { font-family: 'Hanken Grotesk'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/hanken-grotesk-600.woff2') format('woff2'); }
+@font-face { font-family: 'Hanken Grotesk'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/hanken-grotesk-700.woff2') format('woff2'); }
+@font-face { font-family: 'Hanken Grotesk'; font-style: normal; font-weight: 800; font-display: swap; src: url('/fonts/hanken-grotesk-800.woff2') format('woff2'); }
+@font-face { font-family: 'Open Sans'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/open-sans-400.woff2') format('woff2'); }
+@font-face { font-family: 'Open Sans'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/open-sans-700.woff2') format('woff2'); }
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/space-grotesk-500.woff2') format('woff2'); }
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/space-grotesk-600.woff2') format('woff2'); }
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/space-grotesk-700.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/jetbrains-mono-400.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url('/fonts/jetbrains-mono-500.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 600; font-display: swap; src: url('/fonts/jetbrains-mono-600.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 700; font-display: swap; src: url('/fonts/jetbrains-mono-700.woff2') format('woff2'); }
+
 /* ---- pet accent registry: dark pair (pa/pb) + light pair (pal/pbl) ---- */
 .nx.sys[data-pet='cat']   { --pa: #e9b96b; --pa-rgb: 233, 185, 107; --pb: #d4c8a8; --pb-rgb: 212, 200, 168; --pal: #a4761f; --pal-rgb: 164, 118, 31; --pbl: #7e7250; --pbl-rgb: 126, 114, 80; }
 .nx.sys[data-pet='dog']   { --pa: #e0975a; --pa-rgb: 224, 151, 90;  --pb: #cbb091; --pb-rgb: 203, 176, 145; --pal: #b56a28; --pal-rgb: 181, 106, 40; --pbl: #8a7556; --pbl-rgb: 138, 117, 86; }
@@ -60,6 +81,26 @@
   --on-acc: #fff; /* white text on the deeper light-mode accents */
 }
 
+/* ---- typography tokens ----
+   One source of truth for the three roles. The interface (sans) font is the
+   only one the user picks (issue #120); display and mono never change. The
+   picker rewrites --font-sans per [data-uifont] below; everything else reads
+   the token, so a switch is instant and app-wide. --prose-tracking nudges
+   density so Open Sans (a touch wider) reads as tight as the grotesks. */
+.nx.sys {
+  --font-sans: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --font-disp: 'Space Grotesk', var(--font-sans);
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
+  --prose-tracking: 0;
+}
+.nx.sys[data-uifont='open-sans'] {
+  --font-sans: 'Open Sans', ui-sans-serif, system-ui, sans-serif;
+  --prose-tracking: -0.006em;
+}
+.nx.sys[data-uifont='system'] {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
 /* ---- base ---- */
 html,
 body,
@@ -69,13 +110,18 @@ body,
 }
 
 .stl {
-  font-family: 'Hanken Grotesk', ui-sans-serif, system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: var(--prose-tracking);
   background: var(--bg);
   color: var(--ink);
   position: relative;
   overflow: hidden;
   box-sizing: border-box;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 .stl *,
 .stl *::before,
@@ -83,11 +129,12 @@ body,
   box-sizing: border-box;
 }
 .stl .disp {
-  font-family: 'Space Grotesk', sans-serif;
+  font-family: var(--font-disp);
   letter-spacing: -0.02em;
 }
 .stl .mono {
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: var(--font-mono);
+  letter-spacing: 0; /* tabular code/numerals never inherit prose tracking */
 }
 .stl button {
   font: inherit;

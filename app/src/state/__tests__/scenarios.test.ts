@@ -1408,6 +1408,36 @@ describe('brain mode setting', () => {
   })
 })
 
+/* ── interface font setting: presentation-only, persisted, backfilled ──── */
+
+describe('interface font setting', () => {
+  it('defaults to hanken so existing users see no change', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().settings.uiFont).toBe('hanken')
+  })
+
+  it('round-trips an override through settings persistence', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ uiFont: 'open-sans' })
+    expect(useMew.getState().settings.uiFont).toBe('open-sans')
+    /* a fresh hydrate from the same storage keeps the choice */
+    await useMew.getState().hydrate()
+    expect(useMew.getState().settings.uiFont).toBe('open-sans')
+    await vi.advanceTimersByTimeAsync(60_000) // drain any batcher window
+  })
+
+  it('backfills the default when a pre-uiFont snapshot is restored', async () => {
+    await fresh(TUE(9, 40))
+    /* a backup written before this field existed — restore must not crash and
+       the merge-defaults backfill fills uiFont with the default */
+    const legacy = { ...useMew.getState().settings } as Partial<Settings>
+    delete legacy.uiFont
+    await useMew.getState().importData(JSON.stringify({ settings: legacy }))
+    expect(useMew.getState().settings.uiFont).toBe('hanken')
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+})
+
 /* ── preferences change mechanics, not just prose ────────────────────── */
 
 describe('prefs applied at placement', () => {

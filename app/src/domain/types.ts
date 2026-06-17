@@ -166,6 +166,10 @@ export interface Settings {
   /** Theme follows pet (PRD §3b): the pet swaps only the accent pair. */
   pet: PetId
   themeMode: 'carbon' | 'white'
+  /** Interface (prose/sans) font — drives `--font-sans` only. Mono and numerals
+      stay JetBrains Mono regardless. Default 'hanken', so existing users see no
+      change; all options are self-hosted (no network fetch). */
+  uiFont: 'hanken' | 'open-sans' | 'system'
   browserMirror: boolean
   quietHours: { startMin: number; endMin: number } // 18:30–08:30 default, wraps midnight
   showScience: boolean
@@ -256,6 +260,7 @@ export const DEFAULT_SETTINGS: Settings = {
   matrix: {},
   pet: 'cat',
   themeMode: 'carbon',
+  uiFont: 'hanken',
   browserMirror: true,
   quietHours: { startMin: 18 * 60 + 30, endMin: 8 * 60 + 30 },
   showScience: true,
