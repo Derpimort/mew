@@ -109,17 +109,20 @@ export function FocusOrbit() {
         <ThreadRail onOpen={(id) => setCardId(id)} />
       </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
-        {/* day progress: AM fills the inner ring (ri→ro) over the first 12 h, PM
-            the outer ring (ro→pm) over the second — a quiet accent wash ending at
-            the now notch. The disk (r<ri) stays clear for the countdown; the ro and
-            pm rings frame the two filled bands. */}
+        {/* day progress + framing: the AM zone (disk→mid, where both AM bands ride)
+            washes over the first 12 h, the PM zone (mid→pm) over the second — a
+            quiet accent ending at the now notch, backing the same two halves the
+            bands tier. The disk (r<disk) stays clear for the countdown. Two divider
+            rings carry commitment: the inner ring (ri) splits the AM half, the
+            outer ring (ro) the PM half; the bezel (pm) closes the PM zone. */}
         {(() => {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.ro, 0, f.inner)} fill="var(--ice)" opacity={0.14} />}
-              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ro, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
-              <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.75} />
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.mid, 0, f.inner)} fill="var(--ice)" opacity={0.14} />}
+              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.mid, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
+              <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
+              <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
               <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.4} />
             </g>
           )
@@ -297,12 +300,13 @@ export function FocusOrbit() {
           )
         })}
 
-        {/* now — a hand that sweeps the fixed face to the current clock angle;
-            its rim notch is exactly where the day wash ends */}
+        {/* now — a hand that sweeps the fixed face to the current clock angle,
+            crossing all four bands from the clear disk out to the rim notch where
+            the day wash ends */}
         {(() => {
           const deg = clockDeg(minOfDay(now) / 60)
           const [hx, hy] = rPolar(OG.cx, OG.cy, OG.tick, deg)
-          const [tx, ty] = rPolar(OG.cx, OG.cy, OG.ri - 6, deg)
+          const [tx, ty] = rPolar(OG.cx, OG.cy, OG.disk - 6, deg)
           return (
             <g pointerEvents="none">
               <line x1={tx} y1={ty} x2={hx} y2={hy} stroke="var(--ice)" strokeWidth="2" opacity={0.85} style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }} />

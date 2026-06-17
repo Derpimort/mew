@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../../../domain/types'
-import { crossDaySpan, DAY_MIN, dayFill, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
+import { BAND, bandBaseFor, crossDaySpan, DAY_MIN, dayFill, isCommitted, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
 import { clockDeg } from '../dialGeometry'
 
 const D = '2026-06-09'
@@ -49,34 +49,98 @@ describe('visibleOrbit — today, the whole day, open and done', () => {
   })
 })
 
-describe('radiiFor — AM rides the inner band, PM the outer band', () => {
-  const am1 = mk({ id: 'am1', startMin: 9 * 60, endMin: 11 * 60 })
-  const am2 = mk({ id: 'am2', startMin: 9.5 * 60, endMin: 10.5 * 60 }) // overlaps am1
-  const pm9 = mk({ id: 'pm9', startMin: 21 * 60, endMin: 22 * 60 }) // 9 PM — same angle as 9 AM
+describe('isCommitted — held & not background / optional / rest', () => {
+  it('a plain held work block is confirmed', () => {
+    expect(isCommitted(mk({ tag: 'work' }))).toBe(true)
+  })
+  it('background, optional, and rest are NOT confirmed (the complement)', () => {
+    expect(isCommitted(mk({ attention: 'background' }))).toBe(false)
+    expect(isCommitted(mk({ optional: true }))).toBe(false)
+    expect(isCommitted(mk({ tag: 'rest' }))).toBe(false)
+  })
+})
 
-  it('AM sits just inside the outer ring; PM just outside it', () => {
-    const radii = radiiFor([am1, pm9], null, 10)
-    expect(radii.get('am1')).toBe(OG.ro - 12)
-    expect(radii.get('pm9')).toBe(OG.ro + 12)
+describe('bandBaseFor — four importance bands, centre → out', () => {
+  it('AM-confirmed (ri−BAND) < inner ring < AM-bg (ri+BAND) < PM-confirmed (ro−BAND) < outer ring < PM-bg (ro+BAND)', () => {
+    const amC = bandBaseFor(mk({ startMin: 9 * 60, tag: 'work' }))
+    const amB = bandBaseFor(mk({ startMin: 9 * 60, attention: 'background' }))
+    const pmC = bandBaseFor(mk({ startMin: 21 * 60, tag: 'work' }))
+    const pmB = bandBaseFor(mk({ startMin: 21 * 60, attention: 'background' }))
+    expect([amC, OG.ri, amB, pmC, OG.ro, pmB]).toEqual([OG.ri - BAND, OG.ri, OG.ri + BAND, OG.ro - BAND, OG.ro, OG.ro + BAND])
+    // strictly increasing → the four tiers never reorder
+    expect(amC).toBeLessThan(OG.ri)
+    expect(OG.ri).toBeLessThan(amB)
+    expect(amB).toBeLessThan(pmC)
+    expect(pmC).toBeLessThan(OG.ro)
+    expect(OG.ro).toBeLessThan(pmB)
+  })
+})
+
+describe('radiiFor — four tiers: confirmed inside the ring, background outside', () => {
+  const amC = mk({ id: 'amC', startMin: 9 * 60, endMin: 11 * 60, tag: 'work' }) // AM confirmed
+  const amB = mk({ id: 'amB', startMin: 9 * 60, endMin: 11 * 60, attention: 'background' }) // AM bg, same angle
+  const pmC = mk({ id: 'pmC', startMin: 21 * 60, endMin: 22 * 60, tag: 'work' }) // PM confirmed
+  const pmB = mk({ id: 'pmB', startMin: 21 * 60, endMin: 22 * 60, tag: 'rest' }) // PM rest → bg tier
+
+  it('each block lands on its tier base: AM-confirmed inside ri, AM-bg outside, PM-confirmed inside ro, PM-bg outside', () => {
+    const radii = radiiFor([amC, amB, pmC, pmB], null, 10)
+    expect(radii.get('amC')).toBe(OG.ri - BAND)
+    expect(radii.get('amB')).toBe(OG.ri + BAND)
+    expect(radii.get('pmC')).toBe(OG.ro - BAND)
+    expect(radii.get('pmB')).toBe(OG.ro + BAND)
+  })
+
+  it('the four tiers stay ordered centre → out (confirmed nearer centre than bg in each half; AM inside PM)', () => {
+    const radii = radiiFor([amC, amB, pmC, pmB], null, 10)
+    expect(radii.get('amC')!).toBeLessThan(radii.get('amB')!)
+    expect(radii.get('amB')!).toBeLessThan(radii.get('pmC')!)
+    expect(radii.get('pmC')!).toBeLessThan(radii.get('pmB')!)
+  })
+
+  it('confirmed steps INWARD, background steps OUTWARD when same-tier blocks time-overlap', () => {
+    // two overlapping AM-confirmed → second lane is closer to centre
+    const amC2 = mk({ id: 'amC2', startMin: 9.5 * 60, endMin: 10.5 * 60, tag: 'work' })
+    // two overlapping PM-bg → second lane is further out
+    const pmB2 = mk({ id: 'pmB2', startMin: 21.2 * 60, endMin: 21.8 * 60, tag: 'rest' })
+    const radii = radiiFor([amC, amC2, pmB, pmB2], 'amC', 10)
+    expect(radii.get('amC')).toBe(OG.ri - BAND) // focus keeps its band base
+    expect(radii.get('amC2')).toBe(OG.ri - BAND - LANE_STEP) // inward
+    expect(radii.get('pmB2')).toBe(OG.ro + BAND + LANE_STEP) // outward
+  })
+
+  it('focus keeps its band base lane; it never relocates to another tier', () => {
+    const radii = radiiFor([amC, amB], 'amC', 10)
+    expect(radii.get('amC')).toBe(OG.ri - BAND) // still AM-confirmed base, not pulled out to focus
+  })
+
+  it('disjoint same-tier blocks all ride the tier base — compact', () => {
+    const spread = Array.from({ length: 4 }, (_, i) =>
+      mk({ id: `s${i}`, startMin: (8 + i) * 60, endMin: (8 + i) * 60 + 30, tag: 'work' }), // AM confirmed, disjoint
+    )
+    const radii = radiiFor(spread, 's0', 9)
+    expect(new Set(radii.values())).toEqual(new Set([OG.ri - BAND]))
   })
 
   it('a 9 AM and a 9 PM event share an angle but never a band/radius', () => {
-    const radii = radiiFor([am1, pm9], null, 10)
-    expect(radii.get('am1')).not.toBe(radii.get('pm9'))
+    const radii = radiiFor([amC, pmC], null, 10)
+    expect(radii.get('amC')).not.toBe(radii.get('pmC'))
   })
 
-  it('within a band, focus keeps the base ring; an overlapping sibling steps one lane', () => {
-    const radii = radiiFor([am1, am2], 'am1', 10)
-    expect(radii.get('am1')).toBe(OG.ro - 12)
-    expect(radii.get('am2')).toBe(OG.ro - 12 - LANE_STEP)
-  })
-
-  it('disjoint same-band blocks all ride the band base — compact', () => {
-    const spread = Array.from({ length: 4 }, (_, i) =>
-      mk({ id: `s${i}`, startMin: (8 + i) * 60, endMin: (8 + i) * 60 + 30 }), // all AM, disjoint
+  it('the AM-bg band and PM-confirmed band do not cross at realistic density (≤3 lanes each)', () => {
+    // 3 overlapping AM-bg climb outward; 3 overlapping PM-confirmed climb inward —
+    // the deepest of each must still respect AM-bg < PM-confirmed (the mid seam).
+    const amBg = Array.from({ length: 3 }, (_, i) =>
+      mk({ id: `ab${i}`, startMin: (9 + i * 0.1) * 60, endMin: (11 + i * 0.1) * 60, attention: 'background' }),
     )
-    const radii = radiiFor(spread, 's0', 9)
-    expect(new Set(radii.values())).toEqual(new Set([OG.ro - 12]))
+    const pmCf = Array.from({ length: 3 }, (_, i) =>
+      mk({ id: `pc${i}`, startMin: (20 + i * 0.1) * 60, endMin: (22 + i * 0.1) * 60, tag: 'work' }),
+    )
+    const radii = radiiFor([...amBg, ...pmCf], null, 10)
+    const maxAmBg = Math.max(...amBg.map((b) => radii.get(b.id)!))
+    const minPmCf = Math.min(...pmCf.map((b) => radii.get(b.id)!))
+    expect(maxAmBg).toBeLessThan(OG.mid)
+    expect(minPmCf).toBeGreaterThanOrEqual(OG.mid)
+    expect(maxAmBg).toBeLessThan(minPmCf)
   })
 })
 

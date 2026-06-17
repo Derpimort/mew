@@ -1,20 +1,32 @@
 /* Fixed 12-hour clock-face geometry. 12 sits at the top and never moves; a
    block rides an arc at its real start→end clock angle; now is a hand that
-   sweeps the face. The whole day fits on a 12-h face because RADIUS carries the
-   half: AM blocks (00:00–12:00) ride the band BETWEEN the inner and outer ring;
-   PM blocks (12:00–24:00) ride OUTSIDE the outer ring. So a 9 AM and a 9 PM
-   event share an angle but never a band. Within a band, time-overlapping blocks
-   step one lane (greedy). Done blocks stay on the face as completed markers.
-   Labels are callouts outside the bezel with per-side greedy de-collision.
-   All pure — tested like the week model is. */
+   sweeps the face. The whole day fits on a 12-h face because RADIUS carries two
+   things: the half (a 9 AM and 9 PM share an angle but never a band) and, within
+   each half, COMMITMENT. Two ring lines are the dividers — the inner ring splits
+   the AM half, the outer ring the PM half — yielding four importance-tiered
+   bands, centre → out: AM-confirmed (inside the inner ring), AM-bg/rest (outside
+   it), PM-confirmed (inside the outer ring), PM-bg/rest (outside it). Confirmed
+   work rides nearer the centre; background/rest rides further out. Within a band,
+   time-overlapping blocks step one lane (greedy). Done blocks stay on the face as
+   completed markers. Labels are callouts outside the bezel with per-side greedy
+   de-collision. All pure — tested like the week model is. */
 
 import type { Block } from '../../domain/types'
 import { isBackground } from '../../domain/week'
 import { clockDeg, rPolar } from './dialGeometry'
 
-/* Radii, centre → out (SVG units around cx,cy):
-   countdown (inside ri) · inner ring (ri) · AM band (ri→ro) · outer ring (ro) ·
-   PM band (ro→pm) · hour ticks + now-hand (tick) · numerals (num). */
+/* Radii, centre → out (SVG units around cx,cy). Radius now encodes COMMITMENT
+   within each half: two ring lines are the dividers and four importance-tiered
+   event bands fall out, AM nested inside PM —
+     countdown (inside the AM-confirmed band) ·
+     AM-confirmed band (inside ri) · inner ring (ri) · AM-bg/rest band (outside ri) ·
+     AM|PM fill boundary (mid) ·
+     PM-confirmed band (inside ro) · outer ring (ro) · PM-bg/rest band (outside ro) ·
+     bezel (pm) · hour ticks + now-hand (tick) · numerals (num).
+   `ri` splits the AM half by commitment, `ro` splits the PM half; `mid` is where
+   the AM day-fill zone hands off to the PM zone, sitting in the clear gap between
+   the AM-bg and PM-confirmed bands so the wash, rings, and events read as one
+   system (see dayFill + bandBaseFor for the exact seams). */
 export const OG = {
   cx: 300,
   cy: 354,
@@ -23,18 +35,38 @@ export const OG = {
   // ox centres the dial axis (cx) in the stage: cx + ox = w/2, so the
   // countdown can anchor at left:50% and margins stay symmetric.
   ox: 80,
-  ri: 104,
-  ro: 168,
-  pm: 234,
-  tick: 242,
-  num: 254,
+  disk: 90, // clear centre for the countdown; the AM zone fill starts here
+  ri: 128, // inner ring — the AM commitment divider
+  ro: 210, // outer ring — the PM commitment divider
+  mid: 174, // AM→PM day-fill zone boundary (between AM-bg and PM-confirmed bands)
+  pm: 252, // bezel — outer edge of the PM zone
+  tick: 262,
+  num: 274,
 } as const
 export const LANE_STEP = 8
+/** Half-gap from a divider ring to its band's base lane: confirmed blocks sit
+    BAND inside the ring (then step further in), background BAND outside (then
+    step further out). Sized so a couple of de-collision lanes never cross the
+    adjacent ring or the AM|PM boundary. */
+export const BAND = 18
 export const LABEL_R = OG.num + 14 // callouts just outside the numerals
 export const LABEL_GAP = 16
 
-/** AM = the first half of the day; it rides the inner band. */
+/** AM = the first half of the day; its two bands nest inside the PM half. */
 export const isAM = (b: Block): boolean => b.startMin < 720
+
+/** "Confirmed/important" — a held block that isn't background, optional/tentative,
+    or a pacing rest. Confirmed blocks ride INSIDE their half's divider ring;
+    background/rest ride OUTSIDE it. One helper so render + tests agree. */
+export const isCommitted = (b: Block): boolean => !isBackground(b) && !b.optional && b.tag !== 'rest'
+
+/** Base lane radius for a block's importance band, before lane de-collision.
+    Four bands, centre → out: AM-confirmed (ri−BAND), AM-bg (ri+BAND),
+    PM-confirmed (ro−BAND), PM-bg (ro+BAND). Pure — block in, base radius out. */
+export function bandBaseFor(b: Block): number {
+  const ring = isAM(b) ? OG.ri : OG.ro
+  return isCommitted(b) ? ring - BAND : ring + BAND
+}
 
 export const DAY_MIN = 1440
 
@@ -94,14 +126,17 @@ export function isRunning(b: Block, nowH: number): boolean {
   return b.startMin / 60 <= nowH && nowH < b.endMin / 60
 }
 
-/** Lane radii. AM blocks sit just inside the outer ring and step INWARD toward
-    the inner ring; PM blocks sit just outside it and step OUTWARD — so each
-    half owns its band. Within a band a block only leaves the base ring if it
-    time-overlaps something already placed (greedy interval colouring). Focus is
-    placed first in its half, so it keeps the base ring. */
+/** Lane radii — four importance-tiered bands (centre → out): AM-confirmed inside
+    the inner ring, AM-bg/rest outside it, PM-confirmed inside the outer ring,
+    PM-bg/rest outside it. So radius reads as COMMITMENT within each half.
+    Confirmed bands step INWARD from just inside their ring; background bands step
+    OUTWARD from just outside it. Within a band a block only leaves its base lane
+    when it time-overlaps something already placed (greedy interval colouring),
+    so a clear half stays compact on the base ring. Focus is placed first, so it
+    keeps its band's base lane (and stays visually dominant via glow, not radius). */
 export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): Map<string, number> {
   const out = new Map<string, number>()
-  const place = (group: Block[], base: number, dir: 1 | -1) => {
+  const place = (group: Block[], dir: 1 | -1) => {
     const order = [...group].sort((a, b) => {
       if (a.id === focusId) return -1
       if (b.id === focusId) return 1
@@ -112,11 +147,14 @@ export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): M
       let k = 0
       while (lanes[k]?.some((o) => b.startMin < o.endMin && o.startMin < b.endMin)) k++
       ;(lanes[k] ??= []).push(b)
-      out.set(b.id, base + dir * k * LANE_STEP)
+      out.set(b.id, bandBaseFor(b) + dir * k * LANE_STEP)
     }
   }
-  place(vis.filter(isAM), OG.ro - 12, -1) // AM: inward through the inner band
-  place(vis.filter((b) => !isAM(b)), OG.ro + 12, 1) // PM: outward through the outer band
+  // confirmed bands step inward (toward centre); background/rest step outward
+  place(vis.filter((b) => isAM(b) && isCommitted(b)), -1)
+  place(vis.filter((b) => isAM(b) && !isCommitted(b)), 1)
+  place(vis.filter((b) => !isAM(b) && isCommitted(b)), -1)
+  place(vis.filter((b) => !isAM(b) && !isCommitted(b)), 1)
   return out
 }
 
@@ -167,16 +205,18 @@ export function orbitColor(b: Block, isFocus: boolean): string {
 }
 
 export interface DayFill {
-  /** inner-disk sweep degrees — fills 00:00 → 12:00 */
+  /** AM-zone sweep degrees — fills 00:00 → 12:00 */
   inner: number
-  /** inner→outer band sweep degrees — fills 12:00 → 24:00 */
+  /** PM-zone sweep degrees — fills 12:00 → 24:00 */
   outer: number
 }
 
 /** Two-stage day progress: a 12-h face can't show a 24-h day on angle alone, so
-    radius carries AM vs PM. The inner disk fills clockwise from the top over the
-    first 12 h; the inner→outer band fills over the second. Both reach a full
-    turn by 24:00. Pure: minutes-of-day in, two sweep angles out. */
+    radius carries AM vs PM. The AM zone (the inner annulus the two AM bands ride,
+    inside `mid`) fills clockwise from the top over the first 12 h; the PM zone
+    (`mid → pm`, the two PM bands) fills over the second. Both reach a full turn
+    by 24:00 — so the wash backs the same two halves the bands tier. Pure:
+    minutes-of-day in, two sweep angles out. */
 export function dayFill(minutesOfDay: number): DayFill {
   const m = Math.max(0, Math.min(1440, minutesOfDay))
   return {
