@@ -9,6 +9,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
+import { withRetry } from './retry'
 
 /* one upfront sweep should place a day in ≤2 rounds (#102); 14 is headroom for a
    genuinely large multi-item plan, not room to thrash clash-by-clash */
@@ -48,21 +49,36 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
 
       let yieldedText = false
       for (let i = 0; i < MAX_LOOP; i++) {
-        const stream = client.messages.stream({
-          model,
-          /* required by the API — streaming delivers tokens live but every call
-             still declares a ceiling. 32k is unreachable for a MEW turn (the
-             voice is 1–3 sentences); it exists purely as the runaway-cost guard
-             on the user's own key, with the continuation handler below as the
-             never-end-mid-word backstop. */
-          max_tokens: 32000,
-          cache_control: { type: 'ephemeral' },
-          system,
-          tools: TOOLS,
-          messages,
+        const open = () =>
+          client.messages.stream({
+            model,
+            /* required by the API — streaming delivers tokens live but every call
+               still declares a ceiling. 32k is unreachable for a MEW turn (the
+               voice is 1–3 sentences); it exists purely as the runaway-cost guard
+               on the user's own key, with the continuation handler below as the
+               never-end-mid-word backstop. */
+            max_tokens: 32000,
+            cache_control: { type: 'ephemeral' },
+            system,
+            tools: TOOLS,
+            messages,
+          })
+
+        /* Retry only stream-creation + the first event — a transient 429 / 529 /
+           5xx / network blip before any token here is safely replayable; once a
+           token streams below, `yieldedText` is set and a later failure must not
+           replay the turn (the store's `acted || buffer` honesty guard). The
+           request fires on the first awaited event, so connectivity failures
+           surface here, inside withRetry, not at the synchronous create. */
+        const { stream, first } = await withRetry(async () => {
+          const raw = open()
+          const it = raw[Symbol.asyncIterator]()
+          const first = await it.next()
+          return { stream: { it, raw }, first }
         })
 
-        for await (const event of stream) {
+        for (let step = first; !step.done; step = await stream.it.next()) {
+          const event = step.value
           if (event.type === 'content_block_start' && event.content_block.type === 'text' && yieldedText) {
             yield '\n' // a fresh thought after acting gets its own line
           }
@@ -71,7 +87,7 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
             yield event.delta.text
           }
         }
-        const message = await stream.finalMessage()
+        const message = await stream.raw.finalMessage()
 
         if (message.stop_reason === 'pause_turn') {
           messages.push({ role: 'assistant', content: message.content })

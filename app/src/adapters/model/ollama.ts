@@ -6,6 +6,7 @@
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { runIntent, sanitizeIntent } from './rules'
+import { withRetry } from './retry'
 
 const INTENT_SPEC = `Decide what the user wants and respond ONLY with JSON matching:
 {"kind":"plan|complete|move|capture|clear|remove|edit|remember|chat",
@@ -23,23 +24,30 @@ kind="capture" only for a task mentioned without a time.
 kind="remember" when they state a standing rule or correction ("always","never","from now on","X means Y") — include "pref":{"kind":"time-default|duration-default|flexibility|ordering|fact","match":str,"value":str,"stated":str}. One-offs ("move gym today") are never remember.`
 
 export function createOllamaAdapter(baseUrl: string, model: string): ModelPort {
+  /* One non-streaming request per turn, nothing yielded until it returns — so
+     the whole call (fetch + parse) is safely retryable on a transient blip: a
+     local server reloading a model 503s, the socket flakes. The HTTP error
+     carries `.status` so the shared classifier retries 5xx but not a 4xx, and
+     a JSON parse of a 200 body is a logic failure, never retried. */
   async function chatOnce(system: string, turns: ChatTurn[]): Promise<string> {
-    const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        format: 'json',
-        messages: [
-          { role: 'system', content: system },
-          ...turns.slice(-8).map((t) => ({ role: t.role, content: t.text })),
-        ],
-      }),
+    return withRetry(async () => {
+      const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model,
+          stream: false,
+          format: 'json',
+          messages: [
+            { role: 'system', content: system },
+            ...turns.slice(-8).map((t) => ({ role: t.role, content: t.text })),
+          ],
+        }),
+      })
+      if (!res.ok) throw Object.assign(new Error(`ollama ${res.status}`), { status: res.status })
+      const data = (await res.json()) as { message?: { content?: string } }
+      return data.message?.content ?? ''
     })
-    if (!res.ok) throw new Error(`ollama ${res.status}`)
-    const data = (await res.json()) as { message?: { content?: string } }
-    return data.message?.content ?? ''
   }
 
   return {

@@ -1464,11 +1464,13 @@ export const useMew = create<MewState>((set, get) => {
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
             if (failed.length && adapter.id === 'rules') {
+              /* the adapter failed even after the in-adapter backoff retried any
+                 transient blip (#116) — say so kindly and carry the turn here */
               post([
                 mewMsg(
                   failed.includes('anthropic')
-                    ? `(The remote model didn't answer just now — I handled that myself.)`
-                    : `(The local model didn't answer just now — I handled that myself.)`,
+                    ? `(the model was busy — i retried, then handled it myself.)`
+                    : `(the local model was busy — i retried, then handled it myself.)`,
                 ),
               ])
             }
