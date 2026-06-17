@@ -1,4 +1,4 @@
-/* Renders MEW's constrained markdown subset (see markdown.ts) as React
+/* Renders MEW's constrained markdown subset (see markdownParser.ts) as React
    elements — text content is escaped by React, links are pre-vetted by
    `safeHref`, and there is no dangerouslySetInnerHTML, so a reply can't smuggle
    markup. Styling is the terminal log's own type scale (`.md` in
@@ -6,7 +6,7 @@
    gutter. Parsing is memoized per-body so streaming re-renders stay cheap. */
 
 import { useMemo } from 'react'
-import { parseMarkdown, type MdBlock, type MdInline } from './markdown'
+import { parseMarkdown, type MdBlock, type MdInline } from './markdownParser'
 
 export function Markdown({ source }: { source: string }) {
   const blocks = useMemo(() => parseMarkdown(source), [source])

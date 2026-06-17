@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseInline, parseMarkdown, safeHref, type MdBlock, type MdInline } from '../markdown'
+import { parseInline, parseMarkdown, safeHref, type MdBlock, type MdInline } from '../markdownParser'
 
 /* Walk the inline AST back to its text so a test can assert "what the reader
    sees" without caring how spans nest. */
