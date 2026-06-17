@@ -169,7 +169,6 @@
   gap: 12px;
   overflow-y: auto;
   justify-content: flex-start;
-  scroll-behavior: smooth;
 }
 /* "↓ new" — appears only when the user has scrolled up while output streams;
    one tap returns to the live bottom and resumes the stick. */

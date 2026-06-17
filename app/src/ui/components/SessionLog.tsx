@@ -128,7 +128,7 @@ function ThinkingRow({ status }: { status: string | null }) {
   return (
     <div className="mew-thinking" aria-live="polite">
       <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
-      <span className="typing" aria-label="mew is typing" role="status">
+      <span className="typing" aria-label="mew is typing">
         <span className="dot" />
         <span className="dot" />
         <span className="dot" />
