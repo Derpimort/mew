@@ -18,17 +18,18 @@ import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
 
-/** Live wall clock, parked top-left of the stage clear of the face — the exact
-    readout the clock-face approximates. */
+/** Live wall clock, parked top-centre of the stage clear of the face — the exact
+    readout the clock-face approximates. Date rides above the time, both centred;
+    the time is the hero, the date shares the seconds' gold-mono type. */
 function NxClock({ now }: { now: Date }) {
   return (
     <span className="nx-clock" title="current time">
+      <span className="dt">
+        {fmtDow(dayKey(now))} · {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+      </span>
       <span className="nx-time">
         <span className="hm">{fmtTime(minOfDay(now))}</span>
         <span className="sc">:{String(now.getSeconds()).padStart(2, '0')}</span>
-      </span>
-      <span className="dt">
-        {fmtDow(dayKey(now))} · {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
       </span>
     </span>
   )

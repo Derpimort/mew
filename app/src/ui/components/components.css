@@ -179,13 +179,13 @@
   pointer-events: none;
   z-index: 8;
 }
-/* the live wall clock — a single horizontal readout (time · date) */
+/* the live wall clock — date stacked over time, the whole readout centred */
 .nx-clock {
   display: inline-flex;
-  flex-direction: row;
-  align-items: baseline;
-  gap: 9px;
-  text-align: left;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
   pointer-events: none;
 }
 /* hour numerals on the fixed bezel (12/3/6/9) */
@@ -196,9 +196,11 @@
   fill: var(--muted);
 }
 .nx-time { display: inline-flex; align-items: baseline; gap: 3px; }
-.nx-clock .hm { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; color: var(--ink); }
-.nx-clock .sc { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--gold); width: 16px; }
-.nx-clock .dt { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--muted); }
+/* time is the hero: large, full-contrast ink */
+.nx-clock .hm { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 24px; letter-spacing: 0.02em; color: var(--ink); line-height: 1; }
+/* seconds + date share one gold-mono type system, both quieter than the time */
+.nx-clock .sc { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--gold); }
+.nx-clock .dt { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.04em; color: var(--gold); }
 /* every item is the same thin arc; hierarchy is brightness, never thickness */
 .pri-arc { cursor: pointer; transition: opacity 0.18s, stroke-width 0.15s ease, r 0.15s ease; }
 /* one shared dial reveal (#88): hover-revealed elements fade via opacity, never
