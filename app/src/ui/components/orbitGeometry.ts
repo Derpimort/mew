@@ -15,33 +15,34 @@ import type { Block } from '../../domain/types'
 import { isBackground } from '../../domain/week'
 import { clockDeg, rPolar } from './dialGeometry'
 
-/* Radii, centre → out (SVG units around cx,cy). Radius now encodes COMMITMENT
-   within each half: two ring lines are the dividers and four importance-tiered
-   event bands fall out, AM nested inside PM —
+/* Radii, centre → out (SVG units around cx,cy). Radius encodes COMMITMENT within
+   each half — but only TWO ring lines are DRAWN (inner ri + outer bezel pm); the
+   PM divider `ro` stays a pure band-placement reference, not a circle, so the
+   face reads as two clean rings, not three. Four importance-tiered event bands
+   still fall out, AM nested inside PM —
      countdown (inside the AM-confirmed band) ·
-     AM-confirmed band (inside ri) · inner ring (ri) · AM-bg/rest band (outside ri) ·
-     AM|PM fill boundary (mid) ·
-     PM-confirmed band (inside ro) · outer ring (ro) · PM-bg/rest band (outside ro) ·
-     bezel (pm) · hour ticks + now-hand (tick) · numerals (num).
-   `ri` splits the AM half by commitment, `ro` splits the PM half; `mid` is where
-   the AM day-fill zone hands off to the PM zone, sitting in the clear gap between
-   the AM-bg and PM-confirmed bands so the wash, rings, and events read as one
-   system (see dayFill + bandBaseFor for the exact seams). */
+     AM-confirmed band (inside ri) · inner ring (ri, drawn) · AM-bg/rest band (outside ri) ·
+     PM-confirmed band (inside ro) · [ro: invisible divider] · PM-bg/rest band (outside ro) ·
+     outer ring (pm, drawn) + hour ticks + now-hand (tick) · numerals (num).
+   `ri` splits the AM half by commitment, `ro` splits the PM half (as math, not a
+   line); the outer ring (pm) is the bezel and carries the ticks + 12/3/6/9
+   numerals as one combined marked ring. The day-fill wash aligns to the two rings:
+   the AM zone fills the inner disk up to the inner ring (disk→ri), the PM zone
+   fills the gap between the rings (ri→pm) — see dayFill + bandBaseFor. */
 export const OG = {
   cx: 300,
   cy: 354,
   w: 760,
-  h: 664,
+  h: 680, // a clear bottom strip below the 6 o'clock numeral for the hover readout
   // ox centres the dial axis (cx) in the stage: cx + ox = w/2, so the
   // countdown can anchor at left:50% and margins stay symmetric.
   ox: 80,
   disk: 90, // clear centre for the countdown; the AM zone fill starts here
-  ri: 128, // inner ring — the AM commitment divider
-  ro: 210, // outer ring — the PM commitment divider
-  mid: 174, // AM→PM day-fill zone boundary (between AM-bg and PM-confirmed bands)
-  pm: 252, // bezel — outer edge of the PM zone
-  tick: 262,
-  num: 274,
+  ri: 128, // inner ring (drawn) — the AM commitment divider
+  ro: 210, // PM commitment divider — a band-placement reference, NOT drawn (two rings only)
+  pm: 252, // outer ring (drawn) — the bezel, now carrying the hour ticks + numerals
+  tick: 252, // hour ticks sit ON the outer ring (pm), unifying ring + markers
+  num: 266, // numerals just outside the outer ring + ticks
 } as const
 export const LANE_STEP = 8
 /** Half-gap from a divider ring to its band's base lane: confirmed blocks sit
@@ -223,11 +224,11 @@ export interface DayFill {
 }
 
 /** Two-stage day progress: a 12-h face can't show a 24-h day on angle alone, so
-    radius carries AM vs PM. The AM zone (the inner annulus the two AM bands ride,
-    inside `mid`) fills clockwise from the top over the first 12 h; the PM zone
-    (`mid → pm`, the two PM bands) fills over the second. Both reach a full turn
-    by 24:00 — so the wash backs the same two halves the bands tier. Pure:
-    minutes-of-day in, two sweep angles out. */
+    radius carries AM vs PM, aligned to the two rings. The AM zone (the inner disk
+    out to the inner ring, disk→ri) fills clockwise from the top over the first
+    12 h; the PM zone (the gap between the rings, ri→pm) fills over the second.
+    Both reach a full turn by 24:00 — so the wash backs the same two halves the
+    bands tier. Pure: minutes-of-day in, two sweep angles out. */
 export function dayFill(minutesOfDay: number): DayFill {
   const m = Math.max(0, Math.min(1440, minutesOfDay))
   return {

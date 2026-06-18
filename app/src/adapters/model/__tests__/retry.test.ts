@@ -5,7 +5,7 @@
    all deterministic via injected sleep + rng. */
 
 import { describe, expect, it, vi } from 'vitest'
-import { isTransient, retryAfterMs, withRetry } from '../retry'
+import { classifyFailure, isTransient, retryAfterMs, withRetry } from '../retry'
 
 /** An APIError-shaped failure: a numeric `.status`, optional headers. */
 function httpError(status: number, headers?: Record<string, string>): Error {
@@ -22,6 +22,18 @@ describe('isTransient — what is worth retrying', () => {
     for (const s of [429, 500, 502, 503, 529]) {
       expect(isTransient(httpError(s))).toBe(true)
     }
+  })
+
+  it('classifies failures for honest fallback copy: auth / model / busy / unknown', () => {
+    expect(classifyFailure(httpError(401))).toBe('auth')
+    expect(classifyFailure(httpError(403))).toBe('auth')
+    expect(classifyFailure(httpError(404))).toBe('model')
+    expect(classifyFailure(httpError(429))).toBe('busy')
+    expect(classifyFailure(httpError(503))).toBe('busy')
+    expect(classifyFailure(named('APIConnectionError'))).toBe('busy') // network blip
+    expect(classifyFailure(httpError(400))).toBe('unknown')
+    expect(classifyFailure(named('AbortError'))).toBe('unknown') // a stop isn't a model failure
+    expect(classifyFailure(null)).toBe('unknown')
   })
 
   it('does NOT retry 4xx the request would just re-earn', () => {

@@ -109,21 +109,23 @@ export function FocusOrbit() {
         <ThreadRail onOpen={(id) => setCardId(id)} />
       </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
-        {/* day progress + framing: the AM zone (disk→mid, where both AM bands ride)
-            washes over the first 12 h, the PM zone (mid→pm) over the second — a
-            quiet accent ending at the now notch, backing the same two halves the
-            bands tier. The disk (r<disk) stays clear for the countdown. Two divider
-            rings carry commitment: the inner ring (ri) splits the AM half, the
-            outer ring (ro) the PM half; the bezel (pm) closes the PM zone. */}
+        {/* day progress + framing: the fill aligns to the two rings — the AM zone
+            fills the inner disk up to the inner ring (disk→ri) over the first 12 h,
+            then the PM zone fills the gap between the inner and outer rings (ri→pm)
+            over the second — a quiet accent ending at the now notch. The disk
+            (r<disk) stays clear for the countdown. TWO rings
+            are drawn: the inner ring (ri) splits the AM half, and the outer ring
+            (pm) is the bezel that carries the ticks + numerals. The PM commitment
+            divider (ro) is geometry only — never a line — so the face reads as two
+            clean rings, not three. */}
         {(() => {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.mid, 0, f.inner)} fill="var(--ice)" opacity={0.14} />}
-              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.mid, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.14} />}
+              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
               <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
-              <circle cx={OG.cx} cy={OG.cy} r={OG.ro} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
-              <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line)" strokeWidth="1.2" opacity={0.4} />
+              <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
             </g>
           )
         })()}
@@ -366,18 +368,17 @@ export function FocusOrbit() {
         )
       })()}
 
-      {/* Hover readout — a glanceable timeslot, parked in the dial's clear lower
-          interior (below the centre stack + demote chip, above the lowest arc
-          labels) so it never sits under an event the way the old bottom strip
-          did. Calendar-tooltip hierarchy: the TIME RANGE is the hero (mono,
-          full-contrast --ink, ~14px); the title is the quiet second line. When
-          nothing's hovered the same slot carries a faint affordance, so there's
-          never a separate strip crossing the arcs. */}
+      {/* Hover readout — a glanceable timeslot, parked in the stage's bottom strip
+          (its original home), in the clear band below the 6 o'clock numeral so it
+          never sits under an arc. Calendar-tooltip hierarchy: the TIME RANGE is the
+          hero (mono, full-contrast --ink, ~14px); the title is the quiet second
+          line. When nothing's hovered the same slot carries a faint affordance, so
+          there's never a separate strip crossing the arcs. */}
       <div
         className="pri-readout dial-reveal"
         style={{
           left: OG.cx + OG.ox,
-          top: OG.cy + 112,
+          top: OG.h - 42,
           opacity: dialHover ? 1 : 0,
           pointerEvents: 'none',
         }}

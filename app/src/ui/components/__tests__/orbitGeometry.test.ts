@@ -137,7 +137,8 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
 
   it('the AM-bg band and PM-confirmed band do not cross at realistic density (≤3 lanes each)', () => {
     // 3 overlapping AM-bg climb outward; 3 overlapping PM-confirmed climb inward —
-    // the deepest of each must still respect AM-bg < PM-confirmed (the mid seam).
+    // the deepest of each must still respect AM-bg < PM-confirmed (their seam sits
+    // midway between the two divider rings, ri and ro).
     const amBg = Array.from({ length: 3 }, (_, i) =>
       mk({ id: `ab${i}`, startMin: (9 + i * 0.1) * 60, endMin: (11 + i * 0.1) * 60, attention: 'background' }),
     )
@@ -147,8 +148,9 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
     const radii = radiiFor([...amBg, ...pmCf], null, 10)
     const maxAmBg = Math.max(...amBg.map((b) => radii.get(b.id)!))
     const minPmCf = Math.min(...pmCf.map((b) => radii.get(b.id)!))
-    expect(maxAmBg).toBeLessThan(OG.mid)
-    expect(minPmCf).toBeGreaterThanOrEqual(OG.mid)
+    const seam = (OG.ri + OG.ro) / 2
+    expect(maxAmBg).toBeLessThan(seam)
+    expect(minPmCf).toBeGreaterThanOrEqual(seam)
     expect(maxAmBg).toBeLessThan(minPmCf)
   })
 

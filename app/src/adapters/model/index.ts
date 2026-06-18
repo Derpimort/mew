@@ -9,6 +9,7 @@ import { createRulesAdapter } from './rules'
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 export type { ChatTurn, ModelPort, ToolExecutor, WeekContext, PlaceSpec, FreeSpec } from './types'
+export { classifyFailure, type FailureKind } from './retry'
 
 /* The Anthropic SDK loads lazily — the app must not pay for it until a key exists. */
 function createLazyAnthropic(apiKey: string, model: string): ModelPort {

@@ -46,6 +46,7 @@ import {
   writeBackup,
 } from '../adapters/desktop'
 import {
+  classifyFailure,
   selectAdapters,
   type ChatTurn,
   type FreeSpec,
@@ -1512,6 +1513,7 @@ export const useMew = create<MewState>((set, get) => {
         const thread = buildThread(get().chat)
         const adapters = selectAdapters(get().settings, () => new Date(nowFn()))
         const failed: string[] = []
+        let lastRemoteErr: unknown = null // why a remote adapter threw, for honest fallback copy
 
         for (const adapter of adapters) {
           let msgId: string | null = null
@@ -1543,18 +1545,30 @@ export const useMew = create<MewState>((set, get) => {
               else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
             if (failed.length && adapter.id === 'rules') {
-              /* the adapter failed even after the in-adapter backoff retried any
-                 transient blip (#116) — say so kindly and carry the turn here */
+              /* an upstream adapter threw and we've landed on the rules floor.
+                 Tell the truth about WHY: a rejected key (401/403) or unknown
+                 model (404) is PERMANENT — the user must fix it in Settings, so
+                 calling it "busy" (and implying a retry that never happened) sends
+                 them looking in the wrong place. Transient blips were already
+                 retried in-adapter (#116). */
+              const remoteFailed = failed.includes('anthropic') || failed.includes('openai')
+              const kind = classifyFailure(lastRemoteErr)
               post([
                 mewMsg(
-                  failed.includes('anthropic')
-                    ? `(the model was busy — i retried, then handled it myself.)`
-                    : `(the local model was busy — i retried, then handled it myself.)`,
+                  !remoteFailed
+                    ? `(the local model was busy — I retried, then handled it myself.)`
+                    : kind === 'auth'
+                      ? `(your API key was rejected — open Settings to check it. I handled this one myself.)`
+                      : kind === 'model'
+                        ? `(I couldn't reach that model — check the model name in Settings. I handled this myself.)`
+                        : kind === 'busy'
+                          ? `(the model was busy — I retried, then handled it myself.)`
+                          : `(I couldn't reach the model just now — I handled this myself.)`,
                 ),
               ])
             }
             return
-          } catch {
+          } catch (err) {
             if (msgId) {
               const final = get().chat.find((m) => m.id === msgId)
               if (final?.body.trim()) {
@@ -1578,6 +1592,11 @@ export const useMew = create<MewState>((set, get) => {
               post([mewMsg(`(The connection hiccuped mid-thought — everything above did go through.)`)])
               return
             }
+            /* surface WHY (never swallow): the remote adapter's error drives the
+               honest fallback copy above, and every non-rules failure is logged
+               so a key/model/network cause is diagnosable in devtools. */
+            if (adapter.id === 'anthropic' || adapter.id === 'openai') lastRemoteErr = err
+            if (adapter.id !== 'rules') console.error(`[mew] ${adapter.id} adapter failed:`, err)
             failed.push(adapter.id)
           }
         }

@@ -49,6 +49,21 @@ export function isTransient(err: unknown): boolean {
   return isNetworkError(err)
 }
 
+/** Why a model turn failed, for an honest, actionable fallback message. `auth`
+    (401/403 — key rejected) and `model` (404 — model name not found) are
+    PERMANENT and the user must fix them in Settings; `busy` is transient (was
+    retried); `unknown` is anything else. Distinct from isTransient so the copy
+    can stop calling a rejected key "busy". */
+export type FailureKind = 'auth' | 'model' | 'busy' | 'unknown'
+export function classifyFailure(err: unknown): FailureKind {
+  if (isAbort(err)) return 'unknown' // an abort isn't a model failure
+  const status = statusOf(err)
+  if (status === 401 || status === 403) return 'auth'
+  if (status === 404) return 'model'
+  if (isTransient(err)) return 'busy'
+  return 'unknown'
+}
+
 /** Reads HTTP `Retry-After` off the error's headers when the server set one,
     in ms. Supports the delay-seconds form (`Retry-After: 2`) and the HTTP-date
     form. Returns null when absent or unparseable so the caller falls back to
