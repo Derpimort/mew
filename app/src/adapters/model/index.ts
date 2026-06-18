@@ -3,6 +3,7 @@
    deterministic rules floor — never a blocking error (PRD §9). */
 
 import type { Settings } from '../../domain/types'
+import { PROVIDER_CONTRACT } from './contract'
 import { createOllamaAdapter } from './ollama'
 import { createOpenAIAdapter } from './openai'
 import { createRulesAdapter } from './rules'
@@ -30,9 +31,16 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
   const chain: ModelPort[] = []
   if (settings.modelLocation === 'remote') {
     if (settings.remoteProvider === 'openai' && settings.openaiKey.trim()) {
-      chain.push(createOpenAIAdapter(settings.openaiKey.trim(), settings.openaiModel || 'gpt-5.4-mini'))
+      chain.push(
+        createOpenAIAdapter(settings.openaiKey.trim(), settings.openaiModel || PROVIDER_CONTRACT.openai.defaultModel),
+      )
     } else if (settings.remoteProvider !== 'openai' && settings.anthropicKey.trim()) {
-      chain.push(createLazyAnthropic(settings.anthropicKey.trim(), settings.anthropicModel || 'claude-sonnet-4-6'))
+      chain.push(
+        createLazyAnthropic(
+          settings.anthropicKey.trim(),
+          settings.anthropicModel || PROVIDER_CONTRACT.anthropic.defaultModel,
+        ),
+      )
     }
   }
   if (settings.modelLocation === 'local') {

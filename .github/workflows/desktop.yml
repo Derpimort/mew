@@ -49,6 +49,37 @@ jobs:
       - run: pnpm --dir app build
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
 
+  # Live model-contract smoke. Every adapter test mocks the SDK/fetch, so a wrong
+  # request param/value/header (the shipped max_tokens-vs-max_completion_tokens
+  # 400) passes the unit suite and still breaks users. This hits the real API to
+  # prove the contract holds. Runs on release tags + manual dispatch (NOT on PRs,
+  # so forks/PRs are never blocked). Keys come from repo secrets; absent → the
+  # step logs a clear skip and exits 0 (no silent green — and a fork PR that can't
+  # read secrets simply doesn't run this job).
+  smoke:
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm --dir app install --frozen-lockfile
+      - name: Live model smoke (skips when no keys)
+        env:
+          MEW_SMOKE: '1'
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ] && [ -z "$OPENAI_API_KEY" ]; then
+            echo "::notice title=model smoke skipped::no ANTHROPIC_API_KEY / OPENAI_API_KEY secret present — live model smoke skipped (set a repo secret to exercise it)."
+            exit 0
+          fi
+          [ -n "$ANTHROPIC_API_KEY" ] && echo "ANTHROPIC_API_KEY present — running Anthropic live smoke." || echo "ANTHROPIC_API_KEY absent — Anthropic case will skip."
+          [ -n "$OPENAI_API_KEY" ] && echo "OPENAI_API_KEY present — running OpenAI live smoke." || echo "OPENAI_API_KEY absent — OpenAI case will skip."
+          pnpm --dir app smoke:models
+
   # tag v* → installers + updater manifest on a GitHub Release
   # workflow_dispatch → same build, nothing published (release dry-run)
   release:

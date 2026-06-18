@@ -7,8 +7,17 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
 import { withRetry } from './retry'
+import { PROVIDER_CONTRACT } from './contract'
 
 const MAX_LOOP = 6
+
+/* The token-limit quirk lives in PROVIDER_CONTRACT, not inline here: OpenAI's
+   default model rejects `max_tokens` and requires `max_completion_tokens`.
+   Reading the param NAME from the contract is what makes that un-driftable. The
+   field is built once as a spread so the body can never carry the wrong key. */
+const OA = PROVIDER_CONTRACT.openai
+const OA_TOKEN_FIELD: Record<string, number> =
+  OA.tokenLimitParam && OA.tokenCeiling != null ? { [OA.tokenLimitParam]: OA.tokenCeiling } : {}
 
 interface OaToolCall {
   id: string
@@ -43,14 +52,16 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
         method: 'POST',
         headers: {
           Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+          ...OA.requiredHeaders,
         },
         body: JSON.stringify({
           model,
           messages,
           tools: TOOLS,
           tool_choice: 'auto',
-          max_tokens: 1024,
+          /* contract-driven: `max_completion_tokens` for this provider (the
+             gpt-5.x quirk), never the legacy `max_tokens`. */
+          ...OA_TOKEN_FIELD,
         }),
         /* the user's stop aborts the in-flight request; fetch rejects with an
            AbortError, which the store reads as a clean stop (never a failure →

@@ -10,10 +10,16 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
 import { withRetry } from './retry'
+import { PROVIDER_CONTRACT } from './contract'
 
 /* one upfront sweep should place a day in ≤2 rounds (#102); 14 is headroom for a
    genuinely large multi-item plan, not room to thrash clash-by-clash */
 const MAX_LOOP = 14
+
+/* The Messages API requires `max_tokens`; the ceiling lives in PROVIDER_CONTRACT
+   (within claude-sonnet-4-6's 64K output cap) so it can't silently drift past
+   the model limit and 400. */
+const MAX_TOKENS = PROVIDER_CONTRACT.anthropic.tokenCeiling ?? 32000
 
 const TOOLS: Anthropic.Tool[] = MEW_TOOLS.map((t) => ({
   name: t.name,
@@ -54,11 +60,11 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
             {
               model,
               /* required by the API — streaming delivers tokens live but every call
-                 still declares a ceiling. 32k is unreachable for a MEW turn (the
-                 voice is 1–3 sentences); it exists purely as the runaway-cost guard
-                 on the user's own key, with the continuation handler below as the
-                 never-end-mid-word backstop. */
-              max_tokens: 32000,
+                 still declares a ceiling. The contract's ceiling is unreachable for a
+                 MEW turn (the voice is 1–3 sentences); it exists purely as the
+                 runaway-cost guard on the user's own key, with the continuation
+                 handler below as the never-end-mid-word backstop. */
+              max_tokens: MAX_TOKENS,
               cache_control: { type: 'ephemeral' },
               system,
               tools: TOOLS,

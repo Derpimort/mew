@@ -7,6 +7,11 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { runIntent, sanitizeIntent } from './rules'
 import { withRetry } from './retry'
+import { PROVIDER_CONTRACT } from './contract'
+
+/* /api/chat takes no token-limit param (the server default governs); the only
+   static header MEW sets comes from PROVIDER_CONTRACT, same source as the others. */
+const OLLAMA_HEADERS = PROVIDER_CONTRACT.ollama.requiredHeaders
 
 const INTENT_SPEC = `Decide what the user wants and respond ONLY with JSON matching:
 {"kind":"plan|complete|move|capture|clear|remove|edit|remember|chat",
@@ -33,7 +38,7 @@ export function createOllamaAdapter(baseUrl: string, model: string): ModelPort {
     return withRetry(async () => {
       const res = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...OLLAMA_HEADERS },
         body: JSON.stringify({
           model,
           stream: false,
