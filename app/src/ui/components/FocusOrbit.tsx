@@ -122,7 +122,7 @@ export function FocusOrbit() {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.14} />}
+              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.18} />}
               {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
               <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
               <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
@@ -292,7 +292,9 @@ export function FocusOrbit() {
                   }}
                   {...handlers}
                 >
-                  {title.length > 20 ? title.slice(0, 18) + '…' : title}{' '}
+                  {/* truncated at rest (a tidy preview); the full title shows on
+                      hover/focus so a long meeting name is always readable */}
+                  {isH || isF || title.length <= 20 ? title : title.slice(0, 18) + '…'}{' '}
                   <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}>
                     {timeNote}
                   </tspan>
@@ -345,7 +347,7 @@ export function FocusOrbit() {
           </span>
         </div>
       ) : (
-        <div className="clk-center" style={{ width: 310 }}>
+        <div className="clk-center" style={{ width: 280 }}>
           <div className="nx-task" style={{ fontSize: 24, color: 'var(--muted)' }}>
             <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
           </div>

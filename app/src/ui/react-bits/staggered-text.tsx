@@ -258,7 +258,10 @@ const StaggeredText = forwardRef<StaggeredTextHandle, StaggeredTextProps>(
             return [row];
           case "words":
           default:
-            return row.split("");
+            // split into words + whitespace runs (not characters) so each word is
+            // one atomic inline-block segment — it wraps at word boundaries, never
+            // mid-word ("scr|een"). Drop the empty edges split() leaves.
+            return row.split(/(\s+)/).filter((s) => s !== "");
         }
       });
 

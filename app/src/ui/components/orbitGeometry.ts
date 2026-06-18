@@ -33,16 +33,16 @@ export const OG = {
   cx: 300,
   cy: 354,
   w: 760,
-  h: 680, // a clear bottom strip below the 6 o'clock numeral for the hover readout
+  h: 690, // a clear bottom strip below the 6 o'clock numeral for the hover readout
   // ox centres the dial axis (cx) in the stage: cx + ox = w/2, so the
   // countdown can anchor at left:50% and margins stay symmetric.
   ox: 80,
   disk: 90, // clear centre for the countdown; the AM zone fill starts here
-  ri: 128, // inner ring (drawn) — the AM commitment divider
-  ro: 210, // PM commitment divider — a band-placement reference, NOT drawn (two rings only)
-  pm: 252, // outer ring (drawn) — the bezel, now carrying the hour ticks + numerals
-  tick: 252, // hour ticks sit ON the outer ring (pm), unifying ring + markers
-  num: 266, // numerals just outside the outer ring + ticks
+  ri: 150, // inner ring (drawn) — bigger so it clears the centre text and the AM fill (disk→ri) reads as a real band, not a sliver
+  ro: 224, // PM commitment divider — a band-placement reference, NOT drawn (two rings only); tracks ri to keep the AM-bg/PM-confirmed gap
+  pm: 258, // outer ring (drawn) — the bezel, now carrying the hour ticks + numerals
+  tick: 258, // hour ticks sit ON the outer ring (pm), unifying ring + markers
+  num: 272, // numerals just outside the outer ring + ticks
 } as const
 export const LANE_STEP = 8
 /** Half-gap from a divider ring to its band's base lane: confirmed blocks sit

@@ -325,9 +325,11 @@
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--muted);
-  max-width: 280px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* the hover readout is where you read the WHOLE thing — let a long meeting
+     title wrap (override the readout's nowrap) instead of clipping it */
+  max-width: 440px;
+  white-space: normal;
+  text-align: center;
 }
 .pri-idle { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--faint); letter-spacing: 0.04em; }
 /* loose-threads pill — sits in the top bar beside the clock (horizontal) */
@@ -395,7 +397,9 @@
   top: 354px;
   transform: translate(-50%, -50%);
   text-align: center;
-  width: 320px;
+  /* must stay inside the inner ring (ri=150 → 300px diameter) so long titles
+     wrap within the ring instead of crossing it */
+  width: 290px;
   pointer-events: none;
 }
 .nx-count {
