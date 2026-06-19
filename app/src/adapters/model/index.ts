@@ -3,24 +3,27 @@
    deterministic rules floor — never a blocking error (PRD §9). */
 
 import type { Settings } from '../../domain/types'
+import type { RemoteProvider } from './aiAdapter'
 import { PROVIDER_CONTRACT } from './contract'
 import { createOllamaAdapter } from './ollama'
-import { createOpenAIAdapter } from './openai'
 import { createRulesAdapter } from './rules'
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 export type { ChatTurn, ModelPort, ToolExecutor, WeekContext, PlaceSpec, FreeSpec } from './types'
 export { classifyFailure, type FailureKind } from './retry'
 
-/* The Anthropic SDK loads lazily — the app must not pay for it until a key exists. */
-function createLazyAnthropic(apiKey: string, model: string): ModelPort {
+/* The Vercel AI SDK + its provider packages load lazily — the app must not pay
+   for them until a remote key exists; a zero-key session stays on the rules
+   floor and never imports them. Both remote providers run through the one
+   unified adapter (#150). */
+function createLazyAi(provider: RemoteProvider, apiKey: string, model: string): ModelPort {
   let real: Promise<ModelPort> | null = null
   const get = () => {
-    real ??= import('./anthropic').then((m) => m.createAnthropicAdapter(apiKey, model))
+    real ??= import('./aiAdapter').then((m) => m.createAiAdapter(provider, apiKey, model))
     return real
   }
   return {
-    id: 'anthropic',
+    id: provider,
     async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
       yield* (await get()).converse(thread, ctx, exec, signal)
     },
@@ -31,16 +34,9 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
   const chain: ModelPort[] = []
   if (settings.modelLocation === 'remote') {
     if (settings.remoteProvider === 'openai' && settings.openaiKey.trim()) {
-      chain.push(
-        createOpenAIAdapter(settings.openaiKey.trim(), settings.openaiModel || PROVIDER_CONTRACT.openai.defaultModel),
-      )
+      chain.push(createLazyAi('openai', settings.openaiKey.trim(), settings.openaiModel || PROVIDER_CONTRACT.openai.defaultModel))
     } else if (settings.remoteProvider !== 'openai' && settings.anthropicKey.trim()) {
-      chain.push(
-        createLazyAnthropic(
-          settings.anthropicKey.trim(),
-          settings.anthropicModel || PROVIDER_CONTRACT.anthropic.defaultModel,
-        ),
-      )
+      chain.push(createLazyAi('anthropic', settings.anthropicKey.trim(), settings.anthropicModel || PROVIDER_CONTRACT.anthropic.defaultModel))
     }
   }
   if (settings.modelLocation === 'local') {

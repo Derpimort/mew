@@ -12,8 +12,7 @@
    Run it: `MEW_SMOKE=1 ANTHROPIC_API_KEY=… OPENAI_API_KEY=… pnpm smoke:models`. */
 
 import { describe, expect, it } from 'vitest'
-import { createOpenAIAdapter } from '../openai'
-import { createAnthropicAdapter } from '../anthropic'
+import { createAiAdapter } from '../aiAdapter'
 import { PROVIDER_CONTRACT } from '../contract'
 import type { ToolExecutor, WeekContext } from '../types'
 
@@ -63,7 +62,7 @@ maybe('live model-contract smoke', () => {
   oa(
     'OpenAI: a real turn streams text with the contract param',
     async () => {
-      const adapter = createOpenAIAdapter(OPENAI_KEY!, PROVIDER_CONTRACT.openai.defaultModel)
+      const adapter = createAiAdapter('openai', OPENAI_KEY!, PROVIDER_CONTRACT.openai.defaultModel)
       const text = await firstText(adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec))
       expect(text.length).toBeGreaterThan(0)
     },
@@ -74,7 +73,7 @@ maybe('live model-contract smoke', () => {
   an(
     'Anthropic: a real turn streams text within the contract ceiling',
     async () => {
-      const adapter = createAnthropicAdapter(ANTHROPIC_KEY!, PROVIDER_CONTRACT.anthropic.defaultModel)
+      const adapter = createAiAdapter('anthropic', ANTHROPIC_KEY!, PROVIDER_CONTRACT.anthropic.defaultModel)
       const text = await firstText(adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec))
       expect(text.length).toBeGreaterThan(0)
     },

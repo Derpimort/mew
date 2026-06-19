@@ -15,10 +15,13 @@
     "shoot:overlap": "node scripts/shoot-overlap.mjs"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.85",
+    "@ai-sdk/openai": "^3.0.73",
     "@anthropic-ai/sdk": "^0.104.0",
     "@noble/ciphers": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
     "@react-three/fiber": "^9.6.1",
+    "ai": "^6.0.208",
     "clsx": "^2.1.1",
     "dexie": "^4.4.3",
     "hash-wasm": "^4.12.0",
