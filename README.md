@@ -113,6 +113,14 @@ your serve talks to your Supabase.
 network. The serve key stays on the device that entered it and never rides in backups —
 `exportJson` strips it, like every other key.
 
+## Community
+
+MEW is built in the open and contributions are welcome. Before you start:
+
+- **[Contributing guide](CONTRIBUTING.md)** — setup, the quality gates, and the hexagonal architecture
+- **[Code of Conduct](CODE_OF_CONDUCT.md)** — the Contributor Covenant we follow
+- **[Security policy](.github/SECURITY.md)** — how to report a vulnerability privately
+
 ## License
 
 [MIT](LICENSE)
