@@ -76,6 +76,13 @@ pnpm tauri signer generate -w ~/.tauri/mew.key   # prompts for a password
 Dry-run without releasing: Actions → desktop → *Run workflow* — the full
 matrix builds installers + updater artifacts, publishes nothing.
 
+The updater signature validation (the `tauri.conf.json` `plugins.updater.pubkey`)
+is part of our security model: the installed app accepts an update only if its
+artifacts verify against that committed public key, so a tampered or unsigned
+`latest.json`/installer is rejected. That public key, the signing-key handling
+above, and CSP/key-handling scope are covered by the repo
+[security policy](../.github/SECURITY.md).
+
 ## Google Calendar sign-in (one-time OAuth client config)
 
 Google refuses OAuth inside embedded webviews (`disallowed_useragent`), so the
