@@ -23,6 +23,7 @@ const METHODS: ReadonlySet<string> = new Set([
   'deleteSyncForCalendar',
   'exportJson',
   'importJson',
+  'getAuditLog',
   'wipe',
 ])
 

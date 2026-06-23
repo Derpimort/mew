@@ -92,6 +92,7 @@ vi.mock('../../adapters/storage', () => ({
       for (const e of state.memory ?? []) fakeDb.memory.set(e.id, e)
       fakeDb.settings = state.settings ?? null
     },
+    getAuditLog: async () => [],
     wipe: async () => fakeDb.reset(),
   }),
 }))

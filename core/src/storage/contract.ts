@@ -77,4 +77,9 @@ export function storageContract(makeStore: () => StoragePort, h: TestHarness): v
     await s.wipe()
     expect((await s.load()).blocks).toEqual([])
   })
+
+  test('getAuditLog returns an array (empty on a fresh store)', async () => {
+    const s = makeStore()
+    expect(await s.getAuditLog()).toEqual([])
+  })
 }

@@ -3,7 +3,7 @@
    exactly as the Dexie vehicle does, so the engine above the seam is unchanged.
    ARCHITECTURE.md §2: "the core never changes; B/C just swap the adapter." */
 import { Database } from 'bun:sqlite'
-import type { PersistedState, StoragePort } from '../../../app/src/adapters/storage-port'
+import type { AuditEntry, PersistedState, StoragePort } from '../../../app/src/adapters/storage-port'
 import type { Block, Capture, ChatMessage, MemoryEvent, Settings } from '../../../app/src/domain/types'
 import type { SyncEntry } from '../../../app/src/adapters/calendar/types'
 
@@ -14,6 +14,8 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS memory   (id TEXT PRIMARY KEY, json TEXT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS kv       (key TEXT PRIMARY KEY, json TEXT NOT NULL)',
   'CREATE TABLE IF NOT EXISTS sync     (id TEXT PRIMARY KEY, calId TEXT NOT NULL, json TEXT NOT NULL)',
+  /* migration/validation audit trail — parity with the Dexie v3 `auditLog` */
+  'CREATE TABLE IF NOT EXISTS auditLog (id TEXT PRIMARY KEY, ts INTEGER NOT NULL, json TEXT NOT NULL)',
 ]
 
 export function createSqliteStorage(path = ':memory:'): StoragePort {
@@ -119,9 +121,15 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
         }
       })()
     },
+    async getAuditLog(): Promise<AuditEntry[]> {
+      /* newest first — the most recent load's story reads at the top */
+      return (db.query('SELECT json FROM auditLog ORDER BY ts DESC').all() as { json: string }[]).map(
+        (r) => JSON.parse(r.json) as AuditEntry,
+      )
+    },
     async wipe() {
       db.transaction(() => {
-        for (const t of ['blocks', 'captures', 'chat', 'memory', 'kv', 'sync']) db.run(`DELETE FROM ${t}`)
+        for (const t of ['blocks', 'captures', 'chat', 'memory', 'kv', 'sync', 'auditLog']) db.run(`DELETE FROM ${t}`)
       })()
     },
   }

@@ -8,7 +8,7 @@
    proves it against the contract. */
 import type { Block, Capture, ChatMessage, MemoryEvent, Settings } from '../domain/types'
 import type { SyncEntry } from './calendar/types'
-import type { PersistedState, StoragePort } from './storage-port'
+import type { AuditEntry, PersistedState, StoragePort } from './storage-port'
 
 interface RpcEnvelope<T> {
   ok: boolean
@@ -49,6 +49,7 @@ export function createCoreStorage(baseUrl: string, token: string): StoragePort {
     deleteSyncForCalendar: (calId: string) => rpc<void>('deleteSyncForCalendar', [calId]),
     exportJson: () => rpc<string>('exportJson', []),
     importJson: (json: string) => rpc<void>('importJson', [json]),
+    getAuditLog: () => rpc<AuditEntry[]>('getAuditLog', []),
     wipe: () => rpc<void>('wipe', []),
   }
 }
