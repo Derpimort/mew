@@ -81,6 +81,11 @@ export interface ChatMessage {
   ts: number
   /* mew messages: optional muted observation line */
   observation?: string
+  /* mew messages: the model's pre-action reasoning snapshot — what it planned
+     before any tool ran (#166). Captured only when the model exposes a thinking
+     stream and the user opted in (Settings.showReasoning); a short, human-readable
+     slice rendered as a collapsible note. Absent on every keyless/local turn. */
+  reasoning?: string
   /* nudge messages */
   nudgeType?: NudgeId
   nudgeLabel?: string
@@ -173,6 +178,13 @@ export interface Settings {
   browserMirror: boolean
   quietHours: { startMin: number; endMin: number } // 18:30–08:30 default, wraps midnight
   showScience: boolean
+  /** Show the model's pre-tool reasoning snapshot in the session log (#166).
+      Off by default: turning it on asks Anthropic models to think before acting
+      (a small extra cost/latency on the user's own key), then renders that plan
+      as a collapsible note. Off ⇒ no thinking is requested and nothing shows —
+      the same graceful degradation as a keyless turn. Anthropic-only for now
+      (see PROVIDER_CONTRACT.reasoning); other providers ignore it. */
+  showReasoning: boolean
   modelLocation: 'remote' | 'local'
   /** Which remote brain answers (BYO key either way). */
   remoteProvider: 'anthropic' | 'openai'
@@ -264,6 +276,7 @@ export const DEFAULT_SETTINGS: Settings = {
   browserMirror: true,
   quietHours: { startMin: 18 * 60 + 30, endMin: 8 * 60 + 30 },
   showScience: true,
+  showReasoning: false,
   modelLocation: 'remote',
   remoteProvider: 'anthropic',
   anthropicKey: '',

@@ -225,6 +225,7 @@ const ROLE_WORD: Record<ChatMessage['role'], string> = { user: 'you', mew: 'mew'
 
 export function LogLine({ msg }: { msg: ChatMessage }) {
   const showScience = useMew((s) => s.settings.showScience)
+  const showReasoning = useMew((s) => s.settings.showReasoning)
   const nudgeAction = useMew((s) => s.nudgeAction)
 
   /* every line is its own article so a reader can walk message-to-message; the
@@ -252,6 +253,15 @@ export function LogLine({ msg }: { msg: ChatMessage }) {
         {isMew && <span className="mw">★ </span>}
         {isOk && <span className="ok">✓ </span>}
         <Markdown source={msg.body} />
+        {/* the pre-tool reasoning snapshot — collapsed by default so the reply
+            stays clean; open it to see what the model planned before it acted
+            (#166). Native <details>: real DOM, React-escaped, no markup smuggled. */}
+        {showReasoning && msg.reasoning && (
+          <details className="reasoning">
+            <summary>planned before acting</summary>
+            <div className="reasoning-body">{msg.reasoning}</div>
+          </details>
+        )}
         {msg.observation && (
           <div className="cm" style={{ paddingLeft: 34 }}># {msg.observation}</div>
         )}

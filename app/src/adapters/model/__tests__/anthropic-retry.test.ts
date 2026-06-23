@@ -5,7 +5,7 @@
    already spoke). Drives the real adapter through a programmable SDK mock. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ToolExecutor, WeekContext } from '../types'
+import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
 
 const ctx: WeekContext = {
   todayKey: '2026-06-09',
@@ -70,9 +70,9 @@ vi.mock('../retry', async () => {
 
 const textEvent = (t: string) => ({ type: 'content_block_delta', delta: { type: 'text_delta', text: t } })
 
-async function collect(it: AsyncIterable<string>): Promise<string> {
+async function collect(it: AsyncIterable<ConverseChunk>): Promise<string> {
   let out = ''
-  for await (const c of it) out += c
+  for await (const c of it) if (typeof c === 'string') out += c
   return out
 }
 

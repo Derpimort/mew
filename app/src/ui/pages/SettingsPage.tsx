@@ -740,6 +740,16 @@ function PrivacyModelCard() {
           />
         </SetRow>
       )}
+      {/* pre-tool reasoning snapshot (#166) — Anthropic-only, where the SDK
+          surfaces a thinking stream. Off keeps every turn exactly as before. */}
+      {settings.modelLocation === 'remote' && provider === 'anthropic' && (
+        <SetRow
+          t="Show the plan first"
+          s="Claude thinks before it acts; see that plan, collapsed under each reply. A little slower, costs a touch more on your key."
+        >
+          <Tgl on={settings.showReasoning} onToggle={() => updateSettings({ showReasoning: !settings.showReasoning })} />
+        </SetRow>
+      )}
       <SetRow
         t="Bring your own key"
         s={`Sent only to ${provider === 'openai' ? 'api.openai.com' : 'api.anthropic.com'}.`}

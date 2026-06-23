@@ -1518,19 +1518,29 @@ export const useMew = create<MewState>((set, get) => {
         for (const adapter of adapters) {
           let msgId: string | null = null
           let buffer = ''
+          let reasoning: string | undefined // the model's pre-tool plan (#166)
           const flush = () => {
             if (msgId == null) {
               msgId = uid()
-              const msg: ChatMessage = { id: msgId, role: 'mew', body: buffer, ts: nowFn() }
+              const msg: ChatMessage = { id: msgId, role: 'mew', body: buffer, ts: nowFn(), ...(reasoning ? { reasoning } : {}) }
               set((s) => ({ thinking: false, chat: [...s.chat, msg] }))
             } else {
               const id = msgId
-              set((s) => ({ chat: s.chat.map((m) => (m.id === id ? { ...m, body: buffer } : m)) }))
+              set((s) => ({ chat: s.chat.map((m) => (m.id === id ? { ...m, body: buffer, ...(reasoning ? { reasoning } : {}) } : m)) }))
             }
           }
           try {
             for await (const chunk of adapter.converse(thread, ctx, exec, abort.signal)) {
               if (!chunk) continue
+              /* a reasoning chunk is the pre-action plan, not reply text — pin it
+                 to the message (it renders as a collapsible note) and keep going.
+                 It arrives BEFORE the first tool/text, so the snapshot is on the
+                 record ahead of any mutation (#166). */
+              if (typeof chunk !== 'string') {
+                reasoning = chunk.reasoning
+                if (msgId) flush() // a message already exists — attach it now
+                continue
+              }
               buffer += chunk
               flush()
             }

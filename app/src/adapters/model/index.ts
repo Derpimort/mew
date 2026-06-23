@@ -16,10 +16,10 @@ export { classifyFailure, type FailureKind } from './retry'
    for them until a remote key exists; a zero-key session stays on the rules
    floor and never imports them. Both remote providers run through the one
    unified adapter (#150). */
-function createLazyAi(provider: RemoteProvider, apiKey: string, model: string): ModelPort {
+function createLazyAi(provider: RemoteProvider, apiKey: string, model: string, reasoning: boolean): ModelPort {
   let real: Promise<ModelPort> | null = null
   const get = () => {
-    real ??= import('./aiAdapter').then((m) => m.createAiAdapter(provider, apiKey, model))
+    real ??= import('./aiAdapter').then((m) => m.createAiAdapter(provider, apiKey, model, reasoning))
     return real
   }
   return {
@@ -32,11 +32,15 @@ function createLazyAi(provider: RemoteProvider, apiKey: string, model: string): 
 
 export function selectAdapters(settings: Settings, now: () => Date): ModelPort[] {
   const chain: ModelPort[] = []
+  /* pre-tool reasoning capture is opt-in (#166); the adapter further no-ops it
+     for any provider whose contract has no reasoning budget, so this flag is
+     safe to pass through unconditionally. */
+  const reasoning = settings.showReasoning
   if (settings.modelLocation === 'remote') {
     if (settings.remoteProvider === 'openai' && settings.openaiKey.trim()) {
-      chain.push(createLazyAi('openai', settings.openaiKey.trim(), settings.openaiModel || PROVIDER_CONTRACT.openai.defaultModel))
+      chain.push(createLazyAi('openai', settings.openaiKey.trim(), settings.openaiModel || PROVIDER_CONTRACT.openai.defaultModel, reasoning))
     } else if (settings.remoteProvider !== 'openai' && settings.anthropicKey.trim()) {
-      chain.push(createLazyAi('anthropic', settings.anthropicKey.trim(), settings.anthropicModel || PROVIDER_CONTRACT.anthropic.defaultModel))
+      chain.push(createLazyAi('anthropic', settings.anthropicKey.trim(), settings.anthropicModel || PROVIDER_CONTRACT.anthropic.defaultModel, reasoning))
     }
   }
   if (settings.modelLocation === 'local') {

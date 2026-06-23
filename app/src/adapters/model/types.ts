@@ -101,13 +101,23 @@ export interface ToolExecutor {
   queryBrain(question: string): Promise<string>
 }
 
+/** What `converse` yields. A plain string is a reply-text delta (the common
+    case — every adapter emits these). A `{ reasoning }` chunk is the model's
+    pre-action plan, captured BEFORE any tool ran and emitted once, ahead of the
+    first text/tool (#166). It rides the same stream so the seam stays single:
+    the store routes a string to the visible reply and a reasoning chunk to the
+    message's collapsible note. Adapters that can't surface thinking simply never
+    emit the reasoning variant, so widening this is backward-compatible. */
+export type ConverseChunk = string | { reasoning: string }
+
 export interface ModelPort {
   readonly id: 'anthropic' | 'openai' | 'ollama' | 'rules'
   /** Streams MEW's reply text; calls the executor for any actions. `signal`,
       when given, cancels an in-flight turn: the adapter wires it into its
       stream/fetch so a user 'stop' ends the turn within a beat. An abort is the
-      user's decision, never a model failure — work already committed stays. */
-  converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal): AsyncIterable<string>
+      user's decision, never a model failure — work already committed stays.
+      May also yield a single `{ reasoning }` chunk first (see ConverseChunk). */
+  converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal): AsyncIterable<ConverseChunk>
 }
 
 export const MEW_VOICE = `You are MEW ("My Entire Week"), a calm companion who runs the user's week with them.

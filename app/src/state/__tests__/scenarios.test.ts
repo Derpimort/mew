@@ -183,6 +183,9 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
    scenarios opt in via modelLocation:'local'. */
 const scriptedModel = {
   chunks: [] as string[],
+  /** an optional pre-tool reasoning snapshot (#166), yielded first like the real
+      AI adapter so the store's reasoning routing is exercised end-to-end. */
+  reasoning: null as string | null,
   /** runs between the first and last chunk — fire executors, snapshot state.
       Gets the turn's abort signal too, so a test can press stop mid-stream. */
   midTurn: null as
@@ -191,6 +194,7 @@ const scriptedModel = {
   throwAfter: false, // simulate a connection hiccup once the tool has acted
   reset() {
     this.chunks = []
+    this.reasoning = null
     this.midTurn = null
     this.throwAfter = false
   },
@@ -204,6 +208,8 @@ vi.mock('../../adapters/model/ollama', () => ({
       exec: import('../../adapters/model').ToolExecutor,
       signal?: AbortSignal,
     ) {
+      // the plan lands ahead of any text/tool, exactly as the AI adapter emits it
+      if (scriptedModel.reasoning) yield { reasoning: scriptedModel.reasoning }
       const [first, ...rest] = scriptedModel.chunks
       if (first) yield first
       scriptedModel.midTurn?.(exec, signal)
@@ -1709,6 +1715,37 @@ describe('nudges defer until the turn completes', () => {
     await say('finish the deck')
     expect(midTurnCount).toBe(0) // held during the turn, even after the first token
     expect(lastNudge('next-up')).toBeDefined() // … then flushed once it ended
+  })
+
+  it('a pre-tool reasoning snapshot lands on the reply message, ahead of the mutation (#166)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const target = deckToday()
+    // the model thinks first, then completes the deck between the reply parts
+    scriptedModel.reasoning = 'the deck is the one open block today — completing it.'
+    scriptedModel.chunks = ['On it — ', 'marked done.']
+    let plannedBeforeAction: string | undefined
+    scriptedModel.midTurn = (exec) => {
+      // the reasoning is already pinned to the streamed reply before the tool runs
+      const streaming = chat().find((m) => m.role === 'mew' && m.body.includes('On it'))
+      plannedBeforeAction = streaming?.reasoning
+      exec.complete(target.title)
+    }
+    await say('finish the deck')
+
+    const reply = chat().find((m) => m.role === 'mew' && m.body.includes('marked done'))!
+    expect(reply.reasoning).toBe('the deck is the one open block today — completing it.')
+    // it was on the record BEFORE the executor mutated the week
+    expect(plannedBeforeAction).toBe('the deck is the one open block today — completing it.')
+  })
+
+  it('no reasoning chunk ⇒ no reasoning field (the keyless/opt-out default)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['done — thursday is held.']
+    await say('block thursday morning')
+    const reply = chat().find((m) => m.role === 'mew' && m.body.includes('thursday is held'))!
+    expect(reply.reasoning).toBeUndefined()
   })
 
   it('a turn that errors after acting still flushes its parked nudges', async () => {

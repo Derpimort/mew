@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createOpenAIAdapter } from '../openai'
 import { createRulesAdapter } from '../rules'
 import { runTool } from '../tools'
-import type { ToolExecutor, WeekContext } from '../types'
+import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
 
 const NOW = () => new Date(2026, 5, 9, 9, 40) // Tuesday, June 9
 
@@ -73,9 +73,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
   }
 }
 
-async function collect(it: AsyncIterable<string>): Promise<string> {
+async function collect(it: AsyncIterable<ConverseChunk>): Promise<string> {
   let out = ''
-  for await (const c of it) out += c
+  for await (const c of it) if (typeof c === 'string') out += c
   return out
 }
 

@@ -41,6 +41,17 @@ export interface ProviderContract {
       contract.test.ts) so the picker default and the adapter fallback can't
       diverge. */
   defaultModel: string
+
+  /** Pre-tool reasoning capture (#166). null ⇒ this provider's MEW path can't
+      surface a thinking stream, so `showReasoning` is a no-op for it (OpenAI
+      via chat-completions, Ollama). When set, the adapter asks the model to
+      think before acting and streams that plan back.
+        · budgetTokens — the model's internal thinking budget. Anthropic's
+          extended thinking requires ≥ 1024; this is the room to plan, NOT what
+          the user sees.
+        · displayChars — the visible slice cap on the captured plan, so the note
+          stays short (the AC's ≤300 tokens ≈ ~1200 chars; we sit well under). */
+  reasoning: { budgetTokens: number; displayChars: number } | null
 }
 
 /* Anthropic — BYO key, browser-direct via the SDK. `max_tokens` is required by
@@ -52,6 +63,11 @@ const ANTHROPIC: ProviderContract = {
   tokenCeiling: 32000,
   requiredHeaders: {}, // SDK sets Authorization + anthropic-version
   defaultModel: 'claude-sonnet-4-6',
+  /* extended thinking: claude-sonnet-4-x supports it; the AI SDK surfaces it as
+     a reasoning stream (#166). 1500 is just above Anthropic's 1024 minimum —
+     enough headroom to plan a multi-item placement without inviting a long,
+     costly deliberation; the visible slice is capped far tighter. */
+  reasoning: { budgetTokens: 1500, displayChars: 600 },
 }
 
 /* OpenAI — BYO key, plain REST (chat completions). The default gpt-5.4-mini
@@ -62,6 +78,9 @@ const OPENAI: ProviderContract = {
   tokenCeiling: 1024,
   requiredHeaders: { 'Content-Type': 'application/json' },
   defaultModel: 'gpt-5.4-mini',
+  /* the chat-completions path MEW uses doesn't surface a reasoning stream for
+     gpt-5.x-mini; leave it off rather than ship a half-feature (#166). */
+  reasoning: null,
 }
 
 /* Ollama — fully local, plain REST (/api/chat). No token-limit param on the
@@ -72,6 +91,7 @@ const OLLAMA: ProviderContract = {
   tokenCeiling: null,
   requiredHeaders: { 'Content-Type': 'application/json' },
   defaultModel: 'llama3.2',
+  reasoning: null, // local /api/chat path: no reasoning stream wired (#166)
 }
 
 /** The single source of truth. Adapters READ from this; they never re-declare

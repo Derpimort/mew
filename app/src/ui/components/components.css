@@ -221,6 +221,34 @@
   .mew-thinking .typing .dot { animation-duration: 2.4s; }
 }
 
+/* The pre-tool reasoning snapshot (#166): a quiet, collapsed note under MEW's
+   reply. Sits on the `mew ❯` gutter, mono and muted so it reads as machine
+   margin-talk, never competing with the reply itself. */
+.reasoning {
+  margin: 2px 0 0 34px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.reasoning > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  opacity: 0.85;
+}
+.reasoning > summary::-webkit-details-marker { display: none; }
+.reasoning > summary::before { content: '▸ '; }
+.reasoning[open] > summary::before { content: '▾ '; }
+.reasoning > summary:hover { opacity: 1; }
+.reasoning .reasoning-body {
+  margin-top: 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--line, currentColor);
+  opacity: 0.8;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
 .session-compose { padding: 0 16px 16px; flex: none; }
 
 /* ── focus orbit (lanes — DESIGN_LANGUAGE §3 FINAL) ───────────── */

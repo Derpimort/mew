@@ -7,7 +7,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createOpenAIAdapter } from '../openai'
-import type { ToolExecutor, WeekContext } from '../types'
+import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
 
 const ctx: WeekContext = {
   todayKey: '2026-06-09',
@@ -31,9 +31,9 @@ function errResponse(status: number) {
 
 const exec = {} as ToolExecutor
 
-async function collect(it: AsyncIterable<string>): Promise<string> {
+async function collect(it: AsyncIterable<ConverseChunk>): Promise<string> {
   let out = ''
-  for await (const c of it) out += c
+  for await (const c of it) if (typeof c === 'string') out += c
   return out
 }
 
