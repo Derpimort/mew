@@ -13,6 +13,7 @@
     "typecheck": "tsc -b",
     "audit": "pnpm audit --prod",
     "smoke:models": "MEW_SMOKE=1 vitest run src/adapters/model/__tests__/smoke.live.test.ts",
+    "e2e": "playwright test",
     "shoot": "node scripts/shoot.mjs",
     "shoot:overlap": "node scripts/shoot-overlap.mjs"
   },
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.60.0",
     "@tailwindcss/vite": "^4.3.0",
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",

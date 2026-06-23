@@ -2491,6 +2491,13 @@ declare global {
     /** Dev/scenario helper: drive the turn-in-flight UI (typing-indicator /
         working-status visual proofs) without a live model. */
     __mewSetTurn?: (thinking: boolean, workingStatus?: string | null) => void
+    /** Dev/scenario helper (E2E): rewind last-activity by `minutes` and run one
+        tick, so the drift check-in can be exercised deterministically without
+        advancing the wall clock. Mirrors how the real ticker evaluates drift. */
+    __mewSetIdle?: (minutes: number) => void
+    /** Dev/scenario helper (E2E): the append-only memory events, kind + day only
+        (no payload), so a test can assert a flow logged what it should. */
+    __mewMemoryKinds?: () => { kind: MemoryEvent['kind']; dayKey: string }[]
   }
 }
 if (typeof window !== 'undefined') {
@@ -2507,4 +2514,10 @@ if (typeof window !== 'undefined') {
   window.__mewSetTurn = (thinking, workingStatus = null) => {
     useMew.setState({ thinking, workingStatus })
   }
+  window.__mewSetIdle = (minutes) => {
+    useMew.setState({ lastActivityMs: nowFn() - minutes * 60_000 })
+    useMew.getState().tick()
+  }
+  window.__mewMemoryKinds = () =>
+    useMew.getState().memory.map((e) => ({ kind: e.kind, dayKey: e.dayKey }))
 }

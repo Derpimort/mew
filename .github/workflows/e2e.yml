@@ -1,0 +1,42 @@
+name: e2e
+
+# Core-flow end-to-end gate (issue #164). Drives the three journeys that fail
+# silently if the UI→adapter→store glue breaks — talk-to-schedule, a mew, drift
+# — through the REAL built app on the deterministic, keyless rules floor (no
+# model key → no network) with a fixed clock. A failing test fails the PR
+# (Playwright exits 1); traces + videos are uploaded so a flake is root-caused
+# from the artifact, not guessed at. See app/e2e/core-flows.spec.ts.
+on:
+  pull_request:
+    paths: ['app/**', '.github/workflows/e2e.yml']
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      # the chromium build matched to the pinned @playwright/test (1.60)
+      - run: pnpm exec playwright install --with-deps chromium
+      # builds the app, serves the bundle (config.webServer), runs the 3 tests.
+      # CI is set by the runner, so Playwright builds fresh + never reuses a server.
+      - run: pnpm e2e
+      # on failure: the trace (timeline + DOM + network), the video, and the
+      # html report — everything needed to debug a red run after the fact.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-artifacts
+          path: |
+            app/e2e/.artifacts/results
+            app/e2e/.artifacts/report
+          if-no-files-found: ignore
+          retention-days: 14

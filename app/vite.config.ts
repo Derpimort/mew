@@ -1,5 +1,9 @@
 import path from 'node:path'
-import { defineConfig } from 'vite'
+/* vitest/config is a superset of vite's defineConfig — it adds the `test` field
+   while leaving the build untouched (vite ignores `test`). We use it so the unit
+   runner can be scoped to src/, keeping the Playwright e2e/*.spec.ts (which
+   imports @playwright/test and needs a browser) out of `vitest run`. */
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -16,6 +20,13 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+  },
+  test: {
+    /* unit/integration suites live beside the code they cover, under src/. The
+       e2e suite is a separate runner (pnpm e2e / Playwright) — never collected
+       here, even though it shares the .spec naming. */
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
   },
   build: {
     // Emit dist/.vite/manifest.json so scripts/check-bundle-size.mjs can read
