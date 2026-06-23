@@ -46,6 +46,10 @@ jobs:
       # a PR that breaks the compile (or the pin) fails here, not at release
       - run: node desktop/scripts/build-sidecar.mjs
       - run: pnpm --dir app install --frozen-lockfile
+      # supply-chain gate before we spend time building: a high/critical advisory
+      # in a shipped dependency fails here (audit.yml runs the same check standalone
+      # + on a schedule). moderate/low is warn-only — see audit.yml.
+      - run: pnpm --dir app run audit --audit-level high
       - run: pnpm --dir app build
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
 

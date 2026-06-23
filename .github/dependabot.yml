@@ -1,0 +1,84 @@
+# GitHub-native Dependabot — the proactive half of MEW's supply-chain defence
+# (the reactive half is .github/workflows/audit.yml). Dependabot opens PRs for
+# new CVEs in our dependencies, normally within 24h of disclosure; the audit
+# workflow then proves each PR against the same high/critical gate before it can
+# merge. OWASP A06:2021 (Vulnerable and Outdated Components).
+#
+# Note on location: Dependabot ONLY reads .github/dependabot.yml (not a repo-root
+# .dependabot.yml), so the config lives here to actually run.
+#
+# Auto-merge: dependabot.yml cannot merge on its own — patch/minor bumps of the
+# security-sensitive crates/packages (grouped below) are auto-merged once the
+# audit + desktop checks pass, by .github/workflows/dependabot-auto-merge.yml.
+version: 2
+updates:
+  # ── JS/TS: the app workspace (what ships to users) ──────────────────────
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 10
+    labels: ['kind:non-functional', 'deps']
+    commit-message:
+      prefix: 'deps(app)'
+    groups:
+      # crypto + AI SDKs carry the highest blast radius (key handling, on-device
+      # encryption). Grouped so the auto-merge workflow can fast-track their
+      # patch/minor bumps once CI is green.
+      security:
+        applies-to: version-updates
+        patterns:
+          - '@noble/*'
+          - '@anthropic-ai/*'
+          - '@ai-sdk/*'
+          - 'ai'
+          - 'hash-wasm'
+        update-types:
+          - minor
+          - patch
+    # security (CVE) PRs are emitted regardless of the schedule above.
+  # ── JS/TS: the desktop shell (Tauri CLI) ───────────────────────────────
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 5
+    labels: ['kind:non-functional', 'deps']
+    commit-message:
+      prefix: 'deps(desktop)'
+  # ── Rust: the Tauri shell crates ───────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: /desktop/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 5
+    labels: ['kind:non-functional', 'deps']
+    commit-message:
+      prefix: 'deps(rust)'
+    groups:
+      security:
+        applies-to: version-updates
+        patterns:
+          - 'tauri*'
+          - 'serde*'
+          - 'tokio'
+        update-types:
+          - minor
+          - patch
+  # ── GitHub Actions: keep the CI actions themselves patched ─────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+    open-pull-requests-limit: 5
+    labels: ['kind:non-functional', 'deps']
+    commit-message:
+      prefix: 'ci'

@@ -6,7 +6,9 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "icon": "tauri icon ./icon-src.png"
+    "icon": "tauri icon ./icon-src.png",
+    "audit": "pnpm audit --prod",
+    "audit:desktop": "cargo audit --deny warnings --file src-tauri/Cargo.lock"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0"

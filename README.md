@@ -116,6 +116,37 @@ your serve talks to your Supabase.
 network. The serve key stays on the device that entered it and never rides in backups —
 `exportJson` strips it, like every other key.
 
+## Dependency security
+
+MEW ships your API keys (Anthropic, OpenAI, gbrain) and on-device crypto
+(`@noble/ciphers`, `@noble/post-quantum`) — so the supply chain is part of the
+threat model, not an afterthought. Two controls run continuously
+(OWASP A06:2021, *Vulnerable and Outdated Components*):
+
+- **Auditing in CI** (`.github/workflows/audit.yml`). Every PR, every push to
+  `main`, and a weekly cron run `pnpm audit --prod` over both pnpm workspaces
+  (`app/`, `desktop/`) and `cargo audit` over the Rust shell. **High/critical
+  advisories block the merge**; moderate/low log a warning. `--prod` scopes the
+  gate to what actually ships to users. The same high/critical check also guards
+  the desktop build job, so no PR reaches a release with a known serious CVE.
+- **Dependabot** (`.github/dependabot.yml`) opens PRs for new CVEs across npm,
+  Cargo, and the GitHub Actions themselves — typically within 24h of disclosure.
+  Patch/minor bumps of the security-sensitive packages (crypto + AI SDKs +
+  Tauri/serde/tokio) auto-merge *once the audit checks pass*; majors and
+  everything else stay manual.
+
+Findings and the dependency graph live on the repo's
+[Security tab](https://github.com/Derpimort/mew/security). Lock files
+(`app/pnpm-lock.yaml`, `desktop/pnpm-lock.yaml`,
+`desktop/src-tauri/Cargo.lock`) pin every resolved version, so a build is
+reproducible and auditable.
+
+Run the same checks locally:
+
+```sh
+pnpm --dir app audit          # JS/TS, production deps
+pnpm --dir desktop audit:desktop   # Rust crates (needs `cargo install cargo-audit`)
+```
 ## Community
 
 MEW is built in the open and contributions are welcome. Before you start:

@@ -1,0 +1,76 @@
+name: audit
+
+# Supply-chain gate — MEW ships BYO keys (Anthropic, OpenAI, gbrain) and crypto
+# primitives (@noble/ciphers, @noble/post-quantum). An unpatched dependency is a
+# key-exposure or crypto-breakage risk, so every PR and push is audited before it
+# can merge. high/critical block the merge; moderate logs a warning and passes.
+# OWASP A06:2021 (Vulnerable and Outdated Components) makes this a mandatory
+# first control; Dependabot (.github/dependabot.yml) is the proactive half.
+on:
+  pull_request:
+    paths:
+      - 'app/package.json'
+      - 'app/pnpm-lock.yaml'
+      - 'desktop/package.json'
+      - 'desktop/pnpm-lock.yaml'
+      - 'desktop/src-tauri/Cargo.toml'
+      - 'desktop/src-tauri/Cargo.lock'
+      - '.github/workflows/audit.yml'
+  push:
+    branches: ['main']
+  schedule:
+    # weekly belt-and-braces: catch CVEs disclosed against already-merged,
+    # unchanged dependencies (a path-filtered PR run never would). Monday 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # JS/TS dependency audit for both pnpm workspaces. --prod scopes to what ships
+  # to users (devDependencies don't reach the bundle). high/critical fail the
+  # job via --audit-level high; a separate moderate sweep only warns.
+  npm:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [app, desktop]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.dir }}/pnpm-lock.yaml
+      - run: pnpm --dir ${{ matrix.dir }} install --frozen-lockfile
+      # warn-only sweep: surface moderate/low advisories without blocking. The
+      # registry being down must not fail the build for a non-blocking check.
+      - name: Moderate advisories (warn only)
+        run: pnpm --dir ${{ matrix.dir }} run audit --audit-level moderate --ignore-registry-errors || echo "::warning title=moderate advisories in ${{ matrix.dir }}::pnpm audit reported moderate/low advisories — review the GitHub Security tab."
+      # blocking gate: high/critical only. A real registry error here should fail
+      # the build (a missing audit is not a passing audit), so no ignore flag.
+      - name: High/critical advisories (block merge)
+        run: pnpm --dir ${{ matrix.dir }} run audit --audit-level high
+
+  # Rust crate audit for the Tauri shell against RustSec (https://rustsec.org).
+  # We fail on real VULNERABILITIES (cargo audit's default exit-on-vuln), but NOT
+  # on `unmaintained`/`yanked` warnings: the GTK/Tauri Linux stack pulls in known-
+  # unmaintained crates (atk, gdk, etc.) we cannot fix downstream, so `--deny
+  # warnings` would keep this gate permanently red on noise. `warnings = "warn"`
+  # keeps them visible in the log without blocking the merge. Dependabot still
+  # bumps crates weekly; genuine advisories surface in the audit summary.
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { workspaces: desktop/src-tauri }
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: cargo audit (fail on vulnerabilities, warn on unmaintained)
+        run: cargo audit --file desktop/src-tauri/Cargo.lock
