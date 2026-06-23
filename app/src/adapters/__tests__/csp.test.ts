@@ -104,3 +104,73 @@ describe.skipIf(!existsSync(DIST_HTML))('CSP — built bundle has no inline styl
     expect(html).not.toMatch(/\bstyle\s*=\s*"/i)
   })
 })
+
+/* ── SRI decision guard (follow-up to #198; ARCHITECTURE §8 + D11) ───────────
+   Subresource Integrity was deliberately NOT adopted: the self-hosted bundle is
+   same-origin + Vite content-hashed (integrity-by-name), and the only cross-origin
+   script — Google Identity Services — rotates with no stable hash and is injected
+   at runtime, so it can't be pinned. That makes the CSP allowlist the real control.
+   These assertions lock the invariant the decision rests on, so a future change
+   can't quietly invalidate it: the executable scripts/styles a page can load must
+   stay '(self)' + at most the one audited GIS origin (any *other* cross-origin
+   script origin is exactly the mutable asset SRI exists to protect — its arrival
+   should fail loudly and re-open the SRI question), and the built shell must emit
+   only same-origin resource tags (no static cross-origin <script>/<link> that SRI
+   should have guarded). If a future asset breaks either invariant, revisit D11. */
+
+/** The one cross-origin origin MEW's policy legitimately admits for code/styles. */
+const GIS_ORIGIN = 'https://accounts.google.com'
+
+/** Cross-origin tokens in a directive: anything that isn't a keyword/'self'/scheme. */
+function crossOriginSources(dir: string): string[] {
+  return dir
+    .split(/\s+/)
+    .slice(1) // drop the directive name
+    .filter((t) => /^https?:\/\//i.test(t)) // explicit http(s) origins only
+}
+
+describe('CSP — SRI decision invariant (script/style stay self + audited GIS only)', () => {
+  it.each(POLICIES)('%s script-src admits no cross-origin source beyond GIS', (_label, csp) => {
+    expect(crossOriginSources(directive(csp(), 'script-src'))).toEqual([GIS_ORIGIN])
+  })
+
+  it.each(POLICIES)('%s style-src admits no cross-origin source beyond GIS', (_label, csp) => {
+    expect(crossOriginSources(directive(csp(), 'style-src'))).toEqual([GIS_ORIGIN])
+  })
+
+  it.each(POLICIES)('%s never allows arbitrary code via wildcard/blob/data in script-src', (_label, csp) => {
+    const dir = directive(csp(), 'script-src')
+    expect(dir).not.toMatch(/\*/) // no host wildcard
+    expect(dir).not.toContain('blob:')
+    expect(dir).not.toContain('data:')
+  })
+
+  it('web and desktop agree on the script-src directive', () => {
+    expect(directive(webCsp(), 'script-src')).toBe(directive(desktopCsp(), 'script-src'))
+  })
+})
+
+/* The flip side of "no SRI": prove there's nothing for SRI to have protected — the
+   built shell loads scripts/styles only from its own origin (relative or root-
+   rooted URLs), so the content-hashed filename is the integrity story. The lone
+   cross-origin script (GIS) is injected at runtime, so it legitimately never
+   appears as a static tag here. Skips cleanly when dist/ is absent (clean tree). */
+describe.skipIf(!existsSync(DIST_HTML))('SRI decision — built shell loads only same-origin code/styles', () => {
+  const html = existsSync(DIST_HTML) ? readFileSync(DIST_HTML, 'utf8') : ''
+
+  /** Same-origin = relative or root-relative; an absolute http(s) URL is cross-origin. */
+  const isSameOrigin = (url: string) => !/^https?:\/\//i.test(url) && !url.startsWith('//')
+
+  it('every <script src> on the shell is same-origin', () => {
+    const srcs = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*"([^"]+)"/gi)].map((m) => m[1])
+    for (const src of srcs) expect(isSameOrigin(src), `cross-origin script tag: ${src}`).toBe(true)
+  })
+
+  it('every <link rel="stylesheet" href> on the shell is same-origin', () => {
+    const links = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/gi)].map((m) => m[0])
+    for (const tag of links) {
+      const href = tag.match(/\bhref\s*=\s*"([^"]+)"/i)?.[1] ?? ''
+      expect(isSameOrigin(href), `cross-origin stylesheet tag: ${href}`).toBe(true)
+    }
+  })
+})
