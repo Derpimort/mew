@@ -117,7 +117,7 @@ network. The serve key stays on the device that entered it and never rides in ba
 
 MEW is built in the open and contributions are welcome. Before you start:
 
-- **[Contributing guide](CONTRIBUTING.md)** — setup, the quality gates, and the hexagonal architecture
+- **[Contributing guide](CONTRIBUTING.md)** — local setup (`make dev`, no key needed), the quality gates, the hex architecture in a paragraph, the product laws, and how to claim work via `/dev-plan`.
 - **[Code of Conduct](CODE_OF_CONDUCT.md)** — the Contributor Covenant we follow
 - **[Security policy](.github/SECURITY.md)** — how to report a vulnerability privately
 
