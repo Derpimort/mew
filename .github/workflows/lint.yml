@@ -1,0 +1,95 @@
+name: lint
+
+# ESLint + Prettier gate for the app/ package.
+#
+# Why diff-scoped (not `eslint .` as a hard fail): the codebase predates both
+# this gate and Prettier, so the tree carries pre-existing lint findings and is
+# not yet Prettier-formatted. Reformatting/relinting the whole tree in one shot
+# would churn ~every file and bury real review — exactly what we don't want. So
+# the BLOCKING gate holds only the files a PR actually changes to the standard
+# (the same contract as the husky pre-commit hook, re-checked here in case the
+# hook was bypassed). A second, non-blocking pass runs the full codebase so the
+# standing debt stays visible in logs without ever shipping the PR red.
+#
+# New workflow on purpose — desktop.yml and ui-overlap.yml are owned elsewhere.
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - '.github/workflows/lint.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Blocking: every app/ file this PR touches must lint clean and be Prettier-formatted.
+  changed:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # need the base commit to diff against
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+
+      - name: Collect changed app/ files
+        id: changed
+        working-directory: ${{ github.workspace }}
+        run: |
+          base="origin/${{ github.base_ref }}"
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          # Added/Copied/Modified/Renamed app/ files (skip deletions), made app-relative.
+          changed=$(git diff --name-only --diff-filter=ACMR "$base"...HEAD -- 'app/' \
+            | sed 's#^app/##')
+          {
+            echo 'files<<EOF'
+            echo "$changed"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+          echo "Changed app/ files:"; echo "$changed"
+
+      - name: ESLint changed (*.ts, *.tsx)
+        run: |
+          files=$(printf '%s\n' "${{ steps.changed.outputs.files }}" \
+            | grep -E '\.(ts|tsx)$' || true)
+          if [ -z "$files" ]; then
+            echo "No changed TS/TSX in app/ — nothing to lint."; exit 0
+          fi
+          echo "$files" | tr '\n' '\0' | xargs -0 npx eslint --max-warnings=0
+
+      - name: Prettier --check changed
+        run: |
+          files=$(printf '%s\n' "${{ steps.changed.outputs.files }}" \
+            | grep -E '\.(ts|tsx|js|mjs|cjs|json|css|html|md)$' || true)
+          if [ -z "$files" ]; then
+            echo "No changed Prettier-managed files in app/ — nothing to check."; exit 0
+          fi
+          echo "$files" | tr '\n' '\0' | xargs -0 npx prettier --check
+
+  # Advisory: full-tree ESLint + Prettier. Surfaces standing debt without blocking
+  # the PR. Drop `continue-on-error` once the tree is clean to make it a hard gate.
+  full:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - name: ESLint (full codebase, advisory)
+        continue-on-error: true
+        run: pnpm lint
+      - name: Prettier --check (full codebase, advisory)
+        continue-on-error: true
+        run: pnpm format:check

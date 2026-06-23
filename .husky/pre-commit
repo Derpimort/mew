@@ -1,0 +1,11 @@
+# MEW pre-commit: lint + format only what's being committed.
+#
+# The app is the only Node package (it lives in app/), and lint-staged + its
+# config + the eslint/prettier binaries all resolve from there — so step into it
+# first. Running from app/ also means lint-staged's globs only ever match app/
+# files; root docs and workflow YAML are intentionally out of scope.
+#
+# Scoped-to-staged on purpose: this enforces the house style on the lines you're
+# actually touching without reformatting the wider tree (the codebase predates
+# Prettier). Run `pnpm format` from app/ for a deliberate, reviewable full pass.
+cd app && npx lint-staged

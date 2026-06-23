@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check",
     "preview": "vite preview",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
@@ -15,7 +18,8 @@
     "smoke:models": "MEW_SMOKE=1 vitest run src/adapters/model/__tests__/smoke.live.test.ts",
     "e2e": "playwright test",
     "shoot": "node scripts/shoot.mjs",
-    "shoot:overlap": "node scripts/shoot-overlap.mjs"
+    "shoot:overlap": "node scripts/shoot-overlap.mjs",
+    "prepare": "cd .. && husky || true"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.85",
@@ -50,7 +54,10 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
     "playwright-core": "^1.60.0",
+    "prettier": "^3.8.4",
     "tailwindcss": "^4.3.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.59.2",

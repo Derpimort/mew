@@ -1,0 +1,9 @@
+# Build & verification output — never reformat generated/vendored bytes
+dist
+dist-ssr
+node_modules
+shots
+public
+
+# Lockfile is owned by pnpm; Prettier must not touch it
+pnpm-lock.yaml
