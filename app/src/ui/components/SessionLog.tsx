@@ -16,6 +16,20 @@ import { blocksForDay } from '../../domain/week'
     this band new output auto-scrolls; scroll up past it and MEW stops yanking. */
 const STICK_THRESHOLD = 80
 
+/** id the prompt's aria-describedby points at, so a screen reader reads the
+    ⌘K / shift+↵ hint line after the textarea's own label. */
+const PROMPT_HINTS_ID = 'prompt-hints'
+
+/** The assertive-region copy for a turn, as a pure edge function: a rising edge
+    of `thinking` announces the start, a falling edge announces completion, and a
+    same-value tick stays quiet (returns the prior message so nothing re-fires).
+    Kept pure + exported so the announce contract is unit-tested without a DOM. */
+export function streamAnnouncement(prev: string, was: boolean, now: boolean): string {
+  if (now && !was) return 'mew is responding…'
+  if (!now && was) return 'response complete'
+  return prev
+}
+
 export function SessionLog() {
   const chat = useMew((s) => s.chat)
   const thinking = useMew((s) => s.thinking)
@@ -76,6 +90,18 @@ export function SessionLog() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  /* one assertive announcement per turn: a screen reader hears "mew is
+     responding…" the moment the turn starts, then "response complete" once it
+     settles. The visible thinking row is `aria-hidden` (its dots/label would
+     read as noise), so this hidden region is the single spoken signal — driven
+     off `thinking` alone, so it fires within a frame of thinking=true. */
+  const [streamMsg, setStreamMsg] = useState('')
+  const wasThinking = useRef(false)
+  useEffect(() => {
+    setStreamMsg((prev) => streamAnnouncement(prev, wasThinking.current, thinking))
+    wasThinking.current = thinking
+  }, [thinking])
+
   return (
     <>
       <div className="trm-bar">
@@ -92,7 +118,19 @@ export function SessionLog() {
       <div className="session-wrap">
         <div className="session-scroll" ref={scrollRef} onScroll={onScroll}>
           <DayHeader />
-          <div className="log" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {/* the chat thread as a live log: new lines are announced politely and
+              one at a time (aria-atomic=false), each LogLine is its own article
+              so a reader can step message-to-message; aria-busy parks those
+              announcements while a turn is mid-stream. */}
+          <div
+            className="log"
+            role="log"
+            aria-live="polite"
+            aria-atomic="false"
+            aria-busy={thinking}
+            aria-label="chat session"
+            style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+          >
             {chat.map((m) => (
               /* each line lands like terminal output: blur-up entrance, once */
               <motion.div
@@ -107,8 +145,24 @@ export function SessionLog() {
             {thinking && <ThinkingRow status={workingStatus} />}
           </div>
         </div>
+        {/* the single spoken signal for a turn — visually hidden, off-screen,
+            assertive so it interrupts to confirm start/finish. */}
+        <div
+          aria-live="assertive"
+          aria-atomic="true"
+          style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden' }}
+        >
+          {streamMsg}
+        </div>
         {!atBottom && (
-          <button type="button" className="scroll-new" onClick={() => stickToBottom('smooth')}>
+          <button
+            type="button"
+            className="scroll-new"
+            role="status"
+            aria-live="polite"
+            aria-label="new messages available"
+            onClick={() => stickToBottom('smooth')}
+          >
             ↓ new
           </button>
         )}
@@ -122,13 +176,15 @@ export function SessionLog() {
 
 /* MEW's turn-in-flight line. Until tokens stream, a tasteful 3-dot pulse is the
    "typing" signal; a short working-status label (set by the executors) rides
-   alongside it. aria-live lets a screen reader announce both. Once tokens land
-   the reply text itself takes over and this row disappears. */
+   alongside it. It's `aria-hidden` — pulsing dots and a churning status label
+   are visual noise to a reader; the turn's start/finish is spoken once by the
+   assertive region in SessionLog instead. Once tokens land the reply text takes
+   over and this row disappears. */
 function ThinkingRow({ status }: { status: string | null }) {
   return (
-    <div className="mew-thinking" aria-live="polite">
+    <div className="mew-thinking" aria-hidden="true">
       <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
-      <span className="typing" aria-label="mew is typing">
+      <span className="typing">
         <span className="dot" />
         <span className="dot" />
         <span className="dot" />
@@ -144,21 +200,42 @@ function DayHeader() {
   const live = useLive()
   const todayKey = dayKey(new Date(nowMs))
   const count = blocksForDay(blocks, todayKey).length
+  const day = fmtDowLong(todayKey).toLowerCase()
+  const mews = live.mewsToday
+  /* a landmark a reader can skip past (or jump to) — the day's name labels the
+     region, the counts ride in spans whose aria-label spells out the glyphs the
+     terminal `·` separators leave implicit. */
   return (
-    <div className="log cm" style={{ flex: 'none' }}>
-      # {fmtDowLong(todayKey).toLowerCase()} · {count} block{count === 1 ? '' : 's'} · {live.mewsToday} mew
-      {live.mewsToday === 1 ? '' : 's'}
-    </div>
+    <section className="log cm" aria-label={`${day} summary`} style={{ flex: 'none' }}>
+      # {day} ·{' '}
+      <span aria-label={`${count} block${count === 1 ? '' : 's'}`}>
+        {count} block{count === 1 ? '' : 's'}
+      </span>{' '}
+      ·{' '}
+      <span aria-label={`${mews} mew${mews === 1 ? '' : 's'} today`}>
+        {mews} mew{mews === 1 ? '' : 's'}
+      </span>
+    </section>
   )
 }
 
-function LogLine({ msg }: { msg: ChatMessage }) {
+/** what a reader hears as the role on a message article — the UI's own words,
+    not the raw enum, so a `user` line is announced "message from you …". */
+const ROLE_WORD: Record<ChatMessage['role'], string> = { user: 'you', mew: 'mew', nudge: 'nudge' }
+
+export function LogLine({ msg }: { msg: ChatMessage }) {
   const showScience = useMew((s) => s.settings.showScience)
   const nudgeAction = useMew((s) => s.nudgeAction)
 
+  /* every line is its own article so a reader can walk message-to-message; the
+     label carries who said it and when, which the terminal `you ❯` / timestamps
+     only show visually. */
+  const time = fmtTime(minOfDay(new Date(msg.ts)))
+  const articleLabel = `message from ${ROLE_WORD[msg.role]} at ${time}`
+
   if (msg.role === 'user') {
     return (
-      <div data-msg={msg.id}>
+      <div data-msg={msg.id} role="article" aria-label={articleLabel}>
         <span className="p-you">you</span> <span className="p-arr">❯</span>{' '}
         <b style={{ whiteSpace: 'pre-wrap' }}>{msg.body}</b>
       </div>
@@ -170,7 +247,7 @@ function LogLine({ msg }: { msg: ChatMessage }) {
     const isOk = /^(done|moved|held|released|kept|placed|started|right-sized) —/i.test(msg.body)
     const isAside = msg.body.startsWith('(')
     return (
-      <div data-msg={msg.id} className={isAside ? 'cm' : ''}>
+      <div data-msg={msg.id} role="article" aria-label={articleLabel} className={isAside ? 'cm' : ''}>
         <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
         {isMew && <span className="mw">★ </span>}
         {isOk && <span className="ok">✓ </span>}
@@ -183,9 +260,14 @@ function LogLine({ msg }: { msg: ChatMessage }) {
   }
 
   /* nudge — a steel card in the stream */
-  const time = fmtTime(minOfDay(new Date(msg.ts)))
   return (
-    <div className="tui-nudge" data-msg={msg.id} style={{ margin: '6px 0' }}>
+    <div
+      className="tui-nudge"
+      data-msg={msg.id}
+      role="article"
+      aria-label={articleLabel}
+      style={{ margin: '6px 0' }}
+    >
       <div className="h">
         ▸ nudge/{msg.nudgeType} — {time}
       </div>
@@ -265,11 +347,12 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
               stopSpeaking()
             }
           }}
-          aria-label="talk to MEW"
+          aria-label="compose message to MEW"
+          aria-describedby={PROMPT_HINTS_ID}
           placeholder="talk to MEW…"
         />
       </div>
-      <div className="prompt-hints">
+      <div className="prompt-hints" id={PROMPT_HINTS_ID}>
         <span className="hint">
           <span className="k">shift+↵</span> newline
         </span>

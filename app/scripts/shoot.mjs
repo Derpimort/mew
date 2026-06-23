@@ -46,9 +46,11 @@ await page.waitForTimeout(600)
 console.log('summary:', (await page.textContent('.week-summary'))?.trim())
 await page.screenshot({ path: `${outDir}/4-week.png` })
 
-/* 4 · talk-to-schedule through the prompt (acceptance #1) */
-await page.fill('.prompt-row input', 'block thursday morning for the deck, keep friday afternoon free')
-await page.press('.prompt-row input', 'Enter')
+/* 4 · talk-to-schedule through the prompt (acceptance #1). The composer is a
+   <textarea> (auto-grow, multi-line) — match both so the selector survives the
+   input→textarea change, mirroring scripts/shoot-overlap.mjs. */
+await page.fill('.prompt-row input, .prompt-row textarea', 'block thursday morning for the deck, keep friday afternoon free')
+await page.press('.prompt-row input, .prompt-row textarea', 'Enter')
 await page.waitForTimeout(900)
 const log = await page.$$eval('.log', (els) => els.map((e) => e.textContent).join('\n'))
 console.log('log tail:', log.slice(-220).replace(/\s+/g, ' '))
