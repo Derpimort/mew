@@ -246,6 +246,7 @@ Note: locked principles (positive-only, chat-first, care-not-blame, condition-mi
 | Drift detection ≠ real activity (only sees this tab) | MVP heuristic is in-app idleness + tab visibility, stated in copy ("~12 min"); vehicle B can add OS-level idle later. |
 | Local model quality | Only `parseCommand`/kinder-plan use the model; strict small schema; rule-based floor always available. |
 | Rive asset doesn't exist yet | Slot contract + placeholder shipped; `pixie.riv` is a drop-in. |
+| `security.txt` `Expires:` going stale | The RFC 9116 file at `app/public/.well-known/security.txt` carries an `Expires:` ~1 year out (tooling treats an expired file as stale). Bump the date and re-deploy the web build before it lapses; `Contact:` stays the GitHub private-advisory channel (no bouncing mailbox), consistent with `.github/SECURITY.md`. |
 
 ---
 

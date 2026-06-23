@@ -1,0 +1,22 @@
+# MEW security contact — RFC 9116 (https://www.rfc-editor.org/rfc/rfc9116).
+# Served verbatim by Vite from app/public/ at /.well-known/security.txt and by
+# the nginx static build (app/docker/) via the SPA `try_files $uri` rule — no
+# route or CSP change is needed for a static file. The full disclosure policy
+# (scope, coordinated-disclosure timeline, safe harbor) lives in
+# .github/SECURITY.md; keep Contact below consistent with it.
+#
+# Contact is the GitHub Private Vulnerability Reporting channel — the always-on
+# primary route in SECURITY.md. There is deliberately no security@ mailbox here:
+# an unprovisioned address would bounce good-faith reports. A signed file
+# (PGP/Canonical) is intentionally omitted — the web build is a portable static
+# bundle with no fixed production origin, so a hardcoded Canonical URL would be
+# inaccurate; both are optional under RFC 9116.
+#
+# REFRESH: Expires is set ~1 year out. Bump it (and re-deploy the web build)
+# before that date — an expired security.txt is treated as stale by tooling.
+# Last set 2026-06-20.
+
+Contact: https://github.com/Derpimort/mew/security/advisories/new
+Policy: https://github.com/Derpimort/mew/blob/main/.github/SECURITY.md
+Expires: 2027-06-20T00:00:00.000Z
+Preferred-Languages: en
