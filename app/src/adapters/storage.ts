@@ -7,6 +7,7 @@ import type { SyncEntry } from './calendar/types'
 
 /* The contract now lives in storage-port.ts (Dexie-free, so MEW Core can
    import it). Re-exported here so existing callers are unchanged. */
+import { stripSecrets } from './storage-port'
 import type { AuditEntry, PersistedState, StoragePort, ValidationError } from './storage-port'
 export type { AuditEntry, PersistedState, StoragePort, ValidationError } from './storage-port'
 
@@ -277,11 +278,10 @@ export function createDexieStorage(): StoragePort {
     async exportJson() {
       const state = await this.load()
       /* a backup travels (downloads folder, cloud drives) — API keys don't.
-         Each device keeps its own keys; restore re-enters them in Settings. */
-      const settings = state.settings
-        ? { ...state.settings, anthropicKey: '', openaiKey: '', brainToken: '' }
-        : state.settings
-      return JSON.stringify({ ...state, settings }, null, 2)
+         stripSecrets owns the redaction (storage-port.ts) so the SQLite vehicle
+         and the key-audit suite share one source of truth; restore re-enters
+         this device's keys in Settings. */
+      return JSON.stringify({ ...state, settings: stripSecrets(state.settings) }, null, 2)
     },
     async importJson(json) {
       const state = JSON.parse(json) as PersistedState

@@ -6,6 +6,25 @@
 import type { Block, Capture, ChatMessage, MemoryEvent, Settings } from '../domain/types'
 import type { SyncEntry } from './calendar/types'
 
+/* The on-device secrets, named in ONE place so every exit path agrees on what
+   a secret is. A backup travels (downloads folder, cloud drives, a synced
+   Documents dir); these never ride along — each device keeps its own keys and
+   a restore re-enters them in Settings (PRODUCT LAW: keys never leave the
+   device). Both vehicles (Dexie in the browser, SQLite in MEW Core) strip the
+   same set via stripSecrets, and the key-audit suite asserts against this
+   constant so the list can't drift out from under the redaction. */
+export const SECRET_SETTING_KEYS = ['anthropicKey', 'openaiKey', 'brainToken'] as const
+
+/** Return a copy of `settings` with every secret field blanked to ''. Null
+    passes through. Pure + Dexie-free so both storage vehicles share it and a
+    backup can never carry a key. */
+export function stripSecrets(settings: Settings | null): Settings | null {
+  if (!settings) return settings
+  const out = { ...settings }
+  for (const k of SECRET_SETTING_KEYS) out[k] = ''
+  return out
+}
+
 export interface PersistedState {
   blocks: Block[]
   captures: Capture[]

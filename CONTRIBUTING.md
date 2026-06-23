@@ -101,7 +101,7 @@ These are enforced in review and encoded in the types where possible. From
    schedules *around* fixed points, never over them.
 4. **Keys never leave the device.** Keys and tokens stay on-device (and
    `exportJson` strips them from backups); they are sent only to the model
-   endpoint you chose.
+   endpoint you chose. This one has teeth — see §5.
 5. **Graceful keyless / brainless degradation.** Everything works with no API key
    and no brain — `brainEnabled` off means zero network. Only free-form parsing
    quality changes; nudges are fully templated and never need a model.
@@ -112,7 +112,36 @@ When in doubt, the review compass is
 
 ---
 
-## 5. Claiming work
+## 5. Secrets never leave the device
+
+MEW holds three on-device secrets — `anthropicKey`, `openaiKey`, `brainToken`.
+They live in IndexedDB (browser) or SQLite (desktop) and must not escape through
+any exit a backup, a log line, or a crash report can reach:
+
+- **Backups carry zero keys.** `exportJson` runs every settings object through
+  `stripSecrets` (`app/src/adapters/storage-port.ts`) — the one source of truth
+  for what counts as a secret, shared by both storage vehicles. A backup file
+  can travel (downloads, cloud drives, a synced Documents folder); a restore
+  re-enters this device's keys in Settings.
+- **No key is ever logged or thrown.** Do not pass a secret field — or a whole
+  `settings` object that still holds one — to `console.*` or into a thrown
+  `Error`. Log the *state* of a key ("no key set"), never its value. Per the
+  [OWASP Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html),
+  credentials never belong in logs.
+- **The UI masks.** Key fields are `type="password"`; resting readouts show
+  `••••••••` + the last 4 chars, never the raw value.
+- **A new secret field?** Add it to `SECRET_SETTING_KEYS` in the same change.
+  An OAuth *client id* (e.g. `googleClientId`) is a public identifier, not a
+  secret, and is intentionally excluded.
+
+This isn't only a convention: the audit at
+`app/src/adapters/__tests__/key-audit.test.ts` enforces all four points and
+fails CI the day a leak is reintroduced. If it flags your change, the leak is
+real — fix the source, not the test.
+
+---
+
+## 6. Claiming work
 
 MEW runs a lightweight dev loop on top of GitHub Issues:
 
@@ -131,7 +160,7 @@ Picking up your first change? Start from a `dev:queued` issue (look for
 
 ---
 
-## 6. Shipping
+## 7. Shipping
 
 - **`main` is protected.** You cannot push to it directly.
 - Open a PR against `main`. It needs **1 approval** and all gates green.

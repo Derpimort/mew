@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, MemoryEvent, PrefPayload, Settings } from '../../domain/types'
 import { addDaysKey, dayKey, uid } from '../../domain/time'
+import { stripSecrets } from '../../adapters/storage-port'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
 
@@ -72,15 +73,16 @@ vi.mock('../../adapters/storage', () => ({
     saveSyncMap: async () => {},
     deleteSyncForCalendar: async () => {},
     /* real round-trip semantics so backup/restore scenarios exercise the
-       same shape the dexie adapter produces — keys stripped on the way out */
+       same shape the dexie adapter produces — keys stripped on the way out
+       via the same stripSecrets the real vehicles use (so the fake can't
+       under-strip, e.g. forget brainToken) */
     exportJson: async () => {
-      const settings = fakeDb.settings ? { ...fakeDb.settings, anthropicKey: '', openaiKey: '' } : fakeDb.settings
       return JSON.stringify({
         blocks: [...fakeDb.blocks.values()],
         captures: [...fakeDb.captures.values()],
         chat: [...fakeDb.chat.values()],
         memory: [...fakeDb.memory.values()],
-        settings,
+        settings: stripSecrets(fakeDb.settings),
       })
     },
     importJson: async (json: string) => {

@@ -3,6 +3,7 @@
    exactly as the Dexie vehicle does, so the engine above the seam is unchanged.
    ARCHITECTURE.md §2: "the core never changes; B/C just swap the adapter." */
 import { Database } from 'bun:sqlite'
+import { stripSecrets } from '../../../app/src/adapters/storage-port'
 import type { AuditEntry, PersistedState, StoragePort } from '../../../app/src/adapters/storage-port'
 import type { Block, Capture, ChatMessage, MemoryEvent, Settings } from '../../../app/src/domain/types'
 import type { SyncEntry } from '../../../app/src/adapters/calendar/types'
@@ -95,11 +96,10 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
     async exportJson(): Promise<string> {
       const state = await this.load()
       /* a backup travels (downloads folder, cloud drives) — API keys don't.
-         Each device keeps its own keys; restore re-enters them in Settings. */
-      const settings = state.settings
-        ? { ...state.settings, anthropicKey: '', openaiKey: '', brainToken: '' }
-        : state.settings
-      return JSON.stringify({ ...state, settings }, null, 2)
+         stripSecrets owns the redaction (app storage-port.ts), shared with the
+         Dexie vehicle so both strip the same set; restore re-enters this
+         device's keys in Settings. */
+      return JSON.stringify({ ...state, settings: stripSecrets(state.settings) }, null, 2)
     },
     async importJson(json) {
       const state = JSON.parse(json) as PersistedState
