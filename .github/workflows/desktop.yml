@@ -192,6 +192,22 @@ jobs:
       - run: node desktop/scripts/build-sidecar.mjs
       - run: pnpm --dir app install --frozen-lockfile
       - run: pnpm --dir desktop install --frozen-lockfile
+      # Signed updater artifacts are gated on the signing key, same as
+      # includeUpdaterJson below. The committed tauri.conf.json keeps
+      # createUpdaterArtifacts:false so a keyless build (the v0.1.x line, a
+      # dry-run before the secret is added) can't fail looking for a private key
+      # to sign with. When the key secret exists, flip it true in this runner's
+      # checkout so `tauri build` emits the .sig files latest.json is assembled
+      # from. node (not jq) so the patch is identical on Linux and Windows; the
+      # committed file is never touched — no key → no flip → keyless build
+      # succeeds and self-update simply stays dormant (graceful degradation).
+      # the `secrets` context isn't available in a step `if:`, so resolve the
+      # gate into an env bool first (env values CAN read secrets) and branch on it
+      - name: Enable signed updater artifacts (only when a signing key is set)
+        if: env.HAS_SIGNING_KEY == 'true'
+        env:
+          HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: node -e "const f='desktop/src-tauri/tauri.conf.json',c=require('./'+f);c.bundle.createUpdaterArtifacts=true;require('fs').writeFileSync(f,JSON.stringify(c,null,2)+'\n');console.log('createUpdaterArtifacts set true (signing key present)')"
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -210,9 +226,7 @@ jobs:
           # coalesce into one shared draft instead; the publish job below flips
           # it live once every platform's assets are in.
           releaseDraft: true
-          # self-update is off until signing is set up: emit latest.json only
-          # when a signing key exists (createUpdaterArtifacts is false meanwhile,
-          # so unsigned release builds don't fail looking for artifacts).
+          # …and only assemble + upload latest.json when those signatures exist.
           includeUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
 
   # flip the shared draft to a published release once all platforms have

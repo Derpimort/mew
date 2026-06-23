@@ -73,8 +73,17 @@ pnpm tauri signer generate -w ~/.tauri/mew.key   # prompts for a password
 3. Keep the private key somewhere safe: lose it and shipped apps can never
    accept another update (Tauri's own warning).
 
+That's the whole manual list — **don't** flip `createUpdaterArtifacts` in the
+committed config by hand. It stays `false` so a keyless build (the v0.1.x line,
+a dry-run before the secret exists) can't fail looking for a key to sign with;
+the release workflow flips it `true` in the runner's own checkout *only* when
+the `TAURI_SIGNING_PRIVATE_KEY` secret is present, gated the same way as
+`includeUpdaterJson`. Add the pubkey + the two secrets and the next tag
+self-updates; until then self-update stays dormant, no build breaks.
+
 Dry-run without releasing: Actions → desktop → *Run workflow* — the full
-matrix builds installers + updater artifacts, publishes nothing.
+matrix builds installers (and, once the secret is set, updater artifacts),
+publishes nothing.
 
 The updater signature validation (the `tauri.conf.json` `plugins.updater.pubkey`)
 is part of our security model: the installed app accepts an update only if its
