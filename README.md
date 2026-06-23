@@ -47,6 +47,9 @@ make dev      # local vite + HMR        make check    # tests + typecheck
 make up       # docker, port 3000       make shoot    # Playwright screenshots
 ```
 
+What each release added — and how releases are cut — lives in
+**[Releases & changelog](CHANGELOG.md)**.
+
 ## Architecture
 
 Hexagonal, with the domain pure and fully tested:

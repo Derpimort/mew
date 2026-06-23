@@ -138,6 +138,30 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      # Use this version's CHANGELOG.md section as the GitHub Release body, so
+      # the release reads the same story as the changelog (Keep a Changelog).
+      # The awk slices everything between this tag's `## [x.y.z]` heading and the
+      # next `## [` — exactly that version's block. If the tag has no matching
+      # section (changelog not updated for this version), skip the body and let
+      # the tauri-action default stand, rather than wiping the notes to empty.
+      - name: Set release notes from CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          VERSION="${TAG#v}"
+          NOTES=$(awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" {f=1; next}
+            f && (/^## \[/ || /^\[[^]]+\]:/) {f=0}
+            f {print}
+          ' CHANGELOG.md)
+          if [ -n "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$NOTES" | gh release edit "$TAG" --repo "$REPO" --notes-file -
+          else
+            echo "::notice title=release notes::no CHANGELOG.md section for $VERSION — keeping the auto-generated body."
+          fi
       - run: gh release edit "$TAG" --repo "$REPO" --draft=false --latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
