@@ -46,12 +46,23 @@ export const BUDGETS = {
   total: 2300 * KB,
 }
 
+/** A chunk whose name is three.js / @react-three (its code). The vendor + ai
+ *  families get an explicit manual group (vite.config.ts), but three is left to
+ *  auto-splitting — forcing it into a manual group promotes it to a static import
+ *  of the entry, the boot-path regression issue #176 removes. The auto-split
+ *  chunk is therefore named by rolldown (`three.module`, `react-three…`) rather
+ *  than a group, so we match it by name pattern here to apply the lazy-three
+ *  budget. Anchored at the start / on a `react-three`|`fiber` token so sibling
+ *  lazy chunks (aurora-blur, ai-blob — the wrappers, not three's code) stay on
+ *  the strict default `lazy` budget. */
+const isThreeChunk = (name) => /^three(\.|-|$)|react-three|fiber/i.test(name)
+
 /** Sort one chunk into a budget category by its manifest role + name.
  *  entry → 'main'; a named group chunk → that group; everything else → 'lazy'. */
 export function categorize(chunk) {
   if (chunk.isEntry) return 'main'
   if (chunk.name === 'vendor') return 'vendor'
-  if (chunk.name === 'three') return 'three'
+  if (isThreeChunk(chunk.name)) return 'three'
   if (chunk.name === 'ai') return 'ai'
   return 'lazy'
 }
