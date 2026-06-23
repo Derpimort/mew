@@ -1,0 +1,56 @@
+name: lighthouse
+
+# Core Web Vitals guard (issue #187). Builds the web app, runs Lighthouse-CI
+# against the production preview, and reports FCP / LCP / CLS — the three field
+# metrics that bound MEW's first paint (bundle size), companion render
+# (aurora/blob), and layout stability. WARN-ONLY for now: an over-budget metric
+# shows up in the job summary and as a check warning, it does NOT block the
+# merge. Budgets + the warn assertions live in lighthouserc.json; the metric
+# table is rendered by app/scripts/check-lighthouse.mjs. The path to making
+# these block is documented in docs/PERFORMANCE.md.
+#
+# NOTE: a separate workflow (not the desktop.yml check job) on purpose — this is
+# a web-preview perf measurement, independent of the Rust/Tauri build, and is
+# allowed to be slower and non-blocking without holding up the release gate.
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'lighthouserc.json'
+      - '.github/workflows/lighthouse.yml'
+  workflow_dispatch:
+
+# the reporter writes to the job summary; nothing here needs write scopes.
+permissions:
+  contents: read
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm --dir app install --frozen-lockfile
+      - run: pnpm --dir app build
+      # lhci via ephemeral npx — no dependency added to app/package.json (same
+      # pattern ui-overlap.yml uses for playwright). autorun reads lighthouserc.json
+      # at the repo root: it starts `vite preview`, audits localhost:4173 three
+      # times, asserts the warn budgets, and writes the LHRs to .lighthouseci/.
+      # `|| true` keeps the step green even if a warn assertion "fails" — warn-only
+      # means a budget miss must not fail the job (the reporter step surfaces it).
+      - name: Lighthouse-CI (collect + warn-assert)
+        run: npx -y @lhci/cli@0.15.x autorun || true
+      # Parse the LHRs and post the FCP/LCP/CLS table to the job summary, marking
+      # any metric over budget. Exits non-zero ONLY if no report was produced
+      # (a real failure of the run above), never on a budget miss.
+      - name: Report Core Web Vitals
+        run: node app/scripts/check-lighthouse.mjs .lighthouseci
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-reports
+          path: .lighthouseci
+          if-no-files-found: ignore

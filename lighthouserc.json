@@ -1,0 +1,28 @@
+{
+  "//": "Lighthouse-CI config for MEW (issue #187). Drives lhci against the built web preview and measures Core Web Vitals — FCP / LCP / CLS — the three field metrics that bound MEW's first paint (bundle size), companion render (aurora/blob), and layout stability. Assertions are WARN-only for now: a regression shows up in the PR check and the job summary, it does not block the merge. See docs/PERFORMANCE.md for the budgets, the upgrade-to-error path, and the merge policy. Budgets here are duplicated (intentionally) by the typed thresholds in app/scripts/check-lighthouse.mjs, which renders the PR/job-summary table; the test scripts/__tests__/check-lighthouse.test.ts pins the two to the same numbers.",
+  "ci": {
+    "collect": {
+      "//": "Build is run by the workflow; here we only serve the existing app/dist and audit it. Three runs so lhci reports the median (single runs are noisy for paint timings). Desktop preset: MEW's primary surface is a focused planner window, and vehicle B is a desktop (Tauri) shell — desktop form-factor is the honest baseline. Throttling stays on the lighthouse default so the numbers are comparable run-to-run.",
+      "startServerCommand": "pnpm --dir app preview --port 4173 --strictPort",
+      "startServerReadyPattern": "Local:",
+      "url": ["http://localhost:4173/"],
+      "numberOfRuns": 3,
+      "settings": {
+        "preset": "desktop"
+      }
+    },
+    "assert": {
+      "//": "WARN-only first pass (no hard block) — these are the web.dev Core Web Vitals 'good' thresholds. Tighten to error (and toward the aspirational FCP < 1s) once a stable CI baseline exists; the steps are in docs/PERFORMANCE.md. Keep these numbers in lockstep with BUDGETS in app/scripts/check-lighthouse.mjs.",
+      "assertions": {
+        "first-contentful-paint": ["warn", { "maxNumericValue": 1800 }],
+        "largest-contentful-paint": ["warn", { "maxNumericValue": 2500 }],
+        "cumulative-layout-shift": ["warn", { "maxNumericValue": 0.1 }]
+      }
+    },
+    "upload": {
+      "//": "Keep the raw LHRs as build artifacts only — no public LHCI/temporary-storage upload, in keeping with MEW's local-first, nothing-leaves-the-device stance. The workflow uploads .lighthouseci/ as a CI artifact and posts the metric table to the PR via the job summary.",
+      "target": "filesystem",
+      "outputDir": ".lighthouseci"
+    }
+  }
+}

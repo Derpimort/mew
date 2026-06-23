@@ -62,6 +62,7 @@ Hexagonal, with the domain pure and fully tested:
 | `app/src/ui/` | Carbon & Pet White design system: tokens → primitives → views |
 | `design_handoff_mew_mvp/` | Design handoff (reference; drops replace this folder wholesale) |
 | `ARCHITECTURE.md` · `IMPLEMENTATION_PLAN.md` | Decisions, phases, acceptance criteria |
+| `docs/PERFORMANCE.md` | Core Web Vitals (FCP/LCP/CLS) budgets, the CI Lighthouse check, and the merge policy |
 
 Every conversational provider advertises the same neutral tool registry; tool results are
 the only ground truth the model may claim. The deterministic parser keeps everything working
