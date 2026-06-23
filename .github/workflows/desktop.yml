@@ -53,6 +53,80 @@ jobs:
       - run: pnpm --dir app build
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
 
+  # Coverage gate + visibility. Pure-JS, so it skips the Rust/bun/apt setup the
+  # `check` job needs and runs fast & independent. `pnpm coverage` enforces the
+  # per-layer thresholds in vitest.config.ts: it exits non-zero (failing the PR)
+  # the moment a layer's coverage slips below its floor — erosion fails the gate
+  # instead of landing silently. The job also captures coverage-final.json as an
+  # artifact and posts/updates ONE sticky PR comment with the total % (and the
+  # delta vs the last run, read back from that same comment so no base build is
+  # needed). Forks can't comment (no token write) — the step degrades to a log.
+  coverage:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # post/update the coverage comment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm --dir app install --frozen-lockfile
+      # the gate: thresholds live in vitest.config.ts; a drop exits non-zero.
+      # the config's json-summary reporter writes a tiny totals file the comment
+      # step parses without re-reading the 1 MB per-file v8 json.
+      - name: Coverage (enforces thresholds — fails if a layer drops)
+        run: pnpm --dir app coverage
+      - name: Upload coverage report
+        if: always() # keep the artifact even when the gate fails, for triage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            app/coverage/coverage-final.json
+            app/coverage/coverage-summary.json
+            app/coverage/lcov.info
+          if-no-files-found: warn
+      - name: Comment coverage on the PR
+        if: always() # comment whether the gate passed or failed
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs')
+            const tag = '<!-- mew-coverage -->'
+            const path = 'app/coverage/coverage-summary.json'
+            if (!fs.existsSync(path)) {
+              core.info('no coverage-summary.json — coverage run produced no report; skipping comment.')
+              return
+            }
+            const pct = JSON.parse(fs.readFileSync(path, 'utf8')).total.lines.pct
+            const gateFailed = '${{ job.status }}' === 'failure'
+
+            // read the delta off our own previous sticky comment (no base build)
+            const { owner, repo } = context.repo
+            const issue_number = context.issue.number
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number })
+            const prev = comments.find((c) => c.body.includes(tag))
+            const m = prev && prev.body.match(/Coverage:\s\*\*([\d.]+)%/)
+            let delta = ''
+            if (m) {
+              const d = pct - parseFloat(m[1])
+              const arrow = d > 0.05 ? '↑' : d < -0.05 ? '↓' : '→'
+              delta = ` (${arrow} ${d >= 0 ? '+' : ''}${d.toFixed(1)}% vs last run)`
+            }
+            const verdict = gateFailed
+              ? '\n\n❌ **Coverage gate failed** — a layer dropped below its threshold. See the job log for which layer, and add tests at that layer.'
+              : '\n\n✅ Coverage thresholds met (domain 75 · adapters 50 · state 50).'
+            const body = `${tag}\n📊 Coverage: **${pct}%** lines${delta}${verdict}`
+
+            if (prev) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body })
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body })
+            }
+
   # Live model-contract smoke. Every adapter test mocks the SDK/fetch, so a wrong
   # request param/value/header (the shipped max_tokens-vs-max_completion_tokens
   # 400) passes the unit suite and still breaks users. This hits the real API to
