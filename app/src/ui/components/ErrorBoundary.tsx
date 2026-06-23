@@ -6,6 +6,9 @@
 
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { Button } from '../primitives'
+import { logger } from '../../adapters/logger'
+
+const log = logger.withContext('ui')
 
 interface Props {
   children: ReactNode
@@ -39,9 +42,9 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    const where = this.props.label ? ` [${this.props.label}]` : ''
-    // console only — no network. Surfaced for the dev console / `mew session` log.
-    console.error(`mew: a panel hit a snag${where}`, error, info.componentStack)
+    // console only — no network. Surfaced for the dev console / `mew session` log;
+    // the logger redacts any secret an error or stack happened to embed.
+    log.error('panel-crash', { panel: this.props.label ?? null, componentStack: info.componentStack }, error)
   }
 
   private reset = () => {

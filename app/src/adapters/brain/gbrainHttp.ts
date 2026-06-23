@@ -3,13 +3,16 @@
    handshake per session (the streamable transport hands back an
    Mcp-Session-Id); every data call is `tools/call` on the core operations:
    put_page, add_timeline_entry, add_link, query. All of it optional-path:
-   3s timeouts, every failure swallowed to one console.warn + a health flip —
-   the brain must never block the week. */
+   3s timeouts, every failure swallowed to one logged warning + a health flip —
+   the brain must never block the week. The logger redacts the sidecar URL and
+   bearer token, so "keys never leave the device" holds even in the console. */
 
 import type { BrainPage, BrainPort, PrefPayload, RecallOpts } from './types'
+import { logger } from '../logger'
 import { parsePrefBody } from './senses'
 
 const TIMEOUT_MS = 3000
+const log = logger.withContext('brain')
 
 interface GbrainConfig {
   /** read per call so settings changes apply without rebuilding the port */
@@ -27,7 +30,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
     sessionId = null // a fresh session next time the brain comes back
     if (!warned) {
       warned = true
-      console.warn('mew: brain unreachable — running without it', err)
+      log.warn('unreachable', { note: 'running without it' }, err)
     }
   }
 
@@ -253,7 +256,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
           }
           const pref = parsePrefBody(body)
           if (pref) out.push(pref)
-          else console.warn('mew: skipping malformed pref page', slug)
+          else log.warn('pref/malformed', { slug, note: 'skipping malformed pref page' })
         }
         return out.reverse() // list is oldest-first; newest belongs on top
       } catch (err) {

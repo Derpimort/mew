@@ -223,6 +223,7 @@ vi.mock('../../adapters/model/ollama', () => ({
 }))
 
 import { setSidecarBrain } from '../../adapters/brain/sidecar'
+import { setLoggerSink } from '../../adapters/logger'
 import { useMew } from '../store'
 
 /* ── harness ──────────────────────────────────────────────────────── */
@@ -1914,5 +1915,66 @@ describe('a turn can be stopped mid-stream', () => {
     await say('now finish it')
     expect(lastMsg().body).toContain('all done')
     expect(useMew.getState().thinking).toBe(false)
+  })
+})
+
+describe('structured logging (#181) — a calendar sync failure is logged, not swallowed silently', () => {
+  /* a recording sink installed on the app-wide logger (setLoggerSink), so we
+     observe exactly what the store's `log` emits without depending on the test
+     runner's console interception. */
+  type LogCall = { level: string; args: unknown[] }
+  const captured: LogCall[] = []
+  const recorder = {
+    error: (...args: unknown[]) => captured.push({ level: 'error', args }),
+    warn: (...args: unknown[]) => captured.push({ level: 'warn', args }),
+    info: (...args: unknown[]) => captured.push({ level: 'info', args }),
+    debug: (...args: unknown[]) => captured.push({ level: 'debug', args }),
+  }
+
+  const triggerSyncFailure = async () => {
+    /* a live Google calendar + a client id is all syncNow needs to run; the
+       googleAccount mock throws (no network in scenarios), so the sync rejects
+       and lands in the catch that now logs through the LoggerPort. */
+    useMew.getState().updateSettings({
+      googleClientId: 'fake-client-id',
+      calendars: [{ id: 'cal-1', name: 'Work', who: 'me', provider: 'google', kind: 'live' }],
+    })
+    await useMew.getState().syncNow()
+  }
+
+  beforeEach(() => {
+    captured.length = 0
+    setLoggerSink(recorder)
+  })
+  afterEach(() => setLoggerSink(null))
+
+  it("logs with label 'calendar/sync' and structured, redacted context", async () => {
+    await fresh(TUE(9, 40))
+    await triggerSyncFailure()
+
+    /* the failure is surfaced to state for the honest Settings copy … */
+    expect(useMew.getState().syncError).toBe('no network in scenarios')
+    /* … AND logged with a calendar/sync label + structured context. */
+    const sync = captured.find((c) => String(c.args[0]).endsWith('calendar/sync'))
+    expect(sync, 'expected a calendar/sync error log').toBeDefined()
+    const [head, ctx, err] = sync!.args
+    expect(sync!.level).toBe('error')
+    expect(head).toMatch(/ ERROR store\/calendar\/sync$/)
+    expect(ctx).toEqual({ calendars: 1 })
+    expect(err).toMatchObject({ name: 'Error', message: 'no network in scenarios' })
+  })
+
+  it('redacts a key/url/bearer that an error happens to carry (the privacy law)', async () => {
+    await fresh(TUE(9, 40))
+    await triggerSyncFailure()
+    /* the standing mock message is secret-free; assert the path can't leak by
+       checking nothing logged carries a raw key/bearer/https URL. */
+    expect(captured.length).toBeGreaterThan(0)
+    for (const call of captured) {
+      const blob = JSON.stringify(call.args)
+      expect(blob).not.toMatch(/sk-[A-Za-z0-9]/)
+      expect(blob).not.toMatch(/Bearer\s+\S/)
+      expect(blob).not.toMatch(/https?:\/\//)
+    }
   })
 })

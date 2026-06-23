@@ -4,6 +4,10 @@
    in a plain browser every call here is a cheap no-op. Backup writes are
    silent-but-logged — the backup must never block the week. */
 
+import { logger } from './logger'
+
+const log = logger.withContext('desktop')
+
 interface TauriFs {
   mkdir(path: string, opts: { baseDir: number; recursive?: boolean }): Promise<void>
   writeTextFile(path: string, contents: string, opts: { baseDir: number }): Promise<void>
@@ -76,7 +80,7 @@ export async function writeBackup(json: string): Promise<void> {
       await t.fs.remove(`${DIR}/${stale}`, { baseDir })
     }
   } catch (err) {
-    console.warn('mew: auto-backup failed (will retry on the next change)', err)
+    log.warn('backup/write', { note: 'will retry on the next change' }, err)
   }
 }
 
@@ -112,7 +116,7 @@ export async function openBackupFolder(): Promise<void> {
   try {
     await t.opener.openPath(await t.path.join(await t.path.documentDir(), DIR))
   } catch (err) {
-    console.warn('mew: could not open the backup folder', err)
+    log.warn('backup/open-folder', {}, err)
   }
 }
 
@@ -128,12 +132,12 @@ export function registerCloseFlush(isDirty: () => boolean, flush: () => Promise<
       try {
         await flush()
       } catch (err) {
-        console.warn('mew: close-time backup failed', err)
+        log.warn('backup/close-time', {}, err)
       }
       void w.destroy()
     })
   } catch (err) {
-    console.warn('mew: close hook unavailable', err)
+    log.warn('close-hook/unavailable', {}, err)
   }
 }
 

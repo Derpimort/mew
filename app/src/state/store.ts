@@ -55,6 +55,7 @@ import {
   type WeekContext,
 } from '../adapters/model'
 import { createBrowserNotifier } from '../adapters/notify'
+import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
 import { mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
 import { icsToRemoteEvents } from '../adapters/calendar/ics'
@@ -63,6 +64,7 @@ import { seed } from './seed'
 
 const storage: StoragePort = createDexieStorage()
 const notifier = createBrowserNotifier()
+const log = logger.withContext('store')
 
 /* the optional knowledge brain — config read per call so Settings edits
    (and the desktop sidecar's handshake) apply live; every method is a no-op
@@ -307,7 +309,7 @@ export const useMew = create<MewState>((set, get) => {
     try {
       await writeBackup(await storage.exportJson())
     } catch (err) {
-      console.warn('mew: auto-backup failed (will retry on the next change)', err)
+      log.warn('backup/write', { note: 'will retry on the next change' }, err)
     }
   }
   const queueBackup = () => {
@@ -1606,7 +1608,7 @@ export const useMew = create<MewState>((set, get) => {
                honest fallback copy above, and every non-rules failure is logged
                so a key/model/network cause is diagnosable in devtools. */
             if (adapter.id === 'anthropic' || adapter.id === 'openai') lastRemoteErr = err
-            if (adapter.id !== 'rules') console.error(`[mew] ${adapter.id} adapter failed:`, err)
+            if (adapter.id !== 'rules') log.error('model/adapter', { adapter: adapter.id }, err)
             failed.push(adapter.id)
           }
         }
@@ -2422,6 +2424,10 @@ export const useMew = create<MewState>((set, get) => {
           ])
         }
       } catch (e) {
+        /* swallowed to state (syncError drives honest Settings copy), but logged
+           with structure so a token/CORS/API cause is diagnosable in devtools —
+           the calendar count is safe context; the error is redacted on the way out */
+        log.error('calendar/sync', { calendars: live.length }, e)
         set({
           lastSyncAt: nowFn(), // back off; don't hammer a failing API every tick
           syncError: e instanceof Error ? e.message : 'sync failed',
