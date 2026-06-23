@@ -46,7 +46,7 @@ Equivalently, from `app/`:
 pnpm install --frozen-lockfile
 npx tsc -b        # strict typecheck — no errors
 npx vitest run    # the domain + adapter + store suite — all green
-pnpm build        # production bundle succeeds
+pnpm build        # production bundle succeeds (also enforces the size-budget warning)
 ```
 
 **Tests live with behavior.** Add them at the right layer:
@@ -70,7 +70,45 @@ re-run. Never ship red.
 
 ---
 
-## 3. Architecture in one paragraph
+## 3. Bundle size budget
+
+The build is **code-split** so the heavy dependency families load lazily and
+never bloat first paint: `react`/`zustand`/`dexie` → a `vendor` chunk,
+`three`/`@react-three/fiber` → a lazy `three` chunk (only the WebGL companion
+needs it), `ai`/`@ai-sdk/*` → a lazy `ai` chunk (only a model call needs it).
+The split lives in `app/vite.config.ts` (`build.rolldownOptions.output`).
+
+Two checks guard it:
+
+1. **`pnpm build` warns** when any single chunk exceeds **400 KB** (uncompressed) —
+   `build.chunkSizeWarningLimit`.
+2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build` in the
+   `desktop.yml` check job) when a chunk or the total crosses its hard budget. It
+   reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
+   the job summary.
+
+**Budgets** (uncompressed; the targets to keep):
+
+- **main (entry) chunk < 450 KB** — first paint depends on it; keep it tightest.
+- **lazy chunks < 300 KB** by default. The known-heavy lazy families have their own
+  larger ceilings (`three`, `ai`) — all the hard budgets live in the `BUDGETS` map
+  at the top of `app/scripts/check-bundle-size.mjs`; everything else holds the
+  300 KB line.
+- **first-load JS < 1.2 MB** — the entry chunk plus everything it statically imports
+  (today main + vendor), i.e. what a first visit actually downloads. `three` and
+  `ai` are lazy and excluded. The script also caps the grand total of all chunks so
+  nothing grows unbounded.
+
+A PR that grows a chunk past its budget fails the check with a clear message.
+Growing a budget is allowed — but it's a deliberate decision: raise the value in
+the `BUDGETS` map in **`app/scripts/check-bundle-size.mjs`** (and the soft
+`chunkSizeWarningLimit` in **`app/vite.config.ts`** if you're moving the warn line
+too), update this section, and say why in the PR. The default answer to "the bundle
+grew" is to lazy-load or split, not to raise the ceiling.
+
+---
+
+## 4. Architecture in one paragraph
 
 MEW is **hexagonal** (ports & adapters). The dependency rule is
 `ui → state → domain ← adapters`:
@@ -88,7 +126,7 @@ Deep reference: **[ARCHITECTURE.md](ARCHITECTURE.md) §2 ("The shared core")**.
 
 ---
 
-## 4. Product laws (non-negotiable)
+## 5. Product laws (non-negotiable)
 
 These are enforced in review and encoded in the types where possible. From
 **[HANDOFF.md](HANDOFF.md) §60**, the locked laws are:
@@ -101,7 +139,7 @@ These are enforced in review and encoded in the types where possible. From
    schedules *around* fixed points, never over them.
 4. **Keys never leave the device.** Keys and tokens stay on-device (and
    `exportJson` strips them from backups); they are sent only to the model
-   endpoint you chose. This one has teeth — see §5.
+   endpoint you chose. This one has teeth — see §6.
 5. **Graceful keyless / brainless degradation.** Everything works with no API key
    and no brain — `brainEnabled` off means zero network. Only free-form parsing
    quality changes; nudges are fully templated and never need a model.
@@ -112,7 +150,7 @@ When in doubt, the review compass is
 
 ---
 
-## 5. Secrets never leave the device
+## 6. Secrets never leave the device
 
 MEW holds three on-device secrets — `anthropicKey`, `openaiKey`, `brainToken`.
 They live in IndexedDB (browser) or SQLite (desktop) and must not escape through
@@ -141,7 +179,7 @@ real — fix the source, not the test.
 
 ---
 
-## 6. Claiming work
+## 7. Claiming work
 
 MEW runs a lightweight dev loop on top of GitHub Issues:
 
@@ -160,7 +198,7 @@ Picking up your first change? Start from a `dev:queued` issue (look for
 
 ---
 
-## 7. Shipping
+## 8. Shipping
 
 - **`main` is protected.** You cannot push to it directly.
 - Open a PR against `main`. It needs **1 approval** and all gates green.

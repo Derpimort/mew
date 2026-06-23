@@ -51,6 +51,12 @@ jobs:
       # + on a schedule). moderate/low is warn-only — see audit.yml.
       - run: pnpm --dir app run audit --audit-level high
       - run: pnpm --dir app build
+      # bundle-size budget gate: read the manifest from the build above and fail
+      # if the main chunk / any chunk / the total crosses its ceiling (budgets in
+      # app/scripts/check-bundle-size.mjs + CONTRIBUTING.md). Catches the "chunk >
+      # 500 kB" class of regression at PR time. Breakdown goes to the job summary.
+      - name: Bundle size budget
+        run: node app/scripts/check-bundle-size.mjs app/dist
       - run: cargo check --manifest-path desktop/src-tauri/Cargo.toml
 
   # Coverage gate + visibility. Pure-JS, so it skips the Rust/bun/apt setup the
