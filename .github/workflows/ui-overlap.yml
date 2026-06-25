@@ -30,7 +30,7 @@ jobs:
           pnpm exec vite preview --port 5199 --strictPort &
           for i in $(seq 1 30); do curl -sf http://localhost:5199/ >/dev/null && break || sleep 1; done
           node scripts/shoot-overlap.mjs http://localhost:5199
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: overlap-shots
