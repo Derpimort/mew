@@ -2,6 +2,10 @@ name: desktop
 
 on:
   pull_request:
+    # Heavy gate: the `check` job is only meant for release-promotion PRs
+    # (base=main, i.e. develop → main). Day-to-day PRs into develop run the
+    # quick gate (ci.yml) instead. Tag pushes + dry-run dispatch are unchanged.
+    branches: ['main']
     paths: ['desktop/**', 'app/**', '.github/workflows/desktop.yml']
   push:
     tags: ['v*']

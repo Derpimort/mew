@@ -8,6 +8,10 @@ name: audit
 # first control; Dependabot (.github/dependabot.yml) is the proactive half.
 on:
   pull_request:
+    # Heavy gate: only on release-promotion PRs (base=main, i.e. develop → main).
+    # Day-to-day PRs into develop run the quick gate (ci.yml) instead. The push
+    # (main) + weekly schedule sweeps below still catch already-merged deps.
+    branches: ['main']
     paths:
       - 'app/package.json'
       - 'app/pnpm-lock.yaml'

@@ -70,7 +70,32 @@ re-run. Never ship red.
 
 ---
 
-## 3. Bundle size budget
+## 3. Branch flow & CI
+
+MEW uses a calm two-tier gitflow, and CI matches it so day-to-day work stays
+fast and the heavy suite runs only when it earns its keep:
+
+- **Feature branches → PR into `develop`.** This fires the **quick gate**
+  (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`), and lint
+  (ESLint + Prettier `--check`). It's all pure-JS and lands in ~2-3 min, so you
+  get fast feedback on every push.
+- **Promote with a `develop → main` PR.** A PR whose base is `main` is a release
+  promotion, and it runs the **full suite** on top of the quick gate: the app
+  build + `cargo check` (`desktop.yml`), Playwright e2e (`e2e.yml`), Lighthouse
+  Core Web Vitals (`lighthouse.yml`), the UI-overlap guard (`ui-overlap.yml`),
+  and the dependency audit (`audit.yml`). This is where the slower, heavier
+  confidence checks happen — once, at the gate to `main`.
+- **Releases cut from `main` via a `v*` tag.** Pushing a `v*` tag triggers the
+  desktop release (cross-platform installers + the updater manifest) — unchanged
+  by the gitflow.
+
+So: open feature work against `develop` and iterate fast; open a `develop → main`
+PR when you're ready to ship and let the full suite vouch for it; tag from `main`
+to release. Same green-everywhere bar — just measured at the right moment.
+
+---
+
+## 4. Bundle size budget
 
 The build is **code-split** so the heavy dependency families load lazily and
 never bloat first paint: `react`/`zustand`/`dexie` → a `vendor` chunk,
@@ -108,7 +133,7 @@ grew" is to lazy-load or split, not to raise the ceiling.
 
 ---
 
-## 4. Architecture in one paragraph
+## 5. Architecture in one paragraph
 
 MEW is **hexagonal** (ports & adapters). The dependency rule is
 `ui → state → domain ← adapters`:
@@ -126,7 +151,7 @@ Deep reference: **[ARCHITECTURE.md](ARCHITECTURE.md) §2 ("The shared core")**.
 
 ---
 
-## 5. Product laws (non-negotiable)
+## 6. Product laws (non-negotiable)
 
 These are enforced in review and encoded in the types where possible. From
 **[HANDOFF.md](HANDOFF.md) §60**, the locked laws are:
@@ -139,7 +164,7 @@ These are enforced in review and encoded in the types where possible. From
    schedules *around* fixed points, never over them.
 4. **Keys never leave the device.** Keys and tokens stay on-device (and
    `exportJson` strips them from backups); they are sent only to the model
-   endpoint you chose. This one has teeth — see §6.
+   endpoint you chose. This one has teeth — see §7.
 5. **Graceful keyless / brainless degradation.** Everything works with no API key
    and no brain — `brainEnabled` off means zero network. Only free-form parsing
    quality changes; nudges are fully templated and never need a model.
@@ -150,7 +175,7 @@ When in doubt, the review compass is
 
 ---
 
-## 6. Secrets never leave the device
+## 7. Secrets never leave the device
 
 MEW holds three on-device secrets — `anthropicKey`, `openaiKey`, `brainToken`.
 They live in IndexedDB (browser) or SQLite (desktop) and must not escape through
@@ -179,7 +204,7 @@ real — fix the source, not the test.
 
 ---
 
-## 7. Claiming work
+## 8. Claiming work
 
 MEW runs a lightweight dev loop on top of GitHub Issues:
 
@@ -198,7 +223,7 @@ Picking up your first change? Start from a `dev:queued` issue (look for
 
 ---
 
-## 8. Shipping
+## 9. Shipping
 
 - **`main` is protected.** You cannot push to it directly.
 - Open a PR against `main`. It needs **1 approval** and all gates green.

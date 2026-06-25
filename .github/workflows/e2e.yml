@@ -8,6 +8,9 @@ name: e2e
 # from the artifact, not guessed at. See app/e2e/core-flows.spec.ts.
 on:
   pull_request:
+    # Heavy gate: only on release-promotion PRs (base=main, i.e. develop → main).
+    # Day-to-day PRs into develop run the quick gate (ci.yml) instead.
+    branches: ['main']
     paths: ['app/**', '.github/workflows/e2e.yml']
   workflow_dispatch:
 

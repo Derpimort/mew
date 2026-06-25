@@ -14,6 +14,9 @@ name: lighthouse
 # allowed to be slower and non-blocking without holding up the release gate.
 on:
   pull_request:
+    # Heavy gate: only on release-promotion PRs (base=main, i.e. develop → main).
+    # Day-to-day PRs into develop run the quick gate (ci.yml) instead.
+    branches: ['main']
     paths:
       - 'app/**'
       - 'lighthouserc.json'

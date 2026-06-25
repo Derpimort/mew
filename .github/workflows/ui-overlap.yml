@@ -6,6 +6,9 @@ name: ui-overlap
 # what keeps overlapping text from shipping again.
 on:
   pull_request:
+    # Heavy gate: only on release-promotion PRs (base=main, i.e. develop → main).
+    # Day-to-day PRs into develop run the quick gate (ci.yml) instead.
+    branches: ['main']
     paths: ['app/**', '.github/workflows/ui-overlap.yml']
   workflow_dispatch:
 
