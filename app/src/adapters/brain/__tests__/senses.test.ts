@@ -4,7 +4,20 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage } from '../../../domain/types'
-import { blockEventPage, chatBatchPage, debriefPage, explicitProjectFrom, knownProjectsFrom, makeChatBatcher, parsePrefBody, peopleFrom, prefPage, projectsFrom, slugify, taskSlug } from '../senses'
+import {
+  blockEventPage,
+  chatBatchPage,
+  debriefPage,
+  explicitProjectFrom,
+  knownProjectsFrom,
+  makeChatBatcher,
+  parsePrefBody,
+  peopleFrom,
+  prefPage,
+  projectsFrom,
+  slugify,
+  taskSlug,
+} from '../senses'
 
 const D = '2026-06-09'
 
@@ -27,7 +40,9 @@ function mk(over: Partial<Block>): Block {
 describe('slugify / taskSlug', () => {
   it('normalizes to brain-safe slugs', () => {
     expect(slugify('Gym is always 7am!')).toBe('gym-is-always-7am')
-    expect(slugify("  Order lunch ≠ Lunch — it's an errand ")).toBe('order-lunch-lunch-its-an-errand')
+    expect(slugify("  Order lunch ≠ Lunch — it's an errand ")).toBe(
+      'order-lunch-lunch-its-an-errand'
+    )
   })
 
   it('taskSlug drops the em-dash detail half', () => {
@@ -42,7 +57,11 @@ describe('peopleFrom — deliberate patterns only', () => {
 
   it('reads colon-separated sync lists with separators', () => {
     expect(peopleFrom('sync: jordan/remy')).toEqual(['person/jatin', 'person/remy'])
-    expect(peopleFrom('Meeting: dana, sam and lee')).toEqual(['person/dana', 'person/sam', 'person/lee'])
+    expect(peopleFrom('Meeting: dana, sam and lee')).toEqual([
+      'person/dana',
+      'person/sam',
+      'person/lee',
+    ])
   })
 
   it('reads a trailing "with <name>"', () => {
@@ -63,7 +82,9 @@ describe('blockEventPage', () => {
     expect(page.slug).toBe('task/interview')
     expect(page.links).toContain(`week/${D}`)
     expect(page.links).toContain('person/mira')
-    expect(page.timeline).toEqual([{ slug: `week/${D}`, date: D, summary: '14:00 completed — Interview (60m, deep)' }])
+    expect(page.timeline).toEqual([
+      { slug: `week/${D}`, date: D, summary: '14:00 completed — Interview (60m, deep)' },
+    ])
   })
 
   it('stamps every page MEW writes with the mew tag — the hook for a server-side scope filter', () => {
@@ -83,18 +104,27 @@ describe('blockEventPage', () => {
     expect(over.timeline![0].summary).toContain('ran over +23m')
     expect(over.body).toContain('ran over +23m')
     /* under 10m is calendar noise, not an outcome; rolling is never "over" */
-    expect(blockEventPage(b, 'completed', D, 14 * 60 + 9).timeline![0].summary).not.toContain('ran over')
+    expect(blockEventPage(b, 'completed', D, 14 * 60 + 9).timeline![0].summary).not.toContain(
+      'ran over'
+    )
     expect(blockEventPage(b, 'rolled', D, 18 * 60).timeline![0].summary).not.toContain('ran over')
   })
 })
 
 describe('prefPage — structured, upsert-by-construction', () => {
-  const pref = { kind: 'time-default' as const, match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }
+  const pref = {
+    kind: 'time-default' as const,
+    match: 'gym',
+    value: 'starts 07:00',
+    stated: 'gym is always 7am',
+  }
 
   it('slug is kind+match so restating replaces instead of accumulating', () => {
     const page = prefPage(pref)
     expect(page.slug).toBe('pref/time-default-gym')
-    expect(prefPage({ ...pref, value: 'starts 08:00', stated: 'gym moved to 8' }).slug).toBe(page.slug)
+    expect(prefPage({ ...pref, value: 'starts 08:00', stated: 'gym moved to 8' }).slug).toBe(
+      page.slug
+    )
     expect(page.tags).toEqual(['mew', 'preference', 'time-default'])
   })
 
@@ -145,7 +175,6 @@ describe('project extraction', () => {
     expect(page.links).toContain(`week/${D}`)
   })
 })
-
 
 describe('chatBatchPage', () => {
   it('keeps user/mew turns, drops nudges, timeline-only (no body to clobber)', () => {

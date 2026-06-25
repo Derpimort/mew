@@ -40,7 +40,11 @@ export function BlockCard({
   }
 
   return (
-    <div className={'nx-card' + (variant ? ` ${variant}` : '')} style={style} onClick={(e) => e.stopPropagation()}>
+    <div
+      className={'nx-card' + (variant ? ` ${variant}` : '')}
+      style={style}
+      onClick={(e) => e.stopPropagation()}
+    >
       {pinned && (
         <button type="button" className="cx" aria-label="close" title="deselect" onClick={onClose}>
           ×
@@ -55,7 +59,13 @@ export function BlockCard({
           {block.optional ? " · tentative — doesn't hold the time" : ''}
         </div>
         <span className={'ctag' + (life ? ' life' : '')}>
-          {block.external ? 'calendar' : block.tag === 'work' ? 'work' : block.tag === 'rest' ? 'rest · earned' : 'life'}
+          {block.external
+            ? 'calendar'
+            : block.tag === 'work'
+              ? 'work'
+              : block.tag === 'rest'
+                ? 'rest · earned'
+                : 'life'}
           {block.optional ? ' · optional' : ''}
         </span>
       </div>
@@ -63,7 +73,11 @@ export function BlockCard({
         <div className="cacts">
           {isNow || block.startedAt != null ? (
             <>
-              <button type="button" className="ca pri" onClick={act(() => toggleComplete(block.id))}>
+              <button
+                type="button"
+                className="ca pri"
+                onClick={act(() => toggleComplete(block.id))}
+              >
                 Done — a mew
               </button>
               {!block.external && (

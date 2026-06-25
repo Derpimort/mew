@@ -24,7 +24,7 @@ export interface DayShape {
 
 export function dayShape(blocks: Block[], dayKey: string, fromMin = 0): DayShape {
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => !b.optional && b.status !== 'rolled' && b.endMin > fromMin,
+    (b) => !b.optional && b.status !== 'rolled' && b.endMin > fromMin
   )
   const lines: string[] = []
   const gaps: DayShape['gaps'] = []
@@ -71,7 +71,7 @@ export function dayShape(blocks: Block[], dayKey: string, fromMin = 0): DayShape
         n.id !== b.id &&
         n.startMin >= b.endMin &&
         n.startMin <= b.endMin + 15 &&
-        (n.tag === 'rest' || /review|notes|debrief|buffer/i.test(n.title)),
+        (n.tag === 'rest' || /review|notes|debrief|buffer/i.test(n.title))
     )
     return !cushion
   })
@@ -79,17 +79,17 @@ export function dayShape(blocks: Block[], dayKey: string, fromMin = 0): DayShape
   const streak = longestStreak as DayShape['longestStreak']
   if (streak && streak.endMin - streak.startMin >= 110) {
     lines.push(
-      `unbroken stretch ${fmtTime(streak.startMin)}–${fmtTime(streak.endMin)} (${streak.endMin - streak.startMin} min) — focus degrades past ~90 min; a 10–15 min rest inside it restores output`,
+      `unbroken stretch ${fmtTime(streak.startMin)}–${fmtTime(streak.endMin)} (${streak.endMin - streak.startMin} min) — focus degrades past ~90 min; a 10–15 min rest inside it restores output`
     )
   }
   for (const g of gaps.slice(0, 4)) {
     lines.push(
-      `dead air ${fmtTime(g.startMin)}–${fmtTime(g.endMin)} (${g.endMin - g.startMin} min) — pull blocks together or name it as rest`,
+      `dead air ${fmtTime(g.startMin)}–${fmtTime(g.endMin)} (${g.endMin - g.startMin} min) — pull blocks together or name it as rest`
     )
   }
   for (const b of missingBuffers.slice(0, 3)) {
     lines.push(
-      `${b.title.split('—')[0].trim()} ends ${fmtTime(b.endMin)} with no buffer — 15 min of review/notes right after keeps the decisions and resets stress`,
+      `${b.title.split('—')[0].trim()} ends ${fmtTime(b.endMin)} with no buffer — 15 min of review/notes right after keeps the decisions and resets stress`
     )
   }
   if (!lines.length) {

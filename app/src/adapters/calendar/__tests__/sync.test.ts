@@ -92,7 +92,11 @@ describe('mergePull — inbound events', () => {
     expect(r1.added).toBe(0)
     expect(r1.blocks).toHaveLength(0)
     // and any lingering local copy of it is cleared
-    const existing = mk({ id: 'x1', dayKey: '2026-06-10', external: { calId: 'work@acme', eventId: 'ev1' } })
+    const existing = mk({
+      id: 'x1',
+      dayKey: '2026-06-10',
+      external: { calId: 'work@acme', eventId: 'ev1' },
+    })
     const r2 = mergePull([existing], [remote({})], [CAL], W, dismissed)
     expect(r2.blocks.find((b) => b.id === 'x1')).toBeUndefined()
   })
@@ -127,7 +131,13 @@ describe('planPush — outbound diff per routing matrix (acceptance #6)', () => 
   it('is idempotent: an up-to-date sync map plans nothing', () => {
     const blocks = [mk({ id: 'w1' })]
     const map: SyncEntry[] = [
-      { id: 'w1:work@acme', blockId: 'w1', calId: 'work@acme', eventId: 'g1', hash: 'Q3 deck|2026-06-09|540|690' },
+      {
+        id: 'w1:work@acme',
+        blockId: 'w1',
+        calId: 'work@acme',
+        eventId: 'g1',
+        hash: 'Q3 deck|2026-06-09|540|690',
+      },
     ]
     expect(planPush(blocks, matrix, [CAL], W, map).ops).toHaveLength(0)
   })
@@ -135,12 +145,20 @@ describe('planPush — outbound diff per routing matrix (acceptance #6)', () => 
   it('updates when the block moved, deletes when visibility flips to hidden', () => {
     const blocks = [mk({ id: 'w1', startMin: 600, endMin: 750 })]
     const map: SyncEntry[] = [
-      { id: 'w1:work@acme', blockId: 'w1', calId: 'work@acme', eventId: 'g1', hash: 'Q3 deck|2026-06-09|540|690' },
+      {
+        id: 'w1:work@acme',
+        blockId: 'w1',
+        calId: 'work@acme',
+        eventId: 'g1',
+        hash: 'Q3 deck|2026-06-09|540|690',
+      },
     ]
     const moved = planPush(blocks, matrix, [CAL], W, map)
     expect(moved.ops[0]).toMatchObject({ kind: 'update', eventId: 'g1' })
 
-    const hiddenMatrix: RoutingMatrix = { 'work@acme': { work: 'hidden', private: 'hidden', health: 'hidden' } }
+    const hiddenMatrix: RoutingMatrix = {
+      'work@acme': { work: 'hidden', private: 'hidden', health: 'hidden' },
+    }
     const hidden = planPush(blocks, hiddenMatrix, [CAL], W, map)
     expect(hidden.ops[0]).toMatchObject({ kind: 'delete', eventId: 'g1' })
   })
@@ -156,7 +174,13 @@ describe('planPush — outbound diff per routing matrix (acceptance #6)', () => 
     const rolled = mk({ id: 'old', status: 'rolled', rolledToId: 'new' })
     const fresh = mk({ id: 'new', dayKey: '2026-06-10' })
     const map: SyncEntry[] = [
-      { id: 'old:work@acme', blockId: 'old', calId: 'work@acme', eventId: 'g1', hash: 'Q3 deck|2026-06-09|540|690' },
+      {
+        id: 'old:work@acme',
+        blockId: 'old',
+        calId: 'work@acme',
+        eventId: 'g1',
+        hash: 'Q3 deck|2026-06-09|540|690',
+      },
     ]
     const { ops } = planPush([rolled, fresh], matrix, [CAL], W, map)
     expect(ops.map((o) => o.kind).sort()).toEqual(['create', 'delete'])

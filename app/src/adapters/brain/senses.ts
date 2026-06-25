@@ -26,7 +26,9 @@ const STOP_NAMES = new Set(['the', 'a', 'an', 'team', 'everyone', 'all', 'me', '
     "1:1 with dana"               → dana                                   */
 export function peopleFrom(title: string): string[] {
   const out = new Set<string>()
-  const dash = title.match(/^(?:.*\b(?:interview|call|sync|meeting|1:1|chat|review)\b.*?)—\s*(.+)$/i)
+  const dash = title.match(
+    /^(?:.*\b(?:interview|call|sync|meeting|1:1|chat|review)\b.*?)—\s*(.+)$/i
+  )
   if (dash) {
     for (const part of dash[1].split(/[,/&]|\band\b/i)) {
       const name = slugify(part)
@@ -56,7 +58,8 @@ export function taskSlug(title: string): string {
    naming ("for Kite London" — a proper-noun run after 'for') is how a
    project enters the graph; once known, a title fragment is enough to
    keep linking it. Lowercase "for deep work" stays a phrase, not a project. */
-const PROJECT_EXPLICIT = /\bfor\s+((?:[A-Z][\w&'-]*|[0-9][\w&'-]*)(?:\s+(?:[A-Z][\w&'-]*|[0-9][\w&'-]*)){0,3})\s*$/
+const PROJECT_EXPLICIT =
+  /\bfor\s+((?:[A-Z][\w&'-]*|[0-9][\w&'-]*)(?:\s+(?:[A-Z][\w&'-]*|[0-9][\w&'-]*)){0,3})\s*$/
 
 /** The explicit project name a title declares, if any — slug form. */
 export function explicitProjectFrom(title: string): string | null {
@@ -100,7 +103,7 @@ export function blockEventPage(
   kind: BlockEventKind,
   dayKey: string,
   atMin: number,
-  knownProjects: Iterable<string> = [],
+  knownProjects: Iterable<string> = []
 ): BrainPage {
   const title = b.title.split('—')[0].trim()
   const dur = b.endMin - b.startMin
@@ -141,7 +144,8 @@ export function parsePrefBody(body: string): PrefPayload | null {
   if (!m) return null
   try {
     const p = JSON.parse(m[1]) as PrefPayload
-    if (typeof p.match === 'string' && typeof p.value === 'string' && typeof p.kind === 'string') return p
+    if (typeof p.match === 'string' && typeof p.value === 'string' && typeof p.kind === 'string')
+      return p
     return null
   } catch {
     return null
@@ -179,7 +183,7 @@ export function chatBatchPage(turns: ChatMessage[], dayKey: string): BrainPage |
 /** 60s coalescing batcher for chat turns — pure factory, fake-timer friendly. */
 export function makeChatBatcher(
   flush: (turns: ChatMessage[], dayKey: string) => void,
-  delayMs = 60_000,
+  delayMs = 60_000
 ): { add(turn: ChatMessage, dayKey: string): void; flushNow(): void } {
   let pending: ChatMessage[] = []
   let pendingDay = ''

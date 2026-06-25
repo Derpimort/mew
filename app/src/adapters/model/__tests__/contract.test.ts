@@ -97,6 +97,8 @@ describe('OpenAI adapter — outgoing request body', () => {
 
   it('caps tokens within the contract ceiling', async () => {
     const body = await captureBody()
-    expect(body.max_completion_tokens as number).toBeLessThanOrEqual(PROVIDER_CONTRACT.openai.tokenCeiling!)
+    expect(body.max_completion_tokens as number).toBeLessThanOrEqual(
+      PROVIDER_CONTRACT.openai.tokenCeiling!
+    )
   })
 })

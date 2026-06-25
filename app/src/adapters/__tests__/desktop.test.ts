@@ -195,7 +195,9 @@ describe('oauthLoopback', () => {
     vi.stubGlobal('window', shell.win)
     const p = oauthLoopback((port) => `https://accounts.google.com/o/oauth2/v2/auth?p=${port}`)
     await settle()
-    expect(shell.openedUrls).toEqual([`https://accounts.google.com/o/oauth2/v2/auth?p=${OAUTH_PORTS[0]}`])
+    expect(shell.openedUrls).toEqual([
+      `https://accounts.google.com/o/oauth2/v2/auth?p=${OAUTH_PORTS[0]}`,
+    ])
     const emit = shell.listeners.get('oauth://url')!
     /* the bare redirect (fragment stayed in the browser) must NOT settle it */
     emit({ payload: `http://localhost:${OAUTH_PORTS[0]}/` })

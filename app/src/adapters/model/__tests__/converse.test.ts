@@ -70,6 +70,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('clear')
       return `Cleared ${scope}.`
     }),
+    undoLast: vi.fn(() => {
+      calls.push('undoLast')
+      return `Undone — took back the deck block I'd just placed.`
+    }),
   }
 }
 
@@ -83,7 +87,7 @@ describe('rules adapter — converse', () => {
   it('greets back without touching the week', async () => {
     const exec = mockExec()
     const reply = await collect(
-      createRulesAdapter(NOW).converse([{ role: 'user', text: 'hello pixie' }], ctx, exec),
+      createRulesAdapter(NOW).converse([{ role: 'user', text: 'hello pixie' }], ctx, exec)
     )
     expect(reply).toMatch(/what should the week hold/)
     expect(exec.calls).toHaveLength(0)
@@ -95,8 +99,8 @@ describe('rules adapter — converse', () => {
       createRulesAdapter(NOW).converse(
         [{ role: 'user', text: 'block thursday morning for the deck, keep friday afternoon free' }],
         ctx,
-        exec,
-      ),
+        exec
+      )
     )
     expect(exec.plan).toHaveBeenCalledOnce()
     const [places, frees] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
@@ -108,7 +112,7 @@ describe('rules adapter — converse', () => {
   it('completions go through the executor', async () => {
     const exec = mockExec()
     const reply = await collect(
-      createRulesAdapter(NOW).converse([{ role: 'user', text: 'done with the deck' }], ctx, exec),
+      createRulesAdapter(NOW).converse([{ role: 'user', text: 'done with the deck' }], ctx, exec)
     )
     expect(exec.complete).toHaveBeenCalledWith('deck')
     expect(reply).toBe('Marked deck done.')
@@ -120,8 +124,8 @@ describe('rules adapter — converse', () => {
       createRulesAdapter(NOW).converse(
         [{ role: 'user', text: 'cleanup my calendar so that i could restart and plan' }],
         ctx,
-        exec,
-      ),
+        exec
+      )
     )
     expect(exec.clear).toHaveBeenCalledWith('upcoming')
     expect(reply).toBe('Cleared upcoming.')
@@ -141,7 +145,7 @@ describe('anthropic tool dispatch — runTool', () => {
         ],
         frees: [{ dayOffset: 3, startMin: 780, endMin: 1020 }],
       },
-      exec,
+      exec
     )
     const [places, frees] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places).toHaveLength(1)
@@ -153,15 +157,19 @@ describe('anthropic tool dispatch — runTool', () => {
     const exec = mockExec()
     expect(await runTool('complete_task', { query: 'deck' }, exec)).toBe('Marked deck done.')
     expect(await runTool('move_task', { query: 'deck', toDayOffset: 2 }, exec)).toBe('Moved deck.')
-    expect(await runTool('capture_intention', { title: 'call the bank' }, exec)).toBe('Captured "call the bank".')
+    expect(await runTool('capture_intention', { title: 'call the bank' }, exec)).toBe(
+      'Captured "call the bank".'
+    )
     expect(await runTool('edit_block', { query: 'prod release', durationMin: 45 }, exec)).toBe(
-      'Updated prod release.',
+      'Updated prod release.'
     )
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
       'prod release',
       { durationMin: 45 },
     ])
-    expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe('Removed prod release.')
+    expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe(
+      'Removed prod release.'
+    )
     /* the at/all disambiguators reach the executor; bare call carries empty opts */
     await runTool('remove_blocks', { query: 'sleep', at: '22:30' }, exec)
     await runTool('remove_blocks', { query: 'prod release', all: true }, exec)
@@ -171,14 +179,14 @@ describe('anthropic tool dispatch — runTool', () => {
     expect(removeCalls[2]).toEqual(['prod release', { at: undefined, all: true }])
     expect(await runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
     expect(await runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
-      'Slot 45m day 0 [-,1020].',
+      'Slot 45m day 0 [-,1020].'
     )
     expect(await runTool('clear_blocks', { scope: 'week' }, exec)).toBe('Cleared week.')
     expect(await runTool('clear_blocks', { scope: 'junk' }, exec)).toBe('Cleared upcoming.')
     expect(await runTool('nope', {}, exec)).toMatch(/unknown tool/)
-    expect(await runTool('query_brain', { question: 'how much has spicanova eaten' }, exec)).toContain(
-      'Spicanova this week',
-    )
+    expect(
+      await runTool('query_brain', { question: 'how much has spicanova eaten' }, exec)
+    ).toContain('Spicanova this week')
     expect(exec.calls).toContain('queryBrain')
     expect(await runTool('query_brain', { question: '  ' }, exec)).toMatch(/nothing to look up/)
     expect(await runTool('plan_blocks', {}, exec)).toMatch(/nothing to place/)
@@ -191,18 +199,25 @@ describe('remember rides the tool registry', () => {
     const out = await runTool(
       'remember',
       { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' },
-      exec,
+      exec
     )
     expect(out).toBe('Remembered — gym starts 07:00.')
     const [pref] = (exec.remember as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(pref).toEqual({ kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' })
+    expect(pref).toEqual({
+      kind: 'time-default',
+      match: 'gym',
+      value: 'starts 07:00',
+      stated: 'gym is always 7am',
+    })
   })
 
   it('an unknown kind degrades to fact; a subject-less rule is refused', async () => {
     const exec = mockExec()
     await runTool('remember', { kind: 'sneaky', match: 'gym', value: 'x', stated: 's' }, exec)
     expect((exec.remember as ReturnType<typeof vi.fn>).mock.calls[0][0].kind).toBe('fact')
-    expect(await runTool('remember', { match: ' ', value: '' }, exec)).toMatch(/nothing to remember/)
+    expect(await runTool('remember', { match: ' ', value: '' }, exec)).toMatch(
+      /nothing to remember/
+    )
   })
 })
 
@@ -211,8 +226,19 @@ describe('attention + due ride the tool registry', () => {
     const exec = mockExec()
     await runTool(
       'plan_blocks',
-      { places: [{ title: 'swap iphone', tag: 'work', dayOffset: 0, durationMin: 180, attention: 'background', dueMin: 780 }] },
-      exec,
+      {
+        places: [
+          {
+            title: 'swap iphone',
+            tag: 'work',
+            dayOffset: 0,
+            durationMin: 180,
+            attention: 'background',
+            dueMin: 780,
+          },
+        ],
+      },
+      exec
     )
     const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0]).toMatchObject({ title: 'swap iphone', attention: 'background', due: 780 })
@@ -220,7 +246,11 @@ describe('attention + due ride the tool registry', () => {
 
   it('an unknown attention value is dropped, not trusted', async () => {
     const exec = mockExec()
-    await runTool('plan_blocks', { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] }, exec)
+    await runTool(
+      'plan_blocks',
+      { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] },
+      exec
+    )
     const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0].attention).toBeUndefined()
   })
@@ -257,13 +287,17 @@ describe('openai adapter — abort', () => {
                   role: 'assistant',
                   content: 'on it.',
                   tool_calls: [
-                    { id: 'c1', type: 'function', function: { name: 'complete_task', arguments: '{"query":"deck"}' } },
+                    {
+                      id: 'c1',
+                      type: 'function',
+                      function: { name: 'complete_task', arguments: '{"query":"deck"}' },
+                    },
                   ],
                 },
               },
             ],
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
         )
       }
       if (init?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
@@ -279,9 +313,13 @@ describe('openai adapter — abort', () => {
     const exec = mockExec()
     const abort = new AbortController()
     const adapter = createOpenAIAdapter('sk-test', 'gpt-test')
-    const it = adapter
-      .converse([{ role: 'user', text: 'done with the deck' }], ctx, exec, abort.signal)
-      [Symbol.asyncIterator]()
+    const stream = adapter.converse(
+      [{ role: 'user', text: 'done with the deck' }],
+      ctx,
+      exec,
+      abort.signal
+    )
+    const it = stream[Symbol.asyncIterator]()
 
     /* drive round 1 (commits the tool action), then stop before round 2 — the
        store's ■/Esc fires between rounds, exactly as in the live loop. */

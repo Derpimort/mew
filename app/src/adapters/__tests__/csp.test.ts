@@ -61,16 +61,16 @@ describe('CSP — style-src is tight (no unsafe-inline)', () => {
     expect(directive(csp(), 'style-src')).toMatch(/^style-src\b/)
   })
 
-  it.each(POLICIES)('%s keeps style-src \'self\'', (_label, csp) => {
+  it.each(POLICIES)("%s keeps style-src 'self'", (_label, csp) => {
     expect(directive(csp(), 'style-src')).toContain("'self'")
   })
 
-  it.each(POLICIES)('%s has NO \'unsafe-inline\' in style-src', (_label, csp) => {
+  it.each(POLICIES)("%s has NO 'unsafe-inline' in style-src", (_label, csp) => {
     // the regression that matters: re-opening CSS-based key exfiltration.
     expect(directive(csp(), 'style-src')).not.toContain("'unsafe-inline'")
   })
 
-  it.each(POLICIES)('%s has no \'unsafe-inline\' or \'unsafe-eval\' anywhere', (_label, csp) => {
+  it.each(POLICIES)("%s has no 'unsafe-inline' or 'unsafe-eval' anywhere", (_label, csp) => {
     expect(csp()).not.toContain("'unsafe-inline'")
     expect(csp()).not.toContain("'unsafe-eval'")
   })
@@ -92,7 +92,7 @@ describe('CSP — style-src is tight (no unsafe-inline)', () => {
 describe.skipIf(!existsSync(DIST_HTML))('CSP — built bundle has no inline styles', () => {
   const html = existsSync(DIST_HTML) ? readFileSync(DIST_HTML, 'utf8') : ''
 
-  it('links an external stylesheet (style-src \'self\' covers it)', () => {
+  it("links an external stylesheet (style-src 'self' covers it)", () => {
     expect(html).toMatch(/<link[^>]+rel="stylesheet"[^>]*>/i)
   })
 
@@ -138,12 +138,15 @@ describe('CSP — SRI decision invariant (script/style stay self + audited GIS o
     expect(crossOriginSources(directive(csp(), 'style-src'))).toEqual([GIS_ORIGIN])
   })
 
-  it.each(POLICIES)('%s never allows arbitrary code via wildcard/blob/data in script-src', (_label, csp) => {
-    const dir = directive(csp(), 'script-src')
-    expect(dir).not.toMatch(/\*/) // no host wildcard
-    expect(dir).not.toContain('blob:')
-    expect(dir).not.toContain('data:')
-  })
+  it.each(POLICIES)(
+    '%s never allows arbitrary code via wildcard/blob/data in script-src',
+    (_label, csp) => {
+      const dir = directive(csp(), 'script-src')
+      expect(dir).not.toMatch(/\*/) // no host wildcard
+      expect(dir).not.toContain('blob:')
+      expect(dir).not.toContain('data:')
+    }
+  )
 
   it('web and desktop agree on the script-src directive', () => {
     expect(directive(webCsp(), 'script-src')).toBe(directive(desktopCsp(), 'script-src'))
@@ -155,22 +158,26 @@ describe('CSP — SRI decision invariant (script/style stay self + audited GIS o
    rooted URLs), so the content-hashed filename is the integrity story. The lone
    cross-origin script (GIS) is injected at runtime, so it legitimately never
    appears as a static tag here. Skips cleanly when dist/ is absent (clean tree). */
-describe.skipIf(!existsSync(DIST_HTML))('SRI decision — built shell loads only same-origin code/styles', () => {
-  const html = existsSync(DIST_HTML) ? readFileSync(DIST_HTML, 'utf8') : ''
+describe.skipIf(!existsSync(DIST_HTML))(
+  'SRI decision — built shell loads only same-origin code/styles',
+  () => {
+    const html = existsSync(DIST_HTML) ? readFileSync(DIST_HTML, 'utf8') : ''
 
-  /** Same-origin = relative or root-relative; an absolute http(s) URL is cross-origin. */
-  const isSameOrigin = (url: string) => !/^https?:\/\//i.test(url) && !url.startsWith('//')
+    /** Same-origin = relative or root-relative; an absolute http(s) URL is cross-origin. */
+    const isSameOrigin = (url: string) => !/^https?:\/\//i.test(url) && !url.startsWith('//')
 
-  it('every <script src> on the shell is same-origin', () => {
-    const srcs = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*"([^"]+)"/gi)].map((m) => m[1])
-    for (const src of srcs) expect(isSameOrigin(src), `cross-origin script tag: ${src}`).toBe(true)
-  })
+    it('every <script src> on the shell is same-origin', () => {
+      const srcs = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*"([^"]+)"/gi)].map((m) => m[1])
+      for (const src of srcs)
+        expect(isSameOrigin(src), `cross-origin script tag: ${src}`).toBe(true)
+    })
 
-  it('every <link rel="stylesheet" href> on the shell is same-origin', () => {
-    const links = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/gi)].map((m) => m[0])
-    for (const tag of links) {
-      const href = tag.match(/\bhref\s*=\s*"([^"]+)"/i)?.[1] ?? ''
-      expect(isSameOrigin(href), `cross-origin stylesheet tag: ${href}`).toBe(true)
-    }
-  })
-})
+    it('every <link rel="stylesheet" href> on the shell is same-origin', () => {
+      const links = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/gi)].map((m) => m[0])
+      for (const tag of links) {
+        const href = tag.match(/\bhref\s*=\s*"([^"]+)"/i)?.[1] ?? ''
+        expect(isSameOrigin(href), `cross-origin stylesheet tag: ${href}`).toBe(true)
+      }
+    })
+  }
+)

@@ -26,6 +26,10 @@ tauri-plugin-oauth = "2"
 # the human picks the restart moment; dialog ships for native fallbacks
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
+# native OS notifications for start-by/drift/end-of-day nudges (#168) — the
+# webview mirrors the newest nudge through window.__TAURI__.notification;
+# local-only, no network, keys unaffected
+tauri-plugin-notification = "2"
 # phase 5 (built-in brain): the bundled gbrain sidecar is spawned and killed
 # from Rust only — the webview gets an endpoint handshake, never spawn rights
 tauri-plugin-shell = "2"

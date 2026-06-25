@@ -23,7 +23,11 @@ const ctx: WeekContext = {
 
 /* A plain text reply (no tool calls) — converse yields the content and returns. */
 function okResponse(content: string) {
-  return { ok: true, status: 200, json: async () => ({ choices: [{ message: { role: 'assistant', content } }] }) }
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({ choices: [{ message: { role: 'assistant', content } }] }),
+  }
 }
 function errResponse(status: number) {
   return { ok: false, status, text: async () => '', json: async () => ({}) }
@@ -99,7 +103,9 @@ describe('openai adapter — transient resilience', () => {
     const fetchSpy = vi.fn(async () => errResponse(400))
     vi.stubGlobal('fetch', fetchSpy)
     const adapter = createOpenAIAdapter('sk-x', 'gpt-x')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toThrow('openai 400')
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toThrow('openai 400')
     expect(fetchSpy).toHaveBeenCalledOnce()
   })
 
@@ -107,7 +113,9 @@ describe('openai adapter — transient resilience', () => {
     const fetchSpy = vi.fn(async () => errResponse(401))
     vi.stubGlobal('fetch', fetchSpy)
     const adapter = createOpenAIAdapter('sk-x', 'gpt-x')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toThrow('openai 401')
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toThrow('openai 401')
     expect(fetchSpy).toHaveBeenCalledOnce()
   })
 
@@ -115,7 +123,9 @@ describe('openai adapter — transient resilience', () => {
     const fetchSpy = vi.fn(async () => errResponse(429))
     vi.stubGlobal('fetch', fetchSpy)
     const adapter = createOpenAIAdapter('sk-x', 'gpt-x')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toThrow('openai 429')
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toThrow('openai 429')
     expect(fetchSpy).toHaveBeenCalledTimes(3) // initial + retries:2
   })
 
@@ -125,7 +135,9 @@ describe('openai adapter — transient resilience', () => {
     })
     vi.stubGlobal('fetch', fetchSpy)
     const adapter = createOpenAIAdapter('sk-x', 'gpt-x')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toThrow('aborted')
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toThrow('aborted')
     expect(fetchSpy).toHaveBeenCalledOnce()
   })
 
@@ -148,7 +160,11 @@ describe('openai adapter — transient resilience', () => {
                   role: 'assistant',
                   content: 'on it',
                   tool_calls: [
-                    { id: 't1', type: 'function', function: { name: 'analyze_day', arguments: '{}' } },
+                    {
+                      id: 't1',
+                      type: 'function',
+                      function: { name: 'analyze_day', arguments: '{}' },
+                    },
                   ],
                 },
               },
@@ -164,8 +180,13 @@ describe('openai adapter — transient resilience', () => {
     let streamed = ''
     await expect(
       (async () => {
-        for await (const c of adapter.converse([{ role: 'user', text: 'plan my day' }], ctx, toolExec)) streamed += c
-      })(),
+        for await (const c of adapter.converse(
+          [{ role: 'user', text: 'plan my day' }],
+          ctx,
+          toolExec
+        ))
+          streamed += c
+      })()
     ).rejects.toThrow('openai 503')
     /* round 1 fired once (not replayed) + round 2's three exhausted attempts */
     expect(calls).toBe(4)

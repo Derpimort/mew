@@ -38,7 +38,11 @@ export function validateSchema(state: PersistedState): ValidationError[] {
   for (const b of state.blocks ?? []) {
     const id = isNonEmptyString(b?.id) ? b.id : undefined
     if (!id) {
-      errors.push({ table: 'blocks', message: 'block is missing required `id`', repair: REPAIR_DROP })
+      errors.push({
+        table: 'blocks',
+        message: 'block is missing required `id`',
+        repair: REPAIR_DROP,
+      })
     }
     if (!isNonEmptyString(b?.dayKey)) {
       errors.push({
@@ -61,7 +65,11 @@ export function validateSchema(state: PersistedState): ValidationError[] {
   /* Captures: an id is the minimum to place or complete one later. */
   for (const c of state.captures ?? []) {
     if (!isNonEmptyString(c?.id)) {
-      errors.push({ table: 'captures', message: 'capture is missing required `id`', repair: REPAIR_DROP })
+      errors.push({
+        table: 'captures',
+        message: 'capture is missing required `id`',
+        repair: REPAIR_DROP,
+      })
     }
   }
 
@@ -69,7 +77,11 @@ export function validateSchema(state: PersistedState): ValidationError[] {
   for (const m of state.chat ?? []) {
     const id = isNonEmptyString(m?.id) ? m.id : undefined
     if (!id) {
-      errors.push({ table: 'chat', message: 'chat message is missing required `id`', repair: REPAIR_DROP })
+      errors.push({
+        table: 'chat',
+        message: 'chat message is missing required `id`',
+        repair: REPAIR_DROP,
+      })
     }
     if (typeof m?.ts !== 'number') {
       errors.push({
@@ -86,7 +98,11 @@ export function validateSchema(state: PersistedState): ValidationError[] {
   for (const e of state.memory ?? []) {
     const id = isNonEmptyString(e?.id) ? e.id : undefined
     if (!id) {
-      errors.push({ table: 'memory', message: 'memory event is missing required `id`', repair: REPAIR_DROP })
+      errors.push({
+        table: 'memory',
+        message: 'memory event is missing required `id`',
+        repair: REPAIR_DROP,
+      })
     }
     if (typeof e?.ts !== 'number') {
       errors.push({
@@ -194,7 +210,10 @@ export function createDexieStorage(): StoragePort {
       const seen = (await db.kv.get('schemaVersion'))?.value
       if (seen !== SCHEMA_VERSION) {
         await db.kv.put({ key: 'schemaVersion', value: SCHEMA_VERSION })
-        await audit('migrate', `schema now at v${SCHEMA_VERSION}${typeof seen === 'number' ? ` (was v${seen})` : ' (first run on this version)'}`)
+        await audit(
+          'migrate',
+          `schema now at v${SCHEMA_VERSION}${typeof seen === 'number' ? ` (was v${seen})` : ' (first run on this version)'}`
+        )
       }
 
       const [blocks, captures, chat, memory, settingsRow] = await Promise.all([
@@ -218,14 +237,14 @@ export function createDexieStorage(): StoragePort {
       const errors = validateSchema(state)
       if (errors.length) {
         console.warn(
-          `[mew/storage] schema validation found ${errors.length} issue(s) after loading at v${SCHEMA_VERSION}:`,
+          `[mew/storage] schema validation found ${errors.length} issue(s) after loading at v${SCHEMA_VERSION}:`
         )
         for (const e of errors) {
           console.warn(`  · ${e.table}${e.id ? ` (${e.id})` : ''}: ${e.message} — try: ${e.repair}`)
         }
         await audit(
           'validate',
-          `${errors.length} issue(s): ${errors.map((e) => `${e.table}${e.id ? `#${e.id}` : ''} — ${e.message}`).join('; ')}`,
+          `${errors.length} issue(s): ${errors.map((e) => `${e.table}${e.id ? `#${e.id}` : ''} — ${e.message}`).join('; ')}`
         )
 
         /* No data loss across the board: clear ONLY the tables that hold
@@ -236,7 +255,9 @@ export function createDexieStorage(): StoragePort {
           await db[table].clear()
           state[table] = []
           await audit('fallback', `cleared corrupted \`${table}\` table; other tables left intact`)
-          console.warn(`[mew/storage] cleared corrupted \`${table}\` table to recover; other tables kept`)
+          console.warn(
+            `[mew/storage] cleared corrupted \`${table}\` table to recover; other tables kept`
+          )
         }
       }
 
@@ -250,6 +271,9 @@ export function createDexieStorage(): StoragePort {
     },
     async putCaptures(captures) {
       await db.captures.bulkPut(captures)
+    },
+    async deleteCaptures(ids) {
+      await db.captures.bulkDelete(ids)
     },
     async putChat(msgs) {
       await db.chat.bulkPut(msgs)
@@ -289,7 +313,12 @@ export function createDexieStorage(): StoragePort {
         const current = (await db.kv.get('settings'))?.value as
           | { anthropicKey?: string; openaiKey?: string; brainToken?: string }
           | undefined
-        await Promise.all([db.blocks.clear(), db.captures.clear(), db.chat.clear(), db.memory.clear()])
+        await Promise.all([
+          db.blocks.clear(),
+          db.captures.clear(),
+          db.chat.clear(),
+          db.memory.clear(),
+        ])
         await db.blocks.bulkPut(state.blocks ?? [])
         await db.captures.bulkPut(state.captures ?? [])
         await db.chat.bulkPut(state.chat ?? [])

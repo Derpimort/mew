@@ -3,6 +3,7 @@
    Ollama shares runIntent() so a weak local model gets the same composer. */
 
 import { parseCommand as ruleParse } from '../../domain/parse'
+import { normalizeRrule } from '../../domain/recurrence'
 import type { ScheduleIntent } from '../../domain/types'
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
@@ -29,7 +30,7 @@ export function runIntent(
   intent: ScheduleIntent,
   exec: ToolExecutor,
   ctx: WeekContext,
-  rawText: string,
+  rawText: string
 ): string {
   switch (intent.kind) {
     case 'plan':
@@ -43,20 +44,23 @@ export function runIntent(
           protected: p.protected,
           attention: p.attention,
           due: p.due,
+          rrule: p.rrule,
         })),
         (intent.frees ?? []).map((f) => ({
           dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
           startMin: f.startMin,
           endMin: f.endMin,
-        })),
+        }))
       )
     case 'complete':
       return exec.complete(intent.query ?? '')
     case 'move':
       return exec.move(
         intent.query ?? '',
-        intent.toDayKey != null && /^\d+$/.test(intent.toDayKey) ? Number(intent.toDayKey) : undefined,
-        intent.toStartMin,
+        intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
+          ? Number(intent.toDayKey)
+          : undefined,
+        intent.toStartMin
       )
     case 'capture':
       return exec.capture(intent.title ?? '')
@@ -113,6 +117,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         protected: p.protected !== false,
         attention: p.attention === 'background' ? ('background' as const) : undefined,
         due: optInt(p.dueMin ?? p.due, 0, 1439),
+        rrule: normalizeRrule(p.recurrence ?? p.rrule) ?? undefined,
       }))
     const okFrees = frees
       .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -171,7 +176,10 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         kind: kinds.includes(pr.kind as never) ? (pr.kind as (typeof kinds)[number]) : 'fact',
         match,
         value,
-        stated: typeof pr.stated === 'string' && pr.stated.trim() ? pr.stated.trim() : `${match} ${value}`,
+        stated:
+          typeof pr.stated === 'string' && pr.stated.trim()
+            ? pr.stated.trim()
+            : `${match} ${value}`,
       },
     }
   }

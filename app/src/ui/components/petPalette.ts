@@ -31,6 +31,10 @@ export function usePetPalette(): PetPalette {
     const el = document.querySelector('[data-pet]') ?? document.documentElement
     const cs = getComputedStyle(el)
     const read = (name: string, fb: string) => cs.getPropertyValue(name).trim() || fb
+    // Reading resolved CSS custom properties needs the mounted, themed DOM, so
+    // this can only run in an effect — it syncs React state from an external
+    // system (the document's computed styles), exactly what effects are for.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncs state from computed CSS vars, only readable after mount
     setPal({
       pa: read('--pa', FALLBACK.pa),
       pb: read('--pb', FALLBACK.pb),

@@ -17,7 +17,11 @@ describe('effectiveBrain ranking', () => {
 
   it('a sidecar handshake turns the brain on without touching Settings', () => {
     setSidecarBrain({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
-    expect(effectiveBrain(OFF)).toEqual({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh', on: true })
+    expect(effectiveBrain(OFF)).toEqual({
+      url: 'http://127.0.0.1:43217',
+      token: 'gbrain_fresh',
+      on: true,
+    })
   })
 
   it('explicit Settings config outranks the sidecar — the user meant it', () => {

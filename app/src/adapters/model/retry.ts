@@ -32,7 +32,9 @@ function statusOf(err: unknown): number | undefined {
 function isNetworkError(err: unknown): boolean {
   if (statusOf(err) !== undefined) return false
   const name = (err as { name?: unknown })?.name
-  return name === 'APIConnectionError' || name === 'APIConnectionTimeoutError' || name === 'TypeError'
+  return (
+    name === 'APIConnectionError' || name === 'APIConnectionTimeoutError' || name === 'TypeError'
+  )
 }
 
 /** Transient = worth retrying the same request, same key, same endpoint:
@@ -114,7 +116,11 @@ const DEFAULTS: Required<Omit<RetryOptions, 'sleep' | 'rng'>> = {
 /** Exponential backoff with full jitter for attempt `n` (0-based): a uniform
     point in [0, base·factorⁿ], capped. Full jitter (rather than fixed delay)
     spreads a fleet of clients off a shared 429 so they don't resynchronize. */
-function backoffMs(n: number, opts: Required<Omit<RetryOptions, 'sleep' | 'rng'>>, rng: () => number): number {
+function backoffMs(
+  n: number,
+  opts: Required<Omit<RetryOptions, 'sleep' | 'rng'>>,
+  rng: () => number
+): number {
   const ceiling = Math.min(opts.baseMs * Math.pow(opts.factor, n), opts.maxDelayMs)
   return Math.floor(rng() * ceiling)
 }

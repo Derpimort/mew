@@ -13,7 +13,21 @@ import { useMew, useLive, clockNow } from '../../state/store'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { isBackground } from '../../domain/week'
 import { clockDeg, dialKeyAction, rArc, rPolar, sector } from './dialGeometry'
-import { arcAriaLabel, crossDaySpan, dayFill, dialFocusOrder, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, rovingFocusId, stepDialFocus, visibleOrbit } from './orbitGeometry'
+import {
+  arcAriaLabel,
+  crossDaySpan,
+  dayFill,
+  dialFocusOrder,
+  LANE_STEP,
+  OG,
+  isRunning,
+  orbitColor,
+  radiiFor,
+  resolveLabels,
+  rovingFocusId,
+  stepDialFocus,
+  visibleOrbit,
+} from './orbitGeometry'
 import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
@@ -25,7 +39,8 @@ function NxClock({ now }: { now: Date }) {
   return (
     <span className="nx-clock" title="current time">
       <span className="dt">
-        {fmtDow(dayKey(now))} · {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+        {fmtDow(dayKey(now))} ·{' '}
+        {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
       </span>
       <span className="nx-time">
         <span className="hm">{fmtTime(minOfDay(now))}</span>
@@ -58,12 +73,23 @@ export function FocusOrbit() {
   const todayKey = dayKey(now)
   const nowH = minOfDay(now) / 60
 
+  // `nowH`/`todayKey` derive from clockNow() each render, so the React Compiler
+  // can't prove this memo's inputs are stable and bails out. The manual deps are
+  // correct and intended (recompute only when blocks/day/hour change); keep them.
+  // eslint-disable-next-line react-hooks/preserve-manual-memoization -- deps derive from a non-reactive clock read; manual memo is intentional
   const vis = useMemo(() => visibleOrbit(blocks, todayKey, nowH), [blocks, todayKey, nowH])
   const focusId = live.current?.id ?? null
   const radii = useMemo(() => radiiFor(vis, focusId, nowH), [vis, focusId, nowH])
   /* only open blocks carry a persistent callout — done ones are quiet markers
      (title shows in the hover hint), keeping a full day's face uncluttered */
-  const labels = useMemo(() => resolveLabels(vis.filter((b) => b.status === 'open'), radii), [vis, radii])
+  const labels = useMemo(
+    () =>
+      resolveLabels(
+        vis.filter((b) => b.status === 'open'),
+        radii
+      ),
+    [vis, radii]
+  )
 
   const [hover, setHover] = useState<string | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
@@ -183,10 +209,38 @@ export function FocusOrbit() {
           const f = dayFill(minOfDay(now))
           return (
             <g pointerEvents="none" aria-hidden="true">
-              {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.18} />}
-              {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
-              <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
-              <circle cx={OG.cx} cy={OG.cy} r={OG.pm} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
+              {f.inner > 0.3 && (
+                <path
+                  d={sector(OG.cx, OG.cy, OG.disk, OG.ri, 0, f.inner)}
+                  fill="var(--ice)"
+                  opacity={0.18}
+                />
+              )}
+              {f.outer > 0.3 && (
+                <path
+                  d={sector(OG.cx, OG.cy, OG.ri, OG.pm, 0, f.outer)}
+                  fill="var(--ice)"
+                  opacity={0.12}
+                />
+              )}
+              <circle
+                cx={OG.cx}
+                cy={OG.cy}
+                r={OG.ri}
+                fill="none"
+                stroke="var(--line2)"
+                strokeWidth="1.6"
+                opacity={0.7}
+              />
+              <circle
+                cx={OG.cx}
+                cy={OG.cy}
+                r={OG.pm}
+                fill="none"
+                stroke="var(--line2)"
+                strokeWidth="1.6"
+                opacity={0.7}
+              />
             </g>
           )
         })()}
@@ -199,13 +253,29 @@ export function FocusOrbit() {
             const [x0, y0] = rPolar(OG.cx, OG.cy, OG.tick, deg)
             const [x1, y1] = rPolar(OG.cx, OG.cy, OG.tick - (major ? 12 : 6), deg)
             return (
-              <line key={`tk-${i}`} x1={x0} y1={y0} x2={x1} y2={y1} stroke="var(--line2)" strokeWidth={major ? 2 : 1} opacity={major ? 0.85 : 0.45} />
+              <line
+                key={`tk-${i}`}
+                x1={x0}
+                y1={y0}
+                x2={x1}
+                y2={y1}
+                stroke="var(--line2)"
+                strokeWidth={major ? 2 : 1}
+                opacity={major ? 0.85 : 0.45}
+              />
             )
           })}
           {NUMERALS.map(([n, deg]) => {
             const [x, y] = rPolar(OG.cx, OG.cy, OG.num, deg)
             return (
-              <text key={`nm-${n}`} className="nx-num" x={x} y={y} textAnchor="middle" dominantBaseline="central">
+              <text
+                key={`nm-${n}`}
+                className="nx-num"
+                x={x}
+                y={y}
+                textAnchor="middle"
+                dominantBaseline="central"
+              >
                 {n}
               </text>
             )
@@ -269,7 +339,9 @@ export function FocusOrbit() {
                   opacity={0.9}
                   pointerEvents="none"
                   aria-hidden="true"
-                  style={{ filter: 'drop-shadow(0 0 0 4px var(--bg)) drop-shadow(0 0 7px var(--ice))' }}
+                  style={{
+                    filter: 'drop-shadow(0 0 0 4px var(--bg)) drop-shadow(0 0 7px var(--ice))',
+                  }}
                 />
               )}
               <path
@@ -280,7 +352,9 @@ export function FocusOrbit() {
                 stroke={col}
                 strokeWidth={isDone ? 2.5 : isF ? 5 : isH ? 5 : 3.5}
                 strokeLinecap="round"
-                strokeDasharray={isDone ? 'none' : dueBg ? '1 5' : b.tag === 'rest' ? '2 7' : 'none'}
+                strokeDasharray={
+                  isDone ? 'none' : dueBg ? '1 5' : b.tag === 'rest' ? '2 7' : 'none'
+                }
                 opacity={op}
                 style={isF && !isDone ? { filter: 'drop-shadow(0 0 9px var(--glowc))' } : undefined}
                 {...handlers}
@@ -312,7 +386,13 @@ export function FocusOrbit() {
                 r={isDone ? 3 : isF ? 5 : isH ? 5 : dueBg ? 4.5 : 3.5}
                 fill={col}
                 opacity={Math.min(op + 0.15, 1)}
-                style={isF && !isDone ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : dueBg ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : undefined}
+                style={
+                  isF && !isDone
+                    ? { filter: 'drop-shadow(0 0 8px var(--glowc))' }
+                    : dueBg
+                      ? { filter: 'drop-shadow(0 0 8px var(--glowc))' }
+                      : undefined
+                }
                 className="pri-arc"
                 aria-hidden="true"
                 {...handlers}
@@ -325,7 +405,9 @@ export function FocusOrbit() {
                   discipline as labels; the chevron itself stays quietly on. */}
               {carry &&
                 (() => {
-                  const edgeDeg = clockDeg((span.continuesAfter ? span.drawEnd : span.drawStart) / 60)
+                  const edgeDeg = clockDeg(
+                    (span.continuesAfter ? span.drawEnd : span.drawStart) / 60
+                  )
                   const fwd = span.continuesAfter // forward = clockwise into tomorrow
                   const [cxp, cyp] = rPolar(OG.cx, OG.cy, r, edgeDeg + (fwd ? 5 : -5))
                   const [txp, typ] = rPolar(OG.cx, OG.cy, r + 13, edgeDeg + (fwd ? 7 : -7))
@@ -336,7 +418,12 @@ export function FocusOrbit() {
                         y={cyp}
                         textAnchor="middle"
                         dominantBaseline="central"
-                        style={{ fill: col, fontFamily: "'JetBrains Mono',monospace", fontSize: 11, fontWeight: 700 }}
+                        style={{
+                          fill: col,
+                          fontFamily: "'JetBrains Mono',monospace",
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
                         opacity={Math.min(op + 0.2, 1)}
                       >
                         {fwd ? '›' : '‹'}
@@ -347,7 +434,11 @@ export function FocusOrbit() {
                         y={typ}
                         textAnchor="middle"
                         dominantBaseline="central"
-                        style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}
+                        style={{
+                          fill: 'var(--muted)',
+                          fontFamily: "'JetBrains Mono',monospace",
+                          fontSize: 9,
+                        }}
                         opacity={dialHover || isH || isF ? 0.85 : 0}
                       >
                         {fwd ? `→ ${fmtTime(span.endLabelMin)}` : `${fmtTime(span.endLabelMin)} →`}
@@ -390,7 +481,13 @@ export function FocusOrbit() {
                   {/* truncated at rest (a tidy preview); the full title shows on
                       hover/focus so a long meeting name is always readable */}
                   {isH || isF || title.length <= 20 ? title : title.slice(0, 18) + '…'}{' '}
-                  <tspan style={{ fill: 'var(--muted)', fontFamily: "'JetBrains Mono',monospace", fontSize: 9 }}>
+                  <tspan
+                    style={{
+                      fill: 'var(--muted)',
+                      fontFamily: "'JetBrains Mono',monospace",
+                      fontSize: 9,
+                    }}
+                  >
                     {timeNote}
                   </tspan>
                 </text>
@@ -408,8 +505,23 @@ export function FocusOrbit() {
           const [tx, ty] = rPolar(OG.cx, OG.cy, OG.disk - 6, deg)
           return (
             <g pointerEvents="none" aria-hidden="true">
-              <line x1={tx} y1={ty} x2={hx} y2={hy} stroke="var(--ice)" strokeWidth="2" opacity={0.85} style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }} />
-              <circle cx={hx} cy={hy} r="5.5" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
+              <line
+                x1={tx}
+                y1={ty}
+                x2={hx}
+                y2={hy}
+                stroke="var(--ice)"
+                strokeWidth="2"
+                opacity={0.85}
+                style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }}
+              />
+              <circle
+                cx={hx}
+                cy={hy}
+                r="5.5"
+                fill="var(--ice)"
+                style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }}
+              />
             </g>
           )
         })()}
@@ -417,20 +529,38 @@ export function FocusOrbit() {
 
       {/* center: countdown → meta → task → demote chip; or "Nothing holds you." */}
       {current ? (
-        <div className="clk-center" style={cardId ? { opacity: 0, pointerEvents: 'none' } : undefined}>
-          <div className="nx-count" style={{ fontSize: count.length > 5 ? 48 : 64 }}>{count}</div>
+        <div
+          className="clk-center"
+          style={cardId ? { opacity: 0, pointerEvents: 'none' } : undefined}
+        >
+          <div className="nx-count" style={{ fontSize: count.length > 5 ? 48 : 64 }}>
+            {count}
+          </div>
           <div className="nx-meta">{meta}</div>
-          <div
+          <button
+            type="button"
             className="nx-task"
             style={{ fontSize: 25, cursor: 'pointer' }}
+            aria-label={`${live.headline} — open details`}
             onClick={(e) => {
               e.stopPropagation()
               setCardId((v) => (v === current!.id ? null : current!.id))
             }}
           >
-            <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
-          </div>
-          <span
+            <StaggeredText
+              key={live.headline}
+              text={live.headline}
+              as="span"
+              segmentBy="words"
+              delay={55}
+              duration={0.5}
+            />
+          </button>
+          {/* "run in background" is the one dial action with no other route, so it
+              must be keyboard-reachable: it reveals on focus as well as hover, and
+              its own focus keeps it visible (pointer-events on once revealed). */}
+          <button
+            type="button"
             className="pri-demote"
             role="button"
             tabIndex={0}
@@ -452,14 +582,23 @@ export function FocusOrbit() {
             onBlur={() => setChipFocused(false)}
           >
             ↓ let it run in background
-          </span>
+          </button>
         </div>
       ) : (
         <div className="clk-center" style={{ width: 280 }}>
           <div className="nx-task" style={{ fontSize: 24, color: 'var(--muted)' }}>
-            <StaggeredText key={live.headline} text={live.headline} as="span" segmentBy="words" delay={55} duration={0.5} />
+            <StaggeredText
+              key={live.headline}
+              text={live.headline}
+              as="span"
+              segmentBy="words"
+              delay={55}
+              duration={0.5}
+            />
           </div>
-          <div className="nx-meta" style={{ marginTop: 10 }}>{meta}</div>
+          <div className="nx-meta" style={{ marginTop: 10 }}>
+            {meta}
+          </div>
         </div>
       )}
 
@@ -512,7 +651,9 @@ export function FocusOrbit() {
                     <>due {fmtTime(hb.due!)}</>
                   ) : (
                     <>
-                      {fmtTime(hb.startMin)}<span className="dash">–</span>{fmtTime(hSpan.endLabelMin)}
+                      {fmtTime(hb.startMin)}
+                      <span className="dash">–</span>
+                      {fmtTime(hSpan.endLabelMin)}
                       {hSpan.continuesAfter && <span className="xd">+1d</span>}
                     </>
                   )}
@@ -526,7 +667,8 @@ export function FocusOrbit() {
         {/* keyboard guidance, always present so aria-describedby is stable; the
             visual line above stays mouse-worded by design — this is for AT only */}
         <span className="sr-only">
-          Use arrow keys to move between tasks, Enter to bring a task to the centre, Space to open its details, Escape to let the centre task run in the background.
+          Use arrow keys to move between tasks, Enter to bring a task to the centre, Space to open
+          its details, Escape to let the centre task run in the background.
         </span>
       </div>
     </div>

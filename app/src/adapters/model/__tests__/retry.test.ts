@@ -118,7 +118,7 @@ describe('withRetry — the retry loop', () => {
       throw err
     })
     await expect(
-      withRetry(fn, { retries: 2, sleep: async (ms) => void local.push(ms), rng: () => 0 }),
+      withRetry(fn, { retries: 2, sleep: async (ms) => void local.push(ms), rng: () => 0 })
     ).rejects.toBe(err)
     expect(fn).toHaveBeenCalledTimes(3) // first + 2 retries
     expect(local).toHaveLength(2) // a sleep before each retry, none after the last
@@ -150,7 +150,13 @@ describe('withRetry — the retry loop', () => {
       if (++calls <= 3) throw httpError(500)
       return 'ok'
     }
-    await withRetry(fn, { retries: 3, baseMs: 100, factor: 2, rng: () => 1, sleep: async (ms) => void local.push(ms) })
+    await withRetry(fn, {
+      retries: 3,
+      baseMs: 100,
+      factor: 2,
+      rng: () => 1,
+      sleep: async (ms) => void local.push(ms),
+    })
     /* rng=1 ⇒ wait = ceiling = base·2ⁿ: 100, 200, 400 */
     expect(local).toEqual([100, 200, 400])
   })
@@ -162,7 +168,11 @@ describe('withRetry — the retry loop', () => {
       if (++calls === 1) throw httpError(429, { 'retry-after': '999' }) // 999s
       return 'ok'
     }
-    await withRetry(fn, { maxDelayMs: 5000, sleep: async (ms) => void local.push(ms), rng: () => 1 })
+    await withRetry(fn, {
+      maxDelayMs: 5000,
+      sleep: async (ms) => void local.push(ms),
+      rng: () => 1,
+    })
     expect(local).toEqual([5000]) // 999s clamped to the 5s ceiling
   })
 
@@ -173,7 +183,12 @@ describe('withRetry — the retry loop', () => {
       if (++calls <= 1) throw httpError(500)
       return 'ok'
     }
-    await withRetry(fn, { baseMs: 100000, rng: () => 1, maxDelayMs: 2000, sleep: async (ms) => void local.push(ms) })
+    await withRetry(fn, {
+      baseMs: 100000,
+      rng: () => 1,
+      maxDelayMs: 2000,
+      sleep: async (ms) => void local.push(ms),
+    })
     expect(local).toEqual([2000])
   })
 })

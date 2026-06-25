@@ -11,7 +11,9 @@ import tailwindcss from '@tailwindcss/vite'
    real packages under `…/node_modules/.pnpm/<pkg>@<ver>/node_modules/<pkg>/…`,
    so anchor on the LAST `node_modules/<pkg>` boundary rather than a fixed depth. */
 const pkg = (...names: string[]) =>
-  new RegExp(`[\\\\/]node_modules[\\\\/](?:\\.pnpm[\\\\/][^\\\\/]+[\\\\/]node_modules[\\\\/])?(?:${names.join('|')})(?:[\\\\/]|$)`)
+  new RegExp(
+    `[\\\\/]node_modules[\\\\/](?:\\.pnpm[\\\\/][^\\\\/]+[\\\\/]node_modules[\\\\/])?(?:${names.join('|')})(?:[\\\\/]|$)`
+  )
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -78,7 +80,15 @@ export default defineConfig({
             { name: 'ai', test: pkg('ai', '@ai-sdk', '@anthropic-ai'), priority: 20 },
             {
               name: 'vendor',
-              test: pkg('react', 'react-dom', 'scheduler', 'zustand', 'motion', 'lucide-react', 'dexie'),
+              test: pkg(
+                'react',
+                'react-dom',
+                'scheduler',
+                'zustand',
+                'motion',
+                'lucide-react',
+                'dexie'
+              ),
               priority: 10,
             },
           ],

@@ -26,7 +26,9 @@ interface TauriApi {
   opener: { openPath(path: string): Promise<void>; openUrl(url: string): Promise<void> }
   window: {
     getCurrentWindow(): {
-      onCloseRequested(cb: (e: { preventDefault(): void }) => void | Promise<void>): Promise<unknown>
+      onCloseRequested(
+        cb: (e: { preventDefault(): void }) => void | Promise<void>
+      ): Promise<unknown>
       destroy(): Promise<void>
     }
   }
@@ -173,7 +175,7 @@ const OAUTH_RESPONSE_HTML = [
     that carries the response. Times out rather than hang the Settings flow. */
 export async function oauthLoopback(
   buildAuthUrl: (port: number) => string,
-  timeoutMs = 120_000,
+  timeoutMs = 120_000
 ): Promise<string> {
   const t = api()
   if (!t) throw new Error('sign-in via the system browser needs the desktop shell')
@@ -192,13 +194,16 @@ export async function oauthLoopback(
         })
         .then((un) => cleanups.push(un))
       void t.event
-        .listen('oauth://invalid-url', () => reject(new Error('the sign-in redirect was not understood')))
+        .listen('oauth://invalid-url', () =>
+          reject(new Error('the sign-in redirect was not understood'))
+        )
         .then((un) => cleanups.push(un))
     })
     const timeout = new Promise<never>((_, reject) => {
       const id = setTimeout(
-        () => reject(new Error('sign-in timed out after 120s — the browser tab may have been closed')),
-        timeoutMs,
+        () =>
+          reject(new Error('sign-in timed out after 120s — the browser tab may have been closed')),
+        timeoutMs
       )
       cleanups.push(() => clearTimeout(id))
     })

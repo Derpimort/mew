@@ -82,7 +82,12 @@ describe('week model', () => {
     const orig = blocks.find((x) => x.id === b.id)!
     expect(orig.status).toBe('rolled')
     expect(orig.rolledToId).toBe(rolled!.id)
-    expect(rolled).toMatchObject({ dayKey: '2026-06-10', startMin: 9 * 60, endMin: 10 * 60, status: 'open' })
+    expect(rolled).toMatchObject({
+      dayKey: '2026-06-10',
+      startMin: 9 * 60,
+      endMin: 10 * 60,
+      status: 'open',
+    })
   })
 
   it('dayClear ignores rest blocks and needs every task done', () => {
@@ -111,7 +116,12 @@ describe('week model', () => {
 
   describe('findByQuery — "lunch" and "order lunch" are different blocks', () => {
     const lunch = mk({ title: 'Lunch', tag: 'private', startMin: 13 * 60, endMin: 14 * 60 })
-    const order = mk({ title: 'Order lunch', tag: 'private', startMin: 11 * 60, endMin: 11 * 60 + 15 })
+    const order = mk({
+      title: 'Order lunch',
+      tag: 'private',
+      startMin: 11 * 60,
+      endMin: 11 * 60 + 15,
+    })
 
     it('exact base title beats substring match', () => {
       expect(findByQuery([order, lunch], 'lunch', D)?.id).toBe(lunch.id)
@@ -124,8 +134,18 @@ describe('week model', () => {
   })
 
   describe('findByQuery — fuzzy fallback when substring misses (#81)', () => {
-    const mgmt = mk({ title: 'Management Team Monday', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
-    const oneOnOne = mk({ title: 'Mira 1:1', tag: 'work', startMin: 15 * 60, endMin: 15 * 60 + 30 })
+    const mgmt = mk({
+      title: 'Management Team Monday',
+      tag: 'work',
+      startMin: 9 * 60,
+      endMin: 10 * 60,
+    })
+    const oneOnOne = mk({
+      title: 'Mira 1:1',
+      tag: 'work',
+      startMin: 15 * 60,
+      endMin: 15 * 60 + 30,
+    })
 
     it("'management sync' finds 'Management Team Monday' (the reported bug)", () => {
       expect(findByQuery([mgmt, oneOnOne], 'management sync', D)?.id).toBe(mgmt.id)
@@ -141,8 +161,18 @@ describe('week model', () => {
     })
 
     it('an ambiguous fuzzy match is gated — ask, do not guess (and never bulk-delete)', () => {
-      const sprint = mk({ title: 'Sprint Planning', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
-      const release = mk({ title: 'Release Planning', tag: 'work', startMin: 11 * 60, endMin: 12 * 60 })
+      const sprint = mk({
+        title: 'Sprint Planning',
+        tag: 'work',
+        startMin: 9 * 60,
+        endMin: 10 * 60,
+      })
+      const release = mk({
+        title: 'Release Planning',
+        tag: 'work',
+        startMin: 11 * 60,
+        endMin: 12 * 60,
+      })
       // "planing" (typo) is a substring of neither but fuzzy-matches both equally
       expect(findByQuery([sprint, release], 'planing', D)).toBeUndefined()
       // findAllByQuery feeds execRemove's BULK delete — an ambiguous fuzzy spread
@@ -157,8 +187,17 @@ describe('week model', () => {
       expect(findAllByQuery([mgmt, gym], 'managment team').map((b) => b.id)).toEqual([mgmt.id])
       // explicit substring → genuine bulk removal still works
       const p1 = mk({ title: 'Prod release', tag: 'work', startMin: 9 * 60, endMin: 10 * 60 })
-      const p2 = mk({ title: 'Prod release checklist', tag: 'work', startMin: 14 * 60, endMin: 15 * 60 })
-      expect(findAllByQuery([p1, p2], 'prod release').map((b) => b.id).sort()).toEqual([p1.id, p2.id].sort())
+      const p2 = mk({
+        title: 'Prod release checklist',
+        tag: 'work',
+        startMin: 14 * 60,
+        endMin: 15 * 60,
+      })
+      expect(
+        findAllByQuery([p1, p2], 'prod release')
+          .map((b) => b.id)
+          .sort()
+      ).toEqual([p1.id, p2.id].sort())
     })
 
     it('no false positive — an unrelated query finds nothing', () => {
@@ -207,7 +246,13 @@ describe('week model', () => {
     })
 
     it('only counts open, ahead blocks — past days and the resolution stay in one place', () => {
-      const past = mk({ title: 'Sleep', tag: 'rest', dayKey: '2026-06-08', startMin: 22 * 60 + 30, endMin: 5 * 60 })
+      const past = mk({
+        title: 'Sleep',
+        tag: 'rest',
+        dayKey: '2026-06-08',
+        startMin: 22 * 60 + 30,
+        endMin: 5 * 60,
+      })
       // the past instance is filtered out, so today's single match removes cleanly
       const { remove } = resolveRemoval([past, morning], 'sleep', {}, D)
       expect(remove.map((b) => b.id)).toEqual([morning.id])
@@ -224,21 +269,41 @@ describe('week model', () => {
       expect(isFixedTime(mk({ title: 'Weekly sync' }))).toBe(true)
       expect(isFixedTime(mk({ title: 'Call with the bank' }))).toBe(true)
       expect(isFixedTime(mk({ title: 'Team standup' }))).toBe(true)
-      expect(isFixedTime(mk({ title: 'Board prep', external: { calId: 'c', eventId: 'e' } }))).toBe(true)
+      expect(isFixedTime(mk({ title: 'Board prep', external: { calId: 'c', eventId: 'e' } }))).toBe(
+        true
+      )
       expect(isFixedTime(mk({ title: 'Write the Q3 deck' }))).toBe(false)
       expect(isFixedTime(mk({ title: 'Interview prep — Mira' }))).toBe(false) // prep is our task, not their meeting
       expect(isFixedTime(mk({ title: 'Call prep notes' }))).toBe(false)
     })
 
     it('conflictsWith sees fixed tentative interviews but stays transparent to optional tasks', () => {
-      const interview = mk({ id: 'i1', title: 'Interview — Mira', startMin: 13.5 * 60, endMin: 14.5 * 60, optional: true })
-      const maybeGym = mk({ id: 'g1', title: 'Gym?', startMin: 13.5 * 60, endMin: 14.5 * 60, optional: true })
+      const interview = mk({
+        id: 'i1',
+        title: 'Interview — Mira',
+        startMin: 13.5 * 60,
+        endMin: 14.5 * 60,
+        optional: true,
+      })
+      const maybeGym = mk({
+        id: 'g1',
+        title: 'Gym?',
+        startMin: 13.5 * 60,
+        endMin: 14.5 * 60,
+        optional: true,
+      })
       expect(conflictsWith([interview], D, 13.5 * 60, 13.75 * 60).map((b) => b.id)).toEqual(['i1'])
       expect(conflictsWith([maybeGym], D, 13.5 * 60, 13.75 * 60)).toHaveLength(0)
     })
 
     it('auto-placement keeps clear of a tentative interview', () => {
-      const interview = mk({ id: 'i1', title: 'Interview — Pooran', startMin: 8 * 60, endMin: 9 * 60, optional: true })
+      const interview = mk({
+        id: 'i1',
+        title: 'Interview — Pooran',
+        startMin: 8 * 60,
+        endMin: 9 * 60,
+        optional: true,
+      })
       const slot = findFreeSlot([interview], D, 30)
       expect(slot?.startMin).toBe(9 * 60)
     })
@@ -246,15 +311,31 @@ describe('week model', () => {
 
   describe('nextSlotAfter — giving way never teleports a block earlier', () => {
     it('an evening block moves later in the evening, not to 8:00 am', () => {
-      const board = mk({ id: 'board', title: 'Board sanitization', startMin: 20 * 60, endMin: 20 * 60 + 15 })
-      const rest = mk({ id: 'rest', title: 'Micro-break', tag: 'rest', startMin: 19 * 60 + 45, endMin: 20 * 60 + 5 })
+      const board = mk({
+        id: 'board',
+        title: 'Board sanitization',
+        startMin: 20 * 60,
+        endMin: 20 * 60 + 15,
+      })
+      const rest = mk({
+        id: 'rest',
+        title: 'Micro-break',
+        tag: 'rest',
+        startMin: 19 * 60 + 45,
+        endMin: 20 * 60 + 5,
+      })
       const next = nextSlotAfter([board, rest], board, 19 * 60 + 50)
       expect(next).toMatchObject({ dayKey: D, startMin: 20 * 60 + 5 })
     })
 
     it('falls to tomorrow morning when the evening is full', () => {
       const late = mk({ id: 'late', title: 'Wrap-up', startMin: 22 * 60, endMin: 22 * 60 + 20 })
-      const wall = mk({ id: 'wall', title: 'Everything else', startMin: 22 * 60 + 20, endMin: 23 * 60 + 30 })
+      const wall = mk({
+        id: 'wall',
+        title: 'Everything else',
+        startMin: 22 * 60 + 20,
+        endMin: 23 * 60 + 30,
+      })
       const next = nextSlotAfter([late, wall], late, 22 * 60 + 10)
       expect(next?.dayKey).toBe('2026-06-10')
       expect(next?.startMin).toBe(9 * 60)
@@ -263,8 +344,18 @@ describe('week model', () => {
 
   describe('freeWindows — the truth behind "find me time before 5pm"', () => {
     it('a window inside an interview does not exist', () => {
-      const interview = mk({ id: 'iv', title: 'Interview — Mira', startMin: 14.5 * 60, endMin: 15.5 * 60 })
-      const post = mk({ id: 'po', title: 'Post-interview reviews', startMin: 14.5 * 60, endMin: 14.75 * 60 })
+      const interview = mk({
+        id: 'iv',
+        title: 'Interview — Mira',
+        startMin: 14.5 * 60,
+        endMin: 15.5 * 60,
+      })
+      const post = mk({
+        id: 'po',
+        title: 'Post-interview reviews',
+        startMin: 14.5 * 60,
+        endMin: 14.75 * 60,
+      })
       const windows = freeWindows([interview, post], D, 14 * 60, 17 * 60)
       expect(windows).toEqual([
         { startMin: 14 * 60, endMin: 14.5 * 60 },
@@ -273,8 +364,20 @@ describe('week model', () => {
     })
 
     it('tentative interviews block the window; optional tasks stay transparent', () => {
-      const tentative = mk({ id: 't', title: 'Interview — Pooran', optional: true, startMin: 13 * 60, endMin: 14 * 60 })
-      const maybe = mk({ id: 'm', title: 'Gym?', optional: true, startMin: 14 * 60, endMin: 15 * 60 })
+      const tentative = mk({
+        id: 't',
+        title: 'Interview — Pooran',
+        optional: true,
+        startMin: 13 * 60,
+        endMin: 14 * 60,
+      })
+      const maybe = mk({
+        id: 'm',
+        title: 'Gym?',
+        optional: true,
+        startMin: 14 * 60,
+        endMin: 15 * 60,
+      })
       expect(freeWindows([tentative, maybe], D, 13 * 60, 15 * 60)).toEqual([
         { startMin: 14 * 60, endMin: 15 * 60 },
       ])
@@ -287,23 +390,34 @@ describe('week model', () => {
     })
 
     it('a connected-calendar event is calendar (which already implies fixed)', () => {
-      expect(contextMarkers(mk({ title: 'Townhall', external: { calId: 'c', eventId: 'e' } }))).toBe('work, calendar')
+      expect(
+        contextMarkers(mk({ title: 'Townhall', external: { calId: 'c', eventId: 'e' } }))
+      ).toBe('work, calendar')
     })
 
     it('a plain task carries only its tag, plus state', () => {
       expect(contextMarkers(mk({ title: 'Write the deck' }))).toBe('work')
-      expect(contextMarkers(mk({ title: 'Lunch', tag: 'private', optional: true, status: 'done' }))).toBe('private, optional, done')
+      expect(
+        contextMarkers(mk({ title: 'Lunch', tag: 'private', optional: true, status: 'done' }))
+      ).toBe('private, optional, done')
     })
   })
 })
 
 describe('background attention — holds the clock, not the slot', () => {
-  const restore = mk({ title: 'iphone restore', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 })
+  const restore = mk({
+    title: 'iphone restore',
+    attention: 'background',
+    startMin: 9 * 60,
+    endMin: 12 * 60,
+  })
 
   it('is transparent to conflictsWith in both directions', () => {
     expect(conflictsWith([restore], D, 10 * 60, 11 * 60)).toHaveLength(0)
     const meeting = mk({ title: 'design sync', startMin: 10 * 60, endMin: 11 * 60 })
-    expect(conflictsWith([restore, meeting], D, 10 * 60 + 30, 11 * 60).map((b) => b.id)).toEqual([meeting.id])
+    expect(conflictsWith([restore, meeting], D, 10 * 60 + 30, 11 * 60).map((b) => b.id)).toEqual([
+      meeting.id,
+    ])
   })
 
   it('findFreeSlot places straight over a background block', () => {
@@ -324,7 +438,14 @@ describe('background attention — holds the clock, not the slot', () => {
   })
 
   it('place() threads attention and due onto the block', () => {
-    const placed = place([], { title: 'swap', tag: 'work', dayKey: D, durationMin: 180, attention: 'background', due: 780 })
+    const placed = place([], {
+      title: 'swap',
+      tag: 'work',
+      dayKey: D,
+      durationMin: 180,
+      attention: 'background',
+      due: 780,
+    })
     expect(placed?.attention).toBe('background')
     expect(placed?.due).toBe(780)
     const plain = place([], { title: 'plain', tag: 'work', dayKey: D })
@@ -338,10 +459,27 @@ describe('looseThreads — a derived query, nothing persisted', () => {
   const cap = { id: 'c1', title: 'call the bank', createdAt: 0, status: 'open' as const }
 
   it('groups running / slipped / paused / unplaced by definition', () => {
-    const running = mk({ id: 'r1', title: 'restore', attention: 'background', startMin: 13 * 60, endMin: 16 * 60, startedAt: 1 })
+    const running = mk({
+      id: 'r1',
+      title: 'restore',
+      attention: 'background',
+      startMin: 13 * 60,
+      endMin: 16 * 60,
+      startedAt: 1,
+    })
     const slipped = mk({ id: 's1', title: 'review', startMin: 10 * 60, endMin: 11 * 60 })
-    const followUp = mk({ id: 'p1', title: 'deck — rest of it', startMin: 16 * 60, endMin: 17 * 60 })
-    const interrupted = mk({ id: 'i1', title: 'deck', status: 'rolled' as BlockStatus, rolledToId: 'p1' })
+    const followUp = mk({
+      id: 'p1',
+      title: 'deck — rest of it',
+      startMin: 16 * 60,
+      endMin: 17 * 60,
+    })
+    const interrupted = mk({
+      id: 'i1',
+      title: 'deck',
+      status: 'rolled' as BlockStatus,
+      rolledToId: 'p1',
+    })
     const t = looseThreads([running, slipped, followUp, interrupted], [cap], D, now)
     expect(t.running.map((b) => b.id)).toEqual(['r1'])
     expect(t.slipped.map((b) => b.id)).toEqual(['s1'])
@@ -375,7 +513,11 @@ describe('looseThreads — a derived query, nothing persisted', () => {
     const review = mk({ id: 'rev', title: 'Code review', startMin: 9.75 * 60, endMin: 10.25 * 60 })
 
     it('the review repro: promoting code review demotes BOTH other live blocks', () => {
-      expect(overlappingFocus([deck, sync, review], review).map((b) => b.id).sort()).toEqual(['deck', 'sync'])
+      expect(
+        overlappingFocus([deck, sync, review], review)
+          .map((b) => b.id)
+          .sort()
+      ).toEqual(['deck', 'sync'])
     })
 
     it('promoting a future block leaves a non-overlapping live focus alone', () => {
@@ -384,22 +526,45 @@ describe('looseThreads — a derived query, nothing persisted', () => {
     })
 
     it('background and done blocks never need demoting', () => {
-      const bg = mk({ id: 'bg', title: 'Restore', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 })
-      const done = mk({ id: 'dn', title: 'Done thing', status: 'done', startMin: 9 * 60, endMin: 10 * 60 })
+      const bg = mk({
+        id: 'bg',
+        title: 'Restore',
+        attention: 'background',
+        startMin: 9 * 60,
+        endMin: 12 * 60,
+      })
+      const done = mk({
+        id: 'dn',
+        title: 'Done thing',
+        status: 'done',
+        startMin: 9 * 60,
+        endMin: 10 * 60,
+      })
       expect(overlappingFocus([bg, done, review], review)).toHaveLength(0)
     })
   })
 })
 
 describe('flexibility prefs override the fixed-time heuristic', () => {
-  const movableSyncs = [{ kind: 'flexibility' as const, match: 'sync', value: 'can always move', stated: 'my syncs are movable' }]
+  const movableSyncs = [
+    {
+      kind: 'flexibility' as const,
+      match: 'sync',
+      value: 'can always move',
+      stated: 'my syncs are movable',
+    },
+  ]
 
   it('a "sync" title stops being fixed when the rule says so — and vice versa', () => {
     const sync = mk({ title: 'Weekly sync' })
     expect(isFixedTime(sync)).toBe(true)
     expect(isFixedTime(sync, movableSyncs)).toBe(false)
     const pages = mk({ title: 'Morning pages' })
-    expect(isFixedTime(pages, [{ kind: 'flexibility', match: 'pages', value: 'never moves', stated: 's' }])).toBe(true)
+    expect(
+      isFixedTime(pages, [
+        { kind: 'flexibility', match: 'pages', value: 'never moves', stated: 's' },
+      ])
+    ).toBe(true)
   })
 
   it('external events never flip — the calendar still owns them', () => {
@@ -408,9 +573,17 @@ describe('flexibility prefs override the fixed-time heuristic', () => {
   })
 
   it('conflictsWith follows: an optional movable sync goes transparent', () => {
-    const tentative = mk({ id: 'sy', title: 'Weekly sync', optional: true, startMin: 13 * 60, endMin: 14 * 60 })
+    const tentative = mk({
+      id: 'sy',
+      title: 'Weekly sync',
+      optional: true,
+      startMin: 13 * 60,
+      endMin: 14 * 60,
+    })
     expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60).map((b) => b.id)).toEqual(['sy'])
-    expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60, undefined, movableSyncs)).toHaveLength(0)
+    expect(conflictsWith([tentative], D, 13 * 60, 13.5 * 60, undefined, movableSyncs)).toHaveLength(
+      0
+    )
   })
 })
 

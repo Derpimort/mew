@@ -84,15 +84,23 @@ describe('ollama adapter — transient resilience', () => {
     const fetchSpy = vi.fn(async () => errResponse(400))
     vi.stubGlobal('fetch', fetchSpy)
     const adapter = createOllamaAdapter('http://localhost:11434', 'llama3')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toThrow('ollama 400')
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toThrow('ollama 400')
     expect(fetchSpy).toHaveBeenCalledOnce()
   })
 
   it('does NOT retry a malformed 200 body (logic failure, not a blip)', async () => {
-    const fetchSpy = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ message: { content: 'not json' } }) }))
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ message: { content: 'not json' } }),
+    }))
     vi.stubGlobal('fetch', fetchSpy)
     const adapter = createOllamaAdapter('http://localhost:11434', 'llama3')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toBeTruthy()
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toBeTruthy()
     expect(fetchSpy).toHaveBeenCalledOnce()
   })
 })

@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../../../domain/types'
-import { BAND, bandBaseFor, crossDaySpan, DAY_MIN, dayFill, isCommitted, LABEL_GAP, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
+import {
+  BAND,
+  bandBaseFor,
+  crossDaySpan,
+  DAY_MIN,
+  dayFill,
+  isCommitted,
+  LABEL_GAP,
+  LANE_STEP,
+  OG,
+  isRunning,
+  orbitColor,
+  radiiFor,
+  resolveLabels,
+  visibleOrbit,
+} from '../orbitGeometry'
 import { clockDeg } from '../dialGeometry'
 
 const D = '2026-06-09'
@@ -75,7 +90,14 @@ describe('bandBaseFor — four importance bands, centre → out', () => {
     const amB = bandBaseFor(mk({ startMin: 9 * 60, attention: 'background' }))
     const pmC = bandBaseFor(mk({ startMin: 21 * 60, tag: 'work' }))
     const pmB = bandBaseFor(mk({ startMin: 21 * 60, attention: 'background' }))
-    expect([amC, OG.ri, amB, pmC, OG.ro, pmB]).toEqual([OG.ri - BAND, OG.ri, OG.ri + BAND, OG.ro - BAND, OG.ro, OG.ro + BAND])
+    expect([amC, OG.ri, amB, pmC, OG.ro, pmB]).toEqual([
+      OG.ri - BAND,
+      OG.ri,
+      OG.ri + BAND,
+      OG.ro - BAND,
+      OG.ro,
+      OG.ro + BAND,
+    ])
     // strictly increasing → the four tiers never reorder
     expect(amC).toBeLessThan(OG.ri)
     expect(OG.ri).toBeLessThan(amB)
@@ -123,8 +145,9 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
   })
 
   it('disjoint same-tier blocks all ride the tier base — compact', () => {
-    const spread = Array.from({ length: 4 }, (_, i) =>
-      mk({ id: `s${i}`, startMin: (8 + i) * 60, endMin: (8 + i) * 60 + 30, tag: 'work' }), // AM confirmed, disjoint
+    const spread = Array.from(
+      { length: 4 },
+      (_, i) => mk({ id: `s${i}`, startMin: (8 + i) * 60, endMin: (8 + i) * 60 + 30, tag: 'work' }) // AM confirmed, disjoint
     )
     const radii = radiiFor(spread, 's0', 9)
     expect(new Set(radii.values())).toEqual(new Set([OG.ri - BAND]))
@@ -140,10 +163,15 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
     // the deepest of each must still respect AM-bg < PM-confirmed (their seam sits
     // midway between the two divider rings, ri and ro).
     const amBg = Array.from({ length: 3 }, (_, i) =>
-      mk({ id: `ab${i}`, startMin: (9 + i * 0.1) * 60, endMin: (11 + i * 0.1) * 60, attention: 'background' }),
+      mk({
+        id: `ab${i}`,
+        startMin: (9 + i * 0.1) * 60,
+        endMin: (11 + i * 0.1) * 60,
+        attention: 'background',
+      })
     )
     const pmCf = Array.from({ length: 3 }, (_, i) =>
-      mk({ id: `pc${i}`, startMin: (20 + i * 0.1) * 60, endMin: (22 + i * 0.1) * 60, tag: 'work' }),
+      mk({ id: `pc${i}`, startMin: (20 + i * 0.1) * 60, endMin: (22 + i * 0.1) * 60, tag: 'work' })
     )
     const radii = radiiFor([...amBg, ...pmCf], null, 10)
     const maxAmBg = Math.max(...amBg.map((b) => radii.get(b.id)!))
@@ -189,8 +217,10 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
   })
 
   it('same-day, non-overlapping blocks keep their single-ring assignment (no regression)', () => {
-    const spread = Array.from({ length: 4 }, (_, i) =>
-      mk({ id: `d${i}`, startMin: (13 + i) * 60, endMin: (13 + i) * 60 + 30, tag: 'work' }), // PM confirmed, disjoint
+    const spread = Array.from(
+      { length: 4 },
+      (_, i) =>
+        mk({ id: `d${i}`, startMin: (13 + i) * 60, endMin: (13 + i) * 60 + 30, tag: 'work' }) // PM confirmed, disjoint
     )
     const radii = radiiFor(spread, null, 14)
     expect(new Set(radii.values())).toEqual(new Set([OG.ro - BAND]))
@@ -201,15 +231,19 @@ describe('resolveLabels — per-side callouts at the END clock angle, never over
   it('a 6-deep pileup ends with every same-side pair ≥ LABEL_GAP apart', () => {
     /* six blocks ending within minutes of each other → labels pile on one side */
     const six = Array.from({ length: 6 }, (_, i) =>
-      mk({ id: `p${i}`, startMin: (9 + i * 0.05) * 60, endMin: (14 + i * 0.1) * 60 }),
+      mk({ id: `p${i}`, startMin: (9 + i * 0.05) * 60, endMin: (14 + i * 0.1) * 60 })
     )
     const radii = radiiFor(six, 'p0', 10)
     const labels = resolveLabels(six, radii)
     const all = [...labels.values()]
     for (const side of [true, false]) {
-      const ys = all.filter((l) => l.right === side).map((l) => l.y).sort((x, y) => x - y)
+      const ys = all
+        .filter((l) => l.right === side)
+        .map((l) => l.y)
+        .sort((x, y) => x - y)
       // the sweep guarantees ≥ LABEL_GAP; (x+GAP)-x carries float noise, so allow ε
-      for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBeGreaterThanOrEqual(LABEL_GAP - 1e-6)
+      for (let i = 1; i < ys.length; i++)
+        expect(ys[i] - ys[i - 1]).toBeGreaterThanOrEqual(LABEL_GAP - 1e-6)
     }
   })
 
@@ -294,7 +328,13 @@ describe('crossDaySpan — clip a multi-day block to today, mark the carry', () 
 
   it('a same-day block passes through unclipped with no carry (no regression)', () => {
     const s = crossDaySpan(9 * 60, 11 * 60)
-    expect(s).toEqual({ drawStart: 9 * 60, drawEnd: 11 * 60, continuesAfter: false, continuesFrom: false, endLabelMin: 11 * 60 })
+    expect(s).toEqual({
+      drawStart: 9 * 60,
+      drawEnd: 11 * 60,
+      continuesAfter: false,
+      continuesFrom: false,
+      endLabelMin: 11 * 60,
+    })
   })
 
   it('a block ending exactly at 24:00 is same-day, not a cross-day wrap (boundary)', () => {

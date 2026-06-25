@@ -11,15 +11,7 @@ import type { Block, Capture } from '../../domain/types'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { looseThreads } from '../../domain/week'
 import { Button } from '../primitives'
-
-export type ThreadState = 'running' | 'slipped' | 'paused' | 'unplaced'
-
-export const THREAD_STATES: Record<ThreadState, { glyph: string; label: string; color: string }> = {
-  running: { glyph: '◐', label: 'running', color: 'var(--ice)' },
-  slipped: { glyph: '↪', label: 'slipped', color: 'var(--gold)' },
-  paused: { glyph: '‖', label: 'paused', color: 'var(--muted)' },
-  unplaced: { glyph: '○', label: 'unplaced', color: 'var(--faint)' },
-}
+import { THREAD_STATES, type ThreadState } from './threadStates'
 
 interface RowAction {
   label: string
@@ -48,7 +40,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
   const nowMin = minOfDay(new Date(nowMs))
   const threads = useMemo(
     () => looseThreads(blocks, captures, todayKey, nowMin),
-    [blocks, captures, todayKey, nowMin],
+    [blocks, captures, todayKey, nowMin]
   )
 
   /* Esc or a click anywhere outside the box collapses it */
@@ -87,21 +79,26 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
 
   const rows: Row[] = [
     ...threads.running.map((b) =>
-      blockRow('running', b, `→ ${fmtTime(b.endMin)}${b.due != null ? ` · due ${fmtTime(b.due)}` : ''}`, [
-        { label: 'open', run: () => onOpen(b.id) },
-        done(b),
-      ]),
+      blockRow(
+        'running',
+        b,
+        `→ ${fmtTime(b.endMin)}${b.due != null ? ` · due ${fmtTime(b.due)}` : ''}`,
+        [{ label: 'open', run: () => onOpen(b.id) }, done(b)]
+      )
     ),
     ...threads.slipped.map((b) =>
-      blockRow('slipped', b, `was ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`, [done(b), resume(b)]),
+      blockRow('slipped', b, `was ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`, [
+        done(b),
+        resume(b),
+      ])
     ),
     ...threads.paused.map((b) =>
       blockRow(
         'paused',
         b,
         `parked · ${b.dayKey === todayKey ? fmtTime(b.startMin) : `${fmtDow(b.dayKey)} ${fmtTime(b.startMin)}`}`,
-        [done(b), resume(b)],
-      ),
+        [done(b), resume(b)]
+      )
     ),
     ...threads.unplaced.map(
       (c: Capture): Row => ({
@@ -110,7 +107,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
         title: short(c.title),
         meta: 'captured · no time yet',
         actions: [{ label: 'place', run: () => placeCapture(c.id) }],
-      }),
+      })
     ),
   ]
 
@@ -118,6 +115,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
      Reset it here — in an effect, never during render — so a later thread
      appears collapsed and still honors the click-to-expand invariant. */
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- deliberate reset when the thread list empties; must not run during render
     if (!rows.length) setOpen(false)
   }, [rows.length])
 
@@ -125,12 +123,15 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
 
   if (!open) {
     return (
-      <div
+      <button
+        type="button"
         className="frail"
         onClick={(e) => {
           e.stopPropagation() // the stage's background click clears cards — not ours
           setOpen(true)
         }}
+        aria-expanded={false}
+        aria-label={`loose threads — ${rows.length} open`}
         title="loose threads"
       >
         <span className="cnt">{rows.length}</span>
@@ -138,7 +139,7 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
           <span key={r.id} className="dot" style={{ background: THREAD_STATES[r.state].color }} />
         ))}
         <span className="vlabel">threads</span>
-      </div>
+      </button>
     )
   }
 
@@ -146,19 +147,27 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
     <div
       ref={boxRef}
       className="tbox"
-      style={{ position: 'absolute', left: '50%', top: 'calc(100% + 8px)', transform: 'translateX(-50%)', zIndex: 9 }}
+      style={{
+        position: 'absolute',
+        left: '50%',
+        top: 'calc(100% + 8px)',
+        transform: 'translateX(-50%)',
+        zIndex: 9,
+      }}
     >
       <div className="tbox-h">
         <span className="t">Loose threads</span>
-        <span
+        <button
+          type="button"
           className="x"
+          aria-label="close loose threads"
           onClick={(e) => {
             e.stopPropagation()
             setOpen(false)
           }}
         >
           close ✕
-        </span>
+        </button>
       </div>
       {(Object.keys(THREAD_STATES) as ThreadState[]).map((grp) => {
         const grpRows = rows.filter((r) => r.state === grp)

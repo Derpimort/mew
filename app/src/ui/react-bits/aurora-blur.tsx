@@ -1,63 +1,63 @@
-"use client";
+'use client'
 
-import React, { useRef, useMemo } from "react";
-import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import * as THREE from "three";
+import React, { useRef, useMemo } from 'react'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import * as THREE from 'three'
 
 export interface AuroraLayer {
-  color: string;
-  speed: number;
-  intensity: number;
+  color: string
+  speed: number
+  intensity: number
 }
 
 export interface SkyLayer {
-  color: string;
-  blend: number;
+  color: string
+  blend: number
 }
 
 const defaultLayers: AuroraLayer[] = [
-  { color: "#00ff4d", speed: 0.37, intensity: 0.5 },
-  { color: "#66b3ff", speed: 0.15, intensity: 0.35 },
-  { color: "#d438ff", speed: 0.2, intensity: 0.1 },
-  { color: "#1acbae", speed: 0.07, intensity: 0.15 },
-];
+  { color: '#00ff4d', speed: 0.37, intensity: 0.5 },
+  { color: '#66b3ff', speed: 0.15, intensity: 0.35 },
+  { color: '#d438ff', speed: 0.2, intensity: 0.1 },
+  { color: '#1acbae', speed: 0.07, intensity: 0.15 },
+]
 
 const defaultSkyLayers: SkyLayer[] = [
-  { color: "#5f2762", blend: 0.5 },
-  { color: "#263031", blend: 0.5 },
-];
+  { color: '#5f2762', blend: 0.5 },
+  { color: '#263031', blend: 0.5 },
+]
 
 export interface AuroraBlurProps {
   /** Width of the component in pixels or CSS value */
-  width?: string | number;
+  width?: string | number
   /** Height of the component in pixels or CSS value */
-  height?: string | number;
+  height?: string | number
   /** Additional CSS classes */
-  className?: string;
+  className?: string
   /** Content to render on top of the effect */
-  children?: React.ReactNode;
+  children?: React.ReactNode
   /** Animation speed multiplier (0.1-5) */
-  speed?: number;
+  speed?: number
   /** Aurora layers - array of { color, speed, intensity } */
-  layers?: AuroraLayer[];
+  layers?: AuroraLayer[]
   /** Noise scale for aurora pattern (0.5-10) */
-  noiseScale?: number;
+  noiseScale?: number
   /** Horizontal movement speed (-5 to 5) */
-  movementX?: number;
+  movementX?: number
   /** Vertical movement speed (-5 to 5) */
-  movementY?: number;
+  movementY?: number
   /** Vertical fade intensity (0-2) */
-  verticalFade?: number;
+  verticalFade?: number
   /** Bloom/glow intensity (0.5-5) */
-  bloomIntensity?: number;
+  bloomIntensity?: number
   /** Sky gradient layers - array of { color, blend } */
-  skyLayers?: SkyLayer[];
+  skyLayers?: SkyLayer[]
   /** Overall brightness (0-2) */
-  brightness?: number;
+  brightness?: number
   /** Color saturation (0-2) */
-  saturation?: number;
+  saturation?: number
   /** Master opacity (0-1) */
-  opacity?: number;
+  opacity?: number
 }
 
 const vertexShader = `
@@ -66,7 +66,7 @@ void main() {
   vUv = uv;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
-`;
+`
 
 const fragmentShader = `
 precision highp float;
@@ -138,30 +138,30 @@ void main(){
 
   gl_FragColor=vec4(c,u_opacity);
 }
-`;
+`
 
 function hexToVec3(hex: string): [number, number, number] {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  if (!result) return [1, 1, 1];
+  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  if (!result) return [1, 1, 1]
   return [
     parseInt(result[1], 16) / 255,
     parseInt(result[2], 16) / 255,
     parseInt(result[3], 16) / 255,
-  ];
+  ]
 }
 
 interface SceneProps {
-  speed: number;
-  layers: AuroraLayer[];
-  noiseScale: number;
-  movementX: number;
-  movementY: number;
-  verticalFade: number;
-  bloomIntensity: number;
-  skyLayers: SkyLayer[];
-  brightness: number;
-  saturation: number;
-  opacity: number;
+  speed: number
+  layers: AuroraLayer[]
+  noiseScale: number
+  movementX: number
+  movementY: number
+  verticalFade: number
+  bloomIntensity: number
+  skyLayers: SkyLayer[]
+  brightness: number
+  saturation: number
+  opacity: number
 }
 
 const Scene: React.FC<SceneProps> = ({
@@ -177,8 +177,8 @@ const Scene: React.FC<SceneProps> = ({
   saturation,
   opacity,
 }) => {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const { size } = useThree();
+  const meshRef = useRef<THREE.Mesh>(null)
+  const { size } = useThree()
 
   const uniforms = useMemo(
     () => ({
@@ -210,53 +210,41 @@ const Scene: React.FC<SceneProps> = ({
       u_saturation: { value: 1 },
       u_opacity: { value: 1 },
     }),
-    [],
-  );
+    []
+  )
 
   useFrame((state) => {
-    if (!meshRef.current) return;
-    const material = meshRef.current.material as THREE.ShaderMaterial;
-    material.uniforms.u_time.value = state.clock.elapsedTime;
-    material.uniforms.u_resolution.value.set(size.width, size.height);
-    material.uniforms.u_speed.value = speed;
-    const l = layers;
-    material.uniforms.u_layer1Color.value.set(
-      ...hexToVec3(l[0]?.color || "#000"),
-    );
-    material.uniforms.u_layer1Speed.value = l[0]?.speed || 0;
-    material.uniforms.u_layer1Intensity.value = l[0]?.intensity || 0;
-    material.uniforms.u_layer2Color.value.set(
-      ...hexToVec3(l[1]?.color || "#000"),
-    );
-    material.uniforms.u_layer2Speed.value = l[1]?.speed || 0;
-    material.uniforms.u_layer2Intensity.value = l[1]?.intensity || 0;
-    material.uniforms.u_layer3Color.value.set(
-      ...hexToVec3(l[2]?.color || "#000"),
-    );
-    material.uniforms.u_layer3Speed.value = l[2]?.speed || 0;
-    material.uniforms.u_layer3Intensity.value = l[2]?.intensity || 0;
-    material.uniforms.u_layer4Color.value.set(
-      ...hexToVec3(l[3]?.color || "#000"),
-    );
-    material.uniforms.u_layer4Speed.value = l[3]?.speed || 0;
-    material.uniforms.u_layer4Intensity.value = l[3]?.intensity || 0;
-    material.uniforms.u_noiseScale.value = noiseScale;
-    material.uniforms.u_movementX.value = movementX;
-    material.uniforms.u_movementY.value = movementY;
-    material.uniforms.u_verticalFade.value = verticalFade;
-    material.uniforms.u_bloomIntensity.value = bloomIntensity;
-    material.uniforms.u_skyColor1.value.set(
-      ...hexToVec3(skyLayers[0]?.color || "#000"),
-    );
-    material.uniforms.u_skyColor2.value.set(
-      ...hexToVec3(skyLayers[1]?.color || "#000"),
-    );
-    material.uniforms.u_skyBlend1.value = skyLayers[1]?.blend || 0;
-    material.uniforms.u_skyBlend2.value = skyLayers[0]?.blend || 0;
-    material.uniforms.u_brightness.value = brightness;
-    material.uniforms.u_saturation.value = saturation;
-    material.uniforms.u_opacity.value = opacity;
-  });
+    if (!meshRef.current) return
+    const material = meshRef.current.material as THREE.ShaderMaterial
+    material.uniforms.u_time.value = state.clock.elapsedTime
+    material.uniforms.u_resolution.value.set(size.width, size.height)
+    material.uniforms.u_speed.value = speed
+    const l = layers
+    material.uniforms.u_layer1Color.value.set(...hexToVec3(l[0]?.color || '#000'))
+    material.uniforms.u_layer1Speed.value = l[0]?.speed || 0
+    material.uniforms.u_layer1Intensity.value = l[0]?.intensity || 0
+    material.uniforms.u_layer2Color.value.set(...hexToVec3(l[1]?.color || '#000'))
+    material.uniforms.u_layer2Speed.value = l[1]?.speed || 0
+    material.uniforms.u_layer2Intensity.value = l[1]?.intensity || 0
+    material.uniforms.u_layer3Color.value.set(...hexToVec3(l[2]?.color || '#000'))
+    material.uniforms.u_layer3Speed.value = l[2]?.speed || 0
+    material.uniforms.u_layer3Intensity.value = l[2]?.intensity || 0
+    material.uniforms.u_layer4Color.value.set(...hexToVec3(l[3]?.color || '#000'))
+    material.uniforms.u_layer4Speed.value = l[3]?.speed || 0
+    material.uniforms.u_layer4Intensity.value = l[3]?.intensity || 0
+    material.uniforms.u_noiseScale.value = noiseScale
+    material.uniforms.u_movementX.value = movementX
+    material.uniforms.u_movementY.value = movementY
+    material.uniforms.u_verticalFade.value = verticalFade
+    material.uniforms.u_bloomIntensity.value = bloomIntensity
+    material.uniforms.u_skyColor1.value.set(...hexToVec3(skyLayers[0]?.color || '#000'))
+    material.uniforms.u_skyColor2.value.set(...hexToVec3(skyLayers[1]?.color || '#000'))
+    material.uniforms.u_skyBlend1.value = skyLayers[1]?.blend || 0
+    material.uniforms.u_skyBlend2.value = skyLayers[0]?.blend || 0
+    material.uniforms.u_brightness.value = brightness
+    material.uniforms.u_saturation.value = saturation
+    material.uniforms.u_opacity.value = opacity
+  })
 
   return (
     <mesh ref={meshRef}>
@@ -268,12 +256,12 @@ const Scene: React.FC<SceneProps> = ({
         transparent={true}
       />
     </mesh>
-  );
-};
+  )
+}
 
 const AuroraBlur: React.FC<AuroraBlurProps> = ({
-  width = "100%",
-  height = "100%",
+  width = '100%',
+  height = '100%',
   className,
   children,
   speed = 1.5,
@@ -288,12 +276,12 @@ const AuroraBlur: React.FC<AuroraBlurProps> = ({
   saturation = 1,
   opacity = 1,
 }) => {
-  const widthStyle = typeof width === "number" ? `${width}px` : width;
-  const heightStyle = typeof height === "number" ? `${height}px` : height;
+  const widthStyle = typeof width === 'number' ? `${width}px` : width
+  const heightStyle = typeof height === 'number' ? `${height}px` : height
 
   return (
     <div
-      className={`relative overflow-hidden ${className || ""}`}
+      className={`relative overflow-hidden ${className || ''}`}
       style={{
         width: widthStyle,
         height: heightStyle,
@@ -328,9 +316,9 @@ const AuroraBlur: React.FC<AuroraBlurProps> = ({
       </Canvas>
       {children && <div className="relative z-10">{children}</div>}
     </div>
-  );
-};
+  )
+}
 
-AuroraBlur.displayName = "AuroraBlur";
+AuroraBlur.displayName = 'AuroraBlur'
 
-export default AuroraBlur;
+export default AuroraBlur

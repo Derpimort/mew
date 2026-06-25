@@ -6,10 +6,7 @@ const NOW = new Date(2026, 5, 9, 9, 40)
 
 describe('talk-to-schedule parser (the no-key floor)', () => {
   it('parses the acceptance-criterion sentence (acceptance #1)', () => {
-    const out = parseCommand(
-      'block thursday morning for the deck, keep friday afternoon free',
-      NOW,
-    )
+    const out = parseCommand('block thursday morning for the deck, keep friday afternoon free', NOW)
     expect(out.kind).toBe('plan')
     expect(out.places).toHaveLength(1)
     expect(out.places![0]).toMatchObject({
@@ -48,7 +45,10 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
   })
 
   it('recognizes completions and moves', () => {
-    expect(parseCommand('done with the deck', NOW)).toMatchObject({ kind: 'complete', query: 'deck' })
+    expect(parseCommand('done with the deck', NOW)).toMatchObject({
+      kind: 'complete',
+      query: 'deck',
+    })
     expect(parseCommand('move the deck to thursday at 9', NOW)).toMatchObject({
       kind: 'move',
       query: 'deck',
@@ -57,7 +57,10 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
   })
 
   it('captures bare intentions for the when-&-where nudge', () => {
-    expect(parseCommand('call the bank', NOW)).toMatchObject({ kind: 'capture', title: 'call the bank' })
+    expect(parseCommand('call the bank', NOW)).toMatchObject({
+      kind: 'capture',
+      title: 'call the bank',
+    })
   })
 
   it('treats questions as chat', () => {
@@ -65,12 +68,17 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
   })
 
   it('recognizes clear / start-over asks with scope (mews + calendar events stay)', () => {
-    expect(parseCommand('cleanup my calendar so that i could restart and plan', NOW)).toMatchObject({
-      kind: 'clear',
-      scope: 'upcoming',
-    })
+    expect(parseCommand('cleanup my calendar so that i could restart and plan', NOW)).toMatchObject(
+      {
+        kind: 'clear',
+        scope: 'upcoming',
+      }
+    )
     expect(parseCommand('clear today', NOW)).toMatchObject({ kind: 'clear', scope: 'today' })
-    expect(parseCommand('wipe this week and start fresh', NOW)).toMatchObject({ kind: 'clear', scope: 'week' })
+    expect(parseCommand('wipe this week and start fresh', NOW)).toMatchObject({
+      kind: 'clear',
+      scope: 'week',
+    })
     expect(parseCommand('reset tomorrow please, the plan is wrong', NOW)).toMatchObject({
       kind: 'clear',
       scope: 'tomorrow',
@@ -114,7 +122,10 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
 
   describe('targeted removal ("drop both and create afresh" must not wipe the day)', () => {
     it('"drop the prod release" → remove with the title query', () => {
-      expect(parseCommand('drop the prod release', NOW)).toMatchObject({ kind: 'remove', query: 'prod release' })
+      expect(parseCommand('drop the prod release', NOW)).toMatchObject({
+        kind: 'remove',
+        query: 'prod release',
+      })
     })
 
     it('"remove both doc review blocks" strips the scaffolding and flags all', () => {
@@ -126,7 +137,10 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
     })
 
     it('"cancel gym tomorrow" stays a removal, with time words stripped', () => {
-      expect(parseCommand('cancel gym tomorrow', NOW)).toMatchObject({ kind: 'remove', query: 'gym' })
+      expect(parseCommand('cancel gym tomorrow', NOW)).toMatchObject({
+        kind: 'remove',
+        query: 'gym',
+      })
     })
 
     it('a start time pins which one and stays out of the title (#105)', () => {
@@ -188,7 +202,12 @@ describe('remember — the floor learns standing rules', () => {
   it('"remember that gym is always at 7am" → structured time-default', () => {
     expect(parseCommand('remember that gym is always at 7am', NOW)).toEqual({
       kind: 'remember',
-      pref: { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always at 7am' },
+      pref: {
+        kind: 'time-default',
+        match: 'gym',
+        value: 'starts 07:00',
+        stated: 'gym is always at 7am',
+      },
     })
   })
 
@@ -220,7 +239,10 @@ describe('remember — the floor learns standing rules', () => {
   })
 
   it('"remember to <verb>" is a TODO, not a rule — it captures; "remember that" still rules', () => {
-    expect(parseCommand('remember to call the bank', NOW)).toMatchObject({ kind: 'capture', title: 'call the bank' })
+    expect(parseCommand('remember to call the bank', NOW)).toMatchObject({
+      kind: 'capture',
+      title: 'call the bank',
+    })
     expect(parseCommand('remember that gym is always 7am', NOW)).toMatchObject({
       kind: 'remember',
       pref: { kind: 'time-default', match: 'gym', value: 'starts 07:00' },

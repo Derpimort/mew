@@ -56,7 +56,9 @@ await page.addInitScript(() => {
         return files.get(p)
       },
       readDir: async (dir) =>
-        [...files.keys()].filter((p) => p.startsWith(dir + '/')).map((p) => ({ name: p.slice(dir.length + 1) })),
+        [...files.keys()]
+          .filter((p) => p.startsWith(dir + '/'))
+          .map((p) => ({ name: p.slice(dir.length + 1) })),
       remove: async (p) => files.delete(p),
     },
     path: {
@@ -65,7 +67,9 @@ await page.addInitScript(() => {
       join: async (...xs) => xs.join('/'),
     },
     opener: { openPath: async () => {} },
-    window: { getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }) },
+    window: {
+      getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }),
+    },
   }
 })
 

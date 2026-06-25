@@ -37,7 +37,9 @@ await sayIt('block 30m for journal pages today at 8')
 /* running: background + due tight enough that start-by fires now; accept it */
 await sayIt('organize backups 2h in the background due 11:40')
 await page.waitForTimeout(1200)
-const startBtn = page.locator('.tui-nudge', { hasText: 'start organize backups' }).locator('.tui-btn.pri')
+const startBtn = page
+  .locator('.tui-nudge', { hasText: 'start organize backups' })
+  .locator('.tui-btn.pri')
 await startBtn.click()
 await page.waitForTimeout(800)
 /* paused: interrupt the live deck through its center card */
@@ -59,14 +61,17 @@ await page.click('.frail')
 await page.waitForTimeout(500)
 const groups = await page.$$eval('.tbox .tgrp', (els) => els.map((e) => e.textContent?.trim()))
 console.log('groups:', groups.join(' · '))
-const orderOk = JSON.stringify(groups) === JSON.stringify(['running', 'slipped', 'paused', 'unplaced'])
+const orderOk =
+  JSON.stringify(groups) === JSON.stringify(['running', 'slipped', 'paused', 'unplaced'])
 console.log(orderOk ? '✓ all four groups, spec order' : '✗ group order wrong')
 await page.screenshot({ path: `${outDir}/threads-2-box.png` })
 
 /* 3 · place: the capture lands on the week */
 await page.locator('.trow', { hasText: 'call the bank' }).click()
 await page.waitForTimeout(900)
-const placedMsg = (await page.textContent('.session-scroll'))?.includes('Placed — "call the bank" lives')
+const placedMsg = (await page.textContent('.session-scroll'))?.includes(
+  'Placed — "call the bank" lives'
+)
 console.log(placedMsg ? '✓ place routed through the proposal flow' : '✗ place failed')
 await page.screenshot({ path: `${outDir}/threads-3-placed.png` })
 
@@ -75,7 +80,8 @@ await page.click('.frail')
 await page.waitForTimeout(400)
 await page.locator('.trow', { hasText: 'journal pages' }).click()
 await page.waitForTimeout(900)
-const resumed = (await page.textContent('.session-scroll'))?.match(/journal pages.*(9:4|now)/i) != null ||
+const resumed =
+  (await page.textContent('.session-scroll'))?.match(/journal pages.*(9:4|now)/i) != null ||
   (await page.$eval('.frail .cnt', (el) => el.textContent).catch(() => null)) !== pill.count
 console.log('✓ resume fired startNow (thread left the rail)')
 await page.screenshot({ path: `${outDir}/threads-4-resumed.png` })

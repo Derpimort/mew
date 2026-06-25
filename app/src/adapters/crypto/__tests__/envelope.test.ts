@@ -14,7 +14,9 @@ const contains = (hay: Uint8Array, needle: Uint8Array) => {
 }
 
 const crypto = createNobleCrypto()
-const PROFILE = enc(JSON.stringify({ blocks: [{ title: 'Finish Q3 deck' }], calendarToken: 'ya29.SECRET-TOKEN' }))
+const PROFILE = enc(
+  JSON.stringify({ blocks: [{ title: 'Finish Q3 deck' }], calendarToken: 'ya29.SECRET-TOKEN' })
+)
 
 describe('envelope — local passphrase path', () => {
   it('seals, then opens with the right passphrase', async () => {

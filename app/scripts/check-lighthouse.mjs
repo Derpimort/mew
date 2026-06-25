@@ -30,9 +30,30 @@ import path from 'node:path'
 // threshold from web.dev/vitals — the warn line. `lower` notes that smaller is
 // better for all three (kept explicit so the rating never inverts by accident).
 export const METRICS = [
-  { id: 'first-contentful-paint', label: 'FCP', name: 'First Contentful Paint', unit: 'ms', budget: 1800, lower: true },
-  { id: 'largest-contentful-paint', label: 'LCP', name: 'Largest Contentful Paint', unit: 'ms', budget: 2500, lower: true },
-  { id: 'cumulative-layout-shift', label: 'CLS', name: 'Cumulative Layout Shift', unit: 'score', budget: 0.1, lower: true },
+  {
+    id: 'first-contentful-paint',
+    label: 'FCP',
+    name: 'First Contentful Paint',
+    unit: 'ms',
+    budget: 1800,
+    lower: true,
+  },
+  {
+    id: 'largest-contentful-paint',
+    label: 'LCP',
+    name: 'Largest Contentful Paint',
+    unit: 'ms',
+    budget: 2500,
+    lower: true,
+  },
+  {
+    id: 'cumulative-layout-shift',
+    label: 'CLS',
+    name: 'Cumulative Layout Shift',
+    unit: 'score',
+    budget: 0.1,
+    lower: true,
+  },
 ]
 
 /** Budget map keyed by audit id — the same numbers lighthouserc.json asserts on.
@@ -74,7 +95,7 @@ export function evaluate(values, metrics = METRICS) {
   for (const r of rated) {
     if (r.over) {
       warnings.push(
-        `${r.label} (${r.name}) is ${formatValue(r.value, r.unit)} — over the ${formatValue(r.budget, r.unit)} budget.`,
+        `${r.label} (${r.name}) is ${formatValue(r.value, r.unit)} — over the ${formatValue(r.budget, r.unit)} budget.`
       )
     }
   }
@@ -130,14 +151,17 @@ export function formatReport(result) {
  *  lhr-*.json. Returns the parsed LHR object. Throws if none is found. */
 export function readLatestLhr(lhciDir) {
   if (!existsSync(lhciDir)) {
-    throw new Error(`no Lighthouse output at ${lhciDir} — run lhci (the workflow does \`lhci autorun\`) first.`)
+    throw new Error(
+      `no Lighthouse output at ${lhciDir} — run lhci (the workflow does \`lhci autorun\`) first.`
+    )
   }
   // Prefer the manifest's representative run (the median lhci would assert on).
   const manifestPath = path.join(lhciDir, 'manifest.json')
   if (existsSync(manifestPath)) {
     try {
       const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-      const rep = Array.isArray(manifest) && (manifest.find((e) => e.isRepresentativeRun) || manifest[0])
+      const rep =
+        Array.isArray(manifest) && (manifest.find((e) => e.isRepresentativeRun) || manifest[0])
       if (rep && rep.jsonPath && existsSync(rep.jsonPath)) {
         return JSON.parse(readFileSync(rep.jsonPath, 'utf8'))
       }
@@ -159,7 +183,8 @@ export function readLatestLhr(lhciDir) {
 // Run only when invoked directly, so importing the pure helpers in a test
 // doesn't read the filesystem or exit.
 const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
 
 if (invokedDirectly) {
   // Default to repo-root .lighthouseci (this script runs from app/).
@@ -184,10 +209,14 @@ if (invokedDirectly) {
   // stderr locally), but never exit non-zero on a budget miss. Only a complete
   // absence of data (handled above as exit 2) is a hard problem.
   for (const line of result.warnings) {
-    console.error(process.env.GITHUB_ACTIONS ? `::warning title=Core Web Vitals::${line}` : `warning: ${line}`)
+    console.error(
+      process.env.GITHUB_ACTIONS ? `::warning title=Core Web Vitals::${line}` : `warning: ${line}`
+    )
   }
   if (result.warnings.length) {
-    console.log('\ncheck-lighthouse: within data, some metrics over budget (warn-only — not blocking).')
+    console.log(
+      '\ncheck-lighthouse: within data, some metrics over budget (warn-only — not blocking).'
+    )
   } else {
     console.log('\ncheck-lighthouse: OK')
   }

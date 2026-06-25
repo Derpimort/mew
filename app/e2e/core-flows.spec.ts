@@ -36,12 +36,21 @@ async function boot(page: Page) {
   await page.goto(`/${AT}`)
   await expect(page.locator('.nx-count')).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('[aria-label="MEW loading"]')).toHaveCount(0, { timeout: 15_000 })
+  // First-run concept tour (#160) renders over the app on a fresh context
+  // (Settings.hasSeenOnboarding defaults to false) and its modal scrim
+  // intercepts pointer events. Dismiss it the way a first-time user does —
+  // "Skip all" — so the week underneath is interactive. dismiss() persists
+  // hasSeenOnboarding for the context, so it never returns mid-test.
+  await expect(page.locator('.ob-scrim')).toBeVisible({ timeout: 15_000 })
+  await page.getByRole('button', { name: 'Skip all' }).click()
+  await expect(page.locator('.ob-scrim')).toHaveCount(0, { timeout: 5_000 })
 }
 
-/** The composer is a <textarea aria-label="talk to MEW">. One send = type +
-    Enter; we then wait for MEW's reply line to settle (thinking row gone). */
+/** The composer is a <textarea aria-label="compose message to MEW"> (its
+    placeholder reads "talk to MEW…"). One send = type + Enter; we then wait for
+    MEW's reply line to settle (thinking row gone). */
 async function say(page: Page, text: string) {
-  const box = page.getByLabel('talk to MEW')
+  const box = page.getByLabel('compose message to MEW')
   await box.click()
   await box.fill(text)
   await box.press('Enter')
@@ -92,7 +101,9 @@ test.describe('MEW core flows', () => {
     await expect(page.locator('.session-scroll .log').getByText(/that's a mew/i)).toBeVisible()
   })
 
-  test('idling on a focused block raises the drift check-in and mirrors it', async ({ browser }) => {
+  test('idling on a focused block raises the drift check-in and mirrors it', async ({
+    browser,
+  }) => {
     // A fresh context so we can (a) stub the Notification API to capture the
     // mirror and (b) report the tab as hidden — the mirror fires only for what
     // the user would otherwise miss (NotifierPort: visible tabs are skipped).
@@ -113,7 +124,10 @@ test.describe('MEW core flows', () => {
       }
       ;(window as unknown as { Notification: unknown }).Notification = FakeNotification
       // a hidden tab — so notifier.mirror() does not early-return on "visible"
-      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' })
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'hidden',
+      })
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
     })
     const page = await context.newPage()

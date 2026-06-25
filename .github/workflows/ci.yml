@@ -58,14 +58,12 @@ jobs:
 
   # ESLint + Prettier gate (folded in from the old lint.yml).
   #
-  # BLOCKING but diff-scoped, on purpose: the codebase predates both this gate
-  # and Prettier, so the tree carries pre-existing lint findings and is not yet
-  # Prettier-formatted (a full-tree `eslint .` / `prettier --check` is red today
-  # — see the advisory `lint-full` job below). Reformatting/relinting the whole
-  # tree in one shot would churn ~every file and bury real review. So the
-  # blocking gate holds only the files a PR actually changes to the standard
-  # (the same contract as the husky pre-commit hook, re-checked here in case the
-  # hook was bypassed). Setup mirrors typecheck/unit above.
+  # BLOCKING and diff-scoped: a fast pre-merge mirror of the husky pre-commit
+  # hook, linting and format-checking only the files a PR actually changes —
+  # quick feedback re-checked here in case the hook was bypassed. Whole-tree
+  # enforcement now lives in the blocking `lint-full` job below, which holds the
+  # entire codebase to zero findings; this job keeps a PR's own diff to that same
+  # standard a step earlier. Setup mirrors typecheck/unit above.
   lint:
     runs-on: ubuntu-latest
     defaults:
@@ -115,9 +113,9 @@ jobs:
           fi
           echo "$files" | tr '\n' '\0' | xargs -0 npx prettier --check
 
-  # Advisory: full-tree ESLint + Prettier. Surfaces standing debt without
-  # blocking the PR. Drop `continue-on-error` once the tree is clean to make it
-  # a hard gate (and then the diff-scoped `lint` job above can be retired).
+  # Full-tree ESLint + Prettier — a HARD gate. The tree was brought to zero
+  # lint + format findings in v0.2.0, so this blocks any PR that reintroduces
+  # debt. The diff-scoped `lint` job above is kept as a fast husky mirror.
   lint-full:
     runs-on: ubuntu-latest
     defaults:
@@ -130,9 +128,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
-      - name: ESLint (full codebase, advisory)
-        continue-on-error: true
+      - name: ESLint (full codebase)
         run: pnpm lint
-      - name: Prettier --check (full codebase, advisory)
-        continue-on-error: true
+      - name: Prettier --check (full codebase)
         run: pnpm format:check

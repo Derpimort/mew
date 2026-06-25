@@ -16,7 +16,10 @@ import {
 /** A console stand-in that records every level's args. */
 function fakeSink() {
   const calls: { level: LogLevel; args: unknown[] }[] = []
-  const rec = (level: LogLevel) => (...args: unknown[]) => calls.push({ level, args })
+  const rec =
+    (level: LogLevel) =>
+    (...args: unknown[]) =>
+      calls.push({ level, args })
   return {
     error: rec('error'),
     warn: rec('warn'),
@@ -38,7 +41,13 @@ describe('filterContext — redaction (the privacy law)', () => {
 
   it('redacts every secret-named key shape MEW uses', () => {
     expect(
-      filterContext({ openaiKey: 'x', brainToken: 'y', apiKey: 'z', password: 'p', authorization: 'a' }),
+      filterContext({
+        openaiKey: 'x',
+        brainToken: 'y',
+        apiKey: 'z',
+        password: 'p',
+        authorization: 'a',
+      })
     ).toEqual({
       openaiKey: '[redacted:key]',
       brainToken: '[redacted:key]',
@@ -70,7 +79,10 @@ describe('filterContext — redaction (the privacy law)', () => {
 
   it('recurses into nested objects and arrays', () => {
     expect(
-      filterContext({ settings: { model: { anthropicKey: 'sk-1', location: 'remote' } }, urls: ['https://x.test/a'] }),
+      filterContext({
+        settings: { model: { anthropicKey: 'sk-1', location: 'remote' } },
+        urls: ['https://x.test/a'],
+      })
     ).toEqual({
       settings: { model: { anthropicKey: '[redacted:key]', location: 'remote' } },
       urls: ['[redacted:url]'],
@@ -107,7 +119,11 @@ describe('createConsoleLogger — structure & levels', () => {
   it('appends a redacted error object when one is passed', () => {
     const sink = fakeSink()
     const log = createConsoleLogger({ sink, now: FIXED, minLevel: 'debug' })
-    log.error('model/adapter', { adapter: 'anthropic' }, new Error('401 at https://api.anthropic.com'))
+    log.error(
+      'model/adapter',
+      { adapter: 'anthropic' },
+      new Error('401 at https://api.anthropic.com')
+    )
     const [, ctx, err] = sink.calls[0].args
     expect(ctx).toEqual({ adapter: 'anthropic' })
     expect(err).toMatchObject({ name: 'Error', message: '401 at [redacted:url]' })
@@ -133,7 +149,10 @@ describe('createConsoleLogger — structure & levels', () => {
   it('dev minimum lets every level through', () => {
     const sink = fakeSink()
     const log = createConsoleLogger({ sink, now: FIXED, minLevel: 'debug' })
-    log.error('a'); log.warn('b'); log.info('c'); log.debug('d')
+    log.error('a')
+    log.warn('b')
+    log.info('c')
+    log.debug('d')
     expect(sink.calls.map((c) => c.level)).toEqual(['error', 'warn', 'info', 'debug'])
   })
 })

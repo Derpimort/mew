@@ -1,28 +1,28 @@
-"use client";
+'use client'
 
-import React, { useEffect, useRef } from "react";
-import * as THREE from "three";
-import { cn } from "@/lib/utils";
+import React, { useEffect, useRef } from 'react'
+import * as THREE from 'three'
+import { cn } from '@/lib/utils'
 
 export interface AIBlobProps {
   /** Width and height of the blob container in pixels */
-  size?: number;
+  size?: number
   /** Animation speed multiplier (higher = faster) */
-  animationSpeed?: number;
+  animationSpeed?: number
   /** Intensity of the glow effect (0-1) */
-  glowIntensity?: number;
+  glowIntensity?: number
   /** Scale of the noise pattern (higher = more detail) */
-  noiseScale?: number;
+  noiseScale?: number
   /** Scale of the internal noise patterns (higher = smaller patterns, default 1.0) */
-  innerScale?: number;
+  innerScale?: number
   /** Resolution multiplier for performance (0.5 = half res, 1.0 = full res, default 1.0) */
-  resolution?: number;
+  resolution?: number
   /** Array of color hex strings for gradient (2-4 colors recommended) */
-  colors?: string[];
+  colors?: string[]
   /** Additional CSS classes */
-  className?: string;
+  className?: string
   /** Inline styles */
-  style?: React.CSSProperties;
+  style?: React.CSSProperties
 }
 
 const AIBlob: React.FC<AIBlobProps> = ({
@@ -32,79 +32,79 @@ const AIBlob: React.FC<AIBlobProps> = ({
   noiseScale = 3.0,
   innerScale = 1.0,
   resolution = 1.0,
-  colors = ["#ff006e", "#8338ec", "#3a86ff", "#06ffa5"],
+  colors = ['#ff006e', '#8338ec', '#3a86ff', '#06ffa5'],
   className,
   style,
 }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null)
   const uniformsRef = useRef<{
-    uTime: { value: number };
-    uResolution: { value: THREE.Vector2 };
-    uSpeed: { value: number };
-    uGlowIntensity: { value: number };
-    uNoiseScale: { value: number };
-    uInnerScale: { value: number };
-    uColor1: { value: THREE.Vector3 };
-    uColor2: { value: THREE.Vector3 };
-    uColor3: { value: THREE.Vector3 };
-    uColor4: { value: THREE.Vector3 };
-  } | null>(null);
+    uTime: { value: number }
+    uResolution: { value: THREE.Vector2 }
+    uSpeed: { value: number }
+    uGlowIntensity: { value: number }
+    uNoiseScale: { value: number }
+    uInnerScale: { value: number }
+    uColor1: { value: THREE.Vector3 }
+    uColor2: { value: THREE.Vector3 }
+    uColor3: { value: THREE.Vector3 }
+    uColor4: { value: THREE.Vector3 }
+  } | null>(null)
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current) return
 
-    const container = containerRef.current;
+    const container = containerRef.current
 
     const hexToRgb = (hex: string): THREE.Vector3 => {
-      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-      if (!result) return new THREE.Vector3(1, 1, 1);
+      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+      if (!result) return new THREE.Vector3(1, 1, 1)
       return new THREE.Vector3(
         parseInt(result[1], 16) / 255,
         parseInt(result[2], 16) / 255,
-        parseInt(result[3], 16) / 255,
-      );
-    };
+        parseInt(result[3], 16) / 255
+      )
+    }
 
-    const color1 = hexToRgb(colors[0] || "#ff006e");
-    const color2 = hexToRgb(colors[1] || "#8338ec");
-    const color3 = hexToRgb(colors[2] || "#3a86ff");
-    const color4 = hexToRgb(colors[3] || "#06ffa5");
+    const color1 = hexToRgb(colors[0] || '#ff006e')
+    const color2 = hexToRgb(colors[1] || '#8338ec')
+    const color3 = hexToRgb(colors[2] || '#3a86ff')
+    const color4 = hexToRgb(colors[3] || '#06ffa5')
     const renderer = new THREE.WebGLRenderer({
       antialias: true,
       alpha: true,
-      powerPreference: "high-performance",
+      powerPreference: 'high-performance',
       premultipliedAlpha: false,
       stencil: false,
       depth: false,
-    });
+    })
 
-    renderer.setClearColor(0x000000, 0);
-    const pixelRatio = Math.min(window.devicePixelRatio, 2) * resolution;
-    renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(size, size);
+    renderer.setClearColor(0x000000, 0)
+    const pixelRatio = Math.min(window.devicePixelRatio, 2) * resolution
+    renderer.setPixelRatio(pixelRatio)
+    renderer.setSize(size, size)
 
-    const bufferWidth = size * pixelRatio;
-    const bufferHeight = size * pixelRatio;
+    const bufferWidth = size * pixelRatio
+    const bufferHeight = size * pixelRatio
 
-    const gl = renderer.getContext();
+    const gl = renderer.getContext()
     if (gl) {
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.enable(gl.BLEND)
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
     }
 
-    renderer.domElement.style.backgroundColor = "transparent";
-    renderer.domElement.style.background = "transparent";
-    renderer.domElement.style.display = "block";
-    renderer.domElement.style.position = "absolute";
-    renderer.domElement.style.top = "0";
-    renderer.domElement.style.left = "0";
-    renderer.domElement.style.margin = "0";
-    renderer.domElement.style.padding = "0";
+    renderer.domElement.style.backgroundColor = 'transparent'
+    renderer.domElement.style.background = 'transparent'
+    renderer.domElement.style.display = 'block'
+    renderer.domElement.style.position = 'absolute'
+    renderer.domElement.style.top = '0'
+    renderer.domElement.style.left = '0'
+    renderer.domElement.style.margin = '0'
+    renderer.domElement.style.padding = '0'
 
-    container.appendChild(renderer.domElement);
+    container.appendChild(renderer.domElement)
 
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    const scene = new THREE.Scene()
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
 
     uniformsRef.current = {
       uTime: { value: 0 },
@@ -117,13 +117,13 @@ const AIBlob: React.FC<AIBlobProps> = ({
       uColor2: { value: color2 },
       uColor3: { value: color3 },
       uColor4: { value: color4 },
-    };
+    }
 
     const vertexShader = `
       void main() {
         gl_Position = vec4(position, 1.0);
       }
-    `;
+    `
 
     const fragmentShader = `
       precision mediump float;
@@ -293,7 +293,7 @@ const AIBlob: React.FC<AIBlobProps> = ({
 
         gl_FragColor = vec4(col, alpha);
       }
-    `;
+    `
 
     const material = new THREE.ShaderMaterial({
       uniforms: uniformsRef.current,
@@ -303,107 +303,96 @@ const AIBlob: React.FC<AIBlobProps> = ({
       blending: THREE.NormalBlending,
       depthTest: false,
       depthWrite: false,
-    });
+    })
 
-    const geometry = new THREE.PlaneGeometry(2, 2);
-    const mesh = new THREE.Mesh(geometry, material);
-    scene.add(mesh);
+    const geometry = new THREE.PlaneGeometry(2, 2)
+    const mesh = new THREE.Mesh(geometry, material)
+    scene.add(mesh)
 
     const updateSize = () => {
-      const pixelRatio = Math.min(window.devicePixelRatio, 2) * resolution;
-      renderer.setSize(size, size);
-      const bufferWidth = size * pixelRatio;
-      const bufferHeight = size * pixelRatio;
-      uniformsRef.current!.uResolution.value.set(bufferWidth, bufferHeight);
-    };
+      const pixelRatio = Math.min(window.devicePixelRatio, 2) * resolution
+      renderer.setSize(size, size)
+      const bufferWidth = size * pixelRatio
+      const bufferHeight = size * pixelRatio
+      uniformsRef.current!.uResolution.value.set(bufferWidth, bufferHeight)
+    }
 
-    updateSize();
+    updateSize()
 
-    let animationId: number;
+    let animationId: number
     const animate = (time: number) => {
-      animationId = requestAnimationFrame(animate);
+      animationId = requestAnimationFrame(animate)
       if (uniformsRef.current) {
-        uniformsRef.current.uTime.value = time * 0.001;
+        uniformsRef.current.uTime.value = time * 0.001
       }
-      renderer.render(scene, camera);
-    };
+      renderer.render(scene, camera)
+    }
 
-    animate(0);
+    animate(0)
 
     return () => {
-      cancelAnimationFrame(animationId);
-      scene.remove(mesh);
-      geometry.dispose();
-      material.dispose();
-      renderer.dispose();
+      cancelAnimationFrame(animationId)
+      scene.remove(mesh)
+      geometry.dispose()
+      material.dispose()
+      renderer.dispose()
       if (renderer.domElement.parentNode === container) {
-        container.removeChild(renderer.domElement);
+        container.removeChild(renderer.domElement)
       }
-    };
-  }, [
-    size,
-    animationSpeed,
-    glowIntensity,
-    noiseScale,
-    innerScale,
-    resolution,
-    colors,
-  ]);
+    }
+  }, [size, animationSpeed, glowIntensity, noiseScale, innerScale, resolution, colors])
 
   useEffect(() => {
     if (uniformsRef.current) {
-      uniformsRef.current.uSpeed.value = animationSpeed;
+      uniformsRef.current.uSpeed.value = animationSpeed
     }
-  }, [animationSpeed]);
+  }, [animationSpeed])
 
   useEffect(() => {
     if (uniformsRef.current) {
-      uniformsRef.current.uGlowIntensity.value = glowIntensity;
+      uniformsRef.current.uGlowIntensity.value = glowIntensity
     }
-  }, [glowIntensity]);
+  }, [glowIntensity])
 
   useEffect(() => {
     if (uniformsRef.current) {
-      uniformsRef.current.uNoiseScale.value = noiseScale;
+      uniformsRef.current.uNoiseScale.value = noiseScale
     }
-  }, [noiseScale]);
+  }, [noiseScale])
 
   useEffect(() => {
     if (uniformsRef.current) {
-      uniformsRef.current.uInnerScale.value = innerScale;
+      uniformsRef.current.uInnerScale.value = innerScale
     }
-  }, [innerScale]);
+  }, [innerScale])
 
   useEffect(() => {
     if (uniformsRef.current) {
       const hexToRgb = (hex: string): THREE.Vector3 => {
-        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-        if (!result) return new THREE.Vector3(1, 1, 1);
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+        if (!result) return new THREE.Vector3(1, 1, 1)
         return new THREE.Vector3(
           parseInt(result[1], 16) / 255,
           parseInt(result[2], 16) / 255,
-          parseInt(result[3], 16) / 255,
-        );
-      };
+          parseInt(result[3], 16) / 255
+        )
+      }
 
-      uniformsRef.current.uColor1.value = hexToRgb(colors[0] || "#ff006e");
-      uniformsRef.current.uColor2.value = hexToRgb(colors[1] || "#8338ec");
-      uniformsRef.current.uColor3.value = hexToRgb(colors[2] || "#3a86ff");
-      uniformsRef.current.uColor4.value = hexToRgb(colors[3] || "#06ffa5");
+      uniformsRef.current.uColor1.value = hexToRgb(colors[0] || '#ff006e')
+      uniformsRef.current.uColor2.value = hexToRgb(colors[1] || '#8338ec')
+      uniformsRef.current.uColor3.value = hexToRgb(colors[2] || '#3a86ff')
+      uniformsRef.current.uColor4.value = hexToRgb(colors[3] || '#06ffa5')
     }
-  }, [colors]);
+  }, [colors])
 
   return (
-    <div
-      className={cn("relative", className)}
-      style={{ width: size, height: size, ...style }}
-    >
+    <div className={cn('relative', className)} style={{ width: size, height: size, ...style }}>
       <div
         ref={containerRef}
         className="w-full h-full bg-transparent pointer-events-none select-none"
       />
     </div>
-  );
-};
+  )
+}
 
-export default AIBlob;
+export default AIBlob

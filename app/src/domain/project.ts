@@ -20,7 +20,7 @@ function tagFor(block: Block): VisibleTag {
 export function project(
   blocks: Block[],
   matrix: RoutingMatrix,
-  calendarId: string,
+  calendarId: string
 ): ProjectedEvent[] {
   const row = matrix[calendarId]
   if (!row) return []

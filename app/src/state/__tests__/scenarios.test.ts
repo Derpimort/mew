@@ -63,6 +63,7 @@ vi.mock('../../adapters/storage', () => ({
     putBlocks: async (bs: { id: string }[]) => bs.forEach((b) => fakeDb.blocks.set(b.id, b)),
     deleteBlocks: async (ids: string[]) => ids.forEach((i) => fakeDb.blocks.delete(i)),
     putCaptures: async (cs: { id: string }[]) => cs.forEach((c) => fakeDb.captures.set(c.id, c)),
+    deleteCaptures: async (ids: string[]) => ids.forEach((i) => fakeDb.captures.delete(i)),
     putChat: async (ms: { id: string }[]) => ms.forEach((m) => fakeDb.chat.set(m.id, m)),
     putMemory: async (es: { id: string }[]) => es.forEach((e) => fakeDb.memory.set(e.id, e)),
     deleteMemory: async (ids: string[]) => ids.forEach((i) => fakeDb.memory.delete(i)),
@@ -121,11 +122,12 @@ vi.mock('../../adapters/desktop', () => ({
   },
 }))
 
-vi.mock('../../adapters/notify', () => ({
-  createBrowserNotifier: () => ({
-    mirror: (o: { title: string; body: string }) => mirrors.push(o),
-  }),
-}))
+vi.mock('../../adapters/notify', () => {
+  const stub = () => ({ mirror: (o: { title: string; body: string }) => mirrors.push(o) })
+  // store now selects via createNotifier(); keep createBrowserNotifier for any
+  // other reader of this mock (#168)
+  return { createNotifier: stub, createBrowserNotifier: stub }
+})
 
 vi.mock('../../adapters/calendar/google', () => ({
   googleAccount: () => {
@@ -209,7 +211,7 @@ vi.mock('../../adapters/model/ollama', () => ({
       _thread: unknown,
       _ctx: unknown,
       exec: import('../../adapters/model').ToolExecutor,
-      signal?: AbortSignal,
+      signal?: AbortSignal
     ) {
       // the plan lands ahead of any text/tool, exactly as the AI adapter emits it
       if (scriptedModel.reasoning) yield { reasoning: scriptedModel.reasoning }
@@ -245,7 +247,15 @@ async function fresh(start: Date) {
   fakeDb.reset()
   mirrors.length = 0
   vi.setSystemTime(start)
-  useMew.setState({ ...pristine, lastTickDay: dayKey(start), nowMs: start.getTime(), lastActivityMs: start.getTime() }, true)
+  useMew.setState(
+    {
+      ...pristine,
+      lastTickDay: dayKey(start),
+      nowMs: start.getTime(),
+      lastActivityMs: start.getTime(),
+    },
+    true
+  )
   await useMew.getState().hydrate()
 }
 
@@ -292,18 +302,29 @@ describe('a seeded Tuesday morning', () => {
     const blocks = useMew.getState().blocks
     const thu = addDaysKey(dayKey(TUE(9, 40)), 2)
     const fri = addDaysKey(thu, 1)
-    expect(blocks.some((b) => b.dayKey === thu && /deck/i.test(b.title) && b.startMin === 540)).toBe(true)
-    expect(blocks.some((b) => b.dayKey === fri && b.title === 'Kept free' && b.tag === 'rest')).toBe(true)
+    expect(
+      blocks.some((b) => b.dayKey === thu && /deck/i.test(b.title) && b.startMin === 540)
+    ).toBe(true)
+    expect(
+      blocks.some((b) => b.dayKey === fri && b.title === 'Kept free' && b.tag === 'rest')
+    ).toBe(true)
     expect(lastMsg().body).toMatch(/^Done — /)
   })
 
   it('a mew celebrates, remembers — and an early finish offers the next task', async () => {
     await fresh(TUE(9, 40))
-    const current = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    const current = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
     useMew.getState().toggleComplete(current.id)
     expect(chat().some((m) => /That's a mew — one today/.test(m.body))).toBe(true)
     const ev = useMew.getState().memory.findLast((e: MemoryEvent) => e.kind === 'completed')!
-    expect(ev).toMatchObject({ title: current.title, startMin: current.startMin, endMin: current.endMin, deep: true })
+    expect(ev).toMatchObject({
+      title: current.title,
+      startMin: current.startMin,
+      endMin: current.endMin,
+      deep: true,
+    })
 
     /* 110 minutes reclaimed inside the block → next-up offers what fits */
     const nu = lastNudge('next-up')
@@ -315,20 +336,26 @@ describe('a seeded Tuesday morning', () => {
 
   it('an early finish after a long unbroken stretch suggests a micro-break instead', async () => {
     await fresh(TUE(11, 0)) // 2h into the morning, no rest yet
-    const current = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+    const current = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
     useMew.getState().toggleComplete(current.id)
     const mb = lastNudge('micro-break')
     expect(mb).toBeDefined()
     expect(mb.footnote).toContain('Albulescu')
     act(mb, 'take')
-    expect(useMew.getState().blocks.some((b) => /Micro-break/.test(b.title) && b.tag === 'rest')).toBe(true)
+    expect(
+      useMew.getState().blocks.some((b) => /Micro-break/.test(b.title) && b.tag === 'rest')
+    ).toBe(true)
   })
 
   it('edits a block in place — "make the prod release 45 mins" actually resizes it', async () => {
     await fresh(TUE(9, 40))
     await say('block thursday morning for the prod release')
     const thu = addDaysKey(dayKey(TUE(9, 40)), 2)
-    const before = useMew.getState().blocks.find((b) => b.dayKey === thu && /prod release/i.test(b.title))!
+    const before = useMew
+      .getState()
+      .blocks.find((b) => b.dayKey === thu && /prod release/i.test(b.title))!
     expect(before).toBeDefined()
     expect(before.endMin - before.startMin).not.toBe(45)
 
@@ -381,7 +408,9 @@ describe('a seeded Tuesday morning', () => {
     await say('block 45m for prod release today at 2pm')
     await say('block 45m for prod release tomorrow at 10am')
     await say('drop the prod release at 2pm')
-    const after = useMew.getState().blocks.filter((b) => /prod release/i.test(b.title) && b.status === 'open')
+    const after = useMew
+      .getState()
+      .blocks.filter((b) => /prod release/i.test(b.title) && b.status === 'open')
     expect(after).toHaveLength(1)
     expect(after[0].startMin).toBe(10 * 60) // the 14:00 went; tomorrow's 10:00 stands
     expect(lastMsg().body).toMatch(/^Removed — /)
@@ -391,7 +420,9 @@ describe('a seeded Tuesday morning', () => {
     await fresh(TUE(9, 40))
     await say('block 1h for interview with pooran today at 1:30pm')
     await say('block 15m for pooran prep today at 1:30pm')
-    expect(lastMsg().body).toMatch(/note: it overlaps .*interview with pooran 13:30–14:30 \(fixed — it can't move\)/i)
+    expect(lastMsg().body).toMatch(
+      /note: it overlaps .*interview with pooran 13:30–14:30 \(fixed — it can't move\)/i
+    )
   })
 
   it('a chat completion celebrates exactly once (no duplicate mew lines)', async () => {
@@ -404,7 +435,9 @@ describe('a seeded Tuesday morning', () => {
 
   it('start is a state: a started block cannot be re-started, and interrupt parks the rest', async () => {
     await fresh(TUE(9, 40))
-    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
     useMew.getState().startNow(deck.id)
     const started = useMew.getState().blocks.find((b) => b.id === deck.id)!
     expect(started.startedAt).toBeDefined()
@@ -420,10 +453,14 @@ describe('a seeded Tuesday morning', () => {
     useMew.getState().interruptBlock(deck.id)
     const after = useMew.getState().blocks
     expect(after.find((b) => b.id === deck.id)!.status).toBe('rolled')
-    const followUp = after.find((b) => b.status === 'open' && /Q3 deck/.test(b.title) && b.id !== deck.id)!
+    const followUp = after.find(
+      (b) => b.status === 'open' && /Q3 deck/.test(b.title) && b.id !== deck.id
+    )!
     expect(followUp).toBeDefined()
     expect(followUp.startMin).toBeGreaterThan(9 * 60 + 40)
-    expect(useMew.getState().memory.some((e) => e.kind === 'rolled' && /Q3 deck/.test(e.title ?? ''))).toBe(true)
+    expect(
+      useMew.getState().memory.some((e) => e.kind === 'rolled' && /Q3 deck/.test(e.title ?? ''))
+    ).toBe(true)
     expect(lastMsg().body).toMatch(/Paused — no blame/)
   })
 
@@ -432,6 +469,83 @@ describe('a seeded Tuesday morning', () => {
     await say('how is my week looking?')
     expect(lastMsg().body).toMatch(/history says/i)
     expect(lastMsg().body).toMatch(/mornings hold/i)
+  })
+
+  /* drag-to-reschedule (#158) — the store's dragMove is the only mutation path
+     for the week-grid drag, so its outcomes are asserted here, DOM-free. */
+  describe('dragMove — direct manipulation on the week grid', () => {
+    const reply = () =>
+      useMew
+        .getState()
+        .blocks.find((b) => /Reply to Sam/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+
+    it('a clear drop moves the block instantly and persists it (acceptance #1)', async () => {
+      await fresh(TUE(9, 40))
+      const r = reply()
+      const dur = r.endMin - r.startMin
+      const out = useMew.getState().dragMove(r.id, r.dayKey, 20 * 60) // 20:00, empty evening
+      expect(out).toBe('moved')
+      const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+      expect(after.startMin).toBe(20 * 60)
+      expect(after.endMin).toBe(20 * 60 + dur) // length preserved
+      expect(fakeDb.blocks.get(r.id)).toMatchObject({ startMin: 20 * 60 }) // synced to storage
+      expect(lastMsg().body).toMatch(/^Moved — Reply to Sam/)
+    })
+
+    it('a drop onto a meeting is bounced — conflict, week untouched, no move (acceptance #2)', async () => {
+      await fresh(TUE(9, 40))
+      const r = reply()
+      const before = { day: r.dayKey, start: r.startMin }
+      // the deck holds 9:00–11:30; dropping Reply onto 10:00 collides with it
+      const out = useMew.getState().dragMove(r.id, r.dayKey, 10 * 60)
+      expect(out).toBe('conflict')
+      const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+      expect({ day: after.dayKey, start: after.startMin }).toEqual(before) // returned to origin
+    })
+
+    it('a protected/held block drags normally — protected is a rule, not a lock (acceptance #3)', async () => {
+      await fresh(TUE(9, 40))
+      const walk = useMew
+        .getState()
+        .blocks.find((b) => /Walk/.test(b.title) && b.dayKey === dayKey(TUE(0)) && b.protected)!
+      const out = useMew.getState().dragMove(walk.id, walk.dayKey, 20 * 60)
+      expect(out).toBe('moved')
+      expect(useMew.getState().blocks.find((b) => b.id === walk.id)!.startMin).toBe(20 * 60)
+    })
+
+    it('a calendar event is never moved — the drop is ignored and chat explains (acceptance #5)', async () => {
+      await fresh(TUE(9, 40))
+      const tue = dayKey(TUE(0))
+      const ext = {
+        id: 'ext-1',
+        title: 'Synced 1:1',
+        tag: 'work' as const,
+        dayKey: tue,
+        startMin: 15 * 60,
+        endMin: 15 * 60 + 30,
+        protected: true,
+        status: 'open' as const,
+        calendarRefs: [],
+        estimateSource: 'user' as const,
+        external: { calId: 'cal-a', eventId: 'evt-1' },
+      }
+      useMew.setState({ blocks: [...useMew.getState().blocks, ext] })
+      const out = useMew.getState().dragMove('ext-1', tue, 20 * 60)
+      expect(out).toBe('external')
+      const after = useMew.getState().blocks.find((b) => b.id === 'ext-1')!
+      expect(after.startMin).toBe(15 * 60) // never moved
+      expect(after.external).toBeDefined() // still the calendar's
+      expect(lastMsg().body).toMatch(/from your calendar/i)
+    })
+
+    it('a drop back onto the same slot is a no-op (a click, not a move)', async () => {
+      await fresh(TUE(9, 40))
+      const r = reply()
+      const chatLen = chat().length
+      const out = useMew.getState().dragMove(r.id, r.dayKey, r.startMin)
+      expect(out).toBe('noop')
+      expect(chat().length).toBe(chatLen) // no chat line for a non-move
+    })
   })
 })
 
@@ -487,7 +601,12 @@ describe('the end of the day', () => {
     expect(useMew.getState().queuedNudges).toHaveLength(0)
     /* rollover logged yesterday's rest honestly (seed leaves work open at 19:00) */
     expect(
-      useMew.getState().memory.some((e: MemoryEvent) => (e.kind === 'rest_kept' || e.kind === 'rest_skipped') && e.dayKey === dayKey(TUE(0))),
+      useMew
+        .getState()
+        .memory.some(
+          (e: MemoryEvent) =>
+            (e.kind === 'rest_kept' || e.kind === 'rest_skipped') && e.dayKey === dayKey(TUE(0))
+        )
     ).toBe(true)
   })
 })
@@ -500,7 +619,9 @@ describe('clear → fresh start → replan (the restart journey)', () => {
 
     await say('cleanup my calendar so that i could restart and plan')
     expect(lastMsg().body).toMatch(/^Cleared — \d+ open blocks/)
-    const after = useMew.getState().blocks.filter((b) => b.status === 'open' && b.dayKey >= dayKey(TUE(0)))
+    const after = useMew
+      .getState()
+      .blocks.filter((b) => b.status === 'open' && b.dayKey >= dayKey(TUE(0)))
     expect(after).toHaveLength(0)
     /* done mews from earlier today survive — positive only */
     expect(useMew.getState().blocks.some((b) => b.status === 'done')).toBe(true)
@@ -513,7 +634,9 @@ describe('clear → fresh start → replan (the restart journey)', () => {
     expect(lastMsg().body).toMatch(/one thing that matters/)
 
     await say('block 2h for planning tomorrow at 9')
-    expect(useMew.getState().blocks.some((b) => /planning/i.test(b.title) && b.status === 'open')).toBe(true)
+    expect(
+      useMew.getState().blocks.some((b) => /planning/i.test(b.title) && b.status === 'open')
+    ).toBe(true)
   })
 
   it('Monday morning opens the fresh-start window on its own', async () => {
@@ -539,7 +662,11 @@ describe('the brain at work', () => {
     expect(bs.footnote).toContain('Bandura & Schunk')
 
     act(bs, 'starter')
-    expect(useMew.getState().blocks.some((b) => b.title === 'Starter: inbox sweep' && b.status === 'open')).toBe(true)
+    expect(
+      useMew
+        .getState()
+        .blocks.some((b) => b.title === 'Starter: inbox sweep' && b.status === 'open')
+    ).toBe(true)
     expect(lastMsg().body).toMatch(/25-minute starter/)
   })
 
@@ -551,7 +678,13 @@ describe('the brain at work', () => {
     for (let w = 1; w <= 4; w++) {
       const mon = addDaysKey(todayKey, -7 * w - 1)
       for (let i = 0; i < 6; i++)
-        heavy.push({ id: uid(), ts: TUE(9).getTime(), kind: 'completed', dayKey: mon, plannedMin: 60 })
+        heavy.push({
+          id: uid(),
+          ts: TUE(9).getTime(),
+          kind: 'completed',
+          dayKey: mon,
+          plannedMin: 60,
+        })
       for (let i = 0; i < 4; i++)
         heavy.push({ id: uid(), ts: TUE(9).getTime(), kind: 'rolled', dayKey: mon, plannedMin: 60 })
     }
@@ -623,13 +756,14 @@ describe('the mirror', () => {
   })
 })
 
-
 /* ── the brain is optional-path: off = invisible, on = a sense ───────── */
 
 describe('brain senses', () => {
   it('brain off (the default): completing a block writes nothing anywhere new', async () => {
     await fresh(TUE(9, 40))
-    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
     useMew.getState().toggleComplete(deck.id)
     await vi.advanceTimersByTimeAsync(0)
     expect(brainFake.ingests).toHaveLength(0)
@@ -638,7 +772,9 @@ describe('brain senses', () => {
   it('brain on: a completion ingests the task page with the day timeline', async () => {
     await fresh(TUE(9, 40))
     useMew.getState().updateSettings({ brainEnabled: true })
-    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
     useMew.getState().toggleComplete(deck.id)
     await vi.advanceTimersByTimeAsync(0)
     expect(brainFake.ingests.map((p) => p.slug)).toContain('task/q3-deck')
@@ -660,7 +796,9 @@ describe('brain senses', () => {
     desktopFake.tauri = true
     await fresh(TUE(9, 40))
     desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
-    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
     useMew.getState().toggleComplete(deck.id)
     await vi.advanceTimersByTimeAsync(0)
     expect(brainFake.ingests.map((p) => p.slug)).toContain('task/q3-deck')
@@ -677,7 +815,9 @@ describe('brain senses', () => {
     desktopFake.brainReady?.({ url: 'http://127.0.0.1:2000', token: 'gbrain_b' })
     expect(brainCfg.current!.url()).toBe('http://127.0.0.1:2000')
     expect(brainCfg.current!.token()).toBe('gbrain_b')
-    useMew.getState().updateSettings({ brainEnabled: true, brainUrl: 'http://my-brain:9999', brainToken: 'mine' })
+    useMew
+      .getState()
+      .updateSettings({ brainEnabled: true, brainUrl: 'http://my-brain:9999', brainToken: 'mine' })
     expect(brainCfg.current!.url()).toBe('http://my-brain:9999')
     expect(brainCfg.current!.token()).toBe('mine')
     await vi.advanceTimersByTimeAsync(30_000) // drain the queued desktop backup — no ghost timer across tests
@@ -688,7 +828,9 @@ describe('brain senses', () => {
        always-on rulebook stays dark. The rule lives ONLY in the brain, so the
        sole path to the plan is handshake → pref-cache refresh → applyPrefs. */
     desktopFake.tauri = true
-    brainFake.prefs = [{ kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always at 7am' }]
+    brainFake.prefs = [
+      { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always at 7am' },
+    ]
     await fresh(TUE(9, 40))
     desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
     await vi.advanceTimersByTimeAsync(0) // the handshake's listPrefs settles
@@ -786,7 +928,9 @@ describe('delegate (handoff candidates)', () => {
 
     act(dlg[0], 'capture')
     await drain()
-    const cap = useMew.getState().captures.find((c) => /hand the doc review thread to robin/i.test(c.title))
+    const cap = useMew
+      .getState()
+      .captures.find((c) => /hand the doc review thread to robin/i.test(c.title))
     expect(cap).toBeDefined()
     expect(cap!.status).toBe('open')
     /* suggest, don't seize: nothing was placed or reassigned by the accept itself */
@@ -823,7 +967,9 @@ describe('day debrief', () => {
     brainFake.reset()
     /* the day happens: deck done on time, Sam reply slips 40 */
     at(TUE(11, 30))
-    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === TUE_KEY)!
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === TUE_KEY)!
     useMew.getState().toggleComplete(deck.id)
     at(TUE(15, 40))
     const sam = useMew.getState().blocks.find((b) => /Reply to Sam/.test(b.title))!
@@ -837,7 +983,7 @@ describe('day debrief', () => {
     const db = nudges('debrief')
     expect(db).toHaveLength(1)
     expect(db[0].body).toBe(
-      '2 mews; the reply to sam slipped 40 past its window; rest held.\ntomorrow opens heavy — 8h against your 5.5.',
+      '2 mews; the reply to sam slipped 40 past its window; rest held.\ntomorrow opens heavy — 8h against your 5.5.'
     )
     expect(db[0].actions ?? []).toHaveLength(0)
 
@@ -846,7 +992,7 @@ describe('day debrief', () => {
     const page = brainFake.ingests.find(
       (p) =>
         p.slug === `week/${TUE_KEY}` &&
-        (p as { timeline?: { summary: string }[] }).timeline?.[0]?.summary.startsWith('debrief:'),
+        (p as { timeline?: { summary: string }[] }).timeline?.[0]?.summary.startsWith('debrief:')
     )
     expect(page).toBeDefined()
 
@@ -1092,9 +1238,13 @@ describe('entity-aware durations', () => {
 
   it('three 40-minute preps make "block interview prep tomorrow" a 40-minute block, credited', async () => {
     await fresh(TUE(9, 40))
-    useMew.setState((st) => ({ memory: [...st.memory, prepDone(2, 40), prepDone(5, 40), prepDone(9, 40)] }))
+    useMew.setState((st) => ({
+      memory: [...st.memory, prepDone(2, 40), prepDone(5, 40), prepDone(9, 40)],
+    }))
     await say('block interview prep tomorrow')
-    const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
+    const placed = useMew
+      .getState()
+      .blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
     expect(placed).toBeDefined()
     expect(placed!.endMin - placed!.startMin).toBe(40)
     expect(lastMsg().body).toContain('(your usual)')
@@ -1102,10 +1252,14 @@ describe('entity-aware durations', () => {
 
   it('an explicit duration always wins over the usual', async () => {
     await fresh(TUE(9, 40))
-    useMew.setState((st) => ({ memory: [...st.memory, prepDone(2, 40), prepDone(5, 40), prepDone(9, 40)] }))
+    useMew.setState((st) => ({
+      memory: [...st.memory, prepDone(2, 40), prepDone(5, 40), prepDone(9, 40)],
+    }))
     /* 50m fits tomorrow's 60-minute gap; 40 is the usual — explicit wins */
     await say('block 50m for interview prep tomorrow')
-    const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
+    const placed = useMew
+      .getState()
+      .blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
     expect(placed!.endMin - placed!.startMin).toBe(50)
     expect(lastMsg().body).not.toContain('(your usual)')
   })
@@ -1114,7 +1268,9 @@ describe('entity-aware durations', () => {
     await fresh(TUE(9, 40))
     useMew.setState((st) => ({ memory: [...st.memory, prepDone(2, 40), prepDone(5, 40)] }))
     await say('block interview prep tomorrow')
-    const placed = useMew.getState().blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
+    const placed = useMew
+      .getState()
+      .blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
     expect(placed!.endMin - placed!.startMin).toBe(60)
     expect(lastMsg().body).not.toContain('(your usual)')
   })
@@ -1192,7 +1348,13 @@ describe('desktop self-update', () => {
       status: 'open',
     }
     desktopFake.tauri = true
-    desktopFake.backup = JSON.stringify({ blocks: [ghost], captures: [], chat: [], memory: [], settings: null })
+    desktopFake.backup = JSON.stringify({
+      blocks: [ghost],
+      captures: [],
+      chat: [],
+      memory: [],
+      settings: null,
+    })
     await fresh(TUE(9, 40))
     desktopFake.updateReady?.('0.2.0')
     const offer = nudges('update')[0]
@@ -1302,7 +1464,9 @@ describe('setAttention (one-click priority from the orbit)', () => {
   it('is quiet (no chat) and idempotent', async () => {
     await fresh(TUE(9, 40))
     const before = chat().length
-    const deck = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 40)))!
     useMew.getState().setAttention(deck.id, 'background')
     useMew.getState().setAttention(deck.id, 'background') // no-op
     expect(chat().length).toBe(before)
@@ -1346,7 +1510,13 @@ describe('desktop backup & restore', () => {
   const drain = () => vi.advanceTimersByTimeAsync(0)
 
   it('web build never offers a restore and never writes a backup', async () => {
-    desktopFake.backup = JSON.stringify({ blocks: [], captures: [], chat: [], memory: [], settings: null })
+    desktopFake.backup = JSON.stringify({
+      blocks: [],
+      captures: [],
+      chat: [],
+      memory: [],
+      settings: null,
+    })
     await fresh(TUE(9, 40))
     await drain()
     expect(nudges('restore')).toHaveLength(0)
@@ -1366,7 +1536,13 @@ describe('desktop backup & restore', () => {
       status: 'open',
     }
     desktopFake.tauri = true
-    desktopFake.backup = JSON.stringify({ blocks: [restored], captures: [], chat: [], memory: [], settings: null })
+    desktopFake.backup = JSON.stringify({
+      blocks: [restored],
+      captures: [],
+      chat: [],
+      memory: [],
+      settings: null,
+    })
     desktopFake.backupDate = '2026-06-08'
 
     await fresh(TUE(9, 40))
@@ -1387,7 +1563,13 @@ describe('desktop backup & restore', () => {
 
   it('declining the offer keeps the fresh week and resolves the nudge', async () => {
     desktopFake.tauri = true
-    desktopFake.backup = JSON.stringify({ blocks: [], captures: [], chat: [], memory: [], settings: null })
+    desktopFake.backup = JSON.stringify({
+      blocks: [],
+      captures: [],
+      chat: [],
+      memory: [],
+      settings: null,
+    })
     await fresh(TUE(9, 40))
     await drain()
     const offer = nudges('restore')[0]
@@ -1415,7 +1597,6 @@ describe('desktop backup & restore', () => {
     await useMew.getState().speak('block 30m for review today at 17:30')
     await vi.advanceTimersByTimeAsync(30_000)
     expect(desktopFake.written).toHaveLength(2)
-
   })
 })
 
@@ -1479,6 +1660,46 @@ describe('interface font setting', () => {
   })
 })
 
+/* ── first-run concept tour gate (#160) ──────────────────────────────── */
+
+describe('onboarding tour first-run flag', () => {
+  it('defaults to unseen on a fresh seed so the tour shows once', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(false)
+  })
+
+  it('dismiss sets the flag, persists it, and a reload keeps the tour gone', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().dismissOnboarding()
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(true)
+    expect(fakeDb.settings?.hasSeenOnboarding).toBe(true) // written to storage
+    /* re-hydrate from the same storage — the tour must not reappear */
+    await useMew.getState().hydrate()
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(true)
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('dismiss is idempotent — already-seen never re-persists', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().dismissOnboarding()
+    fakeDb.settings = null // prove a second dismiss writes nothing new
+    useMew.getState().dismissOnboarding()
+    expect(fakeDb.settings).toBeNull()
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(true)
+  })
+
+  it('backfills the default when a pre-onboarding snapshot is restored', async () => {
+    await fresh(TUE(9, 40))
+    /* a backup written before this field existed — the tour treats a missing
+       flag as unseen, so a returning user gets the one-time tour, never a crash */
+    const legacy = { ...useMew.getState().settings } as Partial<Settings>
+    delete legacy.hasSeenOnboarding
+    await useMew.getState().importData(JSON.stringify({ settings: legacy }))
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(false)
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+})
+
 /* ── preferences change mechanics, not just prose ────────────────────── */
 
 describe('prefs applied at placement', () => {
@@ -1507,7 +1728,9 @@ describe('prefs applied at placement', () => {
     await say('remember the deploy always takes 45 min')
     await say('add deploy tomorrow at 9')
     const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
-    const dep = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /deploy/i.test(b.title))!
+    const dep = useMew
+      .getState()
+      .blocks.find((b) => b.dayKey === tomorrow && /deploy/i.test(b.title))!
     expect(dep.endMin - dep.startMin).toBe(45)
   })
 
@@ -1529,7 +1752,11 @@ describe('pref-drift validation', () => {
   async function liveAgainstTheRule() {
     await fresh(TUE(9, 40))
     await say('remember that gym is always at 7am')
-    for (const [day, hour] of [[-3, 18], [-2, 18.5], [-1, 19]] as const) {
+    for (const [day, hour] of [
+      [-3, 18],
+      [-2, 18.5],
+      [-1, 19],
+    ] as const) {
       useMew.setState((s) => ({
         memory: [
           ...s.memory,
@@ -1589,10 +1816,14 @@ describe('scheduler slice 2 — scored placement + de-dup (#80, #89)', () => {
     await fresh(TUE(9, 40))
     await say('block 1h for sprint planning today at 2pm')
     expect(
-      useMew.getState().blocks.filter((b) => /sprint planning/i.test(b.title) && b.status === 'open'),
+      useMew
+        .getState()
+        .blocks.filter((b) => /sprint planning/i.test(b.title) && b.status === 'open')
     ).toHaveLength(1)
     await say('block 1h for sprint planning today at 4pm') // plan-not-move: would have twinned
-    const open = useMew.getState().blocks.filter((b) => /sprint planning/i.test(b.title) && b.status === 'open')
+    const open = useMew
+      .getState()
+      .blocks.filter((b) => /sprint planning/i.test(b.title) && b.status === 'open')
     expect(open).toHaveLength(1) // moved onto the new slot, no second copy
     expect(open[0].startMin).toBe(16 * 60)
     expect(lastMsg().body.toLowerCase()).toContain('moved')
@@ -1642,7 +1873,9 @@ describe('scheduler: a long continuous run earns a pacing rest (#103)', () => {
   const SAT = () => addDaysKey(dayKey(TUE(9, 40)), 4) // Saturday — clear afternoon air
 
   const restsOn = (key: string) =>
-    useMew.getState().blocks.filter((b) => b.dayKey === key && b.tag === 'rest' && b.status === 'open')
+    useMew
+      .getState()
+      .blocks.filter((b) => b.dayKey === key && b.tag === 'rest' && b.status === 'open')
 
   it('inserts exactly one short, unprotected breather into a >90-min stretch', async () => {
     await fresh(TUE(9, 40))
@@ -1920,6 +2153,508 @@ describe('a turn can be stopped mid-stream', () => {
     expect(useMew.getState().thinking).toBe(false)
   })
 })
+
+/* ── power-user surface: quick-capture (#171) + global search (#170) ──────
+   The palette is UI; its store contract is what we pin here. Quick-capture is
+   the one capture path that fires NO when-where nudge and writes NO chat turn —
+   the whole point of "jot it and move on" — so these scenarios guard exactly
+   that, plus the auto-place fallback and the read-only search. */
+describe('quick-capture (#171) — no chat turn, no when-where nudge', () => {
+  it('open mode: creates an open capture, no chat entry, no when-where nudge', async () => {
+    await fresh(TUE(9, 40))
+    const chatBefore = chat().length
+    const res = useMew.getState().quickCapture('Call bank', false)
+    expect(res).toEqual({ kind: 'open', message: 'Captured: Call bank' })
+    const caps = useMew.getState().captures
+    expect(caps.some((c) => c.title === 'Call bank' && c.status === 'open')).toBe(true)
+    // the chat thread is untouched — a quick-capture lives in parallel data
+    expect(chat().length).toBe(chatBefore)
+    expect(nudges('when-where')).toHaveLength(0)
+  })
+
+  it('auto-place mode: lands a 30-min block in the first free slot today, no chat turn', async () => {
+    await fresh(TUE(12, 0)) // standup just ended 12:00; lunch is 13:00 → a clear gap
+    const chatBefore = chat().length
+    const res = useMew.getState().quickCapture('Call bank', true)
+    expect(res.kind).toBe('placed')
+    expect(res.message).toMatch(/^Placed: Call bank \d\d?:\d\d/)
+    const blocks = useMew.getState().blocks
+    const placed = blocks.find((b) => b.title === 'Call bank' && b.dayKey === dayKey(TUE(12, 0)))!
+    expect(placed).toBeDefined()
+    expect(placed.endMin - placed.startMin).toBe(30)
+    expect(placed.startMin).toBeGreaterThanOrEqual(12 * 60 + 15) // after now+15 floor
+    // the capture is recorded as placed and linked to the block
+    const cap = useMew.getState().captures.find((c) => c.title === 'Call bank')!
+    expect(cap.status).toBe('placed')
+    expect(cap.placedBlockId).toBe(placed.id)
+    // still no chat turn
+    expect(chat().length).toBe(chatBefore)
+    expect(nudges('when-where')).toHaveLength(0)
+  })
+
+  it('auto-place with no free slot today → falls back to an open capture, honest copy', async () => {
+    await fresh(TUE(9, 40))
+    /* fill the rest of today so no 30-min slot remains after now+15 */
+    const today = dayKey(TUE(9, 40))
+    const wall: import('../../domain/types').Block[] = [
+      {
+        id: uid(),
+        title: 'Wall',
+        tag: 'work',
+        dayKey: today,
+        startMin: 9 * 60,
+        endMin: 23 * 60,
+        protected: true,
+        status: 'open',
+        calendarRefs: [],
+        estimateSource: 'user',
+      },
+    ]
+    useMew.setState((s) => ({ blocks: [...s.blocks.filter((b) => b.dayKey !== today), ...wall] }))
+    const res = useMew.getState().quickCapture('Call bank', true)
+    expect(res.kind).toBe('open')
+    expect(res.message).toMatch(/no free slot today/i)
+    expect(
+      useMew.getState().captures.some((c) => c.title === 'Call bank' && c.status === 'open')
+    ).toBe(true)
+  })
+
+  it('respects the quickCaptureMode setting when autoPlace is omitted', async () => {
+    await fresh(TUE(12, 0))
+    useMew.getState().updateSettings({ quickCaptureMode: 'auto-place' })
+    const res = useMew.getState().quickCapture('Email Dana')
+    expect(res.kind).toBe('placed')
+  })
+
+  it('rapid captures all land, each with its own result (acceptance: 3× in a row)', async () => {
+    await fresh(TUE(9, 40))
+    const a = useMew.getState().quickCapture('First', false)
+    const b = useMew.getState().quickCapture('Second', false)
+    const c = useMew.getState().quickCapture('Third', false)
+    expect([a.kind, b.kind, c.kind]).toEqual(['open', 'open', 'open'])
+    const titles = useMew.getState().captures.map((x) => x.title)
+    expect(titles).toEqual(expect.arrayContaining(['First', 'Second', 'Third']))
+  })
+
+  it('empty / whitespace input is a gentle no-op (button stays disabled in UI)', async () => {
+    await fresh(TUE(9, 40))
+    const capsBefore = useMew.getState().captures.length
+    const res = useMew.getState().quickCapture('   ', false)
+    expect(res.kind).toBe('empty')
+    expect(useMew.getState().captures.length).toBe(capsBefore)
+  })
+
+  it('clamps a very long title to the 120-char Block.title constraint', async () => {
+    await fresh(TUE(9, 40))
+    const long = 'x'.repeat(200)
+    useMew.getState().quickCapture(long, false)
+    const cap = useMew.getState().captures.find((c) => c.title.startsWith('x'))!
+    expect(cap.title.length).toBe(120)
+  })
+})
+
+describe('global search (#170) — read-only, store-level', () => {
+  it('searchAll finds a seeded block by partial title and never mutates the week', async () => {
+    await fresh(TUE(9, 40))
+    const blocksBefore = useMew.getState().blocks
+    const r = useMew.getState().searchAll('deck')
+    expect(r.block.length).toBeGreaterThan(0)
+    expect(r.block.some((h) => /deck/i.test(h.title))).toBe(true)
+    // read-only: the block array is the very same reference afterwards
+    expect(useMew.getState().blocks).toBe(blocksBefore)
+  })
+
+  it('a quick-captured open item is findable in search (the "did I jot X?" answer)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().quickCapture('Renew passport', false)
+    const r = useMew.getState().searchAll('passport')
+    expect(r.capture.some((h) => h.title === 'Renew passport' && h.detail === 'unplaced')).toBe(
+      true
+    )
+  })
+
+  it('an empty query returns no hits (the palette shows commands instead)', async () => {
+    await fresh(TUE(9, 40))
+    const r = useMew.getState().searchAll('')
+    expect(r.block.length + r.capture.length + r.chat.length).toBe(0)
+  })
+})
+
+describe('command palette open/close (#169) — store flag', () => {
+  it('opens and closes; closing a closed palette is a no-op', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().commandPaletteOpen).toBe(false)
+    useMew.getState().openCommandPalette()
+    expect(useMew.getState().commandPaletteOpen).toBe(true)
+    useMew.getState().closeCommandPalette()
+    expect(useMew.getState().commandPaletteOpen).toBe(false)
+    useMew.getState().closeCommandPalette() // idempotent
+    expect(useMew.getState().commandPaletteOpen).toBe(false)
+  })
+
+  it('revealBlock routes to the week view and focuses the block’s day', async () => {
+    await fresh(TUE(9, 40))
+    const target = useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title))!
+    useMew.getState().revealBlock(target.id)
+    const s = useMew.getState()
+    expect(s.page).toBe('week')
+    expect(s.view).toBe('week')
+    expect(s.focusedDayKey).toBe(target.dayKey)
+  })
+
+  it('revealChatMessage routes to the week page and sets the scroll target', async () => {
+    await fresh(TUE(9, 40))
+    const msg = chat()[0]
+    useMew.getState().revealChatMessage(msg.id)
+    expect(useMew.getState().scrollToMsgId).toBe(msg.id)
+    expect(useMew.getState().page).toBe('week')
+  })
+})
+
+/* RFC 5545 RRULE for user-created recurring blocks (#159) — driven through the
+   real store: a plan_blocks call carrying a recurrence expands into one linked
+   block per occurrence; a single delete drops one, an explicit-all drops the
+   whole series; a save/load cycle preserves the rule on every block. Titles
+   ("Pilates", "Journal") are deliberately absent from the seed so the counts
+   are exactly the expansion, and the executor's own result string is captured
+   from the tool call — the streamed reply chunks aren't the tool_result. */
+describe('recurring blocks (#159)', () => {
+  // Pilates every Mon & Wed at 7:00–8:00 for 12 weeks → 24 blocks (2 × 12)
+  const weeklyRule = {
+    freq: 'WEEKLY' as const,
+    interval: 1,
+    byday: ['MO' as const, 'WE' as const],
+    count: 24,
+  }
+  let toolResult = ''
+
+  async function placePilates() {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' }) // route through the scripted adapter
+    toolResult = ''
+    scriptedModel.chunks = ['On it — ', 'placed.']
+    scriptedModel.midTurn = (exec) => {
+      toolResult = exec.plan(
+        [
+          {
+            title: 'Pilates',
+            tag: 'health',
+            dayOffset: 0,
+            startMin: 7 * 60,
+            durationMin: 60,
+            rrule: weeklyRule,
+          },
+        ],
+        []
+      )
+    }
+    await say('pilates every monday and wednesday at 7 for 12 weeks')
+  }
+
+  it('expands a 12-week Mon/Wed rule into 24 linked blocks at the right times', async () => {
+    await placePilates()
+    const blocks = useMew.getState().blocks.filter((b) => b.title === 'Pilates')
+    expect(blocks).toHaveLength(24)
+    // every block carries the same (truthy) series id and the rule itself
+    const ids = new Set(blocks.map((b) => b.recurringBlockId))
+    expect(ids.size).toBe(1)
+    expect([...ids][0]).toBeTruthy()
+    expect(
+      blocks.every((b) => b.rrule?.freq === 'WEEKLY' && b.startMin === 420 && b.endMin === 480)
+    ).toBe(true)
+    // only Mondays and Wednesdays, 12 of each
+    const dows = blocks.map((b) => new Date(b.dayKey + 'T00:00:00').getDay())
+    expect(dows.filter((d) => d === 1)).toHaveLength(12) // Monday
+    expect(dows.filter((d) => d === 3)).toHaveLength(12) // Wednesday
+    expect(toolResult).toMatch(/repeats Mon & Wed/i)
+    expect(toolResult).toMatch(/24 blocks/)
+  })
+
+  it('deleting one occurrence leaves the rule and the rest of the series intact', async () => {
+    await placePilates()
+    const series = useMew.getState().blocks.filter((b) => b.title === 'Pilates')
+    const seriesId = series[0].recurringBlockId
+    // a single occurrence comes off (what a per-block delete does) — the series
+    // link stays on every other block, so "delete this one" never severs the rest.
+    const victim = [...series].sort((a, b) => a.dayKey.localeCompare(b.dayKey))[3]
+    useMew.setState({ blocks: useMew.getState().blocks.filter((b) => b.id !== victim.id) })
+
+    const after = useMew.getState().blocks.filter((b) => b.title === 'Pilates')
+    expect(after).toHaveLength(23)
+    expect(after.every((b) => b.recurringBlockId === seriesId && b.rrule?.freq === 'WEEKLY')).toBe(
+      true
+    )
+    expect(after.some((b) => b.dayKey === victim.dayKey)).toBe(false) // that one day is gone
+  })
+
+  it('deleting all sessions through the remove tool clears the whole series and its link', async () => {
+    await placePilates()
+    let removeResult = ''
+    scriptedModel.chunks = ['Okay — ', 'cleared them all.']
+    scriptedModel.midTurn = (exec) => {
+      removeResult = exec.remove('pilates', { all: true })
+    }
+    await say('cancel all my pilates sessions')
+    expect(useMew.getState().blocks.some((b) => b.title === 'Pilates')).toBe(false)
+    expect(useMew.getState().blocks.some((b) => b.recurringBlockId)).toBe(false) // link drops with the series
+    expect(removeResult).toMatch(/Pilates × 24 sessions/)
+  })
+
+  it('preserves the rule on every block across a save/load cycle', async () => {
+    await placePilates()
+    const before = useMew.getState().blocks.filter((b) => b.title === 'Pilates').length
+    expect(before).toBe(24)
+    // reload the store straight from the faked storage (what dexie persisted)
+    await useMew.getState().hydrate()
+    const after = useMew.getState().blocks.filter((b) => b.title === 'Pilates')
+    expect(after).toHaveLength(before)
+    expect(
+      after.every(
+        (b) =>
+          b.rrule?.freq === 'WEEKLY' && b.rrule?.byday?.join() === 'MO,WE' && b.recurringBlockId
+      )
+    ).toBe(true)
+  })
+
+  it('caps an open-ended daily rule at the 52-week window, never flooding the week', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['On it.']
+    scriptedModel.midTurn = (exec) =>
+      exec.plan(
+        [
+          {
+            title: 'Journal',
+            tag: 'private',
+            dayOffset: 0,
+            startMin: 6 * 60,
+            durationMin: 15,
+            rrule: { freq: 'DAILY', interval: 1 },
+          },
+        ],
+        []
+      )
+    await say('journal every day')
+    // open-ended daily → today + 52 weeks (≈365 days), bounded well under 800
+    const journals = useMew.getState().blocks.filter((b) => b.title === 'Journal')
+    expect(journals.length).toBeGreaterThan(360)
+    expect(journals.length).toBeLessThanOrEqual(800)
+    expect(journals.every((b) => b.recurringBlockId === journals[0].recurringBlockId)).toBe(true)
+  })
+})
+
+/* #162 — undo an AI action: undo_last_action reverses the turn's most recent
+   mutating tool. The store snapshots the week before each mutating tool and
+   restores it; chat (the reply about the undone action) stays as context. */
+
+describe('undo an AI action (#162)', () => {
+  const deckToday = () =>
+    useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+  const blocksById = (id: string) => useMew.getState().blocks.find((b) => b.id === id)
+
+  it('reverses everything the last plan call placed (the whole tool effect)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const before = useMew.getState().blocks.length
+    /* the model places blocks (a long run may also earn an auto-breather), then
+       the user says "undo that" — the same turn reverses exactly that plan call,
+       breather and all, so the week is byte-for-byte where it started */
+    let placedReply = ''
+    let undoReply = ''
+    let placedCount = 0
+    scriptedModel.chunks = ['On it — ', 'and undone.']
+    scriptedModel.midTurn = (exec) => {
+      placedReply = exec.plan(
+        [
+          { title: 'audit prep', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 },
+          { title: 'budget pass', tag: 'work', dayOffset: 1, startMin: 11 * 60, durationMin: 60 },
+          { title: 'vendor sync', tag: 'work', dayOffset: 1, startMin: 13 * 60, durationMin: 30 },
+        ],
+        []
+      )
+      placedCount = useMew.getState().blocks.length - before
+      undoReply = exec.undoLast()
+    }
+    await say('block three things tomorrow — actually, undo that')
+
+    expect(placedReply).toMatch(/^Done — /)
+    expect(placedCount).toBeGreaterThanOrEqual(3) // the three asked, plus any auto-breather
+    expect(undoReply).toMatch(/^Undone — /)
+    expect(undoReply).toMatch(/blocks I'd just placed/) // names the reversal, MEW's voice
+    // every placed block (and any auto-breather) is gone — the week is exactly as it was
+    expect(useMew.getState().blocks.length).toBe(before)
+    expect(
+      useMew.getState().blocks.some((b) => /audit prep|budget pass|vendor sync/.test(b.title))
+    ).toBe(false)
+  })
+
+  it('a model that says "undo that" removes the most recent placed blocks (acceptance)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const tomorrow = addDaysKey(dayKey(TUE(0)), 1)
+    scriptedModel.chunks = ['placed it — ', 'and rolled it back.']
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [{ title: 'dentist', tag: 'health', dayOffset: 1, startMin: 15 * 60, durationMin: 60 }],
+        []
+      )
+      exec.undoLast()
+    }
+    await say('book the dentist tomorrow at 3 — no wait, undo')
+    expect(
+      useMew.getState().blocks.some((b) => b.dayKey === tomorrow && /dentist/.test(b.title))
+    ).toBe(false)
+  })
+
+  it('reverses a move — the block returns to its original day and time', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const deck = deckToday()
+    const { id, dayKey: origDay, startMin: origStart } = deck
+    scriptedModel.chunks = ['moving it… ', 'put back.']
+    scriptedModel.midTurn = (exec) => {
+      exec.move(deck.title, 3, 14 * 60) // push to +3 days at 14:00
+      undoSawMoved(id, origDay, origStart) // proves the move landed before undo
+      exec.undoLast()
+    }
+    await say('push the deck to friday afternoon — actually never mind')
+
+    const after = blocksById(id)!
+    expect(after.dayKey).toBe(origDay)
+    expect(after.startMin).toBe(origStart)
+  })
+
+  it('reverses a completion: the block reopens and the mew event is cleared', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const deck = deckToday()
+    const memBefore = useMew.getState().memory.filter((e) => e.kind === 'completed').length
+    scriptedModel.chunks = ['nice — ', 'oh, reverted.']
+    scriptedModel.midTurn = (exec) => {
+      exec.complete(deck.title)
+      exec.undoLast()
+    }
+    await say("finished the deck — wait that wasn't done, undo")
+
+    expect(blocksById(deck.id)!.status).toBe('open') // reopened
+    // the completion memory event logged by complete_task is gone again
+    expect(useMew.getState().memory.filter((e) => e.kind === 'completed').length).toBe(memBefore)
+    // and it's gone from storage too, not just live state
+    expect(
+      [...fakeDb.memory.values()].filter((e) => (e as { kind: string }).kind === 'completed').length
+    ).toBe(memBefore)
+  })
+
+  it('reverses only the LAST tool in a multi-step turn (plan stays, move reverts)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const tomorrow = addDaysKey(dayKey(TUE(0)), 1)
+    let movedDay = ''
+    scriptedModel.chunks = ['working… ', 'last bit undone.']
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [{ title: 'briefing', tag: 'work', dayOffset: 1, startMin: 10 * 60, durationMin: 60 }],
+        []
+      )
+      const placed = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!
+      exec.move(placed.title, 2, 16 * 60) // move it again — this is the LAST mutation
+      movedDay = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!.dayKey
+      exec.undoLast() // reverses only the move, not the plan
+    }
+    await say('add a briefing tomorrow, then push it to thursday — undo the push')
+
+    const briefing = useMew.getState().blocks.find((b) => /briefing/.test(b.title))
+    expect(briefing).toBeDefined() // the plan SURVIVES — only the last action reverses
+    expect(movedDay).toBe(addDaysKey(dayKey(TUE(0)), 2)) // it really had moved to thursday
+    expect(briefing!.dayKey).toBe(tomorrow) // …and undo put it back to tomorrow
+  })
+
+  it('reverses a capture the same turn jotted', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const before = useMew.getState().captures.length
+    scriptedModel.chunks = ['jotted — ', 'taken back.']
+    scriptedModel.midTurn = (exec) => {
+      exec.capture('call the bank')
+      exec.undoLast()
+    }
+    await say('I should call the bank — actually undo that')
+    expect(useMew.getState().captures.length).toBe(before)
+    expect(useMew.getState().captures.some((c) => /call the bank/.test(c.title))).toBe(false)
+    expect(
+      [...fakeDb.captures.values()].some((c) =>
+        /call the bank/.test((c as { title: string }).title)
+      )
+    ).toBe(false)
+  })
+
+  it('is read-only when nothing has changed this turn — "nothing to undo"', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const before = useMew.getState().blocks.length
+    let reply = ''
+    scriptedModel.chunks = ['hmm — ', 'ok.']
+    scriptedModel.midTurn = (exec) => {
+      reply = exec.undoLast() // no mutation happened first
+    }
+    await say('undo that')
+    expect(reply).toMatch(/nothing to undo/i)
+    expect(useMew.getState().blocks.length).toBe(before) // untouched
+  })
+
+  it('does not touch chat — the reply about the undone action stays as context', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const userTurns = () => chat().filter((m) => m.role === 'user').length
+    scriptedModel.chunks = ['placed — ', 'and undone, all good.']
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [{ title: 'errand', tag: 'work', dayOffset: 1, startMin: 12 * 60, durationMin: 30 }],
+        []
+      )
+      exec.undoLast()
+    }
+    const before = userTurns()
+    await say('block an errand tomorrow then undo it')
+
+    // the user message + the streamed mew reply are both still in the log —
+    // undo reverses the WEEK, never the conversation
+    expect(userTurns()).toBe(before + 1)
+    expect(chat().some((m) => m.role === 'mew' && /all good/.test(m.body))).toBe(true)
+  })
+
+  it('snapshot is per-turn: undo reaches the last action, then a fresh undo finds nothing', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    // turn 1: place then undo — the snapshot is consumed
+    scriptedModel.chunks = ['done — ', 'undone.']
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [{ title: 'sync', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 }],
+        []
+      )
+      exec.undoLast()
+    }
+    await say('add a sync tomorrow then undo')
+
+    // turn 2: a bare "undo that" with nothing new this turn has nothing to take back
+    let secondUndo = ''
+    scriptedModel.chunks = ['let me see — ', 'ok.']
+    scriptedModel.midTurn = (exec) => {
+      secondUndo = exec.undoLast()
+    }
+    await say('undo that')
+    expect(secondUndo).toMatch(/nothing to undo/i)
+  })
+})
+
+/** Assert a move committed before the undo runs (keeps the move test honest). */
+function undoSawMoved(id: string, origDay: string, origStart: number) {
+  const moved = useMew.getState().blocks.find((b) => b.id === id)!
+  if (moved.dayKey === origDay && moved.startMin === origStart) {
+    throw new Error('expected the block to have moved before undo')
+  }
+}
 
 describe('structured logging (#181) — a calendar sync failure is logged, not swallowed silently', () => {
   /* a recording sink installed on the app-wide logger (setLoggerSink), so we

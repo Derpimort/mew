@@ -14,7 +14,10 @@ describe('createCoreStorage — the HTTP StoragePort client', () => {
   it('posts {method,args} to /rpc with the bearer token and returns the result', async () => {
     const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({
       ok: true,
-      json: async () => ({ ok: true, result: { blocks: [], captures: [], chat: [], memory: [], settings: null } }),
+      json: async () => ({
+        ok: true,
+        result: { blocks: [], captures: [], chat: [], memory: [], settings: null },
+      }),
     }))
     vi.stubGlobal('fetch', fetchSpy)
 
@@ -29,18 +32,28 @@ describe('createCoreStorage — the HTTP StoragePort client', () => {
   })
 
   it('forwards args for void commands and trims a trailing slash on the base url', async () => {
-    const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({ ok: true, json: async () => ({ ok: true, result: null }) }))
+    const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({
+      ok: true,
+      json: async () => ({ ok: true, result: null }),
+    }))
     vi.stubGlobal('fetch', fetchSpy)
 
     const store = createCoreStorage('http://127.0.0.1:9000/', 'tok')
     await store.putBlocks([{ id: 'a' } as Block])
 
     expect(fetchSpy.mock.calls[0][0]).toBe('http://127.0.0.1:9000/rpc')
-    expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({ method: 'putBlocks', args: [[{ id: 'a' }]] })
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body)).toEqual({
+      method: 'putBlocks',
+      args: [[{ id: 'a' }]],
+    })
   })
 
   it('throws on a non-ok HTTP status', async () => {
-    const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({ ok: false, status: 500, text: async () => 'boom' }))
+    const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({
+      ok: false,
+      status: 500,
+      text: async () => 'boom',
+    }))
     vi.stubGlobal('fetch', fetchSpy)
 
     const store = createCoreStorage('http://127.0.0.1:9000', 'tok')
@@ -48,7 +61,10 @@ describe('createCoreStorage — the HTTP StoragePort client', () => {
   })
 
   it('throws when the server envelope reports ok:false', async () => {
-    const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({ ok: true, json: async () => ({ ok: false, error: 'nope' }) }))
+    const fetchSpy = vi.fn(async (_url: string, _init: FetchInit) => ({
+      ok: true,
+      json: async () => ({ ok: false, error: 'nope' }),
+    }))
     vi.stubGlobal('fetch', fetchSpy)
 
     const store = createCoreStorage('http://127.0.0.1:9000', 'tok')

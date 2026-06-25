@@ -63,7 +63,9 @@ vi.mock('ai', () => ({
   jsonSchema: (s: unknown) => s,
   stepCountIs: (n: number) => n,
 }))
-vi.mock('@ai-sdk/anthropic', () => ({ createAnthropic: () => () => ({ id: 'mock-anthropic-model' }) }))
+vi.mock('@ai-sdk/anthropic', () => ({
+  createAnthropic: () => () => ({ id: 'mock-anthropic-model' }),
+}))
 vi.mock('@ai-sdk/openai', () => ({ createOpenAI: () => () => ({ id: 'mock-openai-model' }) }))
 
 let createAiAdapter: typeof import('../aiAdapter').createAiAdapter
@@ -85,7 +87,8 @@ async function collect(it: AsyncIterable<ConverseChunk>): Promise<ConverseChunk[
 }
 
 function optionsHasThinking(o: unknown): boolean {
-  const po = (o as { providerOptions?: { anthropic?: { thinking?: { type?: string } } } }).providerOptions
+  const po = (o as { providerOptions?: { anthropic?: { thinking?: { type?: string } } } })
+    .providerOptions
   return po?.anthropic?.thinking?.type === 'enabled'
 }
 
@@ -96,7 +99,9 @@ describe('reasoning OFF (default) — no thinking requested, no reasoning chunk'
       { type: 'text-delta', id: 't', text: 'thursday is held.' },
     ]
     const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6') // reasoning defaults false
-    const chunks = await collect(adapter.converse([{ role: 'user', text: 'block thursday' }], ctx, exec))
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'block thursday' }], ctx, exec)
+    )
 
     expect(chunks).toEqual(['done — ', 'thursday is held.'])
     expect(chunks.every((c) => typeof c === 'string')).toBe(true)
@@ -114,14 +119,18 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'text-delta', id: 't', text: 'done — thursday 9 to 12 is held.' },
     ]
     const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
-    const chunks = await collect(adapter.converse([{ role: 'user', text: 'block thursday morning' }], ctx, exec))
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'block thursday morning' }], ctx, exec)
+    )
 
     // the request asked Claude to think first
     expect(optionsHasThinking(scripted.lastOptions)).toBe(true)
     // exactly one reasoning chunk, and it leads
     const reasoningChunks = chunks.filter((c) => typeof c !== 'string')
     expect(reasoningChunks).toHaveLength(1)
-    expect(chunks[0]).toEqual({ reasoning: 'the user wants thursday morning. no fixed blocks clash, so 9–12 is clear.' })
+    expect(chunks[0]).toEqual({
+      reasoning: 'the user wants thursday morning. no fixed blocks clash, so 9–12 is clear.',
+    })
     // the reply text follows
     expect(chunks.slice(1)).toEqual(['done — thursday 9 to 12 is held.'])
   })
@@ -135,7 +144,9 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'text-delta', id: 't', text: 'done.' },
     ]
     const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
-    const chunks = await collect(adapter.converse([{ role: 'user', text: 'plan my day' }], ctx, exec))
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'plan my day' }], ctx, exec)
+    )
 
     expect(chunks[0]).toEqual({ reasoning: 'place the deck, then free friday.' })
     // only one reasoning chunk despite reasoning-end never arriving before the tool
@@ -150,7 +161,9 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'text-delta', id: 't', text: 'ok.' },
     ]
     const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
-    const chunks = await collect(adapter.converse([{ role: 'user', text: 'plan a lot' }], ctx, exec))
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'plan a lot' }], ctx, exec)
+    )
 
     const first = chunks[0] as { reasoning: string }
     expect(typeof first.reasoning).toBe('string')

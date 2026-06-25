@@ -31,9 +31,15 @@ await page.addInitScript(() => {
       readDir: async () => [],
       remove: async () => {},
     },
-    path: { BaseDirectory: { Document: 6 }, documentDir: async () => '/d', join: async (...x) => x.join('/') },
+    path: {
+      BaseDirectory: { Document: 6 },
+      documentDir: async () => '/d',
+      join: async (...x) => x.join('/'),
+    },
     opener: { openPath: async () => {}, openUrl: async () => {} },
-    window: { getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }) },
+    window: {
+      getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }),
+    },
     core: {
       invoke: async (cmd) => {
         if (cmd === 'apply_update') window.__applied++

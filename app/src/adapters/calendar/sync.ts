@@ -31,7 +31,7 @@ export function mergePull(
   window: { startKey: string; endKey: string },
   /** `calId:eventId` the user deleted or took ownership of — neither
       re-added nor matched, so any lingering local copy is also cleared. */
-  dismissed?: ReadonlySet<string>,
+  dismissed?: ReadonlySet<string>
 ): PullResult {
   const calIds = new Set(calendars.map((c) => c.id))
   const tagFor = new Map(calendars.map((c) => [c.id, c.defaultTag ?? 'work']))
@@ -73,7 +73,14 @@ export function mergePull(
       (b.optional ?? false) !== (e.optional ?? false)
     ) {
       updated++
-      out.push({ ...b, title: e.title, dayKey: e.dayKey, startMin: e.startMin, endMin: e.endMin, optional: e.optional })
+      out.push({
+        ...b,
+        title: e.title,
+        dayKey: e.dayKey,
+        startMin: e.startMin,
+        endMin: e.endMin,
+        optional: e.optional,
+      })
     } else {
       out.push(b)
     }
@@ -115,7 +122,7 @@ export function planPush(
   matrix: RoutingMatrix,
   calendars: ConnectedCalendar[],
   window: { startKey: string; endKey: string },
-  syncMap: SyncEntry[],
+  syncMap: SyncEntry[]
 ): { ops: PushOp[]; nextMap: (op: PushOp, eventId?: string) => SyncEntry | null } {
   const ops: PushOp[] = []
   const byId = new Map(blocks.map((b) => [b.id, b]))
@@ -145,7 +152,13 @@ export function planPush(
     if (!have) {
       ops.push({ kind: 'create', calId: want.calId, blockId: want.blockId, body: want })
     } else if (have.hash !== hashOf(want)) {
-      ops.push({ kind: 'update', calId: want.calId, blockId: want.blockId, eventId: have.eventId, body: want })
+      ops.push({
+        kind: 'update',
+        calId: want.calId,
+        blockId: want.blockId,
+        eventId: have.eventId,
+        body: want,
+      })
     }
   }
   for (const have of syncMap) {
@@ -199,8 +212,8 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   /* pull */
   const eventLists = await Promise.all(
     deps.calendars.map((c) =>
-      deps.account.listEvents(c.id, timeMin.toISOString(), timeMax.toISOString()),
-    ),
+      deps.account.listEvents(c.id, timeMin.toISOString(), timeMax.toISOString())
+    )
   )
   const before = deps.getBlocks()
   const pulled = mergePull(before, eventLists.flat(), deps.calendars, window, deps.dismissed)
@@ -233,5 +246,8 @@ export async function runSync(deps: SyncDeps): Promise<SyncReport> {
   }
   await deps.saveSyncMap(put, removeIds)
 
-  return { pulled: { added: pulled.added, updated: pulled.updated, removed: pulled.removed }, pushed }
+  return {
+    pulled: { added: pulled.added, updated: pulled.updated, removed: pulled.removed },
+    pushed,
+  }
 }

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, proposeKinderPlan, taskDurations, weekReview } from '../insights'
+import {
+  computeInsights,
+  dayDebrief,
+  delegationCandidates,
+  prefContradictions,
+  proposeKinderPlan,
+  taskDurations,
+  weekReview,
+} from '../insights'
 import { aggregates, consolidate } from '../memory'
 import { findFreeSlot } from '../week'
 import type { Block, MemoryEvent } from '../types'
@@ -36,7 +44,7 @@ function richHistory(): MemoryEvent[] {
         title: 'Deep work',
         startMin: 9 * 60,
         endMin: end,
-      }),
+      })
     )
     events.push(
       ev({
@@ -46,7 +54,7 @@ function richHistory(): MemoryEvent[] {
         title: 'Inbox sweep',
         startMin: 15 * 60 + 30,
         endMin: 16 * 60 + 15,
-      }),
+      })
     )
     if (dow >= 2) {
       const dr = new Date(day + 'T15:40:00')
@@ -114,11 +122,35 @@ describe('the kinder plan, made concrete', () => {
   it('moves overflow off heavy days onto the lightest days with room', () => {
     const tomorrow = addDaysKey(todayKey, 1)
     const blocks = [
-      mk({ id: 'a', dayKey: tomorrow, startMin: 8 * 60, endMin: 12 * 60, title: 'Spec — deep work' }),
-      mk({ id: 'b', dayKey: tomorrow, startMin: 13 * 60, endMin: 17 * 60, title: 'Build — deep work' }),
-      mk({ id: 'c', dayKey: tomorrow, startMin: 17 * 60, endMin: 18 * 60 + 30, title: 'Review — deep work' }),
+      mk({
+        id: 'a',
+        dayKey: tomorrow,
+        startMin: 8 * 60,
+        endMin: 12 * 60,
+        title: 'Spec — deep work',
+      }),
+      mk({
+        id: 'b',
+        dayKey: tomorrow,
+        startMin: 13 * 60,
+        endMin: 17 * 60,
+        title: 'Build — deep work',
+      }),
+      mk({
+        id: 'c',
+        dayKey: tomorrow,
+        startMin: 17 * 60,
+        endMin: 18 * 60 + 30,
+        title: 'Review — deep work',
+      }),
     ]
-    const agg = { realisticBestH: 5, carryRatioByWeek: [], carryRatio: 0, restKeptRatio: null, restSkippedStreak: 0 }
+    const agg = {
+      realisticBestH: 5,
+      carryRatioByWeek: [],
+      carryRatio: 0,
+      restKeptRatio: null,
+      restSkippedStreak: 0,
+    }
     const { moves, summary } = proposeKinderPlan(blocks, agg, todayKey, findFreeSlot)
     expect(moves.length).toBeGreaterThanOrEqual(1)
     /* the moved blocks land on later, lighter days */
@@ -130,7 +162,13 @@ describe('the kinder plan, made concrete', () => {
 
   it('proposes nothing when the week is already kind', () => {
     const blocks = [mk({ id: 'a', startMin: 9 * 60, endMin: 12 * 60 })]
-    const agg = { realisticBestH: 5, carryRatioByWeek: [], carryRatio: 0, restKeptRatio: null, restSkippedStreak: 0 }
+    const agg = {
+      realisticBestH: 5,
+      carryRatioByWeek: [],
+      carryRatio: 0,
+      restKeptRatio: null,
+      restSkippedStreak: 0,
+    }
     expect(proposeKinderPlan(blocks, agg, todayKey, findFreeSlot).moves).toHaveLength(0)
   })
 })
@@ -138,17 +176,29 @@ describe('the kinder plan, made concrete', () => {
 describe('overnight consolidation — the brain compacts while you sleep', () => {
   it('compacts events older than 8 weeks into weekly summaries, keeps recent raw', () => {
     const recent = ev({ dayKey: addDaysKey(todayKey, -7), kind: 'completed', plannedMin: 60 })
-    const old1 = ev({ dayKey: addDaysKey(todayKey, -70), kind: 'completed', plannedMin: 300, deep: true })
+    const old1 = ev({
+      dayKey: addDaysKey(todayKey, -70),
+      kind: 'completed',
+      plannedMin: 300,
+      deep: true,
+    })
     const old2 = ev({ dayKey: addDaysKey(todayKey, -70), kind: 'rolled' })
     const old3 = ev({ dayKey: addDaysKey(todayKey, -69), kind: 'rest_kept' })
     const out = consolidate([recent, old1, old2, old3], TODAY, () => `s${n++}`)
     expect(out.removedIds).toHaveLength(3)
     expect(out.summaries).toHaveLength(1)
     expect(out.summaries[0].kind).toBe('weekly_summary')
-    expect(out.summaries[0].summary).toMatchObject({ completed: 1, rolled: 1, restKept: 1, deepMin: 300 })
+    expect(out.summaries[0].summary).toMatchObject({
+      completed: 1,
+      rolled: 1,
+      restKept: 1,
+      deepMin: 300,
+    })
     expect(out.kept).toContain(recent)
     /* aggregates are unaffected by consolidation (they only read recent raw) */
-    expect(aggregates(out.kept, TODAY).realisticBestH).toEqual(aggregates([recent, old1, old2, old3], TODAY).realisticBestH)
+    expect(aggregates(out.kept, TODAY).realisticBestH).toEqual(
+      aggregates([recent, old1, old2, old3], TODAY).realisticBestH
+    )
   })
 
   it('is idempotent — summaries never re-consolidate', () => {
@@ -163,7 +213,12 @@ describe('overnight consolidation — the brain compacts while you sleep', () =>
     const pref = ev({
       dayKey: addDaysKey(todayKey, -90),
       kind: 'preference',
-      pref: { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' },
+      pref: {
+        kind: 'time-default',
+        match: 'gym',
+        value: 'starts 07:00',
+        stated: 'gym is always 7am',
+      },
     })
     const old = ev({ dayKey: addDaysKey(todayKey, -90), kind: 'completed' })
     const out = consolidate([pref, old], TODAY, () => `s${n++}`)
@@ -175,10 +230,25 @@ describe('overnight consolidation — the brain compacts while you sleep', () =>
 
 describe('prefContradictions — rules reality has outgrown', () => {
   const TODAY = new Date(2026, 5, 9, 12, 0)
-  const gymRule: PrefPayload = { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }
-  const deployRule: PrefPayload = { kind: 'duration-default', match: 'deploy', value: '45m', stated: 'deploys take 45' }
+  const gymRule: PrefPayload = {
+    kind: 'time-default',
+    match: 'gym',
+    value: 'starts 07:00',
+    stated: 'gym is always 7am',
+  }
+  const deployRule: PrefPayload = {
+    kind: 'duration-default',
+    match: 'deploy',
+    value: '45m',
+    stated: 'deploys take 45',
+  }
 
-  const done = (title: string, dayOffset: number, startMin: number, endMin?: number): MemoryEvent => ({
+  const done = (
+    title: string,
+    dayOffset: number,
+    startMin: number,
+    endMin?: number
+  ): MemoryEvent => ({
     id: Math.random().toString(36).slice(2),
     ts: 0,
     kind: 'completed',
@@ -198,21 +268,38 @@ describe('prefContradictions — rules reality has outgrown', () => {
   })
 
   it('the 60-minute threshold is a real edge: 59 off is conforming, 60 contradicts', () => {
-    const near = [done('Gym', -1, 7 * 60 + 59), done('Gym', -2, 7 * 60 + 59), done('Gym', -3, 7 * 60 + 59)]
+    const near = [
+      done('Gym', -1, 7 * 60 + 59),
+      done('Gym', -2, 7 * 60 + 59),
+      done('Gym', -3, 7 * 60 + 59),
+    ]
     expect(prefContradictions([gymRule], near, TODAY)).toHaveLength(0)
     const edge = [done('Gym', -1, 8 * 60), done('Gym', -2, 8 * 60), done('Gym', -3, 8 * 60)]
     expect(prefContradictions([gymRule], edge, TODAY)).toHaveLength(1)
   })
 
   it('pref-driven placements cannot self-confirm: at-rule completions never count', () => {
-    const conforming = [done('Gym', -1, 7 * 60), done('Gym', -2, 7 * 60), done('Gym', -3, 7 * 60), done('Gym', -4, 7 * 60)]
+    const conforming = [
+      done('Gym', -1, 7 * 60),
+      done('Gym', -2, 7 * 60),
+      done('Gym', -3, 7 * 60),
+      done('Gym', -4, 7 * 60),
+    ]
     expect(prefContradictions([gymRule], conforming, TODAY)).toHaveLength(0)
   })
 
   it('duration: ±25% is the line, three times over it fires with the median', () => {
-    const close = [done('Deploy api', -1, 600, 600 + 55), done('Deploy api', -2, 600, 600 + 55), done('Deploy api', -3, 600, 600 + 55)]
+    const close = [
+      done('Deploy api', -1, 600, 600 + 55),
+      done('Deploy api', -2, 600, 600 + 55),
+      done('Deploy api', -3, 600, 600 + 55),
+    ]
     expect(prefContradictions([deployRule], close, TODAY)).toHaveLength(0) // 55m is within 25% of 45m
-    const over = [done('Deploy api', -1, 600, 600 + 90), done('Deploy api', -2, 600, 600 + 80), done('Deploy api', -3, 600, 600 + 85)]
+    const over = [
+      done('Deploy api', -1, 600, 600 + 90),
+      done('Deploy api', -2, 600, 600 + 80),
+      done('Deploy api', -3, 600, 600 + 85),
+    ]
     const out = prefContradictions([deployRule], over, TODAY)
     expect(out).toHaveLength(1)
     expect(out[0].observed).toBe('85m')
@@ -226,8 +313,17 @@ describe('prefContradictions — rules reality has outgrown', () => {
   it('validation reads the rulebook with placement’s grammar: "starts 7am" values and punctuated titles are visible', () => {
     /* both forms are applied at placement (prefs.ts); the old local parsers
        dropped them — a rule could be enforced yet invisible to validation */
-    const sevenAm: PrefPayload = { kind: 'time-default', match: 'stand up', value: 'starts 7am', stated: 'standup is at 7' }
-    const lived = [done('Stand-up', -1, 18 * 60), done('Stand-up', -2, 18 * 60), done('Stand-up', -3, 18 * 60)]
+    const sevenAm: PrefPayload = {
+      kind: 'time-default',
+      match: 'stand up',
+      value: 'starts 7am',
+      stated: 'standup is at 7',
+    }
+    const lived = [
+      done('Stand-up', -1, 18 * 60),
+      done('Stand-up', -2, 18 * 60),
+      done('Stand-up', -3, 18 * 60),
+    ]
     const out = prefContradictions([sevenAm], lived, TODAY)
     expect(out).toHaveLength(1)
     expect(out[0]).toMatchObject({ count: 3, observed: 'starts 18:00' })
@@ -240,13 +336,19 @@ describe('delegationCandidates — co-occurrence with receipts', () => {
   /* 3 shared runs + 1 solo inside the window */
   const shared = (daysAgo: number) =>
     ev({ title: 'Doc review — Robin', dayKey: addDaysKey(todayKey, -daysAgo) })
-  const solo = (daysAgo: number) => ev({ title: 'Doc review', dayKey: addDaysKey(todayKey, -daysAgo) })
+  const solo = (daysAgo: number) =>
+    ev({ title: 'Doc review', dayKey: addDaysKey(todayKey, -daysAgo) })
 
   it('a pair with ≥3 shared runs, a solo run, and a graph edge is a candidate', () => {
     const events = [shared(2), shared(7), shared(12), solo(4)]
     const out = delegationCandidates(events, [LINK], NOW)
     expect(out).toHaveLength(1)
-    expect(out[0]).toMatchObject({ taskKind: 'doc-review', person: 'robin', personLabel: 'Robin', count: 3 })
+    expect(out[0]).toMatchObject({
+      taskKind: 'doc-review',
+      person: 'robin',
+      personLabel: 'Robin',
+      count: 3,
+    })
     expect(out[0].label).toBe('doc review')
   })
 
@@ -266,12 +368,17 @@ describe('delegationCandidates — co-occurrence with receipts', () => {
   it('no graph edge, no receipts, no candidate — counts alone are not enough', () => {
     const events = [shared(2), shared(7), shared(12), solo(4)]
     expect(delegationCandidates(events, [], NOW)).toHaveLength(0)
-    expect(delegationCandidates(events, [{ from: 'task/doc-review', to: 'week/2026-06-08' }], NOW)).toHaveLength(0)
+    expect(
+      delegationCandidates(events, [{ from: 'task/doc-review', to: 'week/2026-06-08' }], NOW)
+    ).toHaveLength(0)
   })
 
   it('multiple candidates sort by count, multi-word people get proper labels', () => {
     const events = [
-      shared(2), shared(7), shared(12), solo(4),
+      shared(2),
+      shared(7),
+      shared(12),
+      solo(4),
       ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -1) }),
       ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -3) }),
       ev({ title: 'Sprint notes — Dana K', dayKey: addDaysKey(todayKey, -5) }),
@@ -306,13 +413,31 @@ describe('dayDebrief — the evening story, two kind lines', () => {
   const done = (title: string, endMin: number, atH: number, atM: number): MemoryEvent => {
     const d = new Date(D + 'T00:00:00')
     d.setHours(atH, atM, 0, 0)
-    return { id: `e${bn++}`, ts: d.getTime(), kind: 'completed', dayKey: D, title, endMin, plannedMin: 60 }
+    return {
+      id: `e${bn++}`,
+      ts: d.getTime(),
+      kind: 'completed',
+      dayKey: D,
+      title,
+      endMin,
+      plannedMin: 60,
+    }
   }
   it('mews, the biggest slip, rest held, and a heavy tomorrow — the full story', () => {
     const blocks = [
       blk({ tag: 'rest', startMin: 18 * 60, endMin: 19 * 60 }), // running at 18:15
-      blk({ dayKey: addDaysKey(D, 1), title: 'Spec review — deep work', startMin: 8 * 60, endMin: 12 * 60 }),
-      blk({ dayKey: addDaysKey(D, 1), title: 'Deck v2 — deep work', startMin: 13 * 60, endMin: 17 * 60 }),
+      blk({
+        dayKey: addDaysKey(D, 1),
+        title: 'Spec review — deep work',
+        startMin: 8 * 60,
+        endMin: 12 * 60,
+      }),
+      blk({
+        dayKey: addDaysKey(D, 1),
+        title: 'Deck v2 — deep work',
+        startMin: 13 * 60,
+        endMin: 17 * 60,
+      }),
     ]
     const events = [
       done('Q3 deck — deep work', 11 * 60 + 30, 11, 30), // on time
@@ -333,7 +458,12 @@ describe('dayDebrief — the evening story, two kind lines', () => {
   it('rest still open and not reached = owed, kindly; a light tomorrow is named plainly', () => {
     const blocks = [
       blk({ tag: 'rest', startMin: 20 * 60, endMin: 21 * 60 }), // later tonight
-      blk({ dayKey: addDaysKey(D, 1), title: 'Review — deep work', startMin: 9 * 60, endMin: 11 * 60 }),
+      blk({
+        dayKey: addDaysKey(D, 1),
+        title: 'Review — deep work',
+        startMin: 9 * 60,
+        endMin: 11 * 60,
+      }),
     ]
     const events = [done('Inbox', 10 * 60, 10, 0)]
     const lines = dayDebrief(blocks, events, D, { realisticBestH: 5.5 } as never, 18 * 60 + 15)
@@ -343,7 +473,13 @@ describe('dayDebrief — the evening story, two kind lines', () => {
 
   it('checked off much later ≠ worked later: the +300 cap holds, and rolled days omit tomorrow', () => {
     const events = [done('Old thing', 9 * 60, 18, 0)] // +540 → not a slip
-    const lines = dayDebrief([blk({ status: 'done' })], events, D, { realisticBestH: null } as never, 18 * 60 + 15)
+    const lines = dayDebrief(
+      [blk({ status: 'done' })],
+      events,
+      D,
+      { realisticBestH: null } as never,
+      18 * 60 + 15
+    )
     expect(lines).toEqual(['1 mew.'])
     expect(lines.join(' ')).not.toMatch(/slipped/)
   })
@@ -359,25 +495,34 @@ describe('dayDebrief — the evening story, two kind lines', () => {
 
 describe('weekReview — last week, one honest line', () => {
   /* last week relative to Wednesday TODAY: Jun 1–7 */
-  const LAST = ['2026-06-01', '2026-06-02', '2026-06-03', '2026-06-04', '2026-06-05', '2026-06-06', '2026-06-07']
-  const on = (day: string, over: Partial<MemoryEvent>): MemoryEvent =>
-    ev({ dayKey: day, ...over })
+  const LAST = [
+    '2026-06-01',
+    '2026-06-02',
+    '2026-06-03',
+    '2026-06-04',
+    '2026-06-05',
+    '2026-06-06',
+    '2026-06-07',
+  ]
+  const on = (day: string, over: Partial<MemoryEvent>): MemoryEvent => ev({ dayKey: day, ...over })
 
   it('mews, carry, the band that held, and the top eater — exact line', () => {
     const events = [
       /* 7 morning completions of the same deep block (9:00 start, 5h) */
       ...LAST.slice(0, 5).map((d) =>
-        on(d, { title: 'Deep work', startMin: 9 * 60, plannedMin: 300 }),
+        on(d, { title: 'Deep work', startMin: 9 * 60, plannedMin: 300 })
       ),
       on(LAST[0], { title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 }),
       on(LAST[1], { title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 }),
       /* 3 rolls late in the day */
       ...LAST.slice(2, 5).map((d) =>
-        on(d, { kind: 'rolled', title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 }),
+        on(d, { kind: 'rolled', title: 'Inbox sweep', startMin: 15 * 60 + 30, plannedMin: 45 })
       ),
     ]
     const r = weekReview(events, LAST)
-    expect(r.lines).toEqual(['last week: 7 mews, carry-over 30%, mornings held 5/5, deep work ate 25h.'])
+    expect(r.lines).toEqual([
+      'last week: 7 mews, carry-over 30%, mornings held 5/5, deep work ate 25h.',
+    ])
     expect(r.kinder).toBe(false) // exactly 30 is not past 30
   })
 
@@ -419,11 +564,25 @@ describe('weekReview — last week, one honest line', () => {
 describe('taskDurations — what this task REALLY takes', () => {
   const NOW = TODAY.getTime()
   /* a completion whose stamp implies the actual span */
-  const took = (daysAgo: number, title: string, startMin: number, actualMin: number, plannedMin = 60): MemoryEvent => {
+  const took = (
+    daysAgo: number,
+    title: string,
+    startMin: number,
+    actualMin: number,
+    plannedMin = 60
+  ): MemoryEvent => {
     const day = addDaysKey(todayKey, -daysAgo)
     const d = new Date(day + 'T00:00:00')
     d.setMinutes(startMin + actualMin)
-    return { id: `t${daysAgo}-${actualMin}`, ts: d.getTime(), kind: 'completed', dayKey: day, title, startMin, plannedMin }
+    return {
+      id: `t${daysAgo}-${actualMin}`,
+      ts: d.getTime(),
+      kind: 'completed',
+      dayKey: day,
+      title,
+      startMin,
+      plannedMin,
+    }
   }
 
   it('three sane completions yield the actual median, not the plan', () => {

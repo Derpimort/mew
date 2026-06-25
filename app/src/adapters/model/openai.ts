@@ -36,7 +36,11 @@ const TOOLS = MEW_TOOLS.map((t) => ({
   function: { name: t.name, description: t.description, parameters: t.parameters },
 }))
 
-export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'https://api.openai.com'): ModelPort {
+export function createOpenAIAdapter(
+  apiKey: string,
+  model: string,
+  baseUrl = 'https://api.openai.com'
+): ModelPort {
   /* One buffered round-trip per round of the loop, nothing yielded until it
      returns — so the whole call (fetch + parse) is safely retryable on a
      transient blip (a 429, a 5xx, a network drop) before any token reaches the
@@ -70,9 +74,12 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
       })
       if (!res.ok) {
         const body = await res.text().catch(() => '')
-        throw Object.assign(new Error(`openai ${res.status}${body ? `: ${body.slice(0, 140)}` : ''}`), {
-          status: res.status,
-        })
+        throw Object.assign(
+          new Error(`openai ${res.status}${body ? `: ${body.slice(0, 140)}` : ''}`),
+          {
+            status: res.status,
+          }
+        )
       }
       const data = (await res.json()) as { choices?: { message?: OaMessage }[] }
       const msg = data.choices?.[0]?.message
@@ -84,7 +91,12 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
   return {
     id: 'openai',
 
-    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
+    async *converse(
+      thread: ChatTurn[],
+      ctx: WeekContext,
+      exec: ToolExecutor,
+      signal?: AbortSignal
+    ) {
       const messages: OaMessage[] = [
         { role: 'system', content: [MEW_VOICE, '', contextBlock(ctx)].join('\n') },
         ...thread.slice(-16).map((t) => ({ role: t.role, content: t.text }) as OaMessage),
@@ -102,11 +114,19 @@ export function createOpenAIAdapter(apiKey: string, model: string, baseUrl = 'ht
 
         if (!msg.tool_calls?.length) return
 
-        messages.push({ role: 'assistant', content: msg.content ?? null, tool_calls: msg.tool_calls })
+        messages.push({
+          role: 'assistant',
+          content: msg.content ?? null,
+          tool_calls: msg.tool_calls,
+        })
         for (const call of msg.tool_calls) {
           let out: string
           try {
-            out = await runTool(call.function.name, JSON.parse(call.function.arguments || '{}'), exec)
+            out = await runTool(
+              call.function.name,
+              JSON.parse(call.function.arguments || '{}'),
+              exec
+            )
           } catch (e) {
             out = `error: ${e instanceof Error ? e.message : 'tool failed'}`
           }

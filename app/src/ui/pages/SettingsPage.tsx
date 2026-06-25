@@ -9,9 +9,12 @@ import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
 import { computeInsights } from '../../domain/insights'
-import { Button, PETS, petById, Segc, Tgl } from '../primitives'
+import { Button, Segc, Tgl } from '../primitives'
+import { PETS, petById } from '../primitives/pets'
 import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
 import { usePetPalette } from '../components/petPalette'
+import { ApiKeySetupFlow } from '../components/ApiKeySetupFlow'
+import { keySetupView } from '../components/apiKeySetup'
 import SimpleGraph from '../react-bits/simple-graph'
 
 const TAGS: VisibleTag[] = ['work', 'private', 'health']
@@ -58,7 +61,15 @@ function ModelPicker({
   const known = models.some((m) => m.id === value)
   const [custom, setCustom] = useState(!known)
   return (
-    <span style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+    <span
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+        justifyContent: 'flex-end',
+      }}
+    >
       <select
         className="modelsel"
         value={custom ? '__custom__' : value}
@@ -116,7 +127,12 @@ export function SettingsPage() {
         <span className="mono" style={{ fontSize: 11, color: 'var(--muted)' }}>
           settings
         </span>
-        <button type="button" className="navlink gold" style={{ marginLeft: 'auto' }} onClick={() => setPage('week')}>
+        <button
+          type="button"
+          className="navlink gold"
+          style={{ marginLeft: 'auto' }}
+          onClick={() => setPage('week')}
+        >
           ← back to your week
         </button>
       </div>
@@ -169,7 +185,11 @@ function PatternsCard() {
         />
       </div>
       {insights.lines.slice(0, 3).map((l) => (
-        <div key={l} className="sub" style={{ marginTop: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+        <div
+          key={l}
+          className="sub"
+          style={{ marginTop: 6, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}
+        >
           # {l.toLowerCase()}
         </div>
       ))}
@@ -184,7 +204,13 @@ function CompanionCard() {
   const pet = petById(settings.pet)
 
   const pickPet = (id: PetId) => {
-    const defaults: Record<PetId, string> = { cat: 'Pixie', dog: 'Good Dog', fox: 'Fox', bunny: 'Bunny', bird: 'Bird' }
+    const defaults: Record<PetId, string> = {
+      cat: 'Pixie',
+      dog: 'Good Dog',
+      fox: 'Fox',
+      bunny: 'Bunny',
+      bird: 'Bird',
+    }
     const keepName = settings.mewName !== defaults[settings.pet]
     updateSettings({ pet: id, ...(keepName ? {} : { mewName: defaults[id] }) })
   }
@@ -193,19 +219,23 @@ function CompanionCard() {
     <div className="set-card">
       <h2>Your companion</h2>
       <div className="sub">Your pet sets the personality — and the theme follows it.</div>
-      <div className="petpick" style={{ marginBottom: 6 }}>
+      <div className="petpick" style={{ marginBottom: 6 }} role="radiogroup" aria-label="pet">
         {PETS.map((p) => (
-          <div
+          <button
             key={p.id}
+            type="button"
             className={'petopt' + (p.id === settings.pet ? ' on' : '')}
             onClick={() => pickPet(p.id)}
+            role="radio"
+            aria-checked={p.id === settings.pet}
+            aria-label={p.name}
             style={{ '--accpa': p.c1 } as React.CSSProperties}
           >
             <div className="petswatch">
               <i style={{ background: `linear-gradient(135deg, ${p.c1}, ${p.c2})` }} />
             </div>
             <span className="pn">{p.name}</span>
-          </div>
+          </button>
         ))}
       </div>
       <div
@@ -234,7 +264,11 @@ function CompanionCard() {
           }}
         >
           {settings.pet === 'cat' ? (
-            <img src="/pixie-poly-face.svg" alt="" style={{ width: 80, marginLeft: -11, marginTop: -8 }} />
+            <img
+              src="/pixie-poly-face.svg"
+              alt=""
+              style={{ width: 80, marginLeft: -11, marginTop: -8 }}
+            />
           ) : (
             <span className="mono" style={{ fontSize: 16, color: 'var(--gold)' }}>
               {pet.name[0]}
@@ -242,7 +276,9 @@ function CompanionCard() {
           )}
         </div>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div
+            style={{ fontWeight: 700, fontSize: 15, display: 'flex', alignItems: 'center', gap: 8 }}
+          >
             {renaming ? (
               <input
                 autoFocus
@@ -268,14 +304,23 @@ function CompanionCard() {
             ) : (
               settings.mewName
             )}
-            <button type="button" className="mono" style={{ fontSize: 10, color: 'var(--faint)' }} onClick={() => setRenaming(true)}>
+            <button
+              type="button"
+              className="mono"
+              style={{ fontSize: 10, color: 'var(--faint)' }}
+              onClick={() => setRenaming(true)}
+            >
               rename
             </button>
           </div>
           <div className="mono" style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 3 }}>
             {pet.who}
           </div>
-          <div className="mono" style={{ fontSize: 10, color: 'var(--gold)', marginTop: 4 }} title="post-MVP">
+          <div
+            className="mono"
+            style={{ fontSize: 10, color: 'var(--gold)', marginTop: 4 }}
+            title="post-MVP"
+          >
             animated 3D companion · change look
           </div>
         </div>
@@ -329,8 +374,17 @@ function CalendarsCard() {
     <div className="set-card">
       <h2>Calendars &amp; what they see</h2>
       <div className="sub">MEW sees the whole week; each calendar sees only what you allow.</div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr repeat(3,auto) auto', gap: '8px 10px', alignItems: 'center' }}>
-        <span className="mono" style={mono9}>calendar</span>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1.3fr repeat(3,auto) auto',
+          gap: '8px 10px',
+          alignItems: 'center',
+        }}
+      >
+        <span className="mono" style={mono9}>
+          calendar
+        </span>
         {TAGS.map((t) => (
           <span key={t} className="mono" style={mono9}>
             {t}
@@ -350,7 +404,16 @@ function CalendarsCard() {
           const row = settings.matrix[c.id]
           return (
             <FragmentRow key={c.id}>
-              <span style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }} title={c.who}>
+              <span
+                style={{
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+                title={c.who}
+              >
                 {c.name}
               </span>
               {TAGS.map((t) => {
@@ -396,7 +459,9 @@ function CalendarsCard() {
           <span style={{ color: 'var(--ink)' }}>what {editingCal.name} sees today</span>
           <br />
           {(() => {
-            const events = project(blocks, settings.matrix, editing).filter((e) => e.dayKey === todayKey)
+            const events = project(blocks, settings.matrix, editing).filter(
+              (e) => e.dayKey === todayKey
+            )
             if (!events.length) return 'nothing — every tag is hidden or the day is clear'
             return events.map((e) => (
               <span key={e.blockId}>
@@ -406,18 +471,37 @@ function CalendarsCard() {
             ))
           })()}
           {(editingCal.kind === 'live' || editingCal.kind === 'import') && (
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                alignItems: 'center',
+                flexWrap: 'wrap',
+              }}
+            >
               <span>incoming →</span>
-              <button type="button" className="vis-chip det" onClick={() => cycleDefaultTag(editing)}>
+              <button
+                type="button"
+                className="vis-chip det"
+                onClick={() => cycleDefaultTag(editing)}
+              >
                 {editingCal.defaultTag ?? 'work'}
               </button>
               {editingCal.kind === 'live' && (
-                <button type="button" className="vis-chip busy" onClick={() => void syncNow()} disabled={syncing}>
+                <button
+                  type="button"
+                  className="vis-chip busy"
+                  onClick={() => void syncNow()}
+                  disabled={syncing}
+                >
                   {syncing ? 'syncing…' : 'sync now'}
                 </button>
               )}
               {editingCal.kind === 'import' && (
-                <span style={{ color: 'var(--faint)' }}>snapshot — re-import the .ics to refresh</span>
+                <span style={{ color: 'var(--faint)' }}>
+                  snapshot — re-import the .ics to refresh
+                </span>
               )}
               <button
                 type="button"
@@ -450,9 +534,12 @@ function CalendarsCard() {
         >
           <span style={{ color: 'var(--ink)' }}>one-time setup — your own google oauth client</span>
           <br />
-          mew has no server, so it talks to google as you. google cloud console → enable the calendar api → create an
-          oauth client id (web) → add <span style={{ color: 'var(--gold)' }}>{typeof location !== 'undefined' ? location.origin : 'this origin'}</span> to
-          authorized javascript origins. paste the client id:
+          mew has no server, so it talks to google as you. google cloud console → enable the
+          calendar api → create an oauth client id (web) → add{' '}
+          <span style={{ color: 'var(--gold)' }}>
+            {typeof location !== 'undefined' ? location.origin : 'this origin'}
+          </span>{' '}
+          to authorized javascript origins. paste the client id:
           <div style={{ marginTop: 6 }}>
             <input
               autoFocus
@@ -482,12 +569,19 @@ function CalendarsCard() {
       )}
 
       {googlePicker && (
-        <div style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div
+          style={{ marginTop: 10, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}
+        >
           <span className="mono" style={{ fontSize: 10, color: 'var(--ink)' }}>
             {googlePicker.length ? 'pick calendars:' : 'all connected.'}
           </span>
           {googlePicker.map((c) => (
-            <button key={c.id} type="button" className="vis-chip det" onClick={() => addGoogleCalendar(c)}>
+            <button
+              key={c.id}
+              type="button"
+              className="vis-chip det"
+              onClick={() => addGoogleCalendar(c)}
+            >
               + {c.summary}
               {c.readOnly ? ' (ro)' : ''}
             </button>
@@ -498,7 +592,17 @@ function CalendarsCard() {
         </div>
       )}
 
-      <div className="mono" style={{ fontSize: 10.5, marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+      <div
+        className="mono"
+        style={{
+          fontSize: 10.5,
+          marginTop: 12,
+          display: 'flex',
+          gap: 8,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
         <Button
           variant="ghost"
           size="sm"
@@ -526,10 +630,18 @@ function CalendarsCard() {
             setPageToWeek()
           }}
         />
-        <span style={{ color: 'var(--faint)' }}>· google (live) · .ics snapshot · outlook (soon)</span>
+        <span style={{ color: 'var(--faint)' }}>
+          · google (live) · .ics snapshot · outlook (soon)
+        </span>
         {hasLive && (
           <span style={{ marginLeft: 'auto', color: syncError ? 'var(--ice)' : 'var(--faint)' }}>
-            {syncing ? 'syncing…' : syncError ? `sync hiccup: ${syncError.slice(0, 40)}` : lastSyncAt ? `synced ${fmtTime(minOfDay(new Date(lastSyncAt)))}` : 'sync pending…'}
+            {syncing
+              ? 'syncing…'
+              : syncError
+                ? `sync hiccup: ${syncError.slice(0, 40)}`
+                : lastSyncAt
+                  ? `synced ${fmtTime(minOfDay(new Date(lastSyncAt)))}`
+                  : 'sync pending…'}
           </span>
         )}
       </div>
@@ -569,13 +681,19 @@ function AppearanceCard() {
           onChange={(id) => updateSettings({ themeMode: id as 'carbon' | 'white' })}
         />
       </SetRow>
-      <SetRow t="Accent" s={`Follows ${settings.mewName} — ${pet.name.toLowerCase()} primary for work, soft for life.`}>
+      <SetRow
+        t="Accent"
+        s={`Follows ${settings.mewName} — ${pet.name.toLowerCase()} primary for work, soft for life.`}
+      >
         <div style={{ display: 'flex', gap: 6 }}>
           <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--ice)' }} />
           <span style={{ width: 22, height: 22, borderRadius: 6, background: 'var(--teal)' }} />
         </div>
       </SetRow>
-      <SetRow t="Interface font" s="Sets the prose font everywhere — self-hosted, no fetch. Numerals and code stay monospaced.">
+      <SetRow
+        t="Interface font"
+        s="Sets the prose font everywhere — self-hosted, no fetch. Numerals and code stay monospaced."
+      >
         <Segc
           options={UI_FONTS.map((f) => ({ id: f.id, label: f.label }))}
           value={settings.uiFont}
@@ -612,7 +730,7 @@ function NudgesCard() {
   const settings = useMew((s) => s.settings)
   const updateSettings = useMew((s) => s.updateSettings)
   const quietIdx = QUIET_PRESETS.findIndex(
-    (p) => p.startMin === settings.quietHours.startMin && p.endMin === settings.quietHours.endMin,
+    (p) => p.startMin === settings.quietHours.startMin && p.endMin === settings.quietHours.endMin
   )
   const quietLabel = QUIET_PRESETS[quietIdx]?.label ?? '18:30 – 08:30'
   return (
@@ -623,7 +741,10 @@ function NudgesCard() {
         <Tgl on lock cap="chat-first" />
       </SetRow>
       <SetRow t="Browser notifications" s="Mirror the chat nudge when the tab is unfocused.">
-        <Tgl on={settings.browserMirror} onToggle={() => updateSettings({ browserMirror: !settings.browserMirror })} />
+        <Tgl
+          on={settings.browserMirror}
+          onToggle={() => updateSettings({ browserMirror: !settings.browserMirror })}
+        />
       </SetRow>
       <SetRow t="Quiet hours" s="Queued nudges wait for morning.">
         <span className="segc">
@@ -641,7 +762,23 @@ function NudgesCard() {
         </span>
       </SetRow>
       <SetRow t="Show the science" s="Each nudge cites the research behind it.">
-        <Tgl on={settings.showScience} onToggle={() => updateSettings({ showScience: !settings.showScience })} />
+        <Tgl
+          on={settings.showScience}
+          onToggle={() => updateSettings({ showScience: !settings.showScience })}
+        />
+      </SetRow>
+      <SetRow
+        t="Quick-capture"
+        s="⌘/Ctrl+Shift+C. Keep open waits in the rail; Place now drops it in today's first free 30 min."
+      >
+        <Segc
+          options={[
+            { id: 'open', label: 'Keep open' },
+            { id: 'auto-place', label: 'Place now' },
+          ]}
+          value={settings.quickCaptureMode}
+          onChange={(id) => updateSettings({ quickCaptureMode: id as 'open' | 'auto-place' })}
+        />
       </SetRow>
       <SetRow t="Positive only" s="Reward follow-through; never punish gaps.">
         <Tgl on lock cap="principle" />
@@ -657,12 +794,17 @@ function PrivacyModelCard() {
   const importData = useMew((s) => s.importData)
   const [editingKey, setEditingKey] = useState(false)
   const [editingBrainToken, setEditingBrainToken] = useState(false)
+  const [setupOpen, setSetupOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   /* brain health: probed when the row is live, re-probed on edits */
   const [brainUp, setBrainUp] = useState<boolean | null>(null)
   useEffect(() => {
     if (!settings.brainEnabled) {
+      // Clearing the probe result when the row goes inert syncs UI state with an
+      // external system (the brain service); the rest of the effect awaits an
+      // async health check, so this whole block belongs in an effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- resets async health-probe state when the brain row is disabled
       setBrainUp(null)
       return
     }
@@ -688,6 +830,7 @@ function PrivacyModelCard() {
   const provider = settings.remoteProvider
   const activeKey = provider === 'openai' ? settings.openaiKey : settings.anthropicKey
   const masked = activeKey ? `sk-••••••••••${activeKey.slice(-4)}` : 'no key yet'
+  const activeModel = provider === 'openai' ? settings.openaiModel : settings.anthropicModel
 
   return (
     <div className="set-card">
@@ -747,14 +890,17 @@ function PrivacyModelCard() {
           t="Show the plan first"
           s="Claude thinks before it acts; see that plan, collapsed under each reply. A little slower, costs a touch more on your key."
         >
-          <Tgl on={settings.showReasoning} onToggle={() => updateSettings({ showReasoning: !settings.showReasoning })} />
+          <Tgl
+            on={settings.showReasoning}
+            onToggle={() => updateSettings({ showReasoning: !settings.showReasoning })}
+          />
         </SetRow>
       )}
       <SetRow
         t="Bring your own key"
         s={`Sent only to ${provider === 'openai' ? 'api.openai.com' : 'api.anthropic.com'}.`}
       >
-        {editingKey ? (
+        {keySetupView(activeKey, editingKey) === 'edit' ? (
           <span className="keyfield">
             <input
               autoFocus
@@ -771,10 +917,36 @@ function PrivacyModelCard() {
               }}
             />
           </span>
-        ) : (
+        ) : keySetupView(activeKey, editingKey) === 'masked' ? (
+          /* key already set — the normal masked field to edit/swap it */
           <button type="button" className="keyfield" onClick={() => setEditingKey(true)}>
             {masked}
           </button>
+        ) : (
+          /* first run: the guided flow replaces the dense field (#161). A small
+             escape hatch keeps the raw paste for power users — the dense form is
+             one click away, never lost. */
+          <span
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              flexWrap: 'wrap',
+              justifyContent: 'flex-end',
+            }}
+          >
+            <Button variant="primary" size="sm" onClick={() => setSetupOpen(true)}>
+              Set up AI
+            </Button>
+            <button
+              type="button"
+              className="navlink mono"
+              style={{ fontSize: 10 }}
+              onClick={() => setEditingKey(true)}
+            >
+              paste a key
+            </button>
+          </span>
         )}
       </SetRow>
       <SetRow
@@ -794,7 +966,8 @@ function PrivacyModelCard() {
                   width: 8,
                   height: 8,
                   borderRadius: '50%',
-                  background: brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
+                  background:
+                    brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
                 }}
               />
               <Segc
@@ -804,7 +977,9 @@ function PrivacyModelCard() {
                   { id: 'supabase', label: 'Supabase' },
                 ]}
                 value={settings.brainMode}
-                onChange={(id) => updateSettings({ brainMode: id as 'sidecar' | 'endpoint' | 'supabase' })}
+                onChange={(id) =>
+                  updateSettings({ brainMode: id as 'sidecar' | 'endpoint' | 'supabase' })
+                }
               />
               {settings.brainMode !== 'sidecar' && (
                 <span className="keyfield">
@@ -815,7 +990,9 @@ function PrivacyModelCard() {
                         ? 'https://brain.yourdomain.dev (serve over Supabase)'
                         : 'http://localhost:3131'
                     }
-                    onBlur={(e) => updateSettings({ brainUrl: e.target.value.trim() || 'http://localhost:3131' })}
+                    onBlur={(e) =>
+                      updateSettings({ brainUrl: e.target.value.trim() || 'http://localhost:3131' })
+                    }
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                     }}
@@ -869,7 +1046,9 @@ function PrivacyModelCard() {
             </span>
           ) : (
             <button type="button" className="keyfield" onClick={() => setEditingBrainToken(true)}>
-              {settings.brainToken ? `••••••••${settings.brainToken.slice(-4)}` : 'no key (local serve)'}
+              {settings.brainToken
+                ? `••••••••${settings.brainToken.slice(-4)}`
+                : 'no key (local serve)'}
             </button>
           )}
         </SetRow>
@@ -879,15 +1058,25 @@ function PrivacyModelCard() {
           t="Your brain, your Supabase"
           s="Opt-in: MEW talks only to YOUR gbrain serve; the serve talks to YOUR Supabase (RLS keeps it yours). One brain across web, desktop, and every agent that fills it. Recipe in the README."
         >
-          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>docs → README · One brain</span>
+          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>
+            docs → README · One brain
+          </span>
         </SetRow>
       )}
       {settings.brainEnabled && settings.brainMode === 'sidecar' && (
-        <SetRow t="Built-in brain" s="The desktop app manages a private brain for you — no setup. (Arrives with the desktop sidecar; until then this behaves like My gbrain.)">
-          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>desktop-managed</span>
+        <SetRow
+          t="Built-in brain"
+          s="The desktop app manages a private brain for you — no setup. (Arrives with the desktop sidecar; until then this behaves like My gbrain.)"
+        >
+          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>
+            desktop-managed
+          </span>
         </SetRow>
       )}
-      <SetRow t="Backup &amp; restore" s="One .json with your week, memory, and chat. Keys never travel — each device keeps its own.">
+      <SetRow
+        t="Backup &amp; restore"
+        s="One .json with your week, memory, and chat. Keys never travel — each device keeps its own."
+      >
         <span style={{ display: 'flex', gap: 8 }}>
           <Button variant="ghost" size="sm" onClick={() => void downloadBackup()}>
             download
@@ -909,11 +1098,25 @@ function PrivacyModelCard() {
         </span>
       </SetRow>
       {isTauri() && (
-        <SetRow t="Desktop auto-backup" s={`Every change lands in ${backupPath()} within a minute — 14 daily rotations kept.`}>
+        <SetRow
+          t="Desktop auto-backup"
+          s={`Every change lands in ${backupPath()} within a minute — 14 daily rotations kept.`}
+        >
           <Button variant="ghost" size="sm" onClick={() => void openBackupFolder()}>
             open folder
           </Button>
         </SetRow>
+      )}
+      {setupOpen && (
+        <ApiKeySetupFlow
+          provider={provider}
+          model={activeModel}
+          onClose={() => setSetupOpen(false)}
+          onDone={(key) => {
+            updateSettings(provider === 'openai' ? { openaiKey: key } : { anthropicKey: key })
+            setSetupOpen(false)
+          }}
+        />
       )}
     </div>
   )

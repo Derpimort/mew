@@ -10,6 +10,8 @@ import { WeekColumns } from '../components/WeekColumns'
 import { CompanionStage } from '../components/CompanionStage'
 import { SessionLog } from '../components/SessionLog'
 import { ErrorBoundary } from '../components/ErrorBoundary'
+import { CommandPalette } from '../components/CommandPalette'
+import { OnboardingModal } from '../components/OnboardingModal'
 import { usePetPalette } from '../components/petPalette'
 import { prefersReducedMotion, shouldShowAurora } from '../components/auroraGate'
 
@@ -34,18 +36,32 @@ export function MainPage() {
   const view = useMew((s) => s.view)
   const setView = useMew((s) => s.setView)
   const setPage = useMew((s) => s.setPage)
+  /* post-hydration first-run tour — App renders MainPage only once hydrated, so
+     this flag is already the persisted value, not the default. Its own error
+     boundary so a tour render fault never blocks the week behind it. */
+  const showOnboarding = useMew((s) => !s.settings.hasSeenOnboarding)
   const pal = usePetPalette()
   const showAurora = useShowAurora()
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 452px', height: '100%', minHeight: 0 }}>
+    <div
+      style={{ display: 'grid', gridTemplateColumns: '1fr 452px', height: '100%', minHeight: 0 }}
+    >
+      {showOnboarding && (
+        <ErrorBoundary label="the tour">
+          <OnboardingModal />
+        </ErrorBoundary>
+      )}
       <div className="left-stage">
         {/* ambient aurora in the pet's palette, melting into the app bg —
             only mounted when motion is welcome, so the lazy three.js chunk
             stays off the wire for a reduced-motion session */}
         {showAurora && (
           <Suspense fallback={null}>
-            <div style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }} aria-hidden>
+            <div
+              style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
+              aria-hidden
+            >
               <AuroraBlur
                 width="100%"
                 height="100%"
@@ -74,12 +90,31 @@ export function MainPage() {
             MEW
           </span>
         </div>
-        <div style={{ position: 'absolute', top: 20, right: 24, zIndex: 10, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 7 }}>
+        <div
+          style={{
+            position: 'absolute',
+            top: 20,
+            right: 24,
+            zIndex: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 7,
+          }}
+        >
           <span className="seg2">
-            <button type="button" className={view === 'focus' ? 'on' : ''} onClick={() => setView('focus')}>
+            <button
+              type="button"
+              className={view === 'focus' ? 'on' : ''}
+              onClick={() => setView('focus')}
+            >
               Focus
             </button>
-            <button type="button" className={view === 'week' ? 'on' : ''} onClick={() => setView('week')}>
+            <button
+              type="button"
+              className={view === 'week' ? 'on' : ''}
+              onClick={() => setView('week')}
+            >
               Week
             </button>
           </span>
@@ -101,6 +136,10 @@ export function MainPage() {
           <SessionLog />
         </ErrorBoundary>
       </div>
+      {/* power-user surface (#169/#170/#171): one Cmd/Ctrl-K overlay hosting
+          search + quick-capture. Mounted once, renders nothing until opened —
+          it owns its own hotkeys and never touches the resting layout. */}
+      <CommandPalette />
     </div>
   )
 }

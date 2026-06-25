@@ -22,7 +22,11 @@ function fakeServe(hits: unknown[], opts?: { honorLimit?: boolean }) {
       : hits
     const result =
       body.method === 'initialize'
-        ? { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 'fake', version: '0' } }
+        ? {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            serverInfo: { name: 'fake', version: '0' },
+          }
         : { content: [{ type: 'text', text: JSON.stringify(served) }] }
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result }), {
       status: 200,
@@ -98,7 +102,7 @@ describe('recall scope', () => {
         { slug: 'task/deck', snippet: 'last: completed' },
         { slug: 'person/dana', snippet: 'pre-read sent' },
       ],
-      { honorLimit: true },
+      { honorLimit: true }
     )
     const lines = await port().recall('q', { scope: 'mew', limit: 3 })
     expect(lines).toEqual(['task/deck — last: completed', 'person/dana — pre-read sent'])

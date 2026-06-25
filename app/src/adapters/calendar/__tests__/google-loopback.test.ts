@@ -70,11 +70,15 @@ describe('google authorize via loopback', () => {
     desktopFake.redirect = 'http://localhost:17893/?error=access_denied'
     await expect(googleAccount(freshId()).authorize(true)).rejects.toThrow('sign-in cancelled')
     desktopFake.redirect = 'http://localhost:17893/?error=invalid_client'
-    await expect(googleAccount(freshId()).authorize(true)).rejects.toThrow('google sign-in: invalid_client')
+    await expect(googleAccount(freshId()).authorize(true)).rejects.toThrow(
+      'google sign-in: invalid_client'
+    )
   })
 
   it('rejects a token-less redirect instead of pretending', async () => {
     desktopFake.redirect = 'http://localhost:17893/?state=nothing'
-    await expect(googleAccount(freshId()).authorize(true)).rejects.toThrow('no access token granted')
+    await expect(googleAccount(freshId()).authorize(true)).rejects.toThrow(
+      'no access token granted'
+    )
   })
 })

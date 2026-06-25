@@ -97,7 +97,14 @@ const DETECTOR = (pad, skipSel) => {
       if (r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) continue
       // strip line-box leading so cleanly-stacked lines don't graze
       const vi = Math.min(h * 0.16, 6)
-      boxes.push({ id, txt: txt.slice(0, 36), left: r.left, top: r.top + vi, right: r.right, bottom: r.bottom - vi })
+      boxes.push({
+        id,
+        txt: txt.slice(0, 36),
+        left: r.left,
+        top: r.top + vi,
+        right: r.right,
+        bottom: r.bottom - vi,
+      })
     }
   }
   const seen = new Set()
@@ -143,7 +150,8 @@ const detect = async (label, shot = true) => {
   if (shot) await page.screenshot({ path: `${outDir}/${label.replace(/[^a-z0-9]+/gi, '-')}.png` })
   if (hits.length) {
     console.log(`✗ ${label}: ${hits.length} overlap(s)`)
-    for (const h of hits.slice(0, 12)) console.log(`    "${h.a}" ⟂ "${h.b}"  (${h.overlap} @ ${h.at})`)
+    for (const h of hits.slice(0, 12))
+      console.log(`    "${h.a}" ⟂ "${h.b}"  (${h.overlap} @ ${h.at})`)
   } else {
     console.log(`✓ ${label}: clean`)
   }
@@ -167,6 +175,11 @@ await page.goto(`${base}/?t=00:05`)
 await ready()
 await page.evaluate(() => window.__mewReset?.())
 await ready()
+/* the wipe re-seeds, so the first-run concept tour (#160) reopens — dismiss it
+   (persists to storage, so it stays gone across every later goto) before the
+   composer seed, which the modal would otherwise cover */
+await page.evaluate(() => window.__mewConfigure?.({ hasSeenOnboarding: true }))
+await page.waitForSelector('.ob-scrim', { state: 'detached', timeout: 5000 }).catch(() => {})
 await seed([
   'block 1h for standup today at 9',
   'block 1.5h for design review today at 11',
@@ -211,5 +224,7 @@ await detect('focus-crowded')
 await browser.close()
 
 const total = findings.reduce((n, f) => n + f.hits.length, 0)
-console.log(`\n${total === 0 ? '✓' : '✗'} overlap guard: ${total} collision(s) across ${findings.length} states → ${outDir}`)
+console.log(
+  `\n${total === 0 ? '✓' : '✗'} overlap guard: ${total} collision(s) across ${findings.length} states → ${outDir}`
+)
 if (total > 0) process.exit(1)

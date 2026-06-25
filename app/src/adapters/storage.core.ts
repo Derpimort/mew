@@ -28,7 +28,9 @@ export function createCoreStorage(baseUrl: string, token: string): StoragePort {
     })
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
-      throw new Error(`mew-core ${method} ${res.status}${detail ? `: ${detail.slice(0, 140)}` : ''}`)
+      throw new Error(
+        `mew-core ${method} ${res.status}${detail ? `: ${detail.slice(0, 140)}` : ''}`
+      )
     }
     const env = (await res.json()) as RpcEnvelope<T>
     if (!env.ok) throw new Error(`mew-core ${method}: ${env.error ?? 'failed'}`)
@@ -40,12 +42,14 @@ export function createCoreStorage(baseUrl: string, token: string): StoragePort {
     putBlocks: (blocks: Block[]) => rpc<void>('putBlocks', [blocks]),
     deleteBlocks: (ids: string[]) => rpc<void>('deleteBlocks', [ids]),
     putCaptures: (captures: Capture[]) => rpc<void>('putCaptures', [captures]),
+    deleteCaptures: (ids: string[]) => rpc<void>('deleteCaptures', [ids]),
     putChat: (msgs: ChatMessage[]) => rpc<void>('putChat', [msgs]),
     putMemory: (events: MemoryEvent[]) => rpc<void>('putMemory', [events]),
     deleteMemory: (ids: string[]) => rpc<void>('deleteMemory', [ids]),
     putSettings: (s: Settings) => rpc<void>('putSettings', [s]),
     loadSyncMap: () => rpc<SyncEntry[]>('loadSyncMap', []),
-    saveSyncMap: (put: SyncEntry[], removeIds: string[]) => rpc<void>('saveSyncMap', [put, removeIds]),
+    saveSyncMap: (put: SyncEntry[], removeIds: string[]) =>
+      rpc<void>('saveSyncMap', [put, removeIds]),
     deleteSyncForCalendar: (calId: string) => rpc<void>('deleteSyncForCalendar', [calId]),
     exportJson: () => rpc<string>('exportJson', []),
     importJson: (json: string) => rpc<void>('importJson', [json]),

@@ -23,11 +23,15 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY?.trim()
 /* Skip-WHY at module load (a describe.skip body never runs, so logging there is
    invisible). Printed every run so a skip is never silently green. */
 if (!SMOKE) {
-  console.log('[smoke] MEW_SMOKE!=1 — live model smoke SKIPPED (run `pnpm smoke:models` with keys to exercise it).')
+  console.log(
+    '[smoke] MEW_SMOKE!=1 — live model smoke SKIPPED (run `pnpm smoke:models` with keys to exercise it).'
+  )
 } else {
   if (!OPENAI_KEY) console.log('[smoke] OPENAI_API_KEY absent — OpenAI live smoke SKIPPED.')
-  if (!ANTHROPIC_KEY) console.log('[smoke] ANTHROPIC_API_KEY absent — Anthropic live smoke SKIPPED.')
-  if (OPENAI_KEY || ANTHROPIC_KEY) console.log('[smoke] MEW_SMOKE=1 — exercising live model contract.')
+  if (!ANTHROPIC_KEY)
+    console.log('[smoke] ANTHROPIC_API_KEY absent — Anthropic live smoke SKIPPED.')
+  if (OPENAI_KEY || ANTHROPIC_KEY)
+    console.log('[smoke] MEW_SMOKE=1 — exercising live model contract.')
 }
 
 const ctx: WeekContext = {
@@ -64,20 +68,28 @@ maybe('live model-contract smoke', () => {
     'OpenAI: a real turn streams text with the contract param',
     async () => {
       const adapter = createAiAdapter('openai', OPENAI_KEY!, PROVIDER_CONTRACT.openai.defaultModel)
-      const text = await firstText(adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec))
+      const text = await firstText(
+        adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec)
+      )
       expect(text.length).toBeGreaterThan(0)
     },
-    30_000,
+    30_000
   )
 
   const an = ANTHROPIC_KEY ? it : it.skip
   an(
     'Anthropic: a real turn streams text within the contract ceiling',
     async () => {
-      const adapter = createAiAdapter('anthropic', ANTHROPIC_KEY!, PROVIDER_CONTRACT.anthropic.defaultModel)
-      const text = await firstText(adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec))
+      const adapter = createAiAdapter(
+        'anthropic',
+        ANTHROPIC_KEY!,
+        PROVIDER_CONTRACT.anthropic.defaultModel
+      )
+      const text = await firstText(
+        adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec)
+      )
       expect(text.length).toBeGreaterThan(0)
     },
-    30_000,
+    30_000
   )
 })

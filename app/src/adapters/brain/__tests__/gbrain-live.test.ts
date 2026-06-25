@@ -32,7 +32,14 @@ describe.skipIf(!LIVE)('gbrain serve, live round-trip', () => {
   it('health, completion ingest, pref ingest, recall', async () => {
     expect(await port.health()).toBe(true)
     await port.ingest(blockEventPage(block, 'completed', '2026-06-12', 14 * 60))
-    await port.ingest(prefPage({ kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }))
+    await port.ingest(
+      prefPage({
+        kind: 'time-default',
+        match: 'gym',
+        value: 'starts 07:00',
+        stated: 'gym is always 7am',
+      })
+    )
     /* keyless brains have no semantic leg — keyword recall is the floor
        this proof pins down (semantic rides the same path once the brain
        has an embedding key) */
@@ -42,6 +49,10 @@ describe.skipIf(!LIVE)('gbrain serve, live round-trip', () => {
 
     const prefs = await port.listPrefs()
     console.log('prefs:', prefs)
-    expect(prefs.some((p) => p.kind === 'time-default' && p.match === 'gym' && p.value === 'starts 07:00')).toBe(true)
+    expect(
+      prefs.some(
+        (p) => p.kind === 'time-default' && p.match === 'gym' && p.value === 'starts 07:00'
+      )
+    ).toBe(true)
   }, 30_000)
 })

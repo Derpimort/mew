@@ -38,7 +38,10 @@ export function pixieInputs(s: SustainabilitySignals): PixieInputs {
 }
 
 /** Status line + note for the companion slot — care, not blame; always an invitation. */
-export function pixieCopy(p: PixieInputs, mewName: string): { status: string; note: string; dot: string } {
+export function pixieCopy(
+  p: PixieInputs,
+  mewName: string
+): { status: string; note: string; dot: string } {
   if (p.resting)
     return {
       status: 'resting — earned',

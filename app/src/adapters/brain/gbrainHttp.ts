@@ -34,7 +34,10 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
     }
   }
 
-  const post = async (body: unknown, extraHeaders: Record<string, string> = {}): Promise<Response> => {
+  const post = async (
+    body: unknown,
+    extraHeaders: Record<string, string> = {}
+  ): Promise<Response> => {
     const ctl = new AbortController()
     const t = setTimeout(() => ctl.abort(), TIMEOUT_MS)
     try {
@@ -111,9 +114,12 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
     if (!res.ok) throw new Error(`${name} ${res.status}`)
     const rpc = await parseRpc(res)
     /* MCP tool failures arrive in-band: HTTP 200, isError in the result */
-    const r = rpc.result as { isError?: boolean; content?: { type: string; text?: string }[] } | undefined
+    const r = rpc.result as
+      | { isError?: boolean; content?: { type: string; text?: string }[] }
+      | undefined
     if (rpc.error) throw new Error(`${name}: ${JSON.stringify(rpc.error).slice(0, 200)}`)
-    if (r?.isError) throw new Error(`${name}: ${r.content?.[0]?.text?.slice(0, 200) ?? 'tool error'}`)
+    if (r?.isError)
+      throw new Error(`${name}: ${r.content?.[0]?.text?.slice(0, 200) ?? 'tool error'}`)
     warned = false
     return rpc
   }
@@ -133,7 +139,10 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
          once and retries; and no single failure takes down its siblings */
       const stubAnd = async (slug: string, retry: () => Promise<unknown>) => {
         const type = slug.split('/')[0]
-        await call('put_page', { slug, content: `---\ntype: ${type}\n---\n# ${slug.split('/').slice(1).join('/')}\n` })
+        await call('put_page', {
+          slug,
+          content: `---\ntype: ${type}\n---\n# ${slug.split('/').slice(1).join('/')}\n`,
+        })
         await retry()
       }
       try {
@@ -145,7 +154,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
             await call('add_timeline_entry', { slug: t.slug, date: t.date, summary: t.summary })
           } catch {
             await stubAnd(t.slug, () =>
-              call('add_timeline_entry', { slug: t.slug, date: t.date, summary: t.summary }),
+              call('add_timeline_entry', { slug: t.slug, date: t.date, summary: t.summary })
             ).catch(() => {})
           }
         }
@@ -177,7 +186,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
       const fetchLimit = scope === 'all' ? limit : Math.min(limit * 5, 50)
       const textOf = (rpc: unknown): string =>
         (rpc as { result?: { content?: { type: string; text?: string }[] } }).result?.content?.find(
-          (c) => c.type === 'text',
+          (c) => c.type === 'text'
         )?.text ?? ''
       /* results arrive as a JSON array or plain lines; both become short
          citable lines for the context block. MEW pages keep "slug — snippet";
@@ -190,8 +199,16 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
             return arr
               .map((hit) => {
                 if (typeof hit === 'string') return hit
-                const h = hit as { slug?: string; title?: string; snippet?: string; content?: string; summary?: string }
-                const snippet = (h.snippet ?? h.summary ?? h.title ?? h.content ?? '').replace(/\s+/g, ' ').slice(0, 120)
+                const h = hit as {
+                  slug?: string
+                  title?: string
+                  snippet?: string
+                  content?: string
+                  summary?: string
+                }
+                const snippet = (h.snippet ?? h.summary ?? h.title ?? h.content ?? '')
+                  .replace(/\s+/g, ' ')
+                  .slice(0, 120)
                 if (!h.slug) return snippet
                 if (MEW_PAGES.test(h.slug)) return `${h.slug} — ${snippet}`
                 if (scope !== 'all') return '' // foreign page in MEW scope: never surfaces
@@ -224,9 +241,9 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
       if (!cfg.enabled()) return []
       try {
         const textOf = (rpc: unknown): string =>
-          (rpc as { result?: { content?: { type: string; text?: string }[] } }).result?.content?.find(
-            (c) => c.type === 'text',
-          )?.text ?? ''
+          (
+            rpc as { result?: { content?: { type: string; text?: string }[] } }
+          ).result?.content?.find((c) => c.type === 'text')?.text ?? ''
         const listed = textOf(await call('list_pages', { tag: 'preference', limit: 30 }))
         let slugs: string[] = []
         try {
@@ -249,7 +266,11 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
              lives in .content (fall back to the raw text for older shapes) */
           let body = raw
           try {
-            const env = JSON.parse(raw) as { compiled_truth?: string; content?: string; body?: string }
+            const env = JSON.parse(raw) as {
+              compiled_truth?: string
+              content?: string
+              body?: string
+            }
             body = env.compiled_truth ?? env.content ?? env.body ?? raw
           } catch {
             /* raw markdown already */
@@ -270,9 +291,9 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
       try {
         const rpc = await call('get_links', { slug })
         const text =
-          (rpc as { result?: { content?: { type: string; text?: string }[] } }).result?.content?.find(
-            (c) => c.type === 'text',
-          )?.text ?? ''
+          (
+            rpc as { result?: { content?: { type: string; text?: string }[] } }
+          ).result?.content?.find((c) => c.type === 'text')?.text ?? ''
         const arr = JSON.parse(text || '[]') as unknown
         if (!Array.isArray(arr)) return []
         /* engine shapes vary across versions — accept strings or objects
@@ -285,7 +306,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
                 (l as { to_slug?: string }).to_slug ??
                 (l as { target_slug?: string }).target_slug ??
                 (l as { slug?: string }).slug ??
-                ''),
+                '')
           )
           .filter(Boolean)
       } catch (err) {

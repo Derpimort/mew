@@ -20,7 +20,7 @@ describe('ErrorBoundary — a throwing child shows the fallback, not a crash', (
     const html = renderToStaticMarkup(
       <ErrorBoundary label="the session">
         <Healthy />
-      </ErrorBoundary>,
+      </ErrorBoundary>
     )
     expect(html).toContain(CHILD)
     expect(html).not.toContain('hit a snag')

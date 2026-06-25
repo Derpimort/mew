@@ -23,7 +23,11 @@ export function sidecarBrain(): SidecarEndpoint | null {
 /** Where MEW's brain actually points: the user's configured endpoint when
     they opted in, else the shell's sidecar when one announced itself, else
     nowhere (the keyless floor carries the week). */
-export function effectiveBrain(s: { brainEnabled: boolean; brainUrl: string; brainToken: string }): {
+export function effectiveBrain(s: {
+  brainEnabled: boolean
+  brainUrl: string
+  brainToken: string
+}): {
   url: string
   token: string
   on: boolean

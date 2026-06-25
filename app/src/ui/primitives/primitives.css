@@ -27,6 +27,14 @@
   color: var(--ice);
   box-shadow: inset 0 0 0 1px var(--ice-bd);
 }
+/* a pill sits inside a 3px-padded track — an outset ring would spill past the
+   track edge, so the segmented controls take the ring INSET (it hugs the pill's
+   own radius). Same --focus-ring color; only the offset differs. */
+.seg2 button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: 7px;
+}
 
 /* agent status line */
 .agent {
@@ -59,8 +67,13 @@
   transition: background 0.18s;
   flex: none;
 }
-.tg.on { background: var(--teal); }
-.tg.lock { background: var(--gold); cursor: default; }
+.tg.on {
+  background: var(--teal);
+}
+.tg.lock {
+  background: var(--gold);
+  cursor: default;
+}
 .tg .kn {
   position: absolute;
   top: 3px;
@@ -73,7 +86,17 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 .tg.on .kn,
-.tg.lock .kn { left: 21px; }
+.tg.lock .kn {
+  left: 21px;
+}
+/* the toggle is a keyboard switch (role=switch, tabbable, Space/Enter flips it
+   in the Tgl primitive). A locked principle is inert — no field to change — so it
+   is never tabbable and never shows a ring. The ring follows the pill radius. */
+.tg:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: 999px;
+}
 .lockcap {
   font-family: 'JetBrains Mono', monospace;
   font-size: 8.5px;
@@ -109,9 +132,19 @@
   color: var(--ice);
   box-shadow: inset 0 0 0 1px var(--ice-bd);
 }
+/* same inset ring as .seg2 — the pill lives inside a 3px-padded track */
+.segc button:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
 
 /* pet picker */
-.petpick { display: flex; gap: 10px; flex-wrap: wrap; }
+.petpick {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 .petopt {
   display: flex;
   flex-direction: column;
@@ -130,11 +163,30 @@
 }
 .petopt.on .petswatch {
   border-color: var(--accpa);
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.5px var(--accpa);
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 3.5px var(--accpa);
 }
-.petswatch i { width: 22px; height: 22px; border-radius: 50%; }
-.petopt .pn { font-size: 11px; font-weight: 600; color: var(--muted); }
-.petopt.on .pn { color: var(--ink); }
+.petswatch i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+/* the pet option is a radio (keyboard-selectable); the ring hugs the swatch's
+   14px radius rather than the whole label+name box */
+.petopt:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: 16px;
+}
+.petopt .pn {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.petopt.on .pn {
+  color: var(--ink);
+}
 
 /* visibility chips (routing matrix) */
 .vis-chip {
@@ -146,10 +198,23 @@
   white-space: nowrap;
   transition: all 0.18s ease;
 }
-.vis-chip.det { background: var(--ice-soft); color: var(--ice); box-shadow: inset 0 0 0 1px var(--ice-bd); }
-.vis-chip.busy { color: var(--muted); border: 1px solid var(--line); }
-.vis-chip.hid { color: var(--faint); border: 1px dashed var(--line); }
-.vis-chip.all { background: var(--teal); color: var(--on-acc); }
+.vis-chip.det {
+  background: var(--ice-soft);
+  color: var(--ice);
+  box-shadow: inset 0 0 0 1px var(--ice-bd);
+}
+.vis-chip.busy {
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+.vis-chip.hid {
+  color: var(--faint);
+  border: 1px dashed var(--line);
+}
+.vis-chip.all {
+  background: var(--teal);
+  color: var(--on-acc);
+}
 
 .keyfield {
   font-family: 'JetBrains Mono', monospace;
@@ -159,6 +224,16 @@
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 5px 10px;
+}
+/* the key field is a styled wrapper around a borderless input; the ring belongs
+   on the wrapper (like .prompt-card) so the whole field reads as focused. The
+   inner input drops its own outline since the wrapper now carries the caret.
+   .keyfield is also used as a <button> (the "set / change" affordance) — a real
+   keyboard focus lands on the button itself, so :focus-visible covers both. */
+.keyfield:focus-within,
+.keyfield:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 .keyfield input {
   border: 0;
@@ -186,9 +261,16 @@
   background-repeat: no-repeat;
   background-position: right 9px center;
 }
+/* keep the border emphasis on any focus, but the keyboard caret also gets the
+   shared ring (a bare border-color shift is < 3:1 and fails §2.4.7 alone). The
+   :focus-visible rule is last + equal-specificity, so it wins over the foundation
+   reset without re-introducing a mouse-click outline. */
 .modelsel:focus {
-  outline: none;
   border-color: var(--ice-bd);
+}
+.modelsel:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
 }
 
 /* ── tty session ───────────────────────────────────────────────── */
@@ -205,8 +287,16 @@
   border-top: 1px solid var(--line);
   flex: none;
 }
-.trm-bar .dots { display: flex; gap: 6px; }
-.trm-bar .dots span { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+.trm-bar .dots {
+  display: flex;
+  gap: 6px;
+}
+.trm-bar .dots span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--line);
+}
 .trm-bar kbd {
   font-size: 10px;
   color: var(--muted);
@@ -221,37 +311,76 @@
   line-height: 1.9;
   color: var(--muted);
 }
-.log .cm { color: var(--faint); }
-.log .ok { color: var(--teal); }
-.log .mw { color: var(--gold); }
-.log b { color: var(--ink); font-weight: 500; }
-.log .p-mew { color: var(--gold); font-weight: 600; }
-.log .p-you { color: var(--ice); font-weight: 600; }
-.log .p-arr { color: var(--faint); }
+.log .cm {
+  color: var(--faint);
+}
+.log .ok {
+  color: var(--teal);
+}
+.log .mw {
+  color: var(--gold);
+}
+.log b {
+  color: var(--ink);
+  font-weight: 500;
+}
+.log .p-mew {
+  color: var(--gold);
+  font-weight: 600;
+}
+.log .p-you {
+  color: var(--ice);
+  font-weight: 600;
+}
+.log .p-arr {
+  color: var(--faint);
+}
 
 /* ── markdown subset for mew replies (Markdown.tsx) ──────────────────────────
    The first paragraph flows inline so a one-line reply still reads as a single
    `mew ❯ …` line; structural blocks (lists, code, extra paragraphs) break and
    indent to the gutter so they never blow out the column. Color inherits, so a
    `.cm` aside stays faint while a normal reply stays muted. */
-.md { display: inline; color: var(--muted); }
-.md-p { display: inline; margin: 0; white-space: pre-wrap; }
+.md {
+  display: inline;
+  color: var(--muted);
+}
+.md-p {
+  display: inline;
+  margin: 0;
+  white-space: pre-wrap;
+}
 /* once structure follows, the gutter line is "spent" — break the rest below it */
 .md-p ~ .md-p,
 .md > .md-ul,
 .md > .md-ol,
 .md > .md-pre,
-.md > .md-quote { display: block; margin: 4px 0 0; }
-.md > :first-child { margin-top: 0; }
+.md > .md-quote {
+  display: block;
+  margin: 4px 0 0;
+}
+.md > :first-child {
+  margin-top: 0;
+}
 
 .md-ul,
-.md-ol { padding-left: 34px; }
-.md-ul { list-style: '– ' outside; }
-.md-ol { list-style: decimal outside; }
+.md-ol {
+  padding-left: 34px;
+}
+.md-ul {
+  list-style: '– ' outside;
+}
+.md-ol {
+  list-style: decimal outside;
+}
 .md-ul li,
-.md-ol li { margin: 1px 0; }
+.md-ol li {
+  margin: 1px 0;
+}
 .md-ul li::marker,
-.md-ol li::marker { color: var(--faint); }
+.md-ol li::marker {
+  color: var(--faint);
+}
 
 .md-pre {
   margin: 4px 0 0 34px;
@@ -262,7 +391,11 @@
   overflow-x: auto;
   white-space: pre;
 }
-.md-pre code { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink); }
+.md-pre code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink);
+}
 .md-code {
   font-family: 'JetBrains Mono', monospace;
   font-size: 0.92em;
@@ -271,10 +404,21 @@
   background: var(--gold-soft);
   color: var(--ink);
 }
-.md strong { color: var(--ink); font-weight: 600; }
-.md em { font-style: italic; }
-.md-link { color: var(--gold); text-decoration: underline; text-underline-offset: 2px; }
-.md-link:hover { color: var(--ink); }
+.md strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.md em {
+  font-style: italic;
+}
+.md-link {
+  color: var(--gold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-link:hover {
+  color: var(--ink);
+}
 .md-quote {
   margin: 4px 0 0 34px;
   padding-left: 10px;
@@ -293,9 +437,20 @@
   box-shadow: 0 6px 20px -10px rgba(0, 0, 0, 0.5);
   line-height: 1.7;
 }
-.tui-nudge .h { color: var(--ice); font-weight: 600; margin-bottom: 5px; }
-.tui-nudge .tui-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.tui-nudge .research { color: var(--faint); }
+.tui-nudge .h {
+  color: var(--ice);
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+.tui-nudge .tui-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.tui-nudge .research {
+  color: var(--faint);
+}
 .tui-btn {
   display: inline-block;
   border: 1px solid var(--line);
@@ -305,7 +460,9 @@
   color: var(--ink);
   cursor: pointer;
   background: var(--panel2);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.3);
   font: inherit;
   transition: all 0.18s ease;
 }
@@ -321,18 +478,34 @@
   background: var(--panel2);
   border: 1px solid color-mix(in srgb, var(--ice) 20%, var(--line));
   border-radius: 13px;
-  box-shadow: inset 0 1.5px 4px rgba(0, 0, 0, 0.35), 0 1px 0 rgba(255, 255, 255, 0.03);
+  box-shadow:
+    inset 0 1.5px 4px rgba(0, 0, 0, 0.35),
+    0 1px 0 rgba(255, 255, 255, 0.03);
   cursor: text;
-  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease;
 }
-/* a visible focus ring — the keyboard-reachable composer reads as focused */
+/* a visible focus ring — the keyboard-reachable composer reads as focused.
+   The textarea inside drops its own outline (below), so the card carries the
+   caret: a full-opacity 2px --ice ring (the same intent as --focus-ring, drawn
+   as a box-shadow because the card's rounded corners need the radius the shadow
+   inherits — an outline would square them). Meets §2.4.7's 3:1 on both themes. */
 .prompt-card:focus-within {
   border-color: color-mix(in srgb, var(--ice) 45%, var(--line));
-  box-shadow: inset 0 1.5px 4px rgba(0, 0, 0, 0.35), 0 0 0 2px var(--ice-soft);
+  box-shadow:
+    inset 0 1.5px 4px rgba(0, 0, 0, 0.35),
+    0 0 0 2px var(--ice);
 }
-.sys--light .prompt-card { box-shadow: inset 0 1.5px 4px rgba(80, 60, 20, 0.08), 0 1px 0 #fff; }
+.sys--light .prompt-card {
+  box-shadow:
+    inset 0 1.5px 4px rgba(80, 60, 20, 0.08),
+    0 1px 0 #fff;
+}
 .sys--light .prompt-card:focus-within {
-  box-shadow: inset 0 1.5px 4px rgba(80, 60, 20, 0.08), 0 0 0 2px var(--ice-soft);
+  box-shadow:
+    inset 0 1.5px 4px rgba(80, 60, 20, 0.08),
+    0 0 0 2px var(--ice);
 }
 .prompt-row {
   display: flex;
@@ -342,8 +515,13 @@
   padding: 11px 14px 4px;
   font-size: 12.5px;
 }
-.prompt-row .p-you { color: var(--ice); font-weight: 600; }
-.prompt-row .p-arr { color: var(--faint); }
+.prompt-row .p-you {
+  color: var(--ice);
+  font-weight: 600;
+}
+.prompt-row .p-arr {
+  color: var(--faint);
+}
 .prompt-row textarea {
   flex: 1;
   min-width: 0;
@@ -359,9 +537,16 @@
   padding: 0;
   color: var(--ink);
 }
-.prompt-row textarea::placeholder { color: var(--faint); opacity: 1; }
+.prompt-row textarea::placeholder {
+  color: var(--faint);
+  opacity: 1;
+}
 /* disabled while MEW is mewing: inert, but the draft stays legible */
-.prompt-row textarea:disabled { color: var(--muted); cursor: default; -webkit-text-fill-color: var(--muted); }
+.prompt-row textarea:disabled {
+  color: var(--muted);
+  cursor: default;
+  -webkit-text-fill-color: var(--muted);
+}
 .prompt-hints {
   display: flex;
   align-items: center;
@@ -379,11 +564,25 @@
   border-radius: 4px;
   padding: 1px 4px;
 }
-.prompt-hints .hint.dim { opacity: 0.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prompt-hints .spacer { flex: 1; }
-.prompt-hints .mewing { color: var(--ice); font-weight: 700; }
+.prompt-hints .hint.dim {
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prompt-hints .spacer {
+  flex: 1;
+}
+.prompt-hints .mewing {
+  color: var(--ice);
+  font-weight: 700;
+}
 /* the live-turn footer: "mewing…" beside its ■ stop control (#117) */
-.prompt-hints .mewing-row { display: inline-flex; align-items: center; gap: 10px; }
+.prompt-hints .mewing-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
 .prompt-hints .send {
   font-family: inherit;
   white-space: nowrap;
@@ -397,7 +596,10 @@
   cursor: pointer;
   transition: opacity 0.15s ease;
 }
-.prompt-hints .send:disabled { opacity: 0.35; cursor: default; }
+.prompt-hints .send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
 
 /* ── block detail card (both views) ───────────────────────────── */
 .nx-card {
@@ -410,7 +612,9 @@
   box-shadow: 0 24px 60px -24px rgba(0, 0, 0, 0.7);
   z-index: 20;
 }
-.sys--light .nx-card { box-shadow: 0 24px 60px -28px rgba(60, 45, 15, 0.35); }
+.sys--light .nx-card {
+  box-shadow: 0 24px 60px -28px rgba(60, 45, 15, 0.35);
+}
 .nx-card .ct {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
@@ -437,8 +641,17 @@
   padding: 2px 7px;
   margin-top: 9px;
 }
-.nx-card .ctag.life { color: var(--teal); background: var(--teal-soft); border-color: var(--teal-bd); }
-.nx-card .cacts { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
+.nx-card .ctag.life {
+  color: var(--teal);
+  background: var(--teal-soft);
+  border-color: var(--teal-bd);
+}
+.nx-card .cacts {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
 .nx-card .ca {
   font-size: 11.5px;
   font-weight: 700;
@@ -450,8 +663,15 @@
   line-height: 1.3;
   transition: all 0.18s ease;
 }
-.nx-card .ca.pri { background: var(--ice); color: var(--on-acc); }
-.nx-card .ca.sec { border: 1px solid var(--line); color: var(--ink); background: var(--panel2); }
+.nx-card .ca.pri {
+  background: var(--ice);
+  color: var(--on-acc);
+}
+.nx-card .ca.sec {
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: var(--panel2);
+}
 
 /* shared Button primitive (#68) — the machined click-card affordance (.ca above),
    made reusable so buttons stop being styled per site. Tokens only; theme
@@ -470,20 +690,55 @@
   border-radius: 9px;
   transition: all 0.18s ease;
 }
-.stl .btn:disabled { opacity: 0.5; cursor: default; }
-.stl .btn-md { font-size: 11.5px; padding: 7px 14px; }
-.stl .btn-sm { font-size: 10.5px; padding: 4px 10px; border-radius: 8px; }
-.stl .btn-primary { background: var(--ice); color: var(--on-acc); }
-.stl .btn-primary:hover:not(:disabled) { filter: brightness(1.07); }
-.stl .btn-ghost { background: var(--panel2); color: var(--ink); border-color: var(--line); }
-.stl .btn-ghost:hover:not(:disabled) { border-color: var(--ice-bd); }
+.stl .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.stl .btn-md {
+  font-size: 11.5px;
+  padding: 7px 14px;
+}
+.stl .btn-sm {
+  font-size: 10.5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+.stl .btn-primary {
+  background: var(--ice);
+  color: var(--on-acc);
+}
+.stl .btn-primary:hover:not(:disabled) {
+  filter: brightness(1.07);
+}
+.stl .btn-ghost {
+  background: var(--panel2);
+  color: var(--ink);
+  border-color: var(--line);
+}
+.stl .btn-ghost:hover:not(:disabled) {
+  border-color: var(--ice-bd);
+}
 /* chip: a compact row-action button. A faint --line border on a panel2 box is
    invisible (panel2-on-panel2), so the chip carries an accent-tinted edge to
    read as a button; hover fills it like the click-card primary. */
-.stl .btn-chip { background: var(--panel2); color: var(--ink); border-color: var(--ice-bd); }
-.stl .btn-chip:hover:not(:disabled) { color: var(--on-acc); background: var(--ice); border-color: var(--ice); }
-.stl .btn-danger { background: transparent; color: var(--gold); border-color: var(--ice-bd); }
-.stl .btn-danger:hover:not(:disabled) { background: var(--gold-soft); }
+.stl .btn-chip {
+  background: var(--panel2);
+  color: var(--ink);
+  border-color: var(--ice-bd);
+}
+.stl .btn-chip:hover:not(:disabled) {
+  color: var(--on-acc);
+  background: var(--ice);
+  border-color: var(--ice);
+}
+.stl .btn-danger {
+  background: transparent;
+  color: var(--gold);
+  border-color: var(--ice-bd);
+}
+.stl .btn-danger:hover:not(:disabled) {
+  background: var(--gold-soft);
+}
 
 .nx-card .cx {
   position: absolute;
@@ -498,7 +753,10 @@
   cursor: pointer;
   border-radius: 7px;
 }
-.nx-card .cx:hover { color: var(--ink); background: var(--panel2); }
+.nx-card .cx:hover {
+  color: var(--ink);
+  background: var(--panel2);
+}
 
 /* docked variants — details render in reserved space, never over other blocks */
 .nx-card.center {
@@ -507,7 +765,9 @@
   text-align: center;
   background: var(--panel);
 }
-.nx-card.center .cacts { justify-content: center; }
+.nx-card.center .cacts {
+  justify-content: center;
+}
 
 .nx-card.dock {
   position: relative;
@@ -521,11 +781,29 @@
   border-color: var(--line);
   border-radius: 14px;
 }
-.nx-card.dock .cbody { min-width: 0; }
-.nx-card.dock .ct { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nx-card.dock .cm { margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nx-card.dock .ctag { margin-top: 7px; }
-.nx-card.dock .cacts { margin-top: 0; margin-left: auto; flex-wrap: nowrap; }
+.nx-card.dock .cbody {
+  min-width: 0;
+}
+.nx-card.dock .ct {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-card.dock .cm {
+  margin-top: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nx-card.dock .ctag {
+  margin-top: 7px;
+}
+.nx-card.dock .cacts {
+  margin-top: 0;
+  margin-left: auto;
+  flex-wrap: nowrap;
+}
 
 .wk-dock {
   display: flex;
@@ -568,7 +846,11 @@
   font-weight: 600;
   margin: 0 0 3px;
 }
-.set-card .sub { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+.set-card .sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
 .set-row {
   display: flex;
   align-items: center;
@@ -576,7 +858,21 @@
   padding: 10px 0;
   border-top: 1px solid var(--line2);
 }
-.set-row:first-of-type { border-top: none; }
-.set-row .rt { font-size: 13.5px; font-weight: 600; }
-.set-row .rs { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
-.set-row .rc { margin-left: auto; flex: none; display: flex; align-items: center; }
+.set-row:first-of-type {
+  border-top: none;
+}
+.set-row .rt {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.set-row .rs {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.set-row .rc {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+}

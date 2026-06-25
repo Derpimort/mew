@@ -27,7 +27,9 @@ function parseDayOffset(text: string, now: Date): { offset: number; matched: str
   const lower = text.toLowerCase()
   if (/\btoday\b/.test(lower)) return { offset: 0, matched: 'today' }
   if (/\btomorrow\b/.test(lower)) return { offset: 1, matched: 'tomorrow' }
-  const m = lower.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/)
+  const m = lower.match(
+    /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/
+  )
   if (m) {
     const off = weekdayOffset(m[1], now)
     if (off != null) return { offset: off, matched: m[1] }
@@ -91,7 +93,10 @@ function cleanTitle(raw: string): string {
 /** Strip scheduling words so they never leak into block titles. */
 function stripTimeWords(s: string): string {
   return s
-    .replace(/\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|morning|afternoon|evening)\b/gi, ' ')
+    .replace(
+      /\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|morning|afternoon|evening)\b/gi,
+      ' '
+    )
     .replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(am|pm)?\b/gi, ' ')
     .replace(/\b\d+(?:\.\d+)?\s*h(?:ours?)?\b/gi, ' ')
     .replace(/\b\d+\s*m(?:in(?:utes?)?)?\b/gi, ' ')
@@ -111,7 +116,9 @@ function clauses(text: string): string[] {
 function parsePref(raw: string): NonNullable<ScheduleIntent['pref']> {
   const text = raw.trim().replace(/\.+$/, '')
   const stated = text
-  const timeM = text.match(/^(.*?)\s+(?:is|are|starts?|happens?)\s+always\s+(?:at\s+)?(\d{1,2}(?::(\d{2}))?)\s*(am|pm)?$/i)
+  const timeM = text.match(
+    /^(.*?)\s+(?:is|are|starts?|happens?)\s+always\s+(?:at\s+)?(\d{1,2}(?::(\d{2}))?)\s*(am|pm)?$/i
+  )
   if (timeM) {
     let h = Number(timeM[2].split(':')[0])
     const min = timeM[2].includes(':') ? Number(timeM[2].split(':')[1]) : 0
@@ -124,11 +131,18 @@ function parsePref(raw: string): NonNullable<ScheduleIntent['pref']> {
       stated,
     }
   }
-  const durM = text.match(/^(.*?)\s+(?:always\s+|really\s+)?takes\s+(\d+(?:\.\d+)?)\s*(m|min|mins|minutes|h|hr|hours?)\b/i)
+  const durM = text.match(
+    /^(.*?)\s+(?:always\s+|really\s+)?takes\s+(\d+(?:\.\d+)?)\s*(m|min|mins|minutes|h|hr|hours?)\b/i
+  )
   if (durM) {
     const n = Number(durM[2])
     const mins = /^h/i.test(durM[3]) ? Math.round(n * 60) : Math.round(n)
-    return { kind: 'duration-default', match: durM[1].replace(/^(the|my)\s+/i, '').trim(), value: `${mins}m`, stated }
+    return {
+      kind: 'duration-default',
+      match: durM[1].replace(/^(the|my)\s+/i, '').trim(),
+      value: `${mins}m`,
+      stated,
+    }
   }
   const flexM = text.match(/^(.*?)\s+(never|always)\s+(?:moves?|can move|flexes)$/i)
   if (flexM) {
@@ -184,15 +198,19 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
 
   /* edits: "make the release 45 mins" · "wake should be 6-6:30" · "shorten X to 30m" */
   const durEdit = lower.match(
-    /^(?:make|set|change|shorten|extend|resize|update)\s+(.+?)\s+(?:to\s+)?(\d+(?:\.\d+)?)\s*(m|min|mins|minutes|h|hr|hours?)\b/,
+    /^(?:make|set|change|shorten|extend|resize|update)\s+(.+?)\s+(?:to\s+)?(\d+(?:\.\d+)?)\s*(m|min|mins|minutes|h|hr|hours?)\b/
   )
   if (durEdit) {
     const n = Number(durEdit[2])
     const dur = /^h/.test(durEdit[3]) ? Math.round(n * 60) : Math.round(n)
-    return { kind: 'edit', query: cleanTitle(stripTimeWords(durEdit[1])), edit: { durationMin: dur } }
+    return {
+      kind: 'edit',
+      query: cleanTitle(stripTimeWords(durEdit[1])),
+      edit: { durationMin: dur },
+    }
   }
   const rangeEdit = lower.match(
-    /^(.+?)\s+(?:should be|is now|goes|runs)\s+(\d{1,2})(?::(\d{2}))?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\b/,
+    /^(.+?)\s+(?:should be|is now|goes|runs)\s+(\d{1,2})(?::(\d{2}))?\s*(?:-|–|to)\s*(\d{1,2})(?::(\d{2}))?\b/
   )
   if (rangeEdit) {
     const s1 = Number(rangeEdit[2]) * 60 + (rangeEdit[3] ? Number(rangeEdit[3]) : 0)
@@ -211,17 +229,21 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
        a bare "22:30", then hand resolveRemoval a canonical HH:MM string so its
        own parser (prefs.parseTimeValue) is the single authority on the value. */
     const bare = dropM[1].match(/\b(\d{1,2}):(\d{2})\b/)
-    const atMin =
-      parseTime(dropM[1]) ??
-      (bare ? Number(bare[1]) * 60 + Number(bare[2]) : null)
-    const at = atMin != null ? `${Math.floor(atMin / 60)}:${String(atMin % 60).padStart(2, '0')}` : undefined
+    const atMin = parseTime(dropM[1]) ?? (bare ? Number(bare[1]) * 60 + Number(bare[2]) : null)
+    const at =
+      atMin != null ? `${Math.floor(atMin / 60)}:${String(atMin % 60).padStart(2, '0')}` : undefined
     const q = cleanTitle(
       stripTimeWords(dropM[1])
         .replace(/\b\d{1,2}:\d{2}\b(?:\s*(?:-|–|to)\s*\d{1,2}(?::\d{2})?)?/g, ' ') // bare clock / range
         .replace(/^(?:both|all|every|each|the|my)\s+/i, '')
-        .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, ''),
+        .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, '')
     )
-    if (q) return { kind: 'remove', query: q, ...(at || all ? { remove: { ...(at ? { at } : {}), ...(all ? { all: true } : {}) } } : {}) }
+    if (q)
+      return {
+        kind: 'remove',
+        query: q,
+        ...(at || all ? { remove: { ...(at ? { at } : {}), ...(all ? { all: true } : {}) } } : {}),
+      }
   }
 
   /* completions: "done with the deck", "finished the walk" */
@@ -270,7 +292,7 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
     const cueM = !blockM && parseDuration(cl) != null && (BG_CUE.test(cl) || DUE_CUE.test(cl))
     if (blockM || cueM) {
       let rest = blockM ? blockM[1] : clause
-      let title = ''
+      let title: string
       const forM = rest.match(/^(.*?)\s+for\s+(.+)$/)
       if (forM && blockM) {
         title = stripTimeWords(stripAttentionWords(forM[2])) // "spec review tomorrow at 9" → "spec review"

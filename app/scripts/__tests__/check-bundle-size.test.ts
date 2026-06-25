@@ -39,7 +39,9 @@ describe('bundle-size budget policy', () => {
     chunks[0].bytes += 50 * KB // the regression
     const regressed = evaluate(chunks)
     expect(regressed.ok).toBe(false)
-    expect(regressed.failures.some((f) => f.includes('assets/index-x.js') && f.includes('main'))).toBe(true)
+    expect(
+      regressed.failures.some((f) => f.includes('assets/index-x.js') && f.includes('main'))
+    ).toBe(true)
   })
 
   it('flags an oversized lazy chunk against the strict 300KB default', () => {

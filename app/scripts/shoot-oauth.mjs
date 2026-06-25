@@ -33,14 +33,20 @@ await page.addInitScript(() => {
       readDir: async () => [],
       remove: async () => {},
     },
-    path: { BaseDirectory: { Document: 6 }, documentDir: async () => '/d', join: async (...x) => x.join('/') },
+    path: {
+      BaseDirectory: { Document: 6 },
+      documentDir: async () => '/d',
+      join: async (...x) => x.join('/'),
+    },
     opener: {
       openPath: async () => {},
       openUrl: async (url) => {
         window.__openedUrls.push(url)
       },
     },
-    window: { getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }) },
+    window: {
+      getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }),
+    },
     core: { invoke: async (cmd) => (cmd === 'plugin:oauth|start' ? 17893 : undefined) },
     event: {
       listen: async (name, cb) => {
@@ -54,7 +60,9 @@ await page.addInitScript(() => {
 await page.goto(`${base}/?t=9:40`)
 await page.waitForSelector('.nx-count', { timeout: 15000 })
 await page.waitForTimeout(1500)
-await page.evaluate(() => window.__mewConfigure?.({ googleClientId: 'proof-client-id.apps.googleusercontent.com' }))
+await page.evaluate(() =>
+  window.__mewConfigure?.({ googleClientId: 'proof-client-id.apps.googleusercontent.com' })
+)
 
 await page.click('text=settings')
 await page.waitForSelector('.set-card h2')
@@ -81,7 +89,12 @@ await page.evaluate(() => {
 await page.waitForTimeout(2500)
 /* token accepted → flow reached the calendar API; offline box → factual error in Settings */
 const errText = await page.textContent('.set-card:has-text("Calendars")').catch(() => '')
-console.log('settings after redirect:', errText?.includes('google') || errText?.includes('failed') ? '✓ factual API error surfaced (flow passed auth)' : '(no error text found)')
+console.log(
+  'settings after redirect:',
+  errText?.includes('google') || errText?.includes('failed')
+    ? '✓ factual API error surfaced (flow passed auth)'
+    : '(no error text found)'
+)
 await page.screenshot({ path: `${outDir}/oauth-2-after-redirect.png` })
 
 await browser.close()

@@ -66,6 +66,10 @@ export interface StoragePort {
   putBlocks(blocks: Block[]): Promise<void>
   deleteBlocks(ids: string[]): Promise<void>
   putCaptures(captures: Capture[]): Promise<void>
+  /** Drop captures by id — the undo path (#162) needs to take back a capture a
+      tool jotted down this turn; nothing else removes one (a placed capture is
+      updated in place, not deleted). */
+  deleteCaptures(ids: string[]): Promise<void>
   putChat(msgs: ChatMessage[]): Promise<void>
   putMemory(events: MemoryEvent[]): Promise<void>
   deleteMemory(ids: string[]): Promise<void>

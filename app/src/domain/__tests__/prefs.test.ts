@@ -59,8 +59,12 @@ describe('applyPrefs — rules fill defaults, explicit always wins', () => {
 
   it('fills duration; leaves stated durations and end-bounded specs alone', () => {
     expect(applyPrefs({ title: 'deploy api' }, [durPref]).spec.durationMin).toBe(45)
-    expect(applyPrefs({ title: 'deploy api', durationMin: 90 }, [durPref]).spec.durationMin).toBe(90)
-    expect(applyPrefs({ title: 'deploy api', startMin: 600, endMin: 660 }, [durPref]).spec.durationMin).toBeUndefined()
+    expect(applyPrefs({ title: 'deploy api', durationMin: 90 }, [durPref]).spec.durationMin).toBe(
+      90
+    )
+    expect(
+      applyPrefs({ title: 'deploy api', startMin: 600, endMin: 660 }, [durPref]).spec.durationMin
+    ).toBeUndefined()
   })
 
   it('non-matching rules are inert', () => {
@@ -72,9 +76,21 @@ describe('applyPrefs — rules fill defaults, explicit always wins', () => {
 
 describe('flexOverride — the user’s rule outranks the word heuristic', () => {
   it('reads both directions and stays null without a matching rule', () => {
-    expect(flexOverride('Team sync', [pref({ kind: 'flexibility', match: 'sync', value: 'can always move' })])).toBe('flexible')
-    expect(flexOverride('Morning pages', [pref({ kind: 'flexibility', match: 'pages', value: 'never moves' })])).toBe('fixed')
-    expect(flexOverride('Team sync', [pref({ kind: 'flexibility', match: 'standup', value: 'never moves' })])).toBeNull()
+    expect(
+      flexOverride('Team sync', [
+        pref({ kind: 'flexibility', match: 'sync', value: 'can always move' }),
+      ])
+    ).toBe('flexible')
+    expect(
+      flexOverride('Morning pages', [
+        pref({ kind: 'flexibility', match: 'pages', value: 'never moves' }),
+      ])
+    ).toBe('fixed')
+    expect(
+      flexOverride('Team sync', [
+        pref({ kind: 'flexibility', match: 'standup', value: 'never moves' }),
+      ])
+    ).toBeNull()
     expect(flexOverride('Team sync', [])).toBeNull()
   })
 })

@@ -27,7 +27,9 @@ interface TokenClientConfig {
   error_callback?: (err: { type?: string; message?: string }) => void
 }
 interface GisOauth2 {
-  initTokenClient(cfg: TokenClientConfig): { requestAccessToken(opts?: { prompt?: '' | 'consent' }): void }
+  initTokenClient(cfg: TokenClientConfig): {
+    requestAccessToken(opts?: { prompt?: '' | 'consent' }): void
+  }
 }
 declare global {
   interface Window {
@@ -116,7 +118,9 @@ export class GoogleAccount implements CalendarAccount {
 
   /** System-browser sign-in: auth URL → loopback redirect → token from the
       forwarded fragment. No client secret exists anywhere in this flow. */
-  private async authorizeViaLoopback(interactive: boolean): Promise<{ value: string; expiresAt: number }> {
+  private async authorizeViaLoopback(
+    interactive: boolean
+  ): Promise<{ value: string; expiresAt: number }> {
     const redirect = await oauthLoopback((port) => {
       const q = new URLSearchParams({
         client_id: this.clientId,
@@ -131,7 +135,8 @@ export class GoogleAccount implements CalendarAccount {
     const u = new URL(redirect)
     const fields = new URLSearchParams(u.search ? u.search.slice(1) : u.hash.slice(1))
     const err = fields.get('error')
-    if (err) throw new Error(err === 'access_denied' ? 'sign-in cancelled' : `google sign-in: ${err}`)
+    if (err)
+      throw new Error(err === 'access_denied' ? 'sign-in cancelled' : `google sign-in: ${err}`)
     const value = fields.get('access_token')
     if (!value) throw new Error('no access token granted')
     return { value, expiresAt: Date.now() + Number(fields.get('expires_in') ?? 3600) * 1000 }
@@ -189,7 +194,7 @@ export class GoogleAccount implements CalendarAccount {
         ...(pageToken ? { pageToken } : {}),
       })
       const data = await this.call<{ items?: GEvent[]; nextPageToken?: string }>(
-        `/calendars/${encodeURIComponent(calId)}/events?${params}`,
+        `/calendars/${encodeURIComponent(calId)}/events?${params}`
       )
       for (const e of data.items ?? []) {
         if (e.status === 'cancelled') continue
@@ -224,24 +229,24 @@ export class GoogleAccount implements CalendarAccount {
   }
 
   async createEvent(calId: string, body: PushEventBody): Promise<string> {
-    const data = await this.call<{ id: string }>(
-      `/calendars/${encodeURIComponent(calId)}/events`,
-      { method: 'POST', body: this.body(body) },
-    )
+    const data = await this.call<{ id: string }>(`/calendars/${encodeURIComponent(calId)}/events`, {
+      method: 'POST',
+      body: this.body(body),
+    })
     return data.id
   }
 
   async updateEvent(calId: string, eventId: string, body: PushEventBody): Promise<void> {
     await this.call(
       `/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(eventId)}`,
-      { method: 'PATCH', body: this.body(body) },
+      { method: 'PATCH', body: this.body(body) }
     )
   }
 
   async deleteEvent(calId: string, eventId: string): Promise<void> {
     await this.call(
       `/calendars/${encodeURIComponent(calId)}/events/${encodeURIComponent(eventId)}`,
-      { method: 'DELETE' },
+      { method: 'DELETE' }
     )
   }
 }

@@ -11,7 +11,7 @@ export function layoutLanes<T>(
   items: T[],
   start: (t: T) => number,
   end: (t: T) => number,
-  id: (t: T) => string,
+  id: (t: T) => string
 ): Map<string, LaneSlot> {
   const sorted = [...items].sort((a, b) => start(a) - start(b) || end(a) - end(b))
   const res = new Map<string, LaneSlot>()

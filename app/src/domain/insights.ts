@@ -67,7 +67,7 @@ export function normTitle(title: string): string {
 export function computeInsights(
   events: MemoryEvent[],
   agg: MemoryAggregates,
-  today: Date,
+  today: Date
 ): Insights {
   const todayKey = dayKey(today)
   const floor28 = addDaysKey(todayKey, -28)
@@ -83,7 +83,15 @@ export function computeInsights(
     slot.days.add(e.dayKey)
     byDow.set(dow, slot)
   }
-  const names = ['mondays', 'tuesdays', 'wednesdays', 'thursdays', 'fridays', 'saturdays', 'sundays']
+  const names = [
+    'mondays',
+    'tuesdays',
+    'wednesdays',
+    'thursdays',
+    'fridays',
+    'saturdays',
+    'sundays',
+  ]
   const weekdayLoad: WeekdayLoad[] = [...byDow.entries()]
     .map(([dow, v]) => ({
       dow,
@@ -92,14 +100,22 @@ export function computeInsights(
     }))
     .sort((a, b) => a.dow - b.dow)
   const meanLoad =
-    weekdayLoad.length > 0 ? weekdayLoad.reduce((s, w) => s + w.avgPlannedH, 0) / weekdayLoad.length : 0
+    weekdayLoad.length > 0
+      ? weekdayLoad.reduce((s, w) => s + w.avgPlannedH, 0) / weekdayLoad.length
+      : 0
   const heaviestDow =
     weekdayLoad.length >= 3
       ? [...weekdayLoad].sort((a, b) => b.avgPlannedH - a.avgPlannedH)[0]
       : null
 
   /* follow-through by time band */
-  const bands: BandStat[] = BANDS.map((b) => ({ band: b.band, label: b.label, completed: 0, attempted: 0, rate: null }))
+  const bands: BandStat[] = BANDS.map((b) => ({
+    band: b.band,
+    label: b.label,
+    completed: 0,
+    attempted: 0,
+    rate: null,
+  }))
   for (const e of recent) {
     if (e.startMin == null) continue
     if (e.kind !== 'completed' && e.kind !== 'rolled') continue
@@ -163,19 +179,38 @@ export function computeInsights(
   /* lines — top findings, own numbers, MEW voice */
   const lines: string[] = []
   if (agg.realisticBestH != null)
-    lines.push(`your realistic best is about ${agg.realisticBestH}h of deep work a day — plans beyond that have history against them`)
-  if (bestBand && worstBand && bestBand.band !== worstBand.band && bestBand.rate! - worstBand.rate! >= 0.2)
     lines.push(
-      `${bestBand.label} hold: ${bestBand.completed}/${bestBand.attempted} finished there, against ${worstBand.completed}/${worstBand.attempted} in ${worstBand.label} — deep work belongs in ${bestBand.label}`,
+      `your realistic best is about ${agg.realisticBestH}h of deep work a day — plans beyond that have history against them`
+    )
+  if (
+    bestBand &&
+    worstBand &&
+    bestBand.band !== worstBand.band &&
+    bestBand.rate! - worstBand.rate! >= 0.2
+  )
+    lines.push(
+      `${bestBand.label} hold: ${bestBand.completed}/${bestBand.attempted} finished there, against ${worstBand.completed}/${worstBand.attempted} in ${worstBand.label} — deep work belongs in ${bestBand.label}`
     )
   if (heaviestDow && meanLoad > 0 && heaviestDow.avgPlannedH >= meanLoad * 1.3)
-    lines.push(`${heaviestDow.name} run heavy — ${heaviestDow.avgPlannedH}h planned on average vs ${Math.round(meanLoad * 2) / 2}h elsewhere`)
+    lines.push(
+      `${heaviestDow.name} run heavy — ${heaviestDow.avgPlannedH}h planned on average vs ${Math.round(meanLoad * 2) / 2}h elsewhere`
+    )
   for (const r of chronicRollers.slice(0, 1))
-    lines.push(`"${r.title}" has rolled forward ${spell(r.rolls)} times — a smaller first step usually breaks the loop`)
+    lines.push(
+      `"${r.title}" has rolled forward ${spell(r.rolls)} times — a smaller first step usually breaks the loop`
+    )
   if (latenessMin != null && latenessMin >= 12 && estimateFactor != null && estimateFactor > 1.05)
-    lines.push(`blocks run about ${latenessMin} min past their end — booking ~${Math.round((estimateFactor - 1) * 100)}% longer would make the plan honest`)
-  if (driftBand) lines.push(`drift clusters in the ${BANDS.find((b) => b.band === driftBand)!.label} — that's where a guard earns its keep`)
-  if (agg.carryRatio > 0.3) lines.push(`carry-over is running ${Math.round(agg.carryRatio * 100)}% — the week is asking for a kinder shape`)
+    lines.push(
+      `blocks run about ${latenessMin} min past their end — booking ~${Math.round((estimateFactor - 1) * 100)}% longer would make the plan honest`
+    )
+  if (driftBand)
+    lines.push(
+      `drift clusters in the ${BANDS.find((b) => b.band === driftBand)!.label} — that's where a guard earns its keep`
+    )
+  if (agg.carryRatio > 0.3)
+    lines.push(
+      `carry-over is running ${Math.round(agg.carryRatio * 100)}% — the week is asking for a kinder shape`
+    )
 
   return {
     weekdayLoad,
@@ -216,11 +251,11 @@ export interface DelegationCandidate {
 export function delegationCandidates(
   events: MemoryEvent[],
   links: { from: string; to: string }[],
-  nowMs: number,
+  nowMs: number
 ): DelegationCandidate[] {
   const floor = nowMs - 28 * 24 * 60 * 60 * 1000
   const recent = events.filter(
-    (e) => e.kind === 'completed' && e.ts >= floor && e.ts <= nowMs && !!e.title,
+    (e) => e.kind === 'completed' && e.ts >= floor && e.ts <= nowMs && !!e.title
   )
   if (!recent.length) return []
   const kindSlug = (title: string) =>
@@ -238,7 +273,11 @@ export function delegationCandidates(
     if (!kind || !person || seen.has(key)) continue
     seen.add(key)
     const ofKind = recent.filter((e) => kindSlug(e.title!) === kind)
-    const together = ofKind.filter((e) => e.title!.toLowerCase().includes(person.replace(/-/g, ' ')) || e.title!.toLowerCase().includes(person))
+    const together = ofKind.filter(
+      (e) =>
+        e.title!.toLowerCase().includes(person.replace(/-/g, ' ')) ||
+        e.title!.toLowerCase().includes(person)
+    )
     const alsoYours = ofKind.some((e) => !together.includes(e))
     if (together.length >= 3 && alsoYours) {
       const personLabel = person
@@ -266,7 +305,7 @@ export function dayDebrief(
   events: MemoryEvent[],
   todayKey: string,
   agg: MemoryAggregates,
-  nowMin: number,
+  nowMin: number
 ): string[] {
   const today = blocks.filter((b) => b.dayKey === todayKey)
   const mews = events.filter((e) => e.kind === 'completed' && e.dayKey === todayKey)
@@ -294,7 +333,8 @@ export function dayDebrief(
   const rests = today.filter((b) => b.tag === 'rest')
   if (rests.length) {
     const held = rests.some(
-      (b) => b.status === 'done' || (b.status === 'open' && b.startMin <= nowMin && nowMin < b.endMin),
+      (b) =>
+        b.status === 'done' || (b.status === 'open' && b.startMin <= nowMin && nowMin < b.endMin)
     )
     parts.push(held ? 'rest held' : 'rest is still owed tonight')
   }
@@ -329,7 +369,7 @@ export interface WeekReview {
 export function weekReview(
   events: MemoryEvent[],
   weekDayKeys: string[],
-  brainLines: string[] = [],
+  brainLines: string[] = []
 ): WeekReview {
   const days = new Set(weekDayKeys)
   const inWeek = events.filter((e) => days.has(e.dayKey))
@@ -343,8 +383,12 @@ export function weekReview(
   /* the band that held best — needs enough outcomes to be a claim */
   let best: { label: string; kept: number; total: number } | null = null
   for (const b of BANDS) {
-    const kept = mews.filter((e) => e.startMin != null && e.startMin >= b.from && e.startMin < b.to).length
-    const lost = rolled.filter((e) => e.startMin != null && e.startMin >= b.from && e.startMin < b.to).length
+    const kept = mews.filter(
+      (e) => e.startMin != null && e.startMin >= b.from && e.startMin < b.to
+    ).length
+    const lost = rolled.filter(
+      (e) => e.startMin != null && e.startMin >= b.from && e.startMin < b.to
+    ).length
     const total = kept + lost
     if (total >= 3 && kept / total >= 0.7 && (!best || kept / total > best.kept / best.total)) {
       best = { label: b.label, kept, total }
@@ -385,7 +429,8 @@ export function taskDurations(events: MemoryEvent[], nowMs: number): Map<string,
   const floor = nowMs - 56 * 24 * 60 * 60 * 1000
   const spans = new Map<string, number[]>()
   for (const e of events) {
-    if (e.kind !== 'completed' || e.ts < floor || e.ts > nowMs || !e.title || !e.plannedMin) continue
+    if (e.kind !== 'completed' || e.ts < floor || e.ts > nowMs || !e.title || !e.plannedMin)
+      continue
     let span = e.plannedMin
     if (e.startMin != null) {
       const done = new Date(e.ts)
@@ -404,8 +449,7 @@ export function taskDurations(events: MemoryEvent[], nowMs: number): Map<string,
     if (arr.length < 3) continue
     const sorted = [...arr].sort((a, b) => a - b)
     const mid = sorted.length >> 1
-    const median =
-      sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+    const median = sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2)
     out.set(k, { median, n: arr.length })
   }
   return out
@@ -423,7 +467,12 @@ export function proposeKinderPlan(
   blocks: Block[],
   agg: MemoryAggregates,
   todayKey: string,
-  findFreeSlot: (blocks: Block[], dayKey: string, durationMin: number, windowStart?: number) => { startMin: number } | null,
+  findFreeSlot: (
+    blocks: Block[],
+    dayKey: string,
+    durationMin: number,
+    windowStart?: number
+  ) => { startMin: number } | null
 ): { moves: KinderMove[]; summary: string } {
   const bestH = agg.realisticBestH ?? 5
   const capMin = bestH * 60
@@ -451,7 +500,12 @@ export function proposeKinderPlan(
         .sort((a, b) => a.load - b.load)
         .find((t) => t.load + duration(cand) <= capMin * 1.15)
       if (!target) continue
-      const slot = findFreeSlot(working.filter((b) => b.id !== cand.id), target.k, duration(cand), 9 * 60)
+      const slot = findFreeSlot(
+        working.filter((b) => b.id !== cand.id),
+        target.k,
+        duration(cand),
+        9 * 60
+      )
       if (!slot) continue
       moves.push({
         blockId: cand.id,
@@ -461,16 +515,21 @@ export function proposeKinderPlan(
         toStartMin: slot.startMin,
       })
       working = working.map((b) =>
-        b.id === cand.id ? { ...b, dayKey: target.k, startMin: slot.startMin, endMin: slot.startMin + duration(cand) } : b,
+        b.id === cand.id
+          ? {
+              ...b,
+              dayKey: target.k,
+              startMin: slot.startMin,
+              endMin: slot.startMin + duration(cand),
+            }
+          : b
       )
       load -= duration(cand)
     }
   }
 
   const summary = moves.length
-    ? moves
-        .map((m) => `${m.title} → ${fmtDowLong(m.toDayKey).toLowerCase()}`)
-        .join(', ')
+    ? moves.map((m) => `${m.title} → ${fmtDowLong(m.toDayKey).toLowerCase()}`).join(', ')
     : ''
   return { moves, summary }
 }
@@ -499,11 +558,11 @@ export function prefKey(p: PrefPayload): string {
 export function prefContradictions(
   prefs: PrefPayload[],
   events: MemoryEvent[],
-  today: Date,
+  today: Date
 ): PrefContradiction[] {
   const floor = addDaysKey(dayKey(today), -14)
   const lived = events.filter(
-    (e) => e.kind === 'completed' && e.dayKey >= floor && e.title != null && e.startMin != null,
+    (e) => e.kind === 'completed' && e.dayKey >= floor && e.title != null && e.startMin != null
   )
   const out: PrefContradiction[] = []
   for (const p of prefs) {
@@ -511,10 +570,12 @@ export function prefContradictions(
       const ruleMin = parseTimeValue(p.value)
       if (ruleMin == null) continue
       const off = lived.filter(
-        (e) => matchesPref(e.title!, p.match) && Math.abs(e.startMin! - ruleMin) >= 60,
+        (e) => matchesPref(e.title!, p.match) && Math.abs(e.startMin! - ruleMin) >= 60
       )
       if (off.length >= 3) {
-        const mid = [...off.map((e) => e.startMin!)].sort((a, b) => a - b)[Math.floor(off.length / 2)]
+        const mid = [...off.map((e) => e.startMin!)].sort((a, b) => a - b)[
+          Math.floor(off.length / 2)
+        ]
         out.push({ pref: p, observed: `starts ${fmtTime(mid)}`, count: off.length })
       }
     }
@@ -527,7 +588,9 @@ export function prefContradictions(
         return actual > 0 && Math.abs(actual - ruleDur) / ruleDur >= 0.25
       })
       if (off.length >= 3) {
-        const mid = [...off.map((e) => e.endMin! - e.startMin!)].sort((a, b) => a - b)[Math.floor(off.length / 2)]
+        const mid = [...off.map((e) => e.endMin! - e.startMin!)].sort((a, b) => a - b)[
+          Math.floor(off.length / 2)
+        ]
         out.push({ pref: p, observed: `${mid}m`, count: off.length })
       }
     }

@@ -60,7 +60,8 @@ export const isAM = (b: Block): boolean => b.startMin < 720
 /** "Confirmed/important" — a held block that isn't background, optional/tentative,
     or a pacing rest. Confirmed blocks ride INSIDE their half's divider ring;
     background/rest ride OUTSIDE it. One helper so render + tests agree. */
-export const isCommitted = (b: Block): boolean => !isBackground(b) && !b.optional && b.tag !== 'rest'
+export const isCommitted = (b: Block): boolean =>
+  !isBackground(b) && !b.optional && b.tag !== 'rest'
 
 /** Base lane radius for a block's importance band, before lane de-collision.
     Four bands, centre → out: AM-confirmed (ri−BAND), AM-bg (ri+BAND),
@@ -104,15 +105,33 @@ export function crossDaySpan(startMin: number, endMin: number): CrossDaySpan {
   const endLabelMin = ((endMin % DAY_MIN) + DAY_MIN) % DAY_MIN
   // tail of a block that began yesterday: draw its today head [0, endMin]
   if (startMin < 0) {
-    return { drawStart: 0, drawEnd: Math.min(endMin, DAY_MIN), continuesAfter: false, continuesFrom: true, endLabelMin }
+    return {
+      drawStart: 0,
+      drawEnd: Math.min(endMin, DAY_MIN),
+      continuesAfter: false,
+      continuesFrom: true,
+      endLabelMin,
+    }
   }
   // spills past midnight, either stored shape — clip the drawn arc to day-end
   const spills = endMin > DAY_MIN || endMin <= startMin
   if (spills) {
-    return { drawStart: startMin, drawEnd: DAY_MIN, continuesAfter: true, continuesFrom: false, endLabelMin }
+    return {
+      drawStart: startMin,
+      drawEnd: DAY_MIN,
+      continuesAfter: true,
+      continuesFrom: false,
+      endLabelMin,
+    }
   }
   // same-day (24:00 end included): unclipped, no carry
-  return { drawStart: startMin, drawEnd: endMin, continuesAfter: false, continuesFrom: false, endLabelMin }
+  return {
+    drawStart: startMin,
+    drawEnd: endMin,
+    continuesAfter: false,
+    continuesFrom: false,
+    endLabelMin,
+  }
 }
 
 /** Visible set: everything on today's face — open AND done, the whole day (no
@@ -124,7 +143,11 @@ export function crossDaySpan(startMin: number, endMin: number): CrossDaySpan {
 export function visibleOrbit(blocks: Block[], todayKey: string, _nowH: number): Block[] {
   return blocks
     .filter((b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done'))
-    .sort((a, b) => a.startMin - b.startMin || crossDaySpan(a.startMin, a.endMin).drawEnd - crossDaySpan(b.startMin, b.endMin).drawEnd)
+    .sort(
+      (a, b) =>
+        a.startMin - b.startMin ||
+        crossDaySpan(a.startMin, a.endMin).drawEnd - crossDaySpan(b.startMin, b.endMin).drawEnd
+    )
 }
 
 export function isRunning(b: Block, nowH: number): boolean {
@@ -146,7 +169,9 @@ export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): M
   // as a near-empty interval and mis-lane against neighbours it truly overlaps.
   // crossDaySpan is the single source of that folding — compute once per block
   // (this is the O(n²) lane loop's inner test) and read drawStart/drawEnd.
-  const arc = new Map<string, CrossDaySpan>(vis.map((b) => [b.id, crossDaySpan(b.startMin, b.endMin)]))
+  const arc = new Map<string, CrossDaySpan>(
+    vis.map((b) => [b.id, crossDaySpan(b.startMin, b.endMin)])
+  )
   const span = (b: Block) => arc.get(b.id) ?? crossDaySpan(b.startMin, b.endMin)
   const place = (group: Block[], dir: 1 | -1) => {
     const order = [...group].sort((a, b) => {
@@ -158,16 +183,31 @@ export function radiiFor(vis: Block[], focusId: string | null, _nowH: number): M
     for (const b of order) {
       const bs = span(b)
       let k = 0
-      while (lanes[k]?.some((o) => bs.drawStart < span(o).drawEnd && span(o).drawStart < bs.drawEnd)) k++
+      while (
+        lanes[k]?.some((o) => bs.drawStart < span(o).drawEnd && span(o).drawStart < bs.drawEnd)
+      )
+        k++
       ;(lanes[k] ??= []).push(b)
       out.set(b.id, bandBaseFor(b) + dir * k * LANE_STEP)
     }
   }
   // confirmed bands step inward (toward centre); background/rest step outward
-  place(vis.filter((b) => isAM(b) && isCommitted(b)), -1)
-  place(vis.filter((b) => isAM(b) && !isCommitted(b)), 1)
-  place(vis.filter((b) => !isAM(b) && isCommitted(b)), -1)
-  place(vis.filter((b) => !isAM(b) && !isCommitted(b)), 1)
+  place(
+    vis.filter((b) => isAM(b) && isCommitted(b)),
+    -1
+  )
+  place(
+    vis.filter((b) => isAM(b) && !isCommitted(b)),
+    1
+  )
+  place(
+    vis.filter((b) => !isAM(b) && isCommitted(b)),
+    -1
+  )
+  place(
+    vis.filter((b) => !isAM(b) && !isCommitted(b)),
+    1
+  )
   return out
 }
 
@@ -250,7 +290,8 @@ export function dayFill(minutesOfDay: number): DayFill {
     optional adds "tentative". Positive-only voice — never "overdue"/"failed". */
 function spokenTag(b: Block): string {
   if (b.external) return 'calendar'
-  const base = b.tag === 'work' ? 'work' : b.tag === 'rest' ? 'rest' : b.tag === 'health' ? 'health' : 'life'
+  const base =
+    b.tag === 'work' ? 'work' : b.tag === 'rest' ? 'rest' : b.tag === 'health' ? 'health' : 'life'
   return b.optional ? `${base}, tentative` : base
 }
 
@@ -276,7 +317,11 @@ export function arcAriaLabel(b: Block): string {
     else the live focus item (so Tab lands on "now" first), else the first arc in
     reading order. Returns null only when the face is empty. Pure so the
     "exactly one tab stop, and it's the right one" rule is unit-tested. */
-export function rovingFocusId(order: string[], kbFocus: string | null, focusId: string | null): string | null {
+export function rovingFocusId(
+  order: string[],
+  kbFocus: string | null,
+  focusId: string | null
+): string | null {
   if (kbFocus && order.includes(kbFocus)) return kbFocus
   if (focusId && order.includes(focusId)) return focusId
   return order[0] ?? null
@@ -288,7 +333,11 @@ export function rovingFocusId(order: string[], kbFocus: string | null, focusId: 
     visible blocks in, their ids in focus order out. */
 export function dialFocusOrder(vis: Block[]): string[] {
   return [...vis]
-    .sort((a, b) => a.startMin - b.startMin || crossDaySpan(a.startMin, a.endMin).drawEnd - crossDaySpan(b.startMin, b.endMin).drawEnd)
+    .sort(
+      (a, b) =>
+        a.startMin - b.startMin ||
+        crossDaySpan(a.startMin, a.endMin).drawEnd - crossDaySpan(b.startMin, b.endMin).drawEnd
+    )
     .map((b) => b.id)
 }
 
@@ -304,13 +353,14 @@ export function stepDialFocus(
   radii: Map<string, number>,
   currentId: string | null,
   axis: 'time' | 'lane',
-  dir: 1 | -1,
+  dir: 1 | -1
 ): string | null {
   if (vis.length === 0) return currentId
   const order = dialFocusOrder(vis)
   if (vis.length === 1) return order[0]
   // no anchor yet → first/last in reading order, so the first arrow lands on the face
-  if (currentId == null || !order.includes(currentId)) return dir === 1 ? order[0] : order[order.length - 1]
+  if (currentId == null || !order.includes(currentId))
+    return dir === 1 ? order[0] : order[order.length - 1]
 
   if (axis === 'time') {
     const i = order.indexOf(currentId)

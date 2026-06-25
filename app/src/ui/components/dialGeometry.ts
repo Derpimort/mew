@@ -24,7 +24,7 @@ export const sector = (
   rIn: number,
   rOut: number,
   d0: number,
-  d1: number,
+  d1: number
 ): string => {
   if (d1 < d0) d1 += 360
   if (d1 - d0 >= 360) d1 = d0 + 359.999

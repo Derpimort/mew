@@ -5,7 +5,9 @@ const WS = new Date(2026, 5, 8) // Mon Jun 8 2026 (local)
 const WE = new Date(2026, 5, 29)
 
 function ics(body: string): string {
-  return ['BEGIN:VCALENDAR', 'X-WR-CALNAME:mew@example.com', body, 'END:VCALENDAR'].join('\r\n')
+  return ['BEGIN:VCALENDAR', 'X-WR-CALNAME:mew@example.com', body, 'END:VCALENDAR'].join(
+    '\r\n'
+  )
 }
 
 describe('ICS parsing — the shapes real Google exports use', () => {
@@ -19,7 +21,7 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'SUMMARY:Standup\\, the long',
         '  one with a folded title',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
     expect(out.calName).toBe('mew@example.com')
@@ -36,12 +38,12 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'DTEND;TZID=America/Toronto:20260610T110000',
         'SUMMARY:NY sync',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
     const expected = new Date(Date.UTC(2026, 5, 10, 14, 0))
     expect(out.events[0].dayKey).toBe(
-      `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, '0')}-${String(expected.getDate()).padStart(2, '0')}`,
+      `${expected.getFullYear()}-${String(expected.getMonth() + 1).padStart(2, '0')}-${String(expected.getDate()).padStart(2, '0')}`
     )
     expect(out.events[0].startMin).toBe(expected.getHours() * 60 + expected.getMinutes())
   })
@@ -62,7 +64,7 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'RRULE:FREQ=YEARLY',
         'SUMMARY:Anniversary',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
     expect(out.events).toHaveLength(0)
@@ -82,7 +84,7 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'EXDATE;TZID=Asia/Kolkata:20260615T103000',
         'SUMMARY:Standup',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
     // window Jun 8–28, Mon+Wed = 8,10,15,17,22 (UNTIL 24T04:59Z ends the series
@@ -110,12 +112,14 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'DTEND:20260616T123000Z',
         'SUMMARY:1:1 (moved)',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
     const mon15 = out.events.filter((e) => e.dayKey === '2026-06-15')
     expect(mon15).toHaveLength(0) // original occurrence replaced
-    expect(out.events.some((e) => e.title === '1:1 (moved)' && e.dayKey === '2026-06-16')).toBe(true)
+    expect(out.events.some((e) => e.title === '1:1 (moved)' && e.dayKey === '2026-06-16')).toBe(
+      true
+    )
     // the other Mondays still expand
     expect(out.events.filter((e) => e.title === '1:1').length).toBeGreaterThanOrEqual(2)
   })
@@ -130,7 +134,7 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'RRULE:FREQ=DAILY;COUNT=3',
         'SUMMARY:Sprint check',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
     expect(out.events).toHaveLength(3)
@@ -146,7 +150,7 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'STATUS:CANCELLED',
         'SUMMARY:Dead meeting',
         'END:VEVENT',
-      ].join('\r\n'),
+      ].join('\r\n')
     )
     expect(icsToRemoteEvents(text, 'cal', WS, WE).events).toHaveLength(0)
   })

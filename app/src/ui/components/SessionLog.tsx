@@ -11,6 +11,7 @@ import { Markdown } from './Markdown'
 import type { ChatMessage } from '../../domain/types'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
 import { blocksForDay } from '../../domain/week'
+import { streamAnnouncement } from './sessionAnnounce'
 
 /** How close to the bottom (px) still counts as "stuck to the bottom" — within
     this band new output auto-scrolls; scroll up past it and MEW stops yanking. */
@@ -19,16 +20,6 @@ const STICK_THRESHOLD = 80
 /** id the prompt's aria-describedby points at, so a screen reader reads the
     ⌘K / shift+↵ hint line after the textarea's own label. */
 const PROMPT_HINTS_ID = 'prompt-hints'
-
-/** The assertive-region copy for a turn, as a pure edge function: a rising edge
-    of `thinking` announces the start, a falling edge announces completion, and a
-    same-value tick stays quiet (returns the prior message so nothing re-fires).
-    Kept pure + exported so the announce contract is unit-tested without a DOM. */
-export function streamAnnouncement(prev: string, was: boolean, now: boolean): string {
-  if (now && !was) return 'mew is responding…'
-  if (!now && was) return 'response complete'
-  return prev
-}
 
 export function SessionLog() {
   const chat = useMew((s) => s.chat)
@@ -71,7 +62,10 @@ export function SessionLog() {
     const el = scrollRef.current
     if (!el) return
     if (scrollToMsgId) {
-      el.querySelector(`[data-msg="${scrollToMsgId}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.querySelector(`[data-msg="${scrollToMsgId}"]`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
       clearScroll()
     } else if (atBottomRef.current) {
       el.scrollTop = el.scrollHeight
@@ -248,7 +242,12 @@ export function LogLine({ msg }: { msg: ChatMessage }) {
     const isOk = /^(done|moved|held|released|kept|placed|started|right-sized) —/i.test(msg.body)
     const isAside = msg.body.startsWith('(')
     return (
-      <div data-msg={msg.id} role="article" aria-label={articleLabel} className={isAside ? 'cm' : ''}>
+      <div
+        data-msg={msg.id}
+        role="article"
+        aria-label={articleLabel}
+        className={isAside ? 'cm' : ''}
+      >
         <span className="p-mew">mew</span> <span className="p-arr">❯</span>{' '}
         {isMew && <span className="mw">★ </span>}
         {isOk && <span className="ok">✓ </span>}
@@ -263,7 +262,9 @@ export function LogLine({ msg }: { msg: ChatMessage }) {
           </details>
         )}
         {msg.observation && (
-          <div className="cm" style={{ paddingLeft: 34 }}># {msg.observation}</div>
+          <div className="cm" style={{ paddingLeft: 34 }}>
+            # {msg.observation}
+          </div>
         )}
       </div>
     )
@@ -347,7 +348,12 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
             /* Enter sends; Shift+Enter keeps the newline. `isComposing` (plus
                our own ref, for engines that fire keydown before the flag) guards
                the IME path so committing a glyph never fires the turn. */
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !composing.current) {
+            if (
+              e.key === 'Enter' &&
+              !e.shiftKey &&
+              !e.nativeEvent.isComposing &&
+              !composing.current
+            ) {
               e.preventDefault()
               submit()
             }

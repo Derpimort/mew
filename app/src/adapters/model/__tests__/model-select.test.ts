@@ -12,12 +12,14 @@ import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
    import('./aiAdapter') inside selectAdapters' lazy wrapper. The spy records every
    arg the wrapper forwards — provider, key, model, and the pre-tool reasoning flag
    (#166) — so the impl only needs `provider` to mint a stub adapter. */
-const createAiAdapter = vi.fn((provider: string, apiKey: string, model: string, reasoning?: boolean) => {
-  void apiKey
-  void model
-  void reasoning // recorded by the spy; the stub only needs `provider`
-  return { id: provider, async *converse(): AsyncGenerator<ConverseChunk> {} }
-})
+const createAiAdapter = vi.fn(
+  (provider: string, apiKey: string, model: string, reasoning?: boolean) => {
+    void apiKey
+    void model
+    void reasoning // recorded by the spy; the stub only needs `provider`
+    return { id: provider, async *converse(): AsyncGenerator<ConverseChunk> {} }
+  }
+)
 vi.mock('../aiAdapter', () => ({
   createAiAdapter: (provider: string, apiKey: string, model: string, reasoning?: boolean) =>
     createAiAdapter(provider, apiKey, model, reasoning),
@@ -44,8 +46,12 @@ afterEach(() => createAiAdapter.mockClear())
 describe('selectAdapters threads the chosen model to the unified adapter', () => {
   it('Anthropic: the picked model id reaches the factory', async () => {
     const [adapter] = selectAdapters(
-      settings({ remoteProvider: 'anthropic', anthropicKey: 'sk-ant-x', anthropicModel: 'claude-custom-9' }),
-      NOW,
+      settings({
+        remoteProvider: 'anthropic',
+        anthropicKey: 'sk-ant-x',
+        anthropicModel: 'claude-custom-9',
+      }),
+      NOW
     )
     expect(adapter.id).toBe('anthropic')
     await drain(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
@@ -56,16 +62,21 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
   it('Anthropic: empty model falls back to the stable default (not Fable)', async () => {
     const [adapter] = selectAdapters(
       settings({ remoteProvider: 'anthropic', anthropicKey: 'sk-ant-x', anthropicModel: '' }),
-      NOW,
+      NOW
     )
     await drain(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
-    expect(createAiAdapter).toHaveBeenCalledWith('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', false)
+    expect(createAiAdapter).toHaveBeenCalledWith(
+      'anthropic',
+      'sk-ant-x',
+      'claude-sonnet-4-6',
+      false
+    )
   })
 
   it('OpenAI: the picked model id reaches the factory', async () => {
     const [adapter] = selectAdapters(
       settings({ remoteProvider: 'openai', openaiKey: 'sk-x', openaiModel: 'gpt-test-9' }),
-      NOW,
+      NOW
     )
     expect(adapter.id).toBe('openai')
     await drain(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
@@ -73,7 +84,10 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
   })
 
   it('OpenAI: empty model falls back to the current default', async () => {
-    const [adapter] = selectAdapters(settings({ remoteProvider: 'openai', openaiKey: 'sk-x', openaiModel: '' }), NOW)
+    const [adapter] = selectAdapters(
+      settings({ remoteProvider: 'openai', openaiKey: 'sk-x', openaiModel: '' }),
+      NOW
+    )
     await drain(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
     expect(createAiAdapter).toHaveBeenCalledWith('openai', 'sk-x', 'gpt-5.4-mini', false)
   })
@@ -85,7 +99,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
   it('showReasoning threads through to the factory as the reasoning flag (#166)', async () => {
     const [adapter] = selectAdapters(
       settings({ remoteProvider: 'anthropic', anthropicKey: 'sk-ant-x', showReasoning: true }),
-      NOW,
+      NOW
     )
     await drain(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
     expect(createAiAdapter).toHaveBeenCalledWith('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)

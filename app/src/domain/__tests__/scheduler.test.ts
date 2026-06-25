@@ -25,14 +25,25 @@ function mk(over: Partial<Block>): Block {
 describe('scheduler — candidateSlots (conflict-free enumeration)', () => {
   it('never overlaps an existing block', () => {
     const busy = mk({ title: 'Standup', startMin: 10 * 60, endMin: 11 * 60 })
-    const cands = candidateSlots([busy], { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW)
+    const cands = candidateSlots(
+      [busy],
+      { title: 'deep work', tag: 'work', durationMin: 60 },
+      D,
+      NOW
+    )
     const today = cands.filter((c) => c.dayKey === D) // overlap is a same-day notion
     expect(today.length).toBeGreaterThan(0)
-    for (const c of today) expect(overlaps(c.startMin, c.endMin, busy.startMin, busy.endMin)).toBe(false)
+    for (const c of today)
+      expect(overlaps(c.startMin, c.endMin, busy.startMin, busy.endMin)).toBe(false)
   })
 
   it('a due deadline confines candidates to today and gates anything ending late', () => {
-    const cands = candidateSlots([], { title: 'report', tag: 'work', durationMin: 60, due: 10 * 60 }, D, NOW)
+    const cands = candidateSlots(
+      [],
+      { title: 'report', tag: 'work', durationMin: 60, due: 10 * 60 },
+      D,
+      NOW
+    )
     expect(cands.length).toBeGreaterThan(0)
     for (const c of cands) {
       expect(c.dayKey).toBe(D)
@@ -42,7 +53,9 @@ describe('scheduler — candidateSlots (conflict-free enumeration)', () => {
 
   it('returns nothing when no gap fits the duration', () => {
     const full = mk({ title: 'All day', startMin: 8 * 60, endMin: 18 * 60 + 30 })
-    expect(candidateSlots([full], { title: 'x', tag: 'work', durationMin: 60, due: 18 * 60 }, D, NOW)).toEqual([])
+    expect(
+      candidateSlots([full], { title: 'x', tag: 'work', durationMin: 60, due: 18 * 60 }, D, NOW)
+    ).toEqual([])
   })
 
   it('spans multiple days when there is no due deadline', () => {
@@ -60,26 +73,48 @@ describe('scheduler — scoreSlots (ranking)', () => {
     const ranked = scoreSlots(blocks, { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW)
     expect(ranked.length).toBeGreaterThan(0)
     for (const c of ranked.filter((c) => c.dayKey === D)) // the blocks are all on D
-      for (const b of blocks) expect(overlaps(c.startMin, c.endMin, b.startMin, b.endMin)).toBe(false)
+      for (const b of blocks)
+        expect(overlaps(c.startMin, c.endMin, b.startMin, b.endMin)).toBe(false)
   })
 
   it('a work item prefers a morning slot over an afternoon one', () => {
-    const blocks = [mk({ startMin: 9 * 60, endMin: 14 * 60 }), mk({ startMin: 15 * 60, endMin: 18 * 60 + 30 })]
+    const blocks = [
+      mk({ startMin: 9 * 60, endMin: 14 * 60 }),
+      mk({ startMin: 15 * 60, endMin: 18 * 60 + 30 }),
+    ]
     const top = scoreSlots(blocks, { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW)[0]
     expect(top.startMin).toBeLessThan(12 * 60)
   })
 
   it('penalises a back-to-back slot below a spaced one', () => {
     const blocks = [mk({ startMin: 10 * 60, endMin: 11 * 60 })]
-    const onD = scoreSlots(blocks, { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW).filter((c) => c.dayKey === D)
+    const onD = scoreSlots(
+      blocks,
+      { title: 'deep work', tag: 'work', durationMin: 60 },
+      D,
+      NOW
+    ).filter((c) => c.dayKey === D)
     const backToBack = onD.find((c) => c.startMin === 11 * 60)! // right after the 10–11 block
     const spaced = onD.find((c) => c.startMin === 11 * 60 + 30)! // a gap before it
     expect(backToBack.score).toBeLessThan(spaced.score)
   })
 
   it('a time-default preference ranks its hour on top', () => {
-    const prefs = [{ kind: 'time-default' as const, match: 'deep work', value: 'starts 09:00', stated: 'deep work is 9am' }]
-    const top = scoreSlots([], { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW, prefs)[0]
+    const prefs = [
+      {
+        kind: 'time-default' as const,
+        match: 'deep work',
+        value: 'starts 09:00',
+        stated: 'deep work is 9am',
+      },
+    ]
+    const top = scoreSlots(
+      [],
+      { title: 'deep work', tag: 'work', durationMin: 60 },
+      D,
+      NOW,
+      prefs
+    )[0]
     expect(top.startMin).toBe(9 * 60)
     expect(top.why).toContain('matches your rule')
   })
@@ -132,7 +167,13 @@ describe('scheduler — restInsertion (pacing rest in a long run, #103)', () => 
   it('is idempotent — re-running after the breather lands inserts no second rest', () => {
     const run = mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 + 30 })
     const r = restInsertion([run], D)!
-    const breather = mk({ title: 'Breather', tag: 'rest', startMin: r.startMin, endMin: r.endMin, protected: false })
+    const breather = mk({
+      title: 'Breather',
+      tag: 'rest',
+      startMin: r.startMin,
+      endMin: r.endMin,
+      protected: false,
+    })
     expect(restInsertion([run, breather], D)).toBeNull()
   })
 
@@ -156,7 +197,13 @@ describe('scheduler — restInsertion (pacing rest in a long run, #103)', () => 
   it('a background hold over the run is transparent — it neither forms nor breaks a run', () => {
     const blocks = [
       mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60 + 30 }),
-      mk({ title: 'Spotify', tag: 'private', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 }),
+      mk({
+        title: 'Spotify',
+        tag: 'private',
+        attention: 'background',
+        startMin: 9 * 60,
+        endMin: 12 * 60,
+      }),
     ]
     const r = restInsertion(blocks, D)
     expect(r).not.toBeNull()

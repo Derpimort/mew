@@ -93,7 +93,13 @@ describe('validateSchema', () => {
      allowed to outlive its block, so this must NOT trigger a table clear. */
   it('reports an orphaned memory→block reference as repairable, not missing', () => {
     const memory = [
-      { id: 'e1', ts: 1, kind: 'completed', dayKey: '2026-06-09', blockId: 'gone' } as unknown as MemoryEvent,
+      {
+        id: 'e1',
+        ts: 1,
+        kind: 'completed',
+        dayKey: '2026-06-09',
+        blockId: 'gone',
+      } as unknown as MemoryEvent,
     ]
     const errors = validateSchema(emptyState({ memory }))
     expect(errors.length).toBe(1)
@@ -105,7 +111,15 @@ describe('validateSchema', () => {
   it('does not flag a memory→block reference that resolves', () => {
     const state = emptyState({
       blocks: [block({ id: 'here' })],
-      memory: [{ id: 'e1', ts: 1, kind: 'completed', dayKey: '2026-06-09', blockId: 'here' } as unknown as MemoryEvent],
+      memory: [
+        {
+          id: 'e1',
+          ts: 1,
+          kind: 'completed',
+          dayKey: '2026-06-09',
+          blockId: 'here',
+        } as unknown as MemoryEvent,
+      ],
     })
     expect(validateSchema(state)).toEqual([])
   })

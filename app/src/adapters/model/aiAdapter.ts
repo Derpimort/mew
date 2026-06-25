@@ -28,7 +28,10 @@ const MAX_STEPS = 14
 function buildModel(provider: RemoteProvider, apiKey: string, model: string) {
   if (provider === 'openai') return createOpenAI({ apiKey })(model)
   // browser-direct: Anthropic requires this header to allow a web-origin call
-  return createAnthropic({ apiKey, headers: { 'anthropic-dangerous-direct-browser-access': 'true' } })(model)
+  return createAnthropic({
+    apiKey,
+    headers: { 'anthropic-dangerous-direct-browser-access': 'true' },
+  })(model)
 }
 
 /** Tidy a raw thinking dump into one short, human-readable line and cap it (#166).
@@ -52,7 +55,7 @@ export function createAiAdapter(
   provider: RemoteProvider,
   apiKey: string,
   model: string,
-  reasoning = false,
+  reasoning = false
 ): ModelPort {
   const reasoningCfg = reasoning ? PROVIDER_CONTRACT[provider].reasoning : null
 
@@ -62,7 +65,7 @@ export function createAiAdapter(
       thread: ChatTurn[],
       ctx: WeekContext,
       exec: ToolExecutor,
-      signal?: AbortSignal,
+      signal?: AbortSignal
     ): AsyncIterable<ConverseChunk> {
       /* MEW tools → SDK tools. `execute` runs in-browser and calls the store
          executor (the ONLY mutation path); the SDK drives the multi-step loop. */
@@ -74,7 +77,7 @@ export function createAiAdapter(
             inputSchema: jsonSchema(t.parameters as Parameters<typeof jsonSchema>[0]),
             execute: (args: unknown) => runTool(t.name, args, exec),
           }),
-        ]),
+        ])
       )
       // v6 routes stream errors to onError and ends textStream WITHOUT throwing.
       // Capture it and rethrow after the stream so the store's chain sees the
@@ -96,7 +99,9 @@ export function createAiAdapter(
         ...(reasoningCfg
           ? {
               providerOptions: {
-                anthropic: { thinking: { type: 'enabled', budgetTokens: reasoningCfg.budgetTokens } },
+                anthropic: {
+                  thinking: { type: 'enabled', budgetTokens: reasoningCfg.budgetTokens },
+                },
               },
             }
           : {}),

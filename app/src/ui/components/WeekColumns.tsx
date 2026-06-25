@@ -6,13 +6,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMew, useLive } from '../../state/store'
 import type { Block } from '../../domain/types'
-import { dayKey, fmtDow, fmtShortDate, fmtTime, minOfDay, weekKeys, addDaysKey } from '../../domain/time'
+import {
+  dayKey,
+  fmtDow,
+  fmtShortDate,
+  fmtTime,
+  minOfDay,
+  weekKeys,
+  addDaysKey,
+} from '../../domain/time'
 import { blocksForDay, duration } from '../../domain/week'
 import { aggregates } from '../../domain/memory'
 import { findHeavyDay } from '../../domain/nudges/engine'
 import { clockDeg, nxwY, rPolar, sector } from './dialGeometry'
 import { sidePlacement, type Rect } from './hoverPreview'
 import { layoutLanes } from './lanes'
+import { useGridDrag } from './useGridDrag'
 import { BlockCard } from './BlockCard'
 
 const H = 560
@@ -53,7 +62,7 @@ export function WeekColumns() {
   const agg = useMemo(() => aggregates(memory, now), [memory, nowMs]) // eslint-disable-line react-hooks/exhaustive-deps
   const heavy = useMemo(
     () => findHeavyDay(blocks, todayKey, agg.realisticBestH),
-    [blocks, todayKey, agg.realisticBestH],
+    [blocks, todayKey, agg.realisticBestH]
   )
 
   /* Clicking a block pins its interactive details in the footer dock — reserved
@@ -73,7 +82,12 @@ export function WeekColumns() {
     if (!wrap) return
     const wr = wrap.getBoundingClientRect()
     const br = el.getBoundingClientRect()
-    const rect: Rect = { left: br.left - wr.left, top: br.top - wr.top, width: br.width, height: br.height }
+    const rect: Rect = {
+      left: br.left - wr.left,
+      top: br.top - wr.top,
+      width: br.width,
+      height: br.height,
+    }
     const next = { block: b, rect }
     if (preview && preview.block.id !== b.id) {
       dwellTimer.current = setTimeout(() => setPreview(next), 150)
@@ -85,7 +99,12 @@ export function WeekColumns() {
     if (dwellTimer.current) clearTimeout(dwellTimer.current)
     setPreview(null)
   }
-  useEffect(() => () => { if (dwellTimer.current) clearTimeout(dwellTimer.current) }, [])
+  useEffect(
+    () => () => {
+      if (dwellTimer.current) clearTimeout(dwellTimer.current)
+    },
+    []
+  )
   /* a scroll moves the blocks but not the captured rect — clear so the preview
      never strands away from its block. (A pin already clears at the click site,
      and hover early-returns while pinned, so no preview survives a pin.) */
@@ -93,14 +112,22 @@ export function WeekColumns() {
     if (!preview) return
     const onScroll = () => setPreview(null)
     window.addEventListener('scroll', onScroll, { passive: true, capture: true })
-    return () => window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
+    return () =>
+      window.removeEventListener('scroll', onScroll, { capture: true } as EventListenerOptions)
   }, [preview])
   const [scrubY, setScrubY] = useState<number | null>(null)
+
+  /* drag-to-reschedule (#158): grab a block, slide it across the time-true grid,
+     drop it. All gesture/geometry lives in useGridDrag; the store's dragMove is
+     the only mutation path. The view just wires the handlers/refs and renders the
+     ghost + conflict glow — staying a thin skin. */
+  const { drag, ghostBox, dragClash, bouncedId, gridRef, beginPress, consumeSuppressedClick } =
+    useGridDrag(H, clearPreview)
 
   const plannedH = useMemo(() => {
     const total = keys.reduce(
       (sum, k) => sum + blocksForDay(blocks, k).reduce((s, b) => s + duration(b), 0),
-      0,
+      0
     )
     return Math.round(total / 30) / 2
   }, [blocks, keys])
@@ -110,7 +137,11 @@ export function WeekColumns() {
     let kept = 0
     let total = 0
     for (const e of memory) {
-      if ((e.kind === 'rest_kept' || e.kind === 'rest_skipped') && e.dayKey >= floor && e.dayKey < todayKey) {
+      if (
+        (e.kind === 'rest_kept' || e.kind === 'rest_skipped') &&
+        e.dayKey >= floor &&
+        e.dayKey < todayKey
+      ) {
         total++
         if (e.kind === 'rest_kept') kept++
       }
@@ -119,31 +150,56 @@ export function WeekColumns() {
   }, [memory, todayKey])
 
   const pendingNudge = useMew((s) =>
-    [...s.chat].reverse().find((m) => m.role === 'nudge' && !m.resolved && (m.actions?.length ?? 0) > 0),
+    [...s.chat]
+      .reverse()
+      .find((m) => m.role === 'nudge' && !m.resolved && (m.actions?.length ?? 0) > 0)
   )
 
   const cols = '34px ' + keys.map((k) => (k === selectedKey ? '2.3fr' : '1fr')).join(' ')
 
   const weekLabel =
-    weekOffset === 0
-      ? 'this week'
-      : `week of ${fmtShortDate(keys[0]).toLowerCase()}`
+    weekOffset === 0 ? 'this week' : `week of ${fmtShortDate(keys[0]).toLowerCase()}`
 
   return (
-    <div ref={wrapRef} className="nxs1" style={{ width: 730, position: 'relative' }} onClick={() => { setPinnedId(null); setCard(null) }}>
+    <div
+      ref={wrapRef}
+      className="nxs1"
+      style={{ width: 730, position: 'relative' }}
+      onClick={() => {
+        setPinnedId(null)
+        setCard(null)
+      }}
+    >
       <div className="week-nav">
-        <button type="button" onClick={(e) => { e.stopPropagation(); setWeekOffset(weekOffset - 1) }} aria-label="previous week">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setWeekOffset(weekOffset - 1)
+          }}
+          aria-label="previous week"
+        >
           ‹
         </button>
         <button
           type="button"
           className="wk-label"
           title={weekOffset === 0 ? undefined : 'back to this week'}
-          onClick={(e) => { e.stopPropagation(); setWeekOffset(0) }}
+          onClick={(e) => {
+            e.stopPropagation()
+            setWeekOffset(0)
+          }}
         >
           {weekLabel}
         </button>
-        <button type="button" onClick={(e) => { e.stopPropagation(); setWeekOffset(weekOffset + 1) }} aria-label="next week">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            setWeekOffset(weekOffset + 1)
+          }}
+          aria-label="next week"
+        >
           ›
         </button>
       </div>
@@ -173,18 +229,28 @@ export function WeekColumns() {
       </div>
 
       <div
+        ref={gridRef}
+        className={drag ? 'wk-grid dragging' : 'wk-grid'}
         style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, position: 'relative' }}
         onMouseMove={(e) => {
+          if (drag) return // a live drag owns the pointer; the scrubber steps aside
           const r = e.currentTarget.getBoundingClientRect()
           const y = e.clientY - r.top
           if (y >= 0 && y <= H) setScrubY(y)
           else setScrubY(null)
         }}
-        onMouseLeave={() => { setScrubY(null); clearPreview() }}
+        onMouseLeave={() => {
+          setScrubY(null)
+          clearPreview()
+        }}
       >
         <div style={{ position: 'relative' }}>
           {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (
-            <span key={h} className="nxb-hl" style={{ position: 'absolute', top: nxwY(h, H) - 5, right: 2 }}>
+            <span
+              key={h}
+              className="nxb-hl"
+              style={{ position: 'absolute', top: nxwY(h, H) - 5, right: 2 }}
+            >
               {h}:00
             </span>
           ))}
@@ -194,10 +260,16 @@ export function WeekColumns() {
           const isSel = k === selectedKey
           const isPast = k < todayKey
           const day = blocksForDay(blocks, k)
-          const slots = layoutLanes(day, (b) => b.startMin, (b) => b.endMin, (b) => b.id)
+          const slots = layoutLanes(
+            day,
+            (b) => b.startMin,
+            (b) => b.endMin,
+            (b) => b.id
+          )
           return (
             <div
               key={k}
+              data-daykey={k}
               className={'nxb-col' + (isSel ? ' today' : '') + (isPast ? ' past' : '')}
               style={{ height: H }}
               onClick={(e) => {
@@ -220,11 +292,27 @@ export function WeekColumns() {
                 const twoLine = blkH >= 24
                 const tiny = blkH < 15
                 const inlineTime = !twoLine && !tiny && lanes === 1
+                const isDragSrc = drag?.id === b.id
+                const isClash = dragClash.has(b.id)
+                const isBounced = bouncedId === b.id
+                const openBlock = () => {
+                  clearPreview()
+                  setPinnedId(pinnedId === b.id ? null : b.id)
+                  setCard(b)
+                }
                 return (
                   <div
                     key={b.id}
                     className={
-                      'nxb-blk ' + b.tag + (isNow ? ' now' : '') + (done ? ' done' : '') + (b.optional ? ' optional' : '') + (twoLine ? '' : ' thin')
+                      'nxb-blk ' +
+                      b.tag +
+                      (isNow ? ' now' : '') +
+                      (done ? ' done' : '') +
+                      (b.optional ? ' optional' : '') +
+                      (twoLine ? '' : ' thin') +
+                      (isDragSrc ? ' drag-src' : '') +
+                      (isClash ? ' clash' : '') +
+                      (isBounced ? ' bounced' : '')
                     }
                     style={{
                       top: nxwY(sH, H) + 1.5,
@@ -233,12 +321,32 @@ export function WeekColumns() {
                       width: `calc(${100 / lanes}% - ${lanes > 1 ? 6 : 8}px)`,
                       right: 'auto',
                     }}
-                    onMouseEnter={(e) => hoverPreview(b, e.currentTarget)}
+                    /* a keyboard-reachable block: Tab lands on it (DOM order is
+                       day-column then start-time, so the order reads left-to-right,
+                       top-to-bottom), Enter/Space opens its detail card — the same
+                       thing a click does. aria-label speaks the title + time so a
+                       screen reader gets what the visual block shows. */
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${b.title}, ${fmtTime(b.startMin)} to ${fmtTime(b.endMin)}${done ? ', done' : ''}`}
+                    onMouseDown={(e) => {
+                      if (e.button !== 0) return // left button only
+                      beginPress(b, e)
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!drag) hoverPreview(b, e.currentTarget)
+                    }}
                     onClick={(e) => {
                       e.stopPropagation()
-                      clearPreview()
-                      setPinnedId(pinnedId === b.id ? null : b.id)
-                      setCard(b)
+                      if (consumeSuppressedClick()) return // this click trailed a drag — swallow it
+                      openBlock()
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        openBlock()
+                      }
                     }}
                   >
                     <div className={'t' + (isSel ? '' : ' small') + (tiny ? ' tiny' : '')}>
@@ -268,42 +376,115 @@ export function WeekColumns() {
             </span>
           </>
         )}
+        {/* drag ghost — a 50%-opacity dashed echo of the block at its candidate
+            drop, spanning the full target column so a multi-lane landing reads
+            honestly. A conflicting drop glows red (it will bounce); a protected
+            block carries a 'held' cue so its fixed nature stays visible (#158). */}
+        {drag &&
+          ghostBox &&
+          (() => {
+            const b = blocks.find((x) => x.id === drag.id)
+            if (!b) return null
+            const conflict = dragClash.size > 0
+            const top = nxwY(drag.toStartMin / 60, H) + 1.5
+            const height = Math.max(
+              10,
+              nxwY(Math.min((drag.toStartMin + drag.durationMin) / 60, 24), H) -
+                nxwY(drag.toStartMin / 60, H) -
+                4
+            )
+            return (
+              <div
+                className={
+                  'wk-ghost ' + b.tag + (conflict ? ' clash' : '') + (b.external ? ' external' : '')
+                }
+                style={{ top, height, left: ghostBox.left, width: ghostBox.width }}
+                role="status"
+                aria-label={`Moving ${b.title} to ${fmtTime(drag.toStartMin)}${conflict ? ', conflicts here' : ''}`}
+              >
+                <div className="wk-ghost-t">{b.title}</div>
+                <div className="wk-ghost-m">
+                  {fmtTime(drag.toStartMin)}–{fmtTime(drag.toStartMin + drag.durationMin)}
+                  {b.external ? ' · calendar — not mine to move' : b.protected ? ' · held' : ''}
+                  {conflict ? ' · conflict' : ''}
+                </div>
+              </div>
+            )
+          })()}
       </div>
 
       {/* hover preview — read-only, beside the block, never over it. pointer-events
           none keeps every block underneath hoverable (preserves the dock's old
           invariant for a now-safe floating card). */}
-      {preview && (() => {
-        const b = preview.block
-        const place = sidePlacement(preview.rect, { width: PREVIEW_W, height: PREVIEW_H }, { width: 730, height: H })
-        const life = b.tag !== 'work'
-        const stroke = life ? 'var(--teal)' : 'var(--ice)'
-        const isNow = todayKey === b.dayKey && live.current?.id === b.id
-        // single-block arc at its real clock angle (clockDeg); a thin annular
-        // wedge (sector) between two mini-rings — no new geometry.
-        const d0 = clockDeg(b.startMin / 60)
-        const d1 = clockDeg(Math.min(b.endMin, 24 * 60) / 60)
-        const arc = sector(MC.cx, MC.cy, MC.r - MC.band, MC.r, d0, d1 <= d0 ? d0 + 2 : d1)
-        const [tx, ty] = rPolar(MC.cx, MC.cy, MC.r + 1, 0) // 12-o'clock tick
-        const state = b.protected ? ' · held' : isNow ? ' · now' : b.due != null ? ` · due ${fmtTime(b.due)}` : b.optional ? ' · optional' : ''
-        return (
-          <div
-            className={'wk-preview' + (life ? ' life' : '')}
-            style={{ left: place.x, top: place.y, width: PREVIEW_W }}
-          >
-            <svg className="wk-preview-clock" width={MC.size} height={MC.size} viewBox={`0 0 ${MC.size} ${MC.size}`}>
-              <circle cx={MC.cx} cy={MC.cy} r={MC.r} fill="none" stroke="var(--line)" strokeWidth="1.2" />
-              <circle cx={MC.cx} cy={MC.cy} r={MC.r - MC.band} fill="none" stroke="var(--line2)" strokeWidth="1" />
-              <line x1={tx} y1={ty} x2={tx} y2={ty - 3} stroke="var(--faint)" strokeWidth="1.4" />
-              <path d={arc} fill={stroke} opacity={0.9} />
-            </svg>
-            <div className="wk-preview-body">
-              <div className="wk-preview-t">{b.status === 'done' ? '✓ ' : ''}{b.title}</div>
-              <div className="wk-preview-m">{fmtTime(b.startMin)}–{fmtTime(b.endMin)}{state}</div>
+      {preview &&
+        (() => {
+          const b = preview.block
+          const place = sidePlacement(
+            preview.rect,
+            { width: PREVIEW_W, height: PREVIEW_H },
+            { width: 730, height: H }
+          )
+          const life = b.tag !== 'work'
+          const stroke = life ? 'var(--teal)' : 'var(--ice)'
+          const isNow = todayKey === b.dayKey && live.current?.id === b.id
+          // single-block arc at its real clock angle (clockDeg); a thin annular
+          // wedge (sector) between two mini-rings — no new geometry.
+          const d0 = clockDeg(b.startMin / 60)
+          const d1 = clockDeg(Math.min(b.endMin, 24 * 60) / 60)
+          const arc = sector(MC.cx, MC.cy, MC.r - MC.band, MC.r, d0, d1 <= d0 ? d0 + 2 : d1)
+          const [tx, ty] = rPolar(MC.cx, MC.cy, MC.r + 1, 0) // 12-o'clock tick
+          const state = b.protected
+            ? ' · held'
+            : isNow
+              ? ' · now'
+              : b.due != null
+                ? ` · due ${fmtTime(b.due)}`
+                : b.optional
+                  ? ' · optional'
+                  : ''
+          return (
+            <div
+              className={'wk-preview' + (life ? ' life' : '')}
+              style={{ left: place.x, top: place.y, width: PREVIEW_W }}
+            >
+              <svg
+                className="wk-preview-clock"
+                width={MC.size}
+                height={MC.size}
+                viewBox={`0 0 ${MC.size} ${MC.size}`}
+              >
+                <circle
+                  cx={MC.cx}
+                  cy={MC.cy}
+                  r={MC.r}
+                  fill="none"
+                  stroke="var(--line)"
+                  strokeWidth="1.2"
+                />
+                <circle
+                  cx={MC.cx}
+                  cy={MC.cy}
+                  r={MC.r - MC.band}
+                  fill="none"
+                  stroke="var(--line2)"
+                  strokeWidth="1"
+                />
+                <line x1={tx} y1={ty} x2={tx} y2={ty - 3} stroke="var(--faint)" strokeWidth="1.4" />
+                <path d={arc} fill={stroke} opacity={0.9} />
+              </svg>
+              <div className="wk-preview-body">
+                <div className="wk-preview-t">
+                  {b.status === 'done' ? '✓ ' : ''}
+                  {b.title}
+                </div>
+                <div className="wk-preview-m">
+                  {fmtTime(b.startMin)}–{fmtTime(b.endMin)}
+                  {state}
+                </div>
+              </div>
             </div>
-          </div>
-        )
-      })()}
+          )
+        })()}
 
       {/* the dock: pinned details live HERE on click, never floating over the grid */}
       <div className="wk-dock">
@@ -327,13 +508,20 @@ export function WeekColumns() {
         {plannedH}h planned
         {restKept && (
           <>
-            {' '}· rest kept <span className="life">{restKept}</span>
+            {' '}
+            · rest kept <span className="life">{restKept}</span>
           </>
         )}
         {pendingNudge ? (
           <>
-            {' '}· {heavy ? `${fmtDow(String(pendingNudge.payload?.dayKey ?? heavy.dayKey)).toLowerCase()} wants a kinder shape` : 'something is waiting'} —{' '}
-            <span
+            {' '}
+            ·{' '}
+            {heavy
+              ? `${fmtDow(String(pendingNudge.payload?.dayKey ?? heavy.dayKey)).toLowerCase()} wants a kinder shape`
+              : 'something is waiting'}{' '}
+            —{' '}
+            <button
+              type="button"
               className="att"
               onClick={(e) => {
                 e.stopPropagation()
@@ -341,13 +529,12 @@ export function WeekColumns() {
               }}
             >
               nudge in chat
-            </span>
+            </button>
           </>
         ) : (
           <> · the shape looks kind</>
         )}
       </div>
-
     </div>
   )
 }

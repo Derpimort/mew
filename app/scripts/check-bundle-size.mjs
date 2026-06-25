@@ -91,18 +91,18 @@ export function evaluate(chunks, budgets = BUDGETS, eagerFiles = null) {
   for (const c of rated) {
     if (c.over) {
       failures.push(
-        `${c.file} (${c.category}) is ${kb(c.bytes)} — over the ${kb(c.budget)} ${c.category} budget by ${kb(c.bytes - c.budget)}.`,
+        `${c.file} (${c.category}) is ${kb(c.bytes)} — over the ${kb(c.budget)} ${c.category} budget by ${kb(c.bytes - c.budget)}.`
       )
     }
   }
   if (firstLoadOver) {
     failures.push(
-      `first-load JS is ${kb(firstLoadBytes)} — over the ${kb(budgets.firstLoad)} first-load budget by ${kb(firstLoadBytes - budgets.firstLoad)}.`,
+      `first-load JS is ${kb(firstLoadBytes)} — over the ${kb(budgets.firstLoad)} first-load budget by ${kb(firstLoadBytes - budgets.firstLoad)}.`
     )
   }
   if (totalOver) {
     failures.push(
-      `total bundle is ${kb(totalBytes)} — over the ${kb(budgets.total)} budget by ${kb(totalBytes - budgets.total)}.`,
+      `total bundle is ${kb(totalBytes)} — over the ${kb(budgets.total)} budget by ${kb(totalBytes - budgets.total)}.`
     )
   }
 
@@ -155,7 +155,7 @@ export function readChunks(distDir) {
   const manifestPath = path.join(distDir, '.vite', 'manifest.json')
   if (!existsSync(manifestPath)) {
     throw new Error(
-      `no manifest at ${manifestPath} — run \`pnpm build\` first (vite.config.ts sets build.manifest=true).`,
+      `no manifest at ${manifestPath} — run \`pnpm build\` first (vite.config.ts sets build.manifest=true).`
     )
   }
   const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -203,7 +203,8 @@ export function eagerFiles(manifest) {
 // Run only when invoked directly (`node scripts/check-bundle-size.mjs`), so
 // importing the pure helpers in a test doesn't trigger a build read / exit.
 const invokedDirectly =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)
 
 if (invokedDirectly) {
   const distDir = path.resolve(process.argv[2] ?? 'dist')

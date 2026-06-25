@@ -59,6 +59,23 @@ Overnight consolidation job, graph of tasks/people/projects, delegation candidat
 | 9 | Locked toggles visible, non-interactive | Phase 6; no storage field exists |
 | 10 | `prefers-reduced-motion` honored | Phase 0 global CSS |
 
+## Focus management (standing — WCAG 2.2 §2.4.7 Focus Visible · §2.1.1 Keyboard)
+
+One ring, app-wide. `tokens.css` defines `--focus-ring: 2px solid var(--ice)` + `--focus-offset: 4px` and a global `.stl :focus-visible { outline: var(--focus-ring) }` with a `:focus:not(:focus-visible)` reset — so the keyboard caret is always visible and never shows on a mouse click. The pet accent (`--ice` → `--pa` carbon / `--pal` white) clears ≥3:1 on both themes. No control may `outline: none` without restoring a `:focus-visible` ring.
+
+**Tab stops (in document/reading order):**
+
+| Surface | Tab-stop elements | Notes |
+|---|---|---|
+| MainPage header | Focus/Week segmented (`.seg2`), `settings` link | native `<button>`s |
+| Focus dial | the dial **arcs** (one stop, **roving tabindex**) → the live-headline button → "run in background" chip | arcs are SVG `<path role="button">`; only one carries `tabindex=0`, the rest `-1`; ↑/→ ↓/← step between them in lane-and-angle (`vis`) order, Home/End jump to ends, Enter/Space opens the card. The chip reveals on focus as well as hover so it's never mouse-only. SVG can't take an outline reliably, so the arc ring is a **drop-shadow glow** (`.pri-arc:focus-visible`). |
+| Week grid | day-header buttons (`.nxb-dl`), then each time **block** (`.nxb-blk role="button"`, every block a tab stop) | DOM order is day-column then start-time, so focus reads left-to-right, top-to-bottom; Enter/Space opens the block's card. The block ring is a crisp inset-offset outline (lanes pack tightly). |
+| Loose-threads rail | the pill (`.frail` button), then the close button + each row action | converted from click-only spans to real buttons. |
+| Settings | left-to-right, top-to-bottom: links, **pet picker** (`role=radiogroup` of `role=radio` buttons), visibility chips, toggles (`Tgl` = `role=switch`, Space/Enter flips), segmented controls, key fields, backup buttons | segmented "pills" take the ring **inset** (a pill lives inside a 3px-padded track); key fields show it on the `:focus-within` wrapper (like the composer). |
+| Composer | the textarea | ring is the `.prompt-card:focus-within` 2px `--ice` box-shadow (rounded corners need the radius an outline would square). |
+
+**Deliberately NOT tab stops:** locked principles (`Tgl lock`) — they have no storage field and nothing to change (ARCHITECTURE D7, acceptance #9), so they stay out of the tab order and carry no `role=switch`; purely decorative/`aria-hidden` chrome.
+
 ## Design-iteration workflow (standing)
 
 Each new design drop: replace `design_handoff_mew_mvp/` wholesale → `git diff` it → apply in order **tokens → primitives → layout** (ARCHITECTURE §7) → screenshot vs new canvas. Domain/state/adapters are off-limits to design drops by rule.

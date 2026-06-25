@@ -13,7 +13,10 @@ const outDir = path.resolve('shots')
 mkdirSync(outDir, { recursive: true })
 
 const browser = await chromium.launch({ executablePath: exe })
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 2 })
+const ctx = await browser.newContext({
+  viewport: { width: 1280, height: 900 },
+  deviceScaleFactor: 2,
+})
 const page = await ctx.newPage()
 page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
 

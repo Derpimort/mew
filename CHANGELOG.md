@@ -12,15 +12,47 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-25
+
 ### Added
 
-- Release notes: this `CHANGELOG.md` (Keep a Changelog format) seeded with v0.1.7–v0.1.9,
-  plus [`.github/RELEASES.md`](.github/RELEASES.md) documenting how desktop and web releases
-  are cut, and a maintainer hook to feed the `[Unreleased]` entry into each GitHub Release.
+- Accessibility, WCAG 2.2: the focus dial speaks ARIA and is fully keyboard-drivable; the chat
+  announces MEW's replies via aria-live; focus moves predictably with visible rings throughout.
+- Drag a block to reschedule it directly on the dial.
+- A first-run onboarding flow that introduces MEW's positive, completion-only model.
+- In-app API-key setup, so a key can be added without leaving the app (and still never leaves
+  the device).
+- Undo for AI actions — reverse a tool-driven change to the week in one step (#162, #213).
+- Recurring blocks via RFC 5545 (rrule) (#159, #214).
+- Native OS notifications for upcoming focus blocks.
+- A command palette with global search and quick-capture (#215).
 
 ### Changed
 
+- Lazy-load three.js: the main bundle drops from ~658KB to ~371KB, so first paint is quicker.
+- Pet White theme tuned to meet AA contrast.
 - README now links to the changelog under *Run it*.
+
+### Security
+
+- Tightened Content-Security-Policy on web and desktop (#198).
+- A standing test asserts API keys never leave the device.
+- Signed self-updater artifacts; `SECURITY.md` and a `security.txt` for responsible
+  disclosure (#189).
+- Dependabot plus a dependency-audit gate.
+
+### Developer experience & infrastructure
+
+- Two-tier gitflow CI: a fast typecheck + unit + lint gate on every PR, with the heavy
+  build/e2e/Lighthouse/UI-overlap/audit suites gated to develop→main release promotions.
+- Full-tree ESLint + Prettier are now a hard gate; husky pre-commit mirrors it.
+- Playwright end-to-end smoke tests and Lighthouse CI.
+- A bundle-size budget and vitest coverage thresholds.
+- A structured logger replacing ad-hoc logging; Dexie schema migrated to v3.
+- CONTRIBUTING and CODE_OF_CONDUCT guides (#197).
+- Release notes: this `CHANGELOG.md` (Keep a Changelog format) seeded with v0.1.7–v0.1.9,
+  plus [`.github/RELEASES.md`](.github/RELEASES.md) documenting how desktop and web releases
+  are cut, and a maintainer hook to feed the `[Unreleased]` entry into each GitHub Release.
 
 ## [0.1.9] — 2026-06-19
 
@@ -95,7 +127,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   release build (#144).
 - "Update later" no longer silently restores a backup; the retime `startMin` is now `const` (#138).
 
-[Unreleased]: https://github.com/Derpimort/mew/compare/v0.1.9...HEAD
+[Unreleased]: https://github.com/Derpimort/mew/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Derpimort/mew/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/Derpimort/mew/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Derpimort/mew/compare/v0.1.7...v0.1.8
 [0.1.7]: https://github.com/Derpimort/mew/compare/v0.1.6...v0.1.7

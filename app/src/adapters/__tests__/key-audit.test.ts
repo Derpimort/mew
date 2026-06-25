@@ -136,7 +136,9 @@ describe('API-key audit (#180): keys never leave the device', () => {
       // add it to SECRET_SETTING_KEYS — so the redaction can never silently
       // miss a new secret. googleClientId is intentionally excluded: an OAuth
       // *client id* is a public identifier, not a credential.
-      const secretShaped = Object.keys(DEFAULT_SETTINGS).filter((k) => /(Key|Token|Secret)$/.test(k))
+      const secretShaped = Object.keys(DEFAULT_SETTINGS).filter((k) =>
+        /(Key|Token|Secret)$/.test(k)
+      )
       expect([...secretShaped].sort()).toEqual([...SECRET_SETTING_KEYS].sort())
     })
 
@@ -170,7 +172,9 @@ describe('API-key audit (#180): keys never leave the device', () => {
       // `{`...${settings.openaiKey}`}` outside an input value/defaultValue.
       // Guard the obvious shapes: a secret inside a JSX text node or a template
       // literal that is NOT a mask (no `.slice(` on the same expression).
-      const rawTextNode = new RegExp(`>\\s*\\{\\s*settings\\.(${SECRET_SETTING_KEYS.join('|')})\\s*\\}`)
+      const rawTextNode = new RegExp(
+        `>\\s*\\{\\s*settings\\.(${SECRET_SETTING_KEYS.join('|')})\\s*\\}`
+      )
       expect(page).not.toMatch(rawTextNode)
     })
   })

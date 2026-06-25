@@ -2,7 +2,15 @@
    weeks of memory so MEW has honest numbers (realistic best ≈ 5.5h) from day
    one. Created only when storage is empty. */
 
-import type { Block, ChatMessage, ConnectedCalendar, MemoryEvent, RoutingMatrix, Settings, Tag } from '../domain/types'
+import type {
+  Block,
+  ChatMessage,
+  ConnectedCalendar,
+  MemoryEvent,
+  RoutingMatrix,
+  Settings,
+  Tag,
+} from '../domain/types'
 import { DEFAULT_SETTINGS } from '../domain/types'
 import { addDaysKey, dayKey, fromDayKey, minOfDay, uid, weekKeys } from '../domain/time'
 
@@ -77,7 +85,12 @@ export function seed(now: Date): SeedResult {
   const blocks: Block[] = []
   const memory: MemoryEvent[] = []
 
-  const mkBlock = (key: string, p: DayPlan, status: Block['status'], completedAt?: number): Block => ({
+  const mkBlock = (
+    key: string,
+    p: DayPlan,
+    status: Block['status'],
+    completedAt?: number
+  ): Block => ({
     id: uid(),
     title: p.title,
     tag: p.tag,
@@ -99,7 +112,9 @@ export function seed(now: Date): SeedResult {
 
   /* this week */
   for (const key of week) {
-    const offset = Math.round((fromDayKey(key).getTime() - fromDayKey(todayKey).getTime()) / 86400000)
+    const offset = Math.round(
+      (fromDayKey(key).getTime() - fromDayKey(todayKey).getTime()) / 86400000
+    )
     if (offset < 0) {
       for (const p of planFor(99)) {
         const done = !(p.tag === 'work' && p.start >= 14) // afternoons sometimes slipped

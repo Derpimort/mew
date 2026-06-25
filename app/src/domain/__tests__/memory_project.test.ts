@@ -18,9 +18,7 @@ describe('memory — history informs', () => {
     // 5 days: 5h, 5.5h, 6h, 5.5h, 4h of completed deep work
     const hours = [5, 5.5, 6, 5.5, 4]
     hours.forEach((h, i) => {
-      events.push(
-        ev({ dayKey: addDaysKey(todayKey, -(i + 1)), deep: true, plannedMin: h * 60 }),
-      )
+      events.push(ev({ dayKey: addDaysKey(todayKey, -(i + 1)), deep: true, plannedMin: h * 60 }))
     })
     expect(aggregates(events, TODAY).realisticBestH).toBe(5.5)
   })

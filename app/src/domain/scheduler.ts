@@ -69,7 +69,7 @@ export function candidateSlots(
   q: SlotQuery,
   todayKey: string,
   nowMin: number,
-  horizonDays = 7,
+  horizonDays = 7
 ): { dayKey: string; startMin: number; endMin: number }[] {
   const out: { dayKey: string; startMin: number; endMin: number }[] = []
   const lastDay = q.due != null ? 0 : horizonDays // a same-day due confines to today
@@ -79,7 +79,8 @@ export function candidateSlots(
     for (const w of freeWindows(blocks, day, from, DAY_END)) {
       const starts = new Set<number>()
       if (w.startMin + q.durationMin <= w.endMin) starts.add(w.startMin) // tight pack
-      for (let s = Math.ceil(w.startMin / STEP) * STEP; s + q.durationMin <= w.endMin; s += STEP) starts.add(s)
+      for (let s = Math.ceil(w.startMin / STEP) * STEP; s + q.durationMin <= w.endMin; s += STEP)
+        starts.add(s)
       for (const startMin of [...starts].sort((a, b) => a - b)) {
         const endMin = startMin + q.durationMin
         if (q.due != null && endMin > q.due) continue // must end by the deadline
@@ -93,12 +94,19 @@ export function candidateSlots(
 /** spacing factor [0,1]: 1 = breathing room; lower when the slot sits
     back-to-back with adjacent work, worse when it extends a continuous run past
     the rest cap (#79). Rest blocks don't count as work to space around. */
-function restScore(blocks: Block[], cand: { dayKey: string; startMin: number; endMin: number }): number {
+function restScore(
+  blocks: Block[],
+  cand: { dayKey: string; startMin: number; endMin: number }
+): number {
   const work = blocksForDay(blocks, cand.dayKey).filter(
-    (b) => b.status === 'open' && !isBackground(b) && b.tag !== 'rest',
+    (b) => b.status === 'open' && !isBackground(b) && b.tag !== 'rest'
   )
-  const before = work.filter((b) => b.endMin <= cand.startMin).sort((a, b) => b.endMin - a.endMin)[0]
-  const after = work.filter((b) => b.startMin >= cand.endMin).sort((a, b) => a.startMin - b.startMin)[0]
+  const before = work
+    .filter((b) => b.endMin <= cand.startMin)
+    .sort((a, b) => b.endMin - a.endMin)[0]
+  const after = work
+    .filter((b) => b.startMin >= cand.endMin)
+    .sort((a, b) => a.startMin - b.startMin)[0]
   let score = 1
   if (before && before.endMin === cand.startMin) {
     const runLen = cand.endMin - before.startMin
@@ -143,7 +151,7 @@ export function scoreSlots(
   nowMin: number,
   prefs: PrefPayload[] = [],
   weights: ScoreWeights = DEFAULT_WEIGHTS,
-  horizonDays = 7,
+  horizonDays = 7
 ): SlotCandidate[] {
   return candidateSlots(blocks, q, todayKey, nowMin, horizonDays)
     .map((c) => {
@@ -164,7 +172,9 @@ export function scoreSlots(
         why: reasons.length ? reasons.join(', ') : 'fits a free gap',
       }
     })
-    .sort((a, b) => b.score - a.score || a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+    .sort(
+      (a, b) => b.score - a.score || a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin
+    )
 }
 
 /* ── rest insertion (#103) — the #80 follow-up ────────────────────────
@@ -192,7 +202,7 @@ const RUN_GAP = 15
     the same set the day's load and streak math already trust. */
 function committedWork(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest',
+    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest'
   )
 }
 
@@ -206,7 +216,7 @@ interface WorkRun {
     the run, so a day that's broken up yields only short runs and no insertion. */
 function workRuns(blocks: Block[], dayKey: string): WorkRun[] {
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b),
+    (b) => b.status === 'open' && !b.optional && !isBackground(b)
   )
   const runs: WorkRun[] = []
   let cur: WorkRun | null = null
@@ -271,7 +281,11 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
 
   if (fits.length) {
     const seam = fits[0]
-    const dur = Math.min(PACING_REST_MAX, Math.max(PACING_REST_FLOOR, PACING_REST_MIN), seam.endMin - seam.startMin)
+    const dur = Math.min(
+      PACING_REST_MAX,
+      Math.max(PACING_REST_FLOOR, PACING_REST_MIN),
+      seam.endMin - seam.startMin
+    )
     return {
       dayKey,
       startMin: seam.startMin,

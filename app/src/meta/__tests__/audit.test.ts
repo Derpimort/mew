@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const pkg = JSON.parse(
-  readFileSync(fileURLToPath(new URL('../../../package.json', import.meta.url)), 'utf8'),
+  readFileSync(fileURLToPath(new URL('../../../package.json', import.meta.url)), 'utf8')
 ) as { scripts: Record<string, string>; dependencies: Record<string, string> }
 
 describe('dependency audit wiring', () => {

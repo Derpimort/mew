@@ -31,7 +31,10 @@ export function isDeep(b: Block): boolean {
 }
 
 /** Day load by rail segment (health rides with private in the bars; legend stays work/private/rest). */
-export function loadBySegment(blocks: Block[], dayKey: string): { work: number; priv: number; rest: number } {
+export function loadBySegment(
+  blocks: Block[],
+  dayKey: string
+): { work: number; priv: number; rest: number } {
   const out = { work: 0, priv: 0, rest: 0 }
   for (const b of blocksForDay(blocks, dayKey)) {
     if (b.optional) continue // tentative time isn't load
@@ -91,7 +94,8 @@ export function rollup(blocks: Block[], dayKeys: string[], match: (b: Block) => 
 const FIXED_WORDS =
   /\b(interview|call|meeting|meet|standup|stand-up|sync|1:1|one[- ]on[- ]one|demo|huddle|screening|onsite|panel|intro)\b/i
 /* "interview prep" is OUR work about their meeting — a flexible task */
-const PREP_WORDS = /\b(prep|prepare|preparation|practice|practise|debrief|notes|research|draft|write[- ]?up)\b/i
+const PREP_WORDS =
+  /\b(prep|prepare|preparation|practice|practise|debrief|notes|research|draft|write[- ]?up)\b/i
 export function isFixedTime(b: Block, prefs: PrefPayload[] = []): boolean {
   if (b.external) return true
   /* the user's own rule outranks the word heuristic ("my syncs are movable") */
@@ -111,7 +115,7 @@ export function conflictsWith(
   startMin: number,
   endMin: number,
   excludeId?: string,
-  prefs: PrefPayload[] = [],
+  prefs: PrefPayload[] = []
 ): Block[] {
   return blocksForDay(blocks, dayKey).filter(
     (b) =>
@@ -119,7 +123,7 @@ export function conflictsWith(
       b.status === 'open' &&
       (!b.optional || isFixedTime(b, prefs)) &&
       !isBackground(b) &&
-      overlaps(b.startMin, b.endMin, startMin, endMin),
+      overlaps(b.startMin, b.endMin, startMin, endMin)
   )
 }
 
@@ -128,13 +132,13 @@ export function findFreeSlot(
   dayKey: string,
   durationMin: number,
   windowStart = DAY_START,
-  windowEnd = DAY_END,
+  windowEnd = DAY_END
 ): { startMin: number; endMin: number } | null {
   /* optional events don't hold time — except fixed-time ones (a tentative
      interview is still an interview; auto-placement keeps clear of it).
      background blocks don't hold the slot either: place right over them */
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => (!b.optional || isFixedTime(b)) && !isBackground(b),
+    (b) => (!b.optional || isFixedTime(b)) && !isBackground(b)
   )
   let cursor = windowStart
   for (const b of day) {
@@ -167,7 +171,7 @@ export function contextMarkers(b: Block): string {
 export function proposeCaptureSlot(
   blocks: Block[],
   todayKey: string,
-  nowMin: number,
+  nowMin: number
 ): { dayKey: string; startMin: number } | null {
   for (let i = 0; i <= 6; i++) {
     const key = addDaysKey(todayKey, i)
@@ -188,7 +192,7 @@ export function overlappingFocus(blocks: Block[], target: Block): Block[] {
       b.id !== target.id &&
       b.status === 'open' &&
       (b.attention ?? 'focus') === 'focus' &&
-      overlaps(b.startMin, b.endMin, target.startMin, target.endMin),
+      overlaps(b.startMin, b.endMin, target.startMin, target.endMin)
   )
 }
 
@@ -199,7 +203,7 @@ export function freeWindows(
   blocks: Block[],
   dayKey: string,
   fromMin: number,
-  toMin: number,
+  toMin: number
 ): { startMin: number; endMin: number }[] {
   const busy = blocksForDay(blocks, dayKey)
     .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b))
@@ -222,7 +226,7 @@ export function freeWindows(
 export function nextSlotAfter(
   blocks: Block[],
   b: Block,
-  fromMin: number,
+  fromMin: number
 ): { dayKey: string; startMin: number } | null {
   const from = Math.max(b.startMin, fromMin)
   const today = findFreeSlot(
@@ -230,7 +234,7 @@ export function nextSlotAfter(
     b.dayKey,
     duration(b),
     from,
-    Math.max(DAY_END, 22 * 60 + 30),
+    Math.max(DAY_END, 22 * 60 + 30)
   )
   if (today) return { dayKey: b.dayKey, startMin: today.startMin }
   const tomorrow = addDaysKey(b.dayKey, 1)
@@ -249,6 +253,9 @@ export interface PlaceSpec {
   estimateSource?: Block['estimateSource']
   attention?: Block['attention']
   due?: number
+  /** Links a block to its recurring series; the rule it came from (#159). */
+  recurringBlockId?: string
+  rrule?: Block['rrule']
 }
 
 /** Place a block; when no explicit time, the first free slot wins. Returns null if the day is full. */
@@ -276,6 +283,8 @@ export function place(blocks: Block[], spec: PlaceSpec): Block | null {
     estimateSource: spec.estimateSource ?? 'user',
     ...(spec.attention === 'background' ? { attention: 'background' as const } : {}),
     ...(spec.due != null ? { due: spec.due } : {}),
+    ...(spec.recurringBlockId != null ? { recurringBlockId: spec.recurringBlockId } : {}),
+    ...(spec.rrule != null ? { rrule: spec.rrule } : {}),
   }
 }
 
@@ -296,7 +305,7 @@ export function roll(
   blocks: Block[],
   id: string,
   toDayKey: string,
-  toStartMin: number,
+  toStartMin: number
 ): { blocks: Block[]; rolled: Block | null } {
   const src = blocks.find((b) => b.id === id)
   if (!src) return { blocks, rolled: null }
@@ -310,7 +319,9 @@ export function roll(
     estimateSource: 'mew',
   }
   return {
-    blocks: blocks.map((b) => (b.id === id ? { ...b, status: 'rolled' as const, rolledToId: next.id } : b)).concat(next),
+    blocks: blocks
+      .map((b) => (b.id === id ? { ...b, status: 'rolled' as const, rolledToId: next.id } : b))
+      .concat(next),
     rolled: next,
   }
 }
@@ -319,7 +330,7 @@ export function move(blocks: Block[], id: string, toDayKey: string, toStartMin: 
   return blocks.map((b) =>
     b.id === id
       ? { ...b, dayKey: toDayKey, startMin: toStartMin, endMin: toStartMin + duration(b) }
-      : b,
+      : b
   )
 }
 
@@ -328,13 +339,35 @@ export function move(blocks: Block[], id: string, toDayKey: string, toStartMin: 
    substring finds nothing, so "management sync" can reach "Management Team
    Monday" while existing matches never regress. */
 const QUERY_STOP = new Set([
-  'the', 'a', 'an', 'and', 'or', 'of', 'to', 'for', 'with', 'on', 'in', 'at', 'my', 'me',
-  'meeting', 'sync', 'call', 'session', 'chat', 'time',
+  'the',
+  'a',
+  'an',
+  'and',
+  'or',
+  'of',
+  'to',
+  'for',
+  'with',
+  'on',
+  'in',
+  'at',
+  'my',
+  'me',
+  'meeting',
+  'sync',
+  'call',
+  'session',
+  'chat',
+  'time',
 ])
 /** title/query → meaningful lowercase word tokens; stopwords dropped, but never
     to empty (an all-stopword query keeps its raw words so it still has signal). */
 function queryTokens(s: string): string[] {
-  const raw = s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean)
+  const raw = s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
   const kept = raw.filter((w) => !QUERY_STOP.has(w))
   return kept.length ? kept : raw
 }
@@ -427,7 +460,11 @@ export function findByQuery(blocks: Block[], query: string, todayKey: string): B
       return a.b.title.length - z.b.title.length
     })
   if (!scored.length) return undefined
-  if (scored.length > 1 && scored[0].b.id !== scored[1].b.id && scored[0].score - scored[1].score < FUZZY_TIE) {
+  if (
+    scored.length > 1 &&
+    scored[0].b.id !== scored[1].b.id &&
+    scored[0].score - scored[1].score < FUZZY_TIE
+  ) {
     return undefined // two plausible, different blocks — ask, don't guess
   }
   return scored[0].b
@@ -452,7 +489,11 @@ export function findAllByQuery(blocks: Block[], query: string): Block[] {
     .filter((x) => x.score >= FUZZY_MIN)
     .sort((a, z) => z.score - a.score || a.b.title.length - z.b.title.length)
   if (!scored.length) return []
-  if (scored.length > 1 && scored[0].b.id !== scored[1].b.id && scored[0].score - scored[1].score < FUZZY_TIE) {
+  if (
+    scored.length > 1 &&
+    scored[0].b.id !== scored[1].b.id &&
+    scored[0].score - scored[1].score < FUZZY_TIE
+  ) {
     return [] // ambiguous fuzzy spread — don't silently bulk-act on a guess
   }
   return [scored[0].b]
@@ -477,7 +518,7 @@ export function resolveRemoval(
   blocks: Block[],
   query: string,
   opts: RemovalOpts,
-  todayKey: string,
+  todayKey: string
 ): { remove: Block[]; candidates: Block[] } {
   const matches = findAllByQuery(blocks, query).filter((b) => b.dayKey >= todayKey)
   if (matches.length <= 1) return { remove: matches, candidates: [] }
@@ -496,6 +537,15 @@ export function resolveRemoval(
   return { remove: [], candidates: matches }
 }
 
+/** Every open block in the same recurring series as `target` (#159) — for a
+    "remove all gym sessions" sweep. Matches on recurringBlockId, so deleting
+    the series leaves nothing orphaned; a one-off block (no id) returns just
+    itself. Open-only and ahead-agnostic: the caller decides the time horizon. */
+export function seriesOf(blocks: Block[], target: Block): Block[] {
+  if (!target.recurringBlockId) return [target]
+  return blocks.filter((b) => b.status === 'open' && b.recurringBlockId === target.recurringBlockId)
+}
+
 /** All of the day's non-rest items are done → the day is clear, rest is earned. */
 export function dayClear(blocks: Block[], dayKey: string): boolean {
   const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest' && !b.optional)
@@ -504,7 +554,7 @@ export function dayClear(blocks: Block[], dayKey: string): boolean {
 
 export function openItems(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional,
+    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional
   )
 }
 
@@ -535,7 +585,7 @@ export function looseThreads(
   blocks: Block[],
   captures: Capture[],
   todayKey: string,
-  nowMin: number,
+  nowMin: number
 ): LooseThreads {
   const day = blocksForDay(blocks, todayKey)
   const running = day.filter(
@@ -544,10 +594,10 @@ export function looseThreads(
       isBackground(b) &&
       b.startedAt != null &&
       b.startMin <= nowMin &&
-      nowMin < b.endMin,
+      nowMin < b.endMin
   )
   const slipped = day.filter(
-    (b) => b.status === 'open' && !isBackground(b) && !b.optional && b.endMin < nowMin,
+    (b) => b.status === 'open' && !isBackground(b) && !b.optional && b.endMin < nowMin
   )
   const rolledTargets = new Set(blocks.map((b) => b.rolledToId).filter((id): id is string => !!id))
   const paused = blocks.filter((b) => b.status === 'open' && rolledTargets.has(b.id))

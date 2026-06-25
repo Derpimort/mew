@@ -44,7 +44,11 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, info: ErrorInfo) {
     // console only — no network. Surfaced for the dev console / `mew session` log;
     // the logger redacts any secret an error or stack happened to embed.
-    log.error('panel-crash', { panel: this.props.label ?? null, componentStack: info.componentStack }, error)
+    log.error(
+      'panel-crash',
+      { panel: this.props.label ?? null, componentStack: info.componentStack },
+      error
+    )
   }
 
   private reset = () => {
@@ -55,18 +59,27 @@ export class ErrorBoundary extends Component<Props, State> {
     const { error, resetKey } = this.state
     if (!error) {
       // keyed so reset forces a clean remount of the wrapped subtree
-      return <div key={resetKey} style={{ display: 'contents' }}>{this.props.children}</div>
+      return (
+        <div key={resetKey} style={{ display: 'contents' }}>
+          {this.props.children}
+        </div>
+      )
     }
 
     const what = this.props.label ?? 'this panel'
     return (
-      <div className={'err-boundary' + (this.props.variant === 'full' ? ' err-full' : '')} role="alert">
+      <div
+        className={'err-boundary' + (this.props.variant === 'full' ? ' err-full' : '')}
+        role="alert"
+      >
         <div className="err-mark" aria-hidden>
           ❯_
         </div>
         <div className="err-body">
           <div className="err-head">{what} hit a snag</div>
-          <p className="err-msg">nothing was lost — reload it and we'll pick up where we left off.</p>
+          <p className="err-msg">
+            nothing was lost — reload it and we'll pick up where we left off.
+          </p>
         </div>
         <Button variant="ghost" size="sm" onClick={this.reset}>
           ↻ reload {this.props.label ?? 'panel'}

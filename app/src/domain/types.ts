@@ -1,6 +1,8 @@
 /* Core domain types. Product law is encoded here: a block can be open, done,
    or rolled — there is no failed/overdue/missed state anywhere in the system. */
 
+import type { Rrule } from './recurrence'
+
 export type Tag = 'work' | 'private' | 'health' | 'rest'
 export type BlockStatus = 'open' | 'done' | 'rolled'
 export type Visibility = 'details' | 'busy' | 'hidden'
@@ -36,6 +38,14 @@ export interface Block {
   /** Optional hard deadline (minutes from midnight), independent of endMin.
       With duration it yields latest-start math for the start-by nudge. */
   due?: number
+  /** Links every block expanded from one user-created recurring rule (#159), so
+      the whole series can be removed together while a single occurrence still
+      deletes alone. Absent ⇒ a one-off block. */
+  recurringBlockId?: string
+  /** The rule that generated this occurrence — kept on each block so a
+      save/load cycle preserves the series and a UI can show "repeats weekly".
+      DAILY/WEEKLY only; recurrence is MEW's, never pushed to a calendar. */
+  rrule?: Rrule
 }
 
 export interface Capture {
@@ -213,6 +223,17 @@ export interface Settings {
   /** Recall scope: MEW's own pages only (default) or the whole shared brain
       — strictly opt-in; whole-brain in a calendar is noise until it isn't. */
   brainScope: 'mew' | 'all'
+  /** Quick-capture default (Cmd/Ctrl+Shift+C, #171): 'open' queues a capture
+      with no when-where interrupt; 'auto-place' drops it in the first free
+      30-min slot today, falling back to 'open' when the day is full. Default
+      'open' — suggest, don't seize. */
+  quickCaptureMode: 'open' | 'auto-place'
+  /** First-run state, not a preference: false until the guided concept tour
+      (Focus/Week/Talk) is dismissed or completed, then true forever. There is
+      deliberately no Settings control to re-show it — the three pillars are
+      learned in context after the first pass (NN/g: onboarding shouldn't
+      return). Clearing storage is the only reset. */
+  hasSeenOnboarding: boolean
 }
 
 /* The Rive "PixieMachine" input contract — PRD §6. The placeholder SVG and the
@@ -252,6 +273,9 @@ export interface ScheduleIntent {
     protected?: boolean
     attention?: 'focus' | 'background'
     due?: number
+    /** A standing recurrence (DAILY/WEEKLY) — execPlan expands it into one
+        block per occurrence, all linked by recurringBlockId (#159). */
+    rrule?: Rrule
   }[]
   frees?: { dayKey: string; startMin: number; endMin: number; label: string }[]
   /* complete / move / remove */
@@ -293,4 +317,6 @@ export const DEFAULT_SETTINGS: Settings = {
   brainToken: '',
   brainMode: 'endpoint',
   brainScope: 'mew',
+  quickCaptureMode: 'open',
+  hasSeenOnboarding: false,
 }

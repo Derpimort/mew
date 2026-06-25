@@ -3,12 +3,23 @@
 
 import { useMemo } from 'react'
 import { create } from 'zustand'
-import { type Block, type Capture, type ChatMessage, DEFAULT_SETTINGS, type MemoryEvent, type NudgeId, type PrefPayload, type Settings, type VisibleTag } from '../domain/types'
+import {
+  type Block,
+  type Capture,
+  type ChatMessage,
+  DEFAULT_SETTINGS,
+  type MemoryEvent,
+  type NudgeId,
+  type PrefPayload,
+  type Settings,
+  type VisibleTag,
+} from '../domain/types'
 import {
   addDaysKey,
   dayKey,
   fmtDowLong,
   fmtLongDate,
+  fmtShortDate,
   fmtTime,
   fromDayKey,
   inQuietHours,
@@ -18,9 +29,16 @@ import {
   weekKeys,
 } from '../domain/time'
 import * as week from '../domain/week'
+import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
+import { describeRrule, expandRrule, RRULE_DEFAULT_WEEKS } from '../domain/recurrence'
 import { liveNow } from '../domain/liveNow'
 import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory'
-import { computeInsights, proposeKinderPlan, taskDurations, type TaskDuration } from '../domain/insights'
+import {
+  computeInsights,
+  proposeKinderPlan,
+  taskDurations,
+  type TaskDuration,
+} from '../domain/insights'
 import { pixieInputs } from '../domain/pixie'
 import { dayShape } from '../domain/dayShape'
 import { restInsertion, scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
@@ -31,7 +49,16 @@ import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
 import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
-import { blockEventPage, chatBatchPage, debriefPage, knownProjectsFrom, makeChatBatcher, peopleFrom, prefPage, slugify } from '../adapters/brain/senses'
+import {
+  blockEventPage,
+  chatBatchPage,
+  debriefPage,
+  knownProjectsFrom,
+  makeChatBatcher,
+  peopleFrom,
+  prefPage,
+  slugify,
+} from '../adapters/brain/senses'
 import { effectiveBrain, setSidecarBrain } from '../adapters/brain/sidecar'
 import { applyPrefs } from '../domain/prefs'
 import {
@@ -54,7 +81,7 @@ import {
   type ToolExecutor,
   type WeekContext,
 } from '../adapters/model'
-import { createBrowserNotifier } from '../adapters/notify'
+import { createNotifier } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
 import { mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
@@ -63,7 +90,7 @@ import type { RemoteCalendar } from '../adapters/calendar/types'
 import { seed } from './seed'
 
 const storage: StoragePort = createDexieStorage()
-const notifier = createBrowserNotifier()
+const notifier = createNotifier() // native on the desktop shell, browser API on web (#168)
 const log = logger.withContext('store')
 
 /* the optional knowledge brain — config read per call so Settings edits
@@ -96,7 +123,10 @@ function refreshBrainPrefs(): void {
 }
 
 /** newest-first, deduped by kind+match — the standing rulebook, as data */
-export function activePrefsFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | null): PrefPayload[] {
+export function activePrefsFrom(
+  memory: MemoryEvent[],
+  fromBrain: PrefPayload[] | null
+): PrefPayload[] {
   const source: PrefPayload[] = fromBrain?.length
     ? fromBrain
     : [...memory]
@@ -117,7 +147,9 @@ export function activePrefsFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] 
 
 /** the same rulebook, rendered for the context block */
 export function prefLinesFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | null): string[] {
-  return activePrefsFrom(memory, fromBrain).map((p) => `${p.match} → ${p.value} (stated: "${p.stated}")`)
+  return activePrefsFrom(memory, fromBrain).map(
+    (p) => `${p.match} → ${p.value} (stated: "${p.stated}")`
+  )
 }
 
 /* Dev/design affordance: `?t=HH:MM` shifts the app clock so any moment of the
@@ -174,6 +206,14 @@ export interface MewState {
   lastSyncAt: number
   syncError: string | null
 
+  /* power-user surface (#169/#170/#171): the command palette is a UI-only
+     overlay; its open flag lives here so any shortcut (Cmd/Ctrl+K) and any
+     close (Esc / outside click / a chosen action) share one source of truth.
+     Search and quick-capture are read/additive actions below — neither is a
+     new mutation path: search is read-only, quick-capture reuses the capture
+     executor and the same slot proposer the rail already uses. */
+  commandPaletteOpen: boolean
+
   hydrate(): Promise<void>
   tick(): void
   activity(): void
@@ -192,6 +232,9 @@ export interface MewState {
   focusDay(key: string | null): void
   setPage(page: 'week' | 'settings'): void
   setView(view: 'focus' | 'week'): void
+  /** Mark the first-run concept tour as seen and persist it — one-way, fired
+      when the user skips, completes, or closes the OnboardingModal. */
+  dismissOnboarding(): void
   setPromptDraft(text: string): void
   /** Set the live working label for the current turn (null clears it). The
       executors call this; the thinking row reads it. Non-persisted. */
@@ -203,6 +246,18 @@ export interface MewState {
   interruptBlock(blockId: string): void
   /** Re-place a block in the next free slot today (else tomorrow morning). */
   moveToNextFree(blockId: string): void
+  /** Direct-manipulation move from a week-grid drag to an exact day/start. The
+      only mutation path for drag (the executor law). Self-validating, so the
+      outcome is testable without the DOM: an external (calendar) block is never
+      moved — it returns 'external' with a one-line chat note; a drop onto a
+      time-holding block returns 'conflict' and leaves the week untouched (the
+      view bounces it back); a clear drop commits via week.move and returns
+      'moved'. A drop onto the block's own slot is a 'noop'. */
+  dragMove(
+    blockId: string,
+    toDayKey: string,
+    toStartMin: number
+  ): 'moved' | 'external' | 'conflict' | 'noop'
   toggleProtected(blockId: string): void
   /** Promotion/demotion from the Focus orbit — the click writes attention;
       the center swap falls out of liveNow. Quiet: the swap IS the feedback. */
@@ -225,6 +280,33 @@ export interface MewState {
   dismissPicker(): void
   disconnectCalendar(calId: string): void
   syncNow(): Promise<void>
+
+  /* ── power-user surface (#169/#170/#171), all additive ─────────────── */
+  /** Open the command palette, remembering where focus was so Esc can return
+      it (the component restores the saved element). */
+  openCommandPalette(): void
+  /** Close the palette. Idempotent — closing a closed palette is a no-op. */
+  closeCommandPalette(): void
+  /** Read-only global search (#170): blocks, captures, chat scored by
+      domain/search and grouped by kind. Never mutates — the palette renders
+      the result, the store stays still. */
+  searchAll(query: string): Record<SearchKind, SearchHit[]>
+  /** Quick-capture (#171): jot a title with no chat round-trip. 'open' (the
+      default, or whenever autoPlace is false) queues a capture with NO
+      when-where nudge; 'auto-place' lands it in today's first free 30-min slot
+      and falls back to 'open' when the day is full. Returns what happened so
+      the caller can toast it; the chat thread is never touched by the capture
+      itself. autoPlace defaults to the user's quickCaptureMode setting. */
+  quickCapture(
+    title: string,
+    autoPlace?: boolean
+  ): { kind: 'open' | 'placed' | 'empty'; message: string }
+  /** Jump to a block from a search hit: focus its day and surface its week so
+      the card is on screen. Read-only navigation — no mutation. */
+  revealBlock(blockId: string): void
+  /** Jump to a chat message from a search hit: route to the week page and ask
+      the session log to scroll the message into view (reuses scrollToMsgId). */
+  revealChatMessage(msgId: string): void
 }
 
 /* ── helpers ──────────────────────────────────────────────────────── */
@@ -273,7 +355,10 @@ function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
     const day = week.blocksForDay(s.blocks, key)
     if (!day.length) continue
     const items = day
-      .map((b) => `${fmtTime(b.startMin)}\u2013${fmtTime(b.endMin)} ${b.title} [${week.contextMarkers(b)}]`)
+      .map(
+        (b) =>
+          `${fmtTime(b.startMin)}\u2013${fmtTime(b.endMin)} ${b.title} [${week.contextMarkers(b)}]`
+      )
       .join(' · ')
     summary.push(`${i === 0 ? 'today' : fmtDowLong(key)} (${key}): ${items}`)
   }
@@ -333,12 +418,27 @@ export const useMew = create<MewState>((set, get) => {
     storage.putMemory(evs).catch(() => {})
     queueBackup()
   }
+  /* undo (#162) clears the memory events its reversed tool logged (a completion,
+     a drift mark, a stated preference) — the only path that retracts a logged
+     event (memory is otherwise append-only). */
+  const persistDeleteMemory = (ids: string[]) => {
+    if (!ids.length) return
+    storage.deleteMemory(ids).catch(() => {})
+    queueBackup()
+  }
   const persistSettings = (st: Settings) => {
     storage.putSettings(st).catch(() => {})
     queueBackup()
   }
   const persistCaptures = (cs: Capture[]) => {
     storage.putCaptures(cs).catch(() => {})
+    queueBackup()
+  }
+  /* undo (#162) may take back a capture a tool jotted this turn — the only path
+     that deletes one (a placed capture is updated in place, never removed). */
+  const persistDeleteCaptures = (ids: string[]) => {
+    if (!ids.length) return
+    storage.deleteCaptures(ids).catch(() => {})
     queueBackup()
   }
   const dismissedSet = () => new Set(get().settings.dismissedEvents ?? [])
@@ -350,7 +450,10 @@ export const useMew = create<MewState>((set, get) => {
       .map((b) => `${b.external!.calId}:${b.external!.eventId}`)
     if (!keys.length) return
     const cur = get().settings
-    const next = { ...cur, dismissedEvents: [...new Set([...(cur.dismissedEvents ?? []), ...keys])] }
+    const next = {
+      ...cur,
+      dismissedEvents: [...new Set([...(cur.dismissedEvents ?? []), ...keys])],
+    }
     set({ settings: next })
     persistSettings(next)
   }
@@ -463,7 +566,8 @@ export const useMew = create<MewState>((set, get) => {
     set((s) => ({
       engine: {
         lastFired: { ...s.engine.lastFired, [n.type]: { ts: nowMs, key: n.key } },
-        lastDriftBlockId: n.type === 'drift' ? String(n.payload.blockId) : s.engine.lastDriftBlockId,
+        lastDriftBlockId:
+          n.type === 'drift' ? String(n.payload.blockId) : s.engine.lastDriftBlockId,
       },
     }))
     /* a drift check-in IS the drift signal — log it so insights can find where
@@ -491,14 +595,14 @@ export const useMew = create<MewState>((set, get) => {
         s.memory
           .filter((e) => e.kind === 'completed' && e.ts >= floor && e.title)
           .map((e) =>
-            e.title!
-              .split('—')[0]
+            e
+              .title!.split('—')[0]
               .trim()
               .toLowerCase()
               .replace(/[^a-z0-9]+/g, '-')
-              .replace(/^-+|-+$/g, ''),
+              .replace(/^-+|-+$/g, '')
           )
-          .filter(Boolean),
+          .filter(Boolean)
       ),
     ].slice(0, 12)
     if (!kinds.length) return
@@ -509,7 +613,7 @@ export const useMew = create<MewState>((set, get) => {
         return targets
           .filter((t) => t.startsWith('person/'))
           .map((t) => ({ from: `task/${k}`, to: t }))
-      }),
+      })
     )
       .then((nested) => {
         brainLinks = { weekOf: todayKey, pairs: nested.flat() }
@@ -530,7 +634,10 @@ export const useMew = create<MewState>((set, get) => {
     if (weekColor?.day === todayKey || weekColorPending) return
     weekColorPending = true
     brain
-      .recall(`debrief last week — week of ${addDaysKey(todayKey, -7)}`, { limit: 2, scope: brainScope() })
+      .recall(`debrief last week — week of ${addDaysKey(todayKey, -7)}`, {
+        limit: 2,
+        scope: brainScope(),
+      })
       .then((lines) => {
         weekColor = { day: todayKey, lines }
       })
@@ -560,7 +667,10 @@ export const useMew = create<MewState>((set, get) => {
       personRecallPending.add(b.id)
       const names = people.map((p) => p.split('/')[1]).join(', ')
       brain
-        .recall(`person ${names} recent interactions and outcomes`, { limit: 2, scope: brainScope() })
+        .recall(`person ${names} recent interactions and outcomes`, {
+          limit: 2,
+          scope: brainScope(),
+        })
         .then((lines) => {
           personRecall[b.id] = lines
         })
@@ -599,7 +709,7 @@ export const useMew = create<MewState>((set, get) => {
         brainWeekLines: weekColor?.day === todayKey ? weekColor.lines : undefined,
         personRecall,
       },
-      s.engine,
+      s.engine
     )
     const fired = evaluateTick(ctx)
     for (const n of fired) {
@@ -639,7 +749,7 @@ export const useMew = create<MewState>((set, get) => {
         guardUntilMin: null,
       },
       s.engine,
-      event,
+      event
     )
     for (const n of evaluateEvent(ctx)) {
       /* a chat completion celebrates in the model's own reply — posting the
@@ -710,12 +820,69 @@ export const useMew = create<MewState>((set, get) => {
     const hist = histDurations(s)
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
+      /* recurring block (#159): a rule expands into one block per occurrence,
+         all linked by a shared recurringBlockId, before any one-off logic. The
+         expansion reuses the same bounded DAILY/WEEKLY walk (and 800-cap) the
+         ICS importer uses, but in day-keys; each occurrence keeps the anchor's
+         wall-clock start. Window = anchor day → +52 weeks (UNTIL/COUNT cut it
+         shorter). Recurrence is MEW's: these land as ordinary dated blocks, so
+         the calendar push projects each one individually and never sees an
+         RRULE (sync.ts has no rrule field by design). */
+      if (p.rrule) {
+        const { spec: prefd, applied: rApplied } = applyPrefs(
+          { title: p.title, startMin: p.startMin, durationMin: p.durationMin },
+          prefs,
+          hist
+        )
+        const anchorStart = prefd.startMin ?? p.startMin ?? week.DAY_START
+        const durationMin = prefd.durationMin ?? 60
+        const windowEnd = addDaysKey(key, RRULE_DEFAULT_WEEKS * 7)
+        const occs = expandRrule(p.rrule, key, anchorStart, durationMin, key, windowEnd)
+        if (!occs.length) {
+          lines.push(`couldn't place "${p.title}" — that recurrence has no dates in the next year`)
+          continue
+        }
+        const seriesId = uid()
+        const microRest = p.tag === 'rest' && durationMin <= 20
+        for (const occ of occs) {
+          const made = week.place(blocks, {
+            title: p.title,
+            tag: p.tag,
+            dayKey: occ.dayKey,
+            startMin: occ.startMin,
+            endMin: occ.endMin,
+            protected: p.protected ?? !microRest,
+            attention: p.attention,
+            due: p.due,
+            recurringBlockId: seriesId,
+            rrule: p.rrule,
+          })
+          if (!made) continue // that day is full — skip just this occurrence, keep the series
+          blocks = [...blocks, made]
+          if (made.tag === 'work' && !week.isBackground(made)) touchedDays.add(occ.dayKey)
+        }
+        const placedCount = blocks.filter((b) => b.recurringBlockId === seriesId).length
+        if (!placedCount) {
+          lines.push(`couldn't place "${p.title}" — every day in that recurrence is already full`)
+          continue
+        }
+        const cadence = describeRrule(p.rrule, key)
+        const through = occs[occs.length - 1].dayKey
+        lines.push(
+          `${p.title} repeats ${cadence} ${fmtTime(anchorStart)}–${fmtTime(anchorStart + durationMin)} — ${placedCount} block${placedCount === 1 ? '' : 's'} through ${fmtShortDate(through)}${rApplied.length ? ' (your standing rule)' : ''}`
+        )
+        continue
+      }
       /* the standing rulebook fills what the user left open this message —
          their explicit times/durations always win over their own rules */
-      const { spec: prefd, applied, usual } = applyPrefs(
+      const {
+        spec: prefd,
+        applied,
+        usual,
+      } = applyPrefs(
         { title: p.title, startMin: p.startMin, durationMin: p.durationMin },
         prefs,
-        hist,
+        hist
       )
       /* short rests are pacing, not sacred rest: leave them unprotected so a
          reshape can absorb them instead of tripping protect-rest every move */
@@ -745,7 +912,7 @@ export const useMew = create<MewState>((set, get) => {
                 b.status === 'open' &&
                 !week.isBackground(b) &&
                 !b.external &&
-                b.title.split('—')[0].trim().toLowerCase() === reBase,
+                b.title.split('—')[0].trim().toLowerCase() === reBase
             )
           : undefined
       /* the deterministic floor: with no explicit/ruled time (and not a
@@ -761,7 +928,9 @@ export const useMew = create<MewState>((set, get) => {
           durationMin: prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
         }
-        const best = scoreSlots(occupied, q, todayKey, minOfDay(now), prefs).find((c) => c.dayKey === key)
+        const best = scoreSlots(occupied, q, todayKey, minOfDay(now), prefs).find(
+          (c) => c.dayKey === key
+        )
         if (best) start = best.startMin
       }
       if (existing) {
@@ -772,7 +941,7 @@ export const useMew = create<MewState>((set, get) => {
         if (week.isDeep(moved)) placedDeep = moved
         if (moved.tag === 'work' && !week.isBackground(moved)) touchedDays.add(key)
         lines.push(
-          `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashNote(clash, prefs)}`,
+          `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashNote(clash, prefs)}`
         )
         continue
       }
@@ -799,7 +968,7 @@ export const useMew = create<MewState>((set, get) => {
       if (week.isDeep(placed)) placedDeep = placed
       if (placed.tag === 'work' && !week.isBackground(placed)) touchedDays.add(key)
       lines.push(
-        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`,
+        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`
       )
     }
     for (const f of frees) {
@@ -843,10 +1012,14 @@ export const useMew = create<MewState>((set, get) => {
         })
         if (rest) {
           blocks = [...blocks, rest]
-          restNotes.push(`tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`)
+          restNotes.push(
+            `tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`
+          )
         }
       } else {
-        restNotes.push(`${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`)
+        restNotes.push(
+          `${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`
+        )
       }
     }
     setBlocks(blocks)
@@ -861,7 +1034,7 @@ export const useMew = create<MewState>((set, get) => {
           b.dayKey >= weekStart &&
           b.dayKey <= addDaysKey(weekStart, 6) &&
           week.isDeep(b) &&
-          b.status !== 'rolled',
+          b.status !== 'rolled'
       ).length
       observation = ` That's your ${ordinal(deepCount)} deep-work block this week.`
       if (agg.realisticBestH != null) {
@@ -896,6 +1069,27 @@ export const useMew = create<MewState>((set, get) => {
      finally — a stale controller must never abort the next turn. */
   let turnAbort: AbortController | null = null
   let pendingNudgeQueue: NudgeInstance[] = []
+
+  /* undo an AI action (#162): the snapshot of the mutable week taken just
+     BEFORE the turn's most recent mutating tool ran — undo_last_action restores
+     it. speak resets it to null at entry (a new exchange starts fresh); each
+     mutating exec calls snapshotForUndo() before it runs, so this always holds
+     "the week as it was before the last change". Shallow arrays are a true
+     point-in-time copy here: every mutation replaces element objects (week.*
+     return new arrays, set/logMemory spread), never edits one in place — the
+     same immutability the rest of the store leans on. Chat is deliberately NOT
+     snapshotted: the reply about the undone action stays as context (the spec's
+     "undo does not touch chat history"). */
+  let preMutationSnapshot: {
+    blocks: Block[]
+    captures: Capture[]
+    memory: MewState['memory']
+  } | null = null
+  function snapshotForUndo() {
+    const s = get()
+    preMutationSnapshot = { blocks: s.blocks, captures: s.captures, memory: s.memory }
+  }
+
   function execComplete(query: string): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -942,23 +1136,38 @@ export const useMew = create<MewState>((set, get) => {
       /* the scoring oracle picks the destination — rest-aware and conflict-free
          — instead of the first open hole; fall back to first-fit if it finds
          none (e.g. the asked day is past the scorer horizon) (#80) */
-      const q: SlotQuery = { title: target.title, tag: target.tag, durationMin: week.duration(target) }
-      const best = scoreSlots(blocks.filter((b) => b.id !== target.id), q, todayKey, minOfDay(now), prefs).find(
-        (c) => c.dayKey === toKey,
-      )
+      const q: SlotQuery = {
+        title: target.title,
+        tag: target.tag,
+        durationMin: week.duration(target),
+      }
+      const best = scoreSlots(
+        blocks.filter((b) => b.id !== target.id),
+        q,
+        todayKey,
+        minOfDay(now),
+        prefs
+      ).find((c) => c.dayKey === toKey)
       if (best) start = best.startMin
       else {
         const slot = week.findFreeSlot(
           blocks.filter((b) => b.id !== target.id),
           toKey,
           week.duration(target),
-          toKey === todayKey ? minOfDay(now) + 15 : undefined,
+          toKey === todayKey ? minOfDay(now) + 15 : undefined
         )
         if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
         start = slot.startMin
       }
     }
-    const landed = week.conflictsWith(blocks, toKey, start, start + week.duration(target), target.id, prefs)
+    const landed = week.conflictsWith(
+      blocks,
+      toKey,
+      start,
+      start + week.duration(target),
+      target.id,
+      prefs
+    )
     setBlocks(week.move(blocks, target.id, toKey, start))
     return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed, prefs)}`
   }
@@ -983,7 +1192,7 @@ export const useMew = create<MewState>((set, get) => {
       tag?: import('../domain/types').Tag
       attention?: 'focus' | 'background'
       due?: number
-    },
+    }
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -1010,8 +1219,9 @@ export const useMew = create<MewState>((set, get) => {
       ...(patch.due != null ? { due: patch.due } : {}),
     }
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
-    const clash =
-      week.isBackground(next) ? [] : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id, prefs)
+    const clash = week.isBackground(next)
+      ? []
+      : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id, prefs)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
     return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash, prefs)}`
   }
@@ -1042,7 +1252,9 @@ export const useMew = create<MewState>((set, get) => {
     const projectHit = [...known.entries()].find(([slug]) => qSlug.includes(`-${slug}-`))
     const asked =
       question.match(/\b(?:has|have|did)\s+(.+?)\s+(?:eaten|taken|cost|consumed|used)\b/i)?.[1] ??
-      question.match(/\b(?:time|much|long)\s+(?:on|for|with)\s+(.+?)(?:\s+this\s+week|[?.!]|$)/i)?.[1] ??
+      question.match(
+        /\b(?:time|much|long)\s+(?:on|for|with)\s+(.+?)(?:\s+this\s+week|[?.!]|$)/i
+      )?.[1] ??
       null
     const slug = projectHit?.[0] ?? (asked ? slugify(asked) : null)
     const name = projectHit?.[1] ?? asked?.trim() ?? null
@@ -1089,23 +1301,45 @@ export const useMew = create<MewState>((set, get) => {
       const when = (b: Block) =>
         `the ${fmtTime(b.startMin)} (${b.dayKey === todayKey ? '' : `${fmtDowLong(b.dayKey)} `}${fmtTime(b.startMin)}–${fmtTime(b.endMin)})`
       const list = candidates.map(when)
-      const tail = list.length === 2 ? `${list[0]} or ${list[1]}` : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
+      const tail =
+        list.length === 2
+          ? `${list[0]} or ${list[1]}`
+          : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
       const base = query.split('—')[0].trim()
       return `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`
     }
     if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
+    /* "drop all the gym sessions" (#159): an explicit all over a recurring block
+       removes the WHOLE linked series (every open occurrence, past or ahead),
+       not just the ahead substring matches — so the recurringBlockId drops with
+       it and nothing is orphaned. A single delete (no `all`) stays a single
+       occurrence: the rule and the rest of the series live on. */
+    const removeSet = new Map<string, Block>()
+    for (const m of matches) {
+      const group = opts.all ? week.seriesOf(s.blocks, m) : [m]
+      for (const b of group) removeSet.set(b.id, b)
+    }
+    const removed = [...removeSet.values()]
     /* imported events CAN be removed now — tombstone them so a re-sync won't
        resurrect them; everything else just deletes */
-    dismissExternal(matches)
-    const keep = new Set(matches.map((b) => b.id))
+    dismissExternal(removed)
+    const keep = new Set(removed.map((b) => b.id))
     const kept = s.blocks.filter((b) => !keep.has(b.id))
     set({ blocks: kept, nowMs: nowFn() })
     persistBlocks(kept)
-    storage.deleteBlocks(matches.map((b) => b.id)).catch(() => {})
-    const fromCal = matches.filter((b) => b.external).length
-    const names = matches
-      .map((b) => `${b.title.split('—')[0].trim()} (${b.dayKey === todayKey ? 'today' : fmtDowLong(b.dayKey)} ${fmtTime(b.startMin)})`)
-      .join(', ')
+    storage.deleteBlocks(removed.map((b) => b.id)).catch(() => {})
+    const fromCal = removed.filter((b) => b.external).length
+    /* a whole-series sweep reads as "gym × 24", not 24 listed times */
+    const seriesRemoved = removed.filter((b) => b.recurringBlockId).length
+    const names =
+      seriesRemoved > 1 && seriesRemoved === removed.length
+        ? `${removed[0].title.split('—')[0].trim()} × ${seriesRemoved} sessions`
+        : removed
+            .map(
+              (b) =>
+                `${b.title.split('—')[0].trim()} (${b.dayKey === todayKey ? 'today' : fmtDowLong(b.dayKey)} ${fmtTime(b.startMin)})`
+            )
+            .join(', ')
     return `Removed — ${names}.${fromCal ? ` (${fromCal} from a connected calendar — won't come back on the next sync.)` : ''}`
   }
 
@@ -1128,7 +1362,7 @@ export const useMew = create<MewState>((set, get) => {
     const todayKey = dayKey(new Date(s.nowMs))
     post([
       mewMsg(
-        `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`,
+        `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`
       ),
     ])
     return true
@@ -1154,7 +1388,7 @@ export const useMew = create<MewState>((set, get) => {
     durationMin: number,
     dayOffset: number,
     notBeforeMin?: number,
-    notAfterMin?: number,
+    notAfterMin?: number
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -1162,7 +1396,7 @@ export const useMew = create<MewState>((set, get) => {
     const label = key === todayKey ? 'today' : fmtDowLong(key)
     const floor = Math.max(
       notBeforeMin ?? week.DAY_START,
-      key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0,
+      key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0
     )
     const ceil = notAfterMin ?? 22 * 60 + 30
     const fit = week
@@ -1180,8 +1414,12 @@ export const useMew = create<MewState>((set, get) => {
       .freeWindows(s.blocks, nextKey, 9 * 60, 22 * 60 + 30)
       .find((w) => w.endMin - w.startMin >= durationMin)
     const alts = [
-      later ? `later ${label} ${fmtTime(later.startMin)}–${fmtTime(later.startMin + durationMin)}` : null,
-      nextDay ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}` : null,
+      later
+        ? `later ${label} ${fmtTime(later.startMin)}–${fmtTime(later.startMin + durationMin)}`
+        : null,
+      nextDay
+        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}`
+        : null,
     ].filter(Boolean)
     return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''}`
   }
@@ -1194,7 +1432,7 @@ export const useMew = create<MewState>((set, get) => {
     tag: import('../domain/types').Tag,
     durationMin: number,
     dueMin?: number,
-    window?: TimeWindow,
+    window?: TimeWindow
   ): string {
     const clean = title.trim()
     if (!clean) return 'name the task and I will rank where it fits best.'
@@ -1239,19 +1477,99 @@ export const useMew = create<MewState>((set, get) => {
       }
     }
     const removed = s.blocks.filter(inScope)
-    if (!removed.length) return `Nothing to clear ${scope === 'upcoming' ? 'ahead' : scope} — it's already a blank page.`
+    if (!removed.length)
+      return `Nothing to clear ${scope === 'upcoming' ? 'ahead' : scope} — it's already a blank page.`
     const kept = s.blocks.filter((b) => !inScope(b))
     const keptExternal = s.blocks.filter(
-      (b) => b.external && b.status === 'open' && b.dayKey >= todayKey,
+      (b) => b.external && b.status === 'open' && b.dayKey >= todayKey
     ).length
     set({ blocks: kept })
     persistBlocks(kept)
     storage.deleteBlocks(removed.map((b) => b.id)).catch(() => {})
     const scopeLabel =
-      scope === 'today' ? 'today' : scope === 'tomorrow' ? 'tomorrow' : scope === 'week' ? 'this week' : 'ahead'
+      scope === 'today'
+        ? 'today'
+        : scope === 'tomorrow'
+          ? 'tomorrow'
+          : scope === 'week'
+            ? 'this week'
+            : 'ahead'
     /* a deliberate blank page is a temporal landmark — offer the fresh start */
     setTimeout(() => fireEventNudges({ justCleared: { scope, count: removed.length } }), 0)
     return `Cleared — ${removed.length} open block${removed.length === 1 ? '' : 's'} ${scopeLabel} removed. Your mews stay counted${keptExternal ? `, and ${keptExternal} synced calendar event${keptExternal === 1 ? '' : 's'} stay (not mine to delete)` : ''}. A blank page — say the word and we'll shape it.`
+  }
+
+  /* undo_last_action (#162): reverse the turn's most recent mutating tool by
+     restoring the pre-call snapshot. Read-only when nothing has changed this
+     exchange. Diffs snapshot↔live to (a) describe what came back in MEW's voice
+     and (b) drive storage: blocks the call ADDED are deleted, everything from
+     the snapshot is re-put (so a remove/clear/move/edit is reversed too), and
+     memory events the call logged (completed, drift, a stated preference) are
+     cleared. Chat is untouched — the reply about the undone action stays as
+     context. The snapshot is consumed: a second "undo that" with nothing new
+     finds none and says so (one step back, not a history rewind). */
+  function execUndo(): string {
+    const snap = preMutationSnapshot
+    if (!snap) return `nothing to undo yet — I haven't changed the week this turn.`
+    const s = get()
+
+    const snapBlockIds = new Set(snap.blocks.map((b) => b.id))
+    const liveBlockById = new Map(s.blocks.map((b) => [b.id, b]))
+    const added = s.blocks.filter((b) => !snapBlockIds.has(b.id)) // placed this call → drop
+    const removed = snap.blocks.filter((b) => !liveBlockById.has(b.id)) // deleted/cleared → bring back
+    const changed = snap.blocks.filter((b) => {
+      const live = liveBlockById.get(b.id)
+      return live && live !== b // moved/edited (object replaced) → put back
+    })
+    const addedCaptureIds = s.captures
+      .filter((c) => !snap.captures.some((p) => p.id === c.id))
+      .map((c) => c.id)
+    const snapMemIds = new Set(snap.memory.map((e) => e.id))
+    const droppedMemIds = s.memory.filter((e) => !snapMemIds.has(e.id)).map((e) => e.id) // notes this call logged
+
+    if (
+      !added.length &&
+      !removed.length &&
+      !changed.length &&
+      !addedCaptureIds.length &&
+      !droppedMemIds.length
+    ) {
+      preMutationSnapshot = null
+      return `nothing to undo — the last step changed nothing.`
+    }
+
+    /* restore the live state in one pass, then mirror to storage. nowMs ticks
+       with the change so liveNow/the dial reflect the rollback this frame. */
+    set({ blocks: snap.blocks, captures: snap.captures, memory: snap.memory, nowMs: nowFn() })
+    persistBlocks(snap.blocks)
+    if (added.length) storage.deleteBlocks(added.map((b) => b.id)).catch(() => {})
+    if (snap.captures.length) persistCaptures(snap.captures)
+    persistDeleteCaptures(addedCaptureIds)
+    persistDeleteMemory(droppedMemIds)
+    /* a reversed `remember` must leave the standing rulebook as it was — the
+       local memory event is already gone above; refresh the brain-backed cache
+       too (the brain's own copy is append-only and not ours to retract here). */
+    if (droppedMemIds.length) refreshBrainPrefs()
+
+    preMutationSnapshot = null // one step back; a second undo finds nothing new
+
+    /* describe what came back, in MEW's voice — the model confirms from this */
+    const base = (b: Block) => b.title.split('—')[0].trim()
+    const parts: string[] = []
+    if (added.length)
+      parts.push(
+        `took back ${added.length === 1 ? `the ${base(added[0])} block` : `the ${spell(added.length)} blocks`} I'd just placed`
+      )
+    if (removed.length)
+      parts.push(
+        `brought back ${removed.length === 1 ? base(removed[0]) : `${spell(removed.length)} blocks`}`
+      )
+    if (changed.length)
+      parts.push(
+        `put ${changed.length === 1 ? base(changed[0]) : `${spell(changed.length)} blocks`} back where ${changed.length === 1 ? 'it' : 'they'} ${changed.length === 1 ? 'was' : 'were'}`
+      )
+    if (addedCaptureIds.length) parts.push(`cleared the note I'd jotted`)
+    return `Undone — ${joinHuman(parts)}.`
   }
 
   /** Chat history → model thread. Nudges ride along as labeled assistant turns. */
@@ -1296,6 +1614,8 @@ export const useMew = create<MewState>((set, get) => {
     syncing: false,
     lastSyncAt: 0,
     syncError: null,
+
+    commandPaletteOpen: false,
 
     queryBrain(question: string) {
       return execQueryBrain(question)
@@ -1374,12 +1694,14 @@ export const useMew = create<MewState>((set, get) => {
       if (todayKey !== prevDay) {
         /* day rollover: log whether yesterday's rest was honored */
         const s = get()
-        const yRest = week
-          .blocksForDay(s.blocks, prevDay)
-          .find((b) => b.tag === 'rest')
+        const yRest = week.blocksForDay(s.blocks, prevDay).find((b) => b.tag === 'rest')
         if (yRest) {
           const workLeftOpen = week.openItems(s.blocks, prevDay).length > 0
-          logMemory({ kind: workLeftOpen ? 'rest_skipped' : 'rest_kept', dayKey: prevDay, ts: nowMs })
+          logMemory({
+            kind: workLeftOpen ? 'rest_skipped' : 'rest_kept',
+            dayKey: prevDay,
+            ts: nowMs,
+          })
         }
         /* overnight consolidation (PRD §8): compact old raw events per ISO week */
         if (s.settings.overnightConsolidation) {
@@ -1429,6 +1751,7 @@ export const useMew = create<MewState>((set, get) => {
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
+      preMutationSnapshot = null // a fresh exchange — "undo that" reaches only this turn's last action (#162)
       /* fresh cancel handle for this turn; .signal rides into the adapter so a
          user 'stop' aborts the live stream/fetch (#117) */
       const abort = new AbortController()
@@ -1438,39 +1761,49 @@ export const useMew = create<MewState>((set, get) => {
       /* one short, positive label per tool — what MEW is doing right now. The
          thinking row shows it while `thinking`; speak's finally clears it. */
       const working = (label: string) => set({ workingStatus: label })
+      /* snapshot the mutable week just before a mutating tool runs, so
+         undo_last_action can take back exactly that one change (#162). The
+         read-only tools below never snapshot — there's nothing to reverse. */
       const exec: ToolExecutor = {
         plan: (places, frees) => {
           acted = true
+          snapshotForUndo()
           working('placing blocks…')
           return execPlan(places, frees)
         },
         complete: (q) => {
           acted = true
+          snapshotForUndo()
           working('marking it done…')
           return execComplete(q)
         },
         move: (q, d, t) => {
           acted = true
+          snapshotForUndo()
           working('moving it…')
           return execMove(q, d, t)
         },
         capture: (t) => {
           acted = true
+          snapshotForUndo()
           working('jotting it down…')
           return execCapture(t)
         },
         clear: (scope) => {
           acted = true
+          snapshotForUndo()
           working('clearing the time…')
           return execClear(scope)
         },
         edit: (q, patch) => {
           acted = true
+          snapshotForUndo()
           working('reshaping it…')
           return execEdit(q, patch)
         },
         remove: (q, opts) => {
           acted = true
+          snapshotForUndo()
           working('taking it off…')
           return execRemove(q, opts)
         },
@@ -1492,8 +1825,16 @@ export const useMew = create<MewState>((set, get) => {
         },
         remember: (pref) => {
           acted = true
+          snapshotForUndo()
           working('remembering that…')
           return execRemember(pref)
+        },
+        undoLast: () => {
+          /* the reversal itself isn't a fresh action: it consumes the snapshot
+             rather than taking one, so a misfired "undo that" can't be undone
+             into a loop. acted stays as-is — the turn already mutated. */
+          working('putting that back…')
+          return execUndo()
         },
       }
 
@@ -1524,11 +1865,21 @@ export const useMew = create<MewState>((set, get) => {
           const flush = () => {
             if (msgId == null) {
               msgId = uid()
-              const msg: ChatMessage = { id: msgId, role: 'mew', body: buffer, ts: nowFn(), ...(reasoning ? { reasoning } : {}) }
+              const msg: ChatMessage = {
+                id: msgId,
+                role: 'mew',
+                body: buffer,
+                ts: nowFn(),
+                ...(reasoning ? { reasoning } : {}),
+              }
               set((s) => ({ thinking: false, chat: [...s.chat, msg] }))
             } else {
               const id = msgId
-              set((s) => ({ chat: s.chat.map((m) => (m.id === id ? { ...m, body: buffer, ...(reasoning ? { reasoning } : {}) } : m)) }))
+              set((s) => ({
+                chat: s.chat.map((m) =>
+                  m.id === id ? { ...m, body: buffer, ...(reasoning ? { reasoning } : {}) } : m
+                ),
+              }))
             }
           }
           try {
@@ -1553,8 +1904,7 @@ export const useMew = create<MewState>((set, get) => {
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
                 if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
-              }
-              else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
+              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
             if (failed.length && adapter.id === 'rules') {
               /* an upstream adapter threw and we've landed on the rules floor.
@@ -1575,7 +1925,7 @@ export const useMew = create<MewState>((set, get) => {
                         ? `(I couldn't reach that model — check the model name in Settings. I handled this myself.)`
                         : kind === 'busy'
                           ? `(the model was busy — I retried, then handled it myself.)`
-                          : `(I couldn't reach the model just now — I handled this myself.)`,
+                          : `(I couldn't reach the model just now — I handled this myself.)`
                 ),
               ])
             }
@@ -1588,8 +1938,7 @@ export const useMew = create<MewState>((set, get) => {
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
                 if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
-              }
-              else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
+              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
             }
             if (abort.signal.aborted) {
               /* the user pressed stop — a clean end, not a failure. Whatever
@@ -1601,7 +1950,9 @@ export const useMew = create<MewState>((set, get) => {
             }
             if (acted || buffer.trim()) {
               /* the week already changed (or MEW already spoke) — finish honestly, don't replay */
-              post([mewMsg(`(The connection hiccuped mid-thought — everything above did go through.)`)])
+              post([
+                mewMsg(`(The connection hiccuped mid-thought — everything above did go through.)`),
+              ])
               return
             }
             /* surface WHY (never swallow): the remote adapter's error drives the
@@ -1641,7 +1992,12 @@ export const useMew = create<MewState>((set, get) => {
         /* a misclick undo — remove the matching completion event too */
         const evIdx = [...s.memory]
           .reverse()
-          .find((e) => e.kind === 'completed' && e.dayKey === target.dayKey && e.plannedMin === week.duration(target))
+          .find(
+            (e) =>
+              e.kind === 'completed' &&
+              e.dayKey === target.dayKey &&
+              e.plannedMin === week.duration(target)
+          )
         setBlocks(week.uncomplete(s.blocks, blockId))
         if (evIdx) set((st) => ({ memory: st.memory.filter((e) => e.id !== evIdx.id) }))
         return
@@ -1650,7 +2006,13 @@ export const useMew = create<MewState>((set, get) => {
       const nowMs = nowFn()
       setBlocks(week.complete(s.blocks, blockId, nowMs))
       void brain.ingest(
-        blockEventPage(target, 'completed', target.dayKey, minOfDay(new Date(nowMs)), knownProjectsFrom(s.blocks.map((b) => b.title)).keys()),
+        blockEventPage(
+          target,
+          'completed',
+          target.dayKey,
+          minOfDay(new Date(nowMs)),
+          knownProjectsFrom(s.blocks.map((b) => b.title)).keys()
+        )
       )
       logMemory({
         kind: 'completed',
@@ -1691,12 +2053,23 @@ export const useMew = create<MewState>((set, get) => {
           const target = s.blocks.find((b) => b.id === id)
           if (target) {
             const without = s.blocks.filter((b) => b.id !== id)
-            const todaySlot = week.findFreeSlot(without, todayKey, week.duration(target), minOfDay(now) + 15)
-            const slot = todaySlot ?? week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
+            const todaySlot = week.findFreeSlot(
+              without,
+              todayKey,
+              week.duration(target),
+              minOfDay(now) + 15
+            )
+            const slot =
+              todaySlot ??
+              week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
             if (slot) {
               const toKey = todaySlot ? todayKey : addDaysKey(todayKey, 1)
               setBlocks(week.move(s.blocks, id, toKey, slot.startMin))
-              post([mewMsg(`Moved — it lives ${toKey === todayKey ? 'later today' : 'tomorrow'} at ${fmtTime(slot.startMin)}.`)])
+              post([
+                mewMsg(
+                  `Moved — it lives ${toKey === todayKey ? 'later today' : 'tomorrow'} at ${fmtTime(slot.startMin)}.`
+                ),
+              ])
             }
           }
           accept()
@@ -1708,7 +2081,9 @@ export const useMew = create<MewState>((set, get) => {
           const target = s.blocks.find((b) => b.id === id)
           if (target) {
             set({ guardUntilMin: target.endMin, guardDayKey: todayKey })
-            post([mewMsg(`Guarded until ${fmtTime(target.endMin)} — nothing non-urgent gets through.`)])
+            post([
+              mewMsg(`Guarded until ${fmtTime(target.endMin)} — nothing non-urgent gets through.`),
+            ])
           }
           accept()
           break
@@ -1731,7 +2106,11 @@ export const useMew = create<MewState>((set, get) => {
           })
           if (placed) {
             setBlocks([...s.blocks, placed])
-            post([mewMsg(`Held — review & notes ${fmtTime(start)}–${fmtTime(start + 15)}. Capture it while it's warm.`)])
+            post([
+              mewMsg(
+                `Held — review & notes ${fmtTime(start)}–${fmtTime(start + 15)}. Capture it while it's warm.`
+              ),
+            ])
           }
           accept()
           break
@@ -1755,13 +2134,14 @@ export const useMew = create<MewState>((set, get) => {
                 setBlocks(week.move(s.blocks, candidate.id, toKey, slot.startMin))
                 post([
                   mewMsg(
-                    `Right-sized — ${candidate.title.split('—')[0].trim()} moved to ${fmtDowLong(toKey)} ${fmtTime(slot.startMin)}. ${fmtDowLong(heavyKey)} breathes again.`,
+                    `Right-sized — ${candidate.title.split('—')[0].trim()} moved to ${fmtDowLong(toKey)} ${fmtTime(slot.startMin)}. ${fmtDowLong(heavyKey)} breathes again.`
                   ),
                 ])
                 moved = true
               }
             }
-            if (!moved) post([mewMsg(`The week is tight everywhere — want to look at it together?`)])
+            if (!moved)
+              post([mewMsg(`The week is tight everywhere — want to look at it together?`)])
           }
           accept()
           break
@@ -1778,7 +2158,13 @@ export const useMew = create<MewState>((set, get) => {
             const { blocks } = week.roll(s.blocks, id, toKey, toStart)
             setBlocks(blocks)
             void brain.ingest(
-              blockEventPage(target, 'rolled', target.dayKey, minOfDay(new Date(s.nowMs)), knownProjectsFrom(s.blocks.map((b) => b.title)).keys()),
+              blockEventPage(
+                target,
+                'rolled',
+                target.dayKey,
+                minOfDay(new Date(s.nowMs)),
+                knownProjectsFrom(s.blocks.map((b) => b.title)).keys()
+              )
             )
             logMemory({
               kind: 'rolled',
@@ -1793,7 +2179,7 @@ export const useMew = create<MewState>((set, get) => {
             const dayLabel = toKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(toKey)
             post([
               mewMsg(
-                `Held — ${target.title.split('—')[0].trim()} lives ${dayLabel} at ${fmtTime(toStart)}. Let it go for tonight.`,
+                `Held — ${target.title.split('—')[0].trim()} lives ${dayLabel} at ${fmtTime(toStart)}. Let it go for tonight.`
               ),
             ])
           }
@@ -1822,21 +2208,30 @@ export const useMew = create<MewState>((set, get) => {
             /* someone else's meeting — not ours to move; the rest still stands */
             post([
               mewMsg(
-                `Kept. I can't move their meeting, but the rest stays on your calendar — they see you as busy.`,
+                `Kept. I can't move their meeting, but the rest stays on your calendar — they see you as busy.`
               ),
             ])
             accept()
             break
           }
           if (intruder) {
-            const fromMin = intruder.dayKey === dayKey(new Date(s.nowMs)) ? minOfDay(new Date(s.nowMs)) : 0
+            const fromMin =
+              intruder.dayKey === dayKey(new Date(s.nowMs)) ? minOfDay(new Date(s.nowMs)) : 0
             const next = week.nextSlotAfter(s.blocks, intruder, fromMin)
             if (next) {
               setBlocks(week.move(s.blocks, intruder.id, next.dayKey, next.startMin))
               const dayLabel = next.dayKey === intruder.dayKey ? '' : ' tomorrow'
-              post([mewMsg(`Kept. ${intruder.title.split('—')[0].trim()} moved${dayLabel} to ${fmtTime(next.startMin)} — the rest stays yours.`)])
+              post([
+                mewMsg(
+                  `Kept. ${intruder.title.split('—')[0].trim()} moved${dayLabel} to ${fmtTime(next.startMin)} — the rest stays yours.`
+                ),
+              ])
             } else {
-              post([mewMsg(`Kept — the rest stays. I couldn't find a later slot for ${intruder.title.split('—')[0].trim()}, so it's still where it was; move it where you like.`)])
+              post([
+                mewMsg(
+                  `Kept — the rest stays. I couldn't find a later slot for ${intruder.title.split('—')[0].trim()}, so it's still where it was; move it where you like.`
+                ),
+              ])
             }
           } else {
             post([mewMsg(`Kept. Tonight's rest is yours.`)])
@@ -1848,10 +2243,19 @@ export const useMew = create<MewState>((set, get) => {
           const restId = String(payload.restId)
           const rest = s.blocks.find((b) => b.id === restId)
           if (rest) {
-            const slot = week.findFreeSlot(s.blocks.filter((b) => b.id !== restId), rest.dayKey, week.duration(rest), rest.endMin)
+            const slot = week.findFreeSlot(
+              s.blocks.filter((b) => b.id !== restId),
+              rest.dayKey,
+              week.duration(rest),
+              rest.endMin
+            )
             if (slot) {
               setBlocks(week.move(s.blocks, restId, rest.dayKey, slot.startMin))
-              post([mewMsg(`Moved — rest now starts at ${fmtTime(slot.startMin)}. It still happens; that's the deal.`)])
+              post([
+                mewMsg(
+                  `Moved — rest now starts at ${fmtTime(slot.startMin)}. It still happens; that's the deal.`
+                ),
+              ])
             } else {
               post([mewMsg(`There's nowhere later for it today — I left it where it was.`)])
             }
@@ -1866,7 +2270,7 @@ export const useMew = create<MewState>((set, get) => {
           if (!moves.length) {
             post([
               mewMsg(
-                `The days ahead already fit inside your realistic best${agg.realisticBestH != null ? ` (~${agg.realisticBestH}h deep work a day)` : ''} — the shape is kind. The carry-over story is about size, not placement: try booking blocks a touch longer than instinct says.`,
+                `The days ahead already fit inside your realistic best${agg.realisticBestH != null ? ` (~${agg.realisticBestH}h deep work a day)` : ''} — the shape is kind. The carry-over story is about size, not placement: try booking blocks a touch longer than instinct says.`
               ),
             ])
             break
@@ -1891,25 +2295,33 @@ export const useMew = create<MewState>((set, get) => {
         }
         case 'kinder-plan:apply': {
           try {
-            const moves = JSON.parse(String(payload.moves)) as import('../domain/insights').KinderMove[]
+            const moves = JSON.parse(
+              String(payload.moves)
+            ) as import('../domain/insights').KinderMove[]
             let blocks = s.blocks
             const applied: string[] = []
             for (const m of moves) {
               const target = blocks.find((b) => b.id === m.blockId && b.status === 'open')
               if (!target) continue
               blocks = week.move(blocks, m.blockId, m.toDayKey, m.toStartMin)
-              applied.push(`${m.title} → ${fmtDowLong(m.toDayKey).toLowerCase()} ${fmtTime(m.toStartMin)}`)
+              applied.push(
+                `${m.title} → ${fmtDowLong(m.toDayKey).toLowerCase()} ${fmtTime(m.toStartMin)}`
+              )
             }
             setBlocks(blocks)
             post([
               mewMsg(
                 applied.length
                   ? `Done — ${joinHuman(applied)}. The week breathes again.`
-                  : `Those blocks moved on their own since I proposed this — the shape may already be kinder.`,
+                  : `Those blocks moved on their own since I proposed this — the shape may already be kinder.`
               ),
             ])
           } catch {
-            post([mewMsg(`That proposal went stale — ask me for a kinder shape again and I'll recompute it.`)])
+            post([
+              mewMsg(
+                `That proposal went stale — ask me for a kinder shape again and I'll recompute it.`
+              ),
+            ])
           }
           accept()
           break
@@ -1923,7 +2335,7 @@ export const useMew = create<MewState>((set, get) => {
           const agg = aggregates(s.memory, now)
           post([
             mewMsg(
-              `Good. Give me the one thing that matters most — "block tomorrow morning for the deck" works — and I'll place the rest around it${agg.realisticBestH != null ? `, keeping every day inside ~${agg.realisticBestH}h of deep work` : ''}.`,
+              `Good. Give me the one thing that matters most — "block tomorrow morning for the deck" works — and I'll place the rest around it${agg.realisticBestH != null ? `, keeping every day inside ~${agg.realisticBestH}h of deep work` : ''}.`
             ),
           ])
           break
@@ -1947,7 +2359,7 @@ export const useMew = create<MewState>((set, get) => {
               setBlocks([...s.blocks, placed])
               post([
                 mewMsg(
-                  `Placed — a 25-minute starter for "${title}" ${toKey === todayKey ? 'today' : fmtDowLong(toKey).toLowerCase()} at ${fmtTime(toStart)}. Crack it open; the rest follows.`,
+                  `Placed — a 25-minute starter for "${title}" ${toKey === todayKey ? 'today' : fmtDowLong(toKey).toLowerCase()} at ${fmtTime(toStart)}. Crack it open; the rest follows.`
                 ),
               ])
             }
@@ -2011,7 +2423,7 @@ export const useMew = create<MewState>((set, get) => {
           void applyUpdate().catch((err) => {
             post([
               mewMsg(
-                `The restart didn't take — ${err instanceof Error ? err.message : 'unknown error'}. The update stays staged; relaunching will pick it up.`,
+                `The restart didn't take — ${err instanceof Error ? err.message : 'unknown error'}. The update stays staged; relaunching will pick it up.`
               ),
             ])
           })
@@ -2026,7 +2438,12 @@ export const useMew = create<MewState>((set, get) => {
           void (async () => {
             const json = await readBackup()
             if (json) await get().importData(json)
-            else post([mewMsg(`The backup file isn't readable anymore — check Documents/MEW/mew-backup.json.`)])
+            else
+              post([
+                mewMsg(
+                  `The backup file isn't readable anymore — check Documents/MEW/mew-backup.json.`
+                ),
+              ])
           })()
           break
         }
@@ -2050,7 +2467,7 @@ export const useMew = create<MewState>((set, get) => {
                 match: String(payload.match),
                 value: String(payload.observed),
                 stated: `updated from how it actually lives (was: "${String(payload.stated)}")`,
-              }),
+              })
             ),
           ])
           accept()
@@ -2088,6 +2505,10 @@ export const useMew = create<MewState>((set, get) => {
     setView(view) {
       set({ view })
     },
+    dismissOnboarding() {
+      if (get().settings.hasSeenOnboarding) return // idempotent — never re-persist
+      get().updateSettings({ hasSeenOnboarding: true })
+    },
     setPromptDraft(text) {
       set({ promptDraft: text })
     },
@@ -2104,8 +2525,17 @@ export const useMew = create<MewState>((set, get) => {
       const now = new Date(s.nowMs)
       const nowMin = minOfDay(now)
       /* started is a state, not a button to mash: a live started block stays put */
-      if (target.startedAt != null && target.dayKey === dayKey(now) && target.startMin <= nowMin && nowMin < target.endMin) {
-        post([mewMsg(`${target.title.split('—')[0].trim()} is already running — finish it for the mew, or interrupt it to park the rest.`)])
+      if (
+        target.startedAt != null &&
+        target.dayKey === dayKey(now) &&
+        target.startMin <= nowMin &&
+        nowMin < target.endMin
+      ) {
+        post([
+          mewMsg(
+            `${target.title.split('—')[0].trim()} is already running — finish it for the mew, or interrupt it to park the rest.`
+          ),
+        ])
         return
       }
       const moved = week.move(s.blocks, blockId, dayKey(now), nowMin)
@@ -2131,20 +2561,36 @@ export const useMew = create<MewState>((set, get) => {
         if (slot) toKey = key
       }
       if (!slot) {
-        post([mewMsg(`Nowhere kind to park the rest this week — it stays open; say the word and we'll find it a home.`)])
+        post([
+          mewMsg(
+            `Nowhere kind to park the rest this week — it stays open; say the word and we'll find it a home.`
+          ),
+        ])
         return
       }
       const { blocks: rolled, rolled: next } = week.roll(s.blocks, blockId, toKey, slot.startMin)
       setBlocks(rolled)
       void brain.ingest(
-        blockEventPage(target, 'interrupted', target.dayKey, nowMin, knownProjectsFrom(s.blocks.map((b) => b.title)).keys()),
+        blockEventPage(
+          target,
+          'interrupted',
+          target.dayKey,
+          nowMin,
+          knownProjectsFrom(s.blocks.map((b) => b.title)).keys()
+        )
       )
-      logMemory({ kind: 'rolled', dayKey: target.dayKey, title: target.title, plannedMin: week.duration(target), startMin: target.startMin })
+      logMemory({
+        kind: 'rolled',
+        dayKey: target.dayKey,
+        title: target.title,
+        plannedMin: week.duration(target),
+        startMin: target.startMin,
+      })
       logMemory({ kind: 'interruption', dayKey: todayKey })
       const base = target.title.split('—')[0].trim()
       post([
         mewMsg(
-          `Paused — no blame, things land mid-block. The remaining ${remaining} min of ${base} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(slot.startMin)}.`,
+          `Paused — no blame, things land mid-block. The remaining ${remaining} min of ${base} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(slot.startMin)}.`
         ),
       ])
       void next
@@ -2156,8 +2602,15 @@ export const useMew = create<MewState>((set, get) => {
       const now = new Date(s.nowMs)
       const todayKey = dayKey(now)
       const without = s.blocks.filter((b) => b.id !== blockId)
-      const todaySlot = week.findFreeSlot(without, todayKey, week.duration(target), minOfDay(now) + 15)
-      const slot = todaySlot ?? week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
+      const todaySlot = week.findFreeSlot(
+        without,
+        todayKey,
+        week.duration(target),
+        minOfDay(now) + 15
+      )
+      const slot =
+        todaySlot ??
+        week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
       if (!slot) {
         post([mewMsg(`Nowhere kind to put it yet — want to look at the week together?`)])
         return
@@ -2166,9 +2619,43 @@ export const useMew = create<MewState>((set, get) => {
       setBlocks(week.move(s.blocks, blockId, toKey, slot.startMin))
       post([
         mewMsg(
-          `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : 'tomorrow'} at ${fmtTime(slot.startMin)}.`,
+          `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : 'tomorrow'} at ${fmtTime(slot.startMin)}.`
         ),
       ])
+    },
+    dragMove(blockId, toDayKey, toStartMin) {
+      const s = get()
+      const target = s.blocks.find((b) => b.id === blockId)
+      if (!target) return 'noop'
+      /* a synced calendar event is never MEW's to move (product law) — the drag
+         is silently dropped and chat explains, the same voice as every other
+         "not mine to touch" path. The block bounces back in the view. */
+      if (target.external) {
+        post([
+          mewMsg(
+            `${target.title.split('—')[0].trim()} stays put — that event is from your calendar, so it's not mine to move. Change it where it lives and the next sync brings it across.`
+          ),
+        ])
+        return 'external'
+      }
+      const todayKey = dayKey(new Date(s.nowMs))
+      /* dropped exactly where it already sits → a click, not a move */
+      if (toDayKey === target.dayKey && toStartMin === target.startMin) return 'noop'
+      /* authoritative conflict gate (the view shows the same set live): a drop
+         onto a time-holding open block is bounced, never silently stacked —
+         MEW's "never silent" law. Optional/background blocks are transparent,
+         exactly as conflictsWith treats them everywhere else. */
+      const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+      const endMin = toStartMin + week.duration(target)
+      const clash = week.conflictsWith(s.blocks, toDayKey, toStartMin, endMin, target.id, prefs)
+      if (clash.length) return 'conflict'
+      setBlocks(week.move(s.blocks, blockId, toDayKey, toStartMin))
+      post([
+        mewMsg(
+          `Moved — ${target.title.split('—')[0].trim()} now lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(toStartMin)}.`
+        ),
+      ])
+      return 'moved'
     },
     setAttention(blockId, attention) {
       const s = get()
@@ -2184,7 +2671,11 @@ export const useMew = create<MewState>((set, get) => {
       const now = new Date(s.nowMs)
       const proposal = week.proposeCaptureSlot(s.blocks, dayKey(now), minOfDay(now))
       if (!proposal) {
-        post([mewMsg(`The week can't hold "${cap.title}" yet — say where it should live and I'll make room.`)])
+        post([
+          mewMsg(
+            `The week can't hold "${cap.title}" yet — say where it should live and I'll make room.`
+          ),
+        ])
         return
       }
       if (!placeCaptureAt(cap, proposal.dayKey, proposal.startMin)) return
@@ -2199,7 +2690,7 @@ export const useMew = create<MewState>((set, get) => {
         mewMsg(
           target.protected
             ? `Released — ${target.title.split('—')[0].trim()} can flex now: I may move it when right-sizing, and the slot reads as open.`
-            : `Held — ${target.title.split('—')[0].trim()} is protected: I won't move it, and connected calendars show you busy there.`,
+            : `Held — ${target.title.split('—')[0].trim()} is protected: I won't move it, and connected calendars show you busy there.`
         ),
       ])
     },
@@ -2237,8 +2728,11 @@ export const useMew = create<MewState>((set, get) => {
         ...s.settings,
         calendars: s.settings.calendars.map((c) =>
           c.id === calId
-            ? { ...c, defaultTag: order[(order.indexOf(c.defaultTag ?? 'work') + 1) % order.length] }
-            : c,
+            ? {
+                ...c,
+                defaultTag: order[(order.indexOf(c.defaultTag ?? 'work') + 1) % order.length],
+              }
+            : c
         ),
       }
       set({ settings })
@@ -2254,7 +2748,11 @@ export const useMew = create<MewState>((set, get) => {
       await storage.importJson(json)
       await get().hydrate()
       get().tick()
-      post([mewMsg(`Restored — the week, captures, chat, and memory are back. Keys stay per-device; check Settings if the brain needs one.`)])
+      post([
+        mewMsg(
+          `Restored — the week, captures, chat, and memory are back. Keys stay per-device; check Settings if the brain needs one.`
+        ),
+      ])
     },
 
     importIcs(fileName: string, text: string) {
@@ -2312,7 +2810,7 @@ export const useMew = create<MewState>((set, get) => {
           : ''
       post([
         mewMsg(
-          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`,
+          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
         ),
       ])
     },
@@ -2419,7 +2917,7 @@ export const useMew = create<MewState>((set, get) => {
         if (report.pulled.added > 0) {
           post([
             mewMsg(
-              `${report.pulled.added} event${report.pulled.added === 1 ? '' : 's'} arrived from your calendar${inbound > 1 ? 's' : ''} — they're in the week now.`,
+              `${report.pulled.added} event${report.pulled.added === 1 ? '' : 's'} arrived from your calendar${inbound > 1 ? 's' : ''} — they're in the week now.`
             ),
           ])
         }
@@ -2435,6 +2933,112 @@ export const useMew = create<MewState>((set, get) => {
       } finally {
         set({ syncing: false })
       }
+    },
+
+    /* ── power-user surface (#169/#170/#171) — additive ──────────────── */
+
+    openCommandPalette() {
+      set({ commandPaletteOpen: true })
+    },
+
+    closeCommandPalette() {
+      if (!get().commandPaletteOpen) return
+      set({ commandPaletteOpen: false })
+    },
+
+    searchAll(query: string) {
+      const s = get()
+      return searchDomain({
+        query,
+        blocks: s.blocks,
+        captures: s.captures,
+        chat: s.chat,
+        weekKeys: weekKeys(new Date(s.nowMs)),
+        nowMs: s.nowMs,
+      })
+    },
+
+    quickCapture(title: string, autoPlace?: boolean) {
+      const clean = title.trim().slice(0, 120) // matches Block.title constraint (#171)
+      if (!clean)
+        return { kind: 'empty' as const, message: 'Nothing to capture yet — type a few words.' }
+      const wantPlace = autoPlace ?? get().settings.quickCaptureMode === 'auto-place'
+
+      /* AUTO-PLACE: today's first free 30-min slot, after the quiet-hours/now
+         floor the rail already honors (proposeCaptureSlot scans from now+15,
+         9:00 floor). We constrain to TODAY (i === 0) per the spec; no slot
+         today → fall through to an open capture, never tomorrow silently. */
+      if (wantPlace) {
+        const s = get()
+        const now = new Date(s.nowMs)
+        const todayKey = dayKey(now)
+        const slot = week.findFreeSlot(s.blocks, todayKey, 30, Math.max(minOfDay(now) + 15, 9 * 60))
+        if (slot) {
+          const placed = week.place(s.blocks, {
+            title: clean,
+            tag: 'work',
+            dayKey: todayKey,
+            startMin: slot.startMin,
+            durationMin: 30,
+          })
+          if (placed) {
+            const cap: Capture = {
+              id: uid(),
+              title: clean,
+              createdAt: nowFn(),
+              status: 'placed',
+              placedBlockId: placed.id,
+            }
+            setBlocks([...s.blocks, placed])
+            set((st) => ({ captures: [...st.captures, cap] }))
+            persistCaptures([cap])
+            /* the day's block landed — feed the brain the same sense a chat
+               placement would, brain-on gated; chat itself stays untouched */
+            return {
+              kind: 'placed' as const,
+              message: `Placed: ${clean} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} today`,
+            }
+          }
+        }
+        /* no free slot today — keep it, don't drop it: an open capture, with
+           copy that says exactly what happened (acceptance: "No free slot
+           today—captured as open"). */
+        const cap: Capture = { id: uid(), title: clean, createdAt: nowFn(), status: 'open' }
+        set((st) => ({ captures: [...st.captures, cap] }))
+        persistCaptures([cap])
+        return {
+          kind: 'open' as const,
+          message: `No free slot today — captured "${clean}" as open.`,
+        }
+      }
+
+      /* OPEN MODE (default): a parallel capture, NO when-where nudge, NO chat
+         turn — it waits quietly in the rail/search until you place it. This is
+         the one capture path that deliberately skips fireEventNudges, because a
+         quick-capture is "jot it and move on", not "let's find a slot now". */
+      const cap: Capture = { id: uid(), title: clean, createdAt: nowFn(), status: 'open' }
+      set((st) => ({ captures: [...st.captures, cap] }))
+      persistCaptures([cap])
+      return { kind: 'open' as const, message: `Captured: ${clean}` }
+    },
+
+    revealBlock(blockId: string) {
+      const s = get()
+      const target = s.blocks.find((b) => b.id === blockId)
+      if (!target) return
+      /* page to the week, focus the day, and page the week-grid to the week
+         that holds it — read-only navigation, the card comes on screen */
+      const todayKey = dayKey(new Date(s.nowMs))
+      const offset = Math.round(
+        (fromDayKey(target.dayKey).getTime() - fromDayKey(todayKey).getTime()) / (7 * 86400_000)
+      )
+      set({ page: 'week', focusedDayKey: target.dayKey, view: 'week', weekOffset: offset })
+    },
+
+    revealChatMessage(msgId: string) {
+      /* the session log already knows how to scroll to a message id (a nudge
+         clicked from a mirror uses the same field) — route there and hand it off */
+      set({ page: 'week', scrollToMsgId: msgId })
     },
   }
 })
@@ -2456,7 +3060,7 @@ export function usePixie() {
   const memory = useMew((s) => s.memory)
   const nowMs = useMew((s) => s.nowMs)
   const nudgeWaiting = useMew((s) =>
-    s.chat.some((m) => m.role === 'nudge' && !m.resolved && (m.actions?.length ?? 0) > 0),
+    s.chat.some((m) => m.role === 'nudge' && !m.resolved && (m.actions?.length ?? 0) > 0)
   )
   return useMemo(() => {
     const now = new Date(nowMs)

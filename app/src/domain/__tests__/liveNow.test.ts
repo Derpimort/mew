@@ -44,7 +44,11 @@ describe('liveNow — the live week decides', () => {
 
   it('counts mews and fills the 7-segment strip from done/total', () => {
     const done = mk({ status: 'done', startMin: 8 * 60, endMin: 9 * 60 })
-    const ln = liveNow([done, deck, standup, mk({ tag: 'rest', startMin: 18 * 60, endMin: 19 * 60 })], D, 12 * 60 + 30)
+    const ln = liveNow(
+      [done, deck, standup, mk({ tag: 'rest', startMin: 18 * 60, endMin: 19 * 60 })],
+      D,
+      12 * 60 + 30
+    )
     expect(ln.mewsToday).toBe(1)
     expect(ln.segments.filter(Boolean)).toHaveLength(Math.round((1 / 3) * 7))
   })
@@ -58,7 +62,12 @@ describe('liveNow — the live week decides', () => {
 })
 
 describe('background attention — never the center', () => {
-  const restore = mk({ title: 'iphone restore', attention: 'background', startMin: 9 * 60, endMin: 12 * 60 })
+  const restore = mk({
+    title: 'iphone restore',
+    attention: 'background',
+    startMin: 9 * 60,
+    endMin: 12 * 60,
+  })
 
   it('a live background block never becomes current; a meeting over it does', () => {
     const alone = liveNow([restore], D, 10 * 60)
@@ -83,7 +92,12 @@ describe('background attention — never the center', () => {
   })
 
   it('background never claims next either', () => {
-    const later = mk({ title: 'backup sweep', attention: 'background', startMin: 15 * 60, endMin: 16 * 60 })
+    const later = mk({
+      title: 'backup sweep',
+      attention: 'background',
+      startMin: 15 * 60,
+      endMin: 16 * 60,
+    })
     const ln = liveNow([later], D, 13 * 60)
     expect(ln.next).toBeUndefined()
   })

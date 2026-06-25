@@ -195,11 +195,7 @@ export const NUDGES: NudgeDef[] = [
       const n = c.live.mewsToday
       const left = c.live.openToday
       const tail =
-        left === 0
-          ? ' The day is clear — rest is earned.'
-          : left === 1
-            ? ' One to go.'
-            : ''
+        left === 0 ? ' The day is clear — rest is earned.' : left === 1 ? ' One to go.' : ''
       return {
         body: `That's a mew — ${spell(n)} today.${tail}`,
         footnote: `Progress on meaningful work is the strongest motivator there is. (Amabile & Kramer, 2011)`,
@@ -225,7 +221,11 @@ export const NUDGES: NudgeDef[] = [
         body: `${base} isn't done — shall it live ${dayLabel} at ${fmtTime(p.toStartMin)}? Then let it go for tonight.`,
         footnote: `Unfinished tasks intrude on the mind until they have a concrete plan — then it lets go. (Zeigarnik, 1927; Masicampo & Baumeister, 2011)`,
         actions: [
-          { id: 'roll', label: `${dayLabel[0].toUpperCase()}${dayLabel.slice(1)} at ${fmtTime(p.toStartMin)}`, kind: 'primary' },
+          {
+            id: 'roll',
+            label: `${dayLabel[0].toUpperCase()}${dayLabel.slice(1)} at ${fmtTime(p.toStartMin)}`,
+            kind: 'primary',
+          },
           { id: 'leave', label: 'Leave it open', kind: 'secondary' },
         ],
         payload: { blockId: b.id, toDayKey: p.toDayKey, toStartMin: p.toStartMin },
@@ -266,7 +266,11 @@ export const NUDGES: NudgeDef[] = [
         footnote: `An if-then plan with a when and a where raises follow-through, d = .65 across 94 studies. (Gollwitzer & Sheeran, 2006)`,
         actions: p
           ? [
-              { id: 'placecap', label: `${p.dayKey === c.todayKey ? 'Today' : fmtDowLong(p.dayKey)} ${fmtTime(p.startMin)}`, kind: 'primary' },
+              {
+                id: 'placecap',
+                label: `${p.dayKey === c.todayKey ? 'Today' : fmtDowLong(p.dayKey)} ${fmtTime(p.startMin)}`,
+                kind: 'primary',
+              },
               { id: 'later', label: "I'll pick a time", kind: 'secondary' },
             ]
           : [{ id: 'later', label: "I'll pick a time", kind: 'secondary' }],
@@ -342,7 +346,8 @@ export const NUDGES: NudgeDef[] = [
     label: 'next up',
     tone: 'momentum, light',
     cooldownMs: 0.5 * H,
-    trigger: (c) => c.justCompleted != null && !c.breakDue && c.nextUp != null && c.earlyGapMin >= 15,
+    trigger: (c) =>
+      c.justCompleted != null && !c.breakDue && c.nextUp != null && c.earlyGapMin >= 15,
     build: (c) => {
       const n = c.nextUp!
       return {
@@ -395,7 +400,13 @@ export const NUDGES: NudgeDef[] = [
           { id: 'update', label: `Update to ${obs}`, kind: 'primary' },
           { id: 'keep', label: `Keep ${cur}`, kind: 'secondary' },
         ],
-        payload: { kind: pref.kind, match: pref.match, value: pref.value, observed, stated: pref.stated },
+        payload: {
+          kind: pref.kind,
+          match: pref.match,
+          value: pref.value,
+          observed,
+          stated: pref.stated,
+        },
         key: prefKey(pref),
       }
     },
@@ -425,8 +436,7 @@ export const NUDGES: NudgeDef[] = [
     tone: 'opening, light',
     cooldownMs: 20 * H, // at most once per landmark day
     trigger: (c) =>
-      c.justCleared != null ||
-      (c.dowMon0 === 0 && c.nowMin >= 8 * 60 && c.nowMin < 11 * 60),
+      c.justCleared != null || (c.dowMon0 === 0 && c.nowMin >= 8 * 60 && c.nowMin < 11 * 60),
     build: (c) => {
       /* with history, Monday opens with the story; justCleared keeps the
          blank-page copy (mid-week clears aren't about last week) */
@@ -472,7 +482,12 @@ export const NUDGES: NudgeDef[] = [
           { id: 'capture', label: 'Capture the handoff', kind: 'primary' },
           { id: 'later', label: 'Not now', kind: 'secondary' },
         ],
-        payload: { taskKind: d.taskKind, label: d.label, person: d.person, personLabel: d.personLabel },
+        payload: {
+          taskKind: d.taskKind,
+          label: d.label,
+          person: d.person,
+          personLabel: d.personLabel,
+        },
         key: `${d.person}:${d.taskKind}`,
       }
     },

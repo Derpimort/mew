@@ -12,14 +12,20 @@
 
 import { describe, expect, it, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SessionLog, LogLine, streamAnnouncement } from '../SessionLog'
+import { SessionLog, LogLine } from '../SessionLog'
+import { streamAnnouncement } from '../sessionAnnounce'
 import { useMew } from '../../../state/store'
 import type { ChatMessage } from '../../../domain/types'
 
 const at = (h: number, m: number) => new Date(2026, 5, 19, h, m).getTime()
 
 const USER: ChatMessage = { id: 'u1', role: 'user', body: 'block thursday morning', ts: at(9, 5) }
-const MEW: ChatMessage = { id: 'm1', role: 'mew', body: 'done — thursday 9–11 is yours.', ts: at(14, 6) }
+const MEW: ChatMessage = {
+  id: 'm1',
+  role: 'mew',
+  body: 'done — thursday 9–11 is yours.',
+  ts: at(14, 6),
+}
 const NUDGE: ChatMessage = {
   id: 'n1',
   role: 'nudge',

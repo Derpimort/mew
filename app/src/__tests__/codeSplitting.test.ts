@@ -47,7 +47,7 @@ describe('lazy-load contract: three.js / @react-three stay off the boot path', (
     expect(eagerThree).toEqual([])
   })
 
-  it('aurora-blur and ai-blob are reached only via the entry\'s DYNAMIC imports', () => {
+  it("aurora-blur and ai-blob are reached only via the entry's DYNAMIC imports", () => {
     // the lazy wrappers must be dynamic (React.lazy), never static, on the entry.
     const dyn = entry.dynamicImports
     expect(dyn.some((f) => /aurora-blur/.test(f))).toBe(true)
@@ -67,7 +67,9 @@ describe('lazy-load contract: three.js / @react-three stay off the boot path', (
         .filter((c) => c.imports.includes(tc.fileName))
         .map((c) => c.fileName)
       for (const importer of staticImporters) {
-        expect(importer, `${importer} statically imports ${tc.fileName}`).toMatch(/aurora-blur|ai-blob/)
+        expect(importer, `${importer} statically imports ${tc.fileName}`).toMatch(
+          /aurora-blur|ai-blob/
+        )
       }
     }
   })

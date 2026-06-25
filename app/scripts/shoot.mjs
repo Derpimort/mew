@@ -20,6 +20,15 @@ page.on('console', (m) => {
 })
 page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
 
+/* a fresh playwright context has an empty IndexedDB, so the seed runs and the
+   first-run concept tour (#160) opens over the dial — dismiss it the way a
+   returning user already has, so these canonical shots capture the app itself */
+const skipOnboarding = async () => {
+  await page.waitForSelector('.nx-stage', { timeout: 10000 })
+  await page.evaluate(() => window.__mewConfigure?.({ hasSeenOnboarding: true }))
+  await page.waitForSelector('.ob-scrim', { state: 'detached', timeout: 5000 }).catch(() => {})
+}
+
 /* fail loudly so a broken contract turns the `pnpm shoot` gate red */
 const assert = (cond, msg) => {
   if (!cond) {
@@ -31,6 +40,7 @@ const assert = (cond, msg) => {
 
 /* 1 · Focus dial at the canonical 9:40 — minimal at rest, then hover reveal */
 await page.goto(`${base}/?t=9:40`)
+await skipOnboarding()
 await page.waitForSelector('.nx-count', { timeout: 10000 })
 await page.waitForTimeout(1500)
 console.log('count:', await page.textContent('.nx-count'))
@@ -48,7 +58,10 @@ console.log('task:', await page.textContent('.nx-task'))
       role: stage?.getAttribute('role'),
       label: stage?.getAttribute('aria-label') ?? '',
       describedby: stage?.getAttribute('aria-describedby'),
-      hintExists: !!(stage?.getAttribute('aria-describedby') && document.getElementById(stage.getAttribute('aria-describedby'))),
+      hintExists: !!(
+        stage?.getAttribute('aria-describedby') &&
+        document.getElementById(stage.getAttribute('aria-describedby'))
+      ),
       heading: document.querySelector('.nx-stage h2#dial-title')?.textContent ?? '',
       arcCount: arcs.length,
       named: arcs.every((a) => (a.getAttribute('aria-label') ?? '').trim().length > 0),
@@ -65,7 +78,10 @@ console.log('task:', await page.textContent('.nx-task'))
   assert(/focus dial/i.test(a11y.heading), 'missing sr-only h2 dial heading')
   assert(a11y.arcCount >= 1, 'no arcs exposed as buttons')
   assert(a11y.named, 'an arc button has no accessible name')
-  assert(a11y.tabZero === 1, `roving tabindex broken: ${a11y.tabZero} arcs have tabindex=0 (want exactly 1)`)
+  assert(
+    a11y.tabZero === 1,
+    `roving tabindex broken: ${a11y.tabZero} arcs have tabindex=0 (want exactly 1)`
+  )
   assert(a11y.tabMinus >= a11y.arcCount - 1, 'non-focused arcs are not removed from the tab order')
   assert(a11y.ariaHidden >= 4, 'decorative geometry is not hidden from assistive tech')
   // the demote chip is a named button when something holds the centre
@@ -102,12 +118,15 @@ await page.waitForTimeout(600)
 console.log('summary:', (await page.textContent('.week-summary'))?.trim())
 await page.screenshot({ path: `${outDir}/4-week.png` })
 
-/* 4 · talk-to-schedule through the prompt (acceptance #1). The composer is a
-   <textarea> (aria-label "talk to MEW", auto-grow, multi-line), not an <input>
-   — match both so the selector survives the input→textarea change, mirroring
-   scripts/shoot-overlap.mjs, and so this step doesn't time out. */
-await page.fill('.prompt-row input, .prompt-row textarea', 'block thursday morning for the deck, keep friday afternoon free')
-await page.press('.prompt-row input, .prompt-row textarea', 'Enter')
+/* 4 · talk-to-schedule through the prompt (acceptance #1). The composer is now a
+   <textarea> (aria-label "compose message to MEW", auto-grow, multi-line), not an
+   <input>. Target it by its stable a11y label so the shot survives the
+   input→textarea swap, and fall back to the tag match that
+   scripts/shoot-overlap.mjs uses so both selectors stay in sync. */
+const composer =
+  '.prompt-row [aria-label="compose message to MEW"], .prompt-row input, .prompt-row textarea'
+await page.fill(composer, 'block thursday morning for the deck, keep friday afternoon free')
+await page.press(composer, 'Enter')
 await page.waitForTimeout(900)
 const log = await page.$$eval('.log', (els) => els.map((e) => e.textContent).join('\n'))
 console.log('log tail:', log.slice(-220).replace(/\s+/g, ' '))

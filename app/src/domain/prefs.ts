@@ -62,7 +62,7 @@ export interface PlacementDefaults {
 export function applyPrefs<T extends PlacementDefaults>(
   spec: T,
   prefs: PrefPayload[],
-  histDurations?: Map<string, TaskDuration>,
+  histDurations?: Map<string, TaskDuration>
 ): { spec: T & PlacementDefaults; applied: PrefPayload[]; usual: TaskDuration | null } {
   const applied: PrefPayload[] = []
   let next: T & PlacementDefaults = spec

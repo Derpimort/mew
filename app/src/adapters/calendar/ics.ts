@@ -222,7 +222,10 @@ export function parseIcs(text: string, ownerEmail?: string): IcsParseResult {
           partstat === 'NEEDS-ACTION'
         events.push({
           uid,
-          summary: get('SUMMARY')?.value.replace(/\\([,;nN])/g, (_, c) => (c === ',' || c === ';' ? c : '\n')).replace(/\\\\/g, '\\') ?? '(untitled)',
+          summary:
+            get('SUMMARY')
+              ?.value.replace(/\\([,;nN])/g, (_, c) => (c === ',' || c === ';' ? c : '\n'))
+              .replace(/\\\\/g, '\\') ?? '(untitled)',
           start: start.epoch,
           end: endEpoch,
           dateOnly: false,
@@ -270,7 +273,11 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
 
   const days =
     r.FREQ === 'WEEKLY'
-      ? (r.BYDAY ? r.BYDAY.split(',').map((d) => BYDAY[d.trim()]).filter((d) => d != null) : null)
+      ? r.BYDAY
+        ? r.BYDAY.split(',')
+            .map((d) => BYDAY[d.trim()])
+            .filter((d) => d != null)
+        : null
       : null
 
   const startDay = new Date(ev.start)
@@ -287,7 +294,7 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
     const d = new Date(dayMs)
     const dow = (d.getDay() + 6) % 7
 
-    let hit = false
+    let hit: boolean
     if (r.FREQ === 'DAILY') {
       hit = i % interval === 0
     } else {
@@ -300,7 +307,7 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
     const occEpoch = partsToEpoch(
       { ...baseParts, y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate() },
       tzid,
-      baseUtcFlag,
+      baseUtcFlag
     )
     if (occEpoch < ev.start - 60000) continue
     if (occEpoch > untilMs) break
@@ -326,7 +333,7 @@ export function icsToRemoteEvents(
   calId: string,
   windowStart: Date,
   windowEnd: Date,
-  ownerEmail?: string,
+  ownerEmail?: string
 ): IcsImport {
   const parsed = parseIcs(text, ownerEmail ?? undefined)
   const ws = windowStart.getTime()
@@ -373,5 +380,10 @@ export function icsToRemoteEvents(
     }
   }
 
-  return { calName: parsed.calName, events: out, skippedAllDay: parsed.skippedAllDay, skippedRules: parsed.skippedRules }
+  return {
+    calName: parsed.calName,
+    events: out,
+    skippedAllDay: parsed.skippedAllDay,
+    skippedRules: parsed.skippedRules,
+  }
 }

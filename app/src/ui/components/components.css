@@ -8,7 +8,10 @@
   background: var(--bg);
   position: relative;
 }
-.app-root.settings-mode { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+.app-root.settings-mode {
+  grid-template-columns: 1fr;
+  grid-template-rows: auto 1fr;
+}
 
 .left-stage {
   position: relative;
@@ -33,8 +36,13 @@
   color: var(--faint);
   transition: color 0.18s ease;
 }
-.navlink:hover { color: var(--gold); }
-.navlink.gold { color: var(--gold); font-size: 11px; }
+.navlink:hover {
+  color: var(--gold);
+}
+.navlink.gold {
+  color: var(--gold);
+  font-size: 11px;
+}
 
 /* ── companion stage (PRD §3a) — reserved animated-3D space ───── */
 .right-col {
@@ -50,7 +58,8 @@
   flex: none;
   overflow: hidden;
   border-bottom: 1px solid var(--line2);
-  background: radial-gradient(90% 70% at 50% 32%, rgba(var(--acc-rgb), 0.12), transparent 62%),
+  background:
+    radial-gradient(90% 70% at 50% 32%, rgba(var(--acc-rgb), 0.12), transparent 62%),
     linear-gradient(180deg, var(--panel2), var(--panel));
 }
 .stage-floor {
@@ -73,11 +82,18 @@
   height: 188px;
   border-radius: 30px;
   overflow: hidden;
-  box-shadow: 0 0 0 1px rgba(var(--acc-rgb), 0.4), 0 0 40px rgba(var(--acc-rgb), 0.28),
+  box-shadow:
+    0 0 0 1px rgba(var(--acc-rgb), 0.4),
+    0 0 40px rgba(var(--acc-rgb), 0.28),
     inset 0 -30px 50px -24px rgba(0, 0, 0, 0.5);
   animation: petFloat 7s ease-in-out infinite;
 }
-.stage-pet img { width: 252px; display: block; margin-left: -32px; margin-top: -26px; }
+.stage-pet img {
+  width: 252px;
+  display: block;
+  margin-left: -32px;
+  margin-top: -26px;
+}
 .stage-pet .pet-blank {
   width: 100%;
   height: 100%;
@@ -122,7 +138,13 @@
   box-shadow: 0 0 8px var(--glowc);
   animation: stlPulse 3s ease-in-out infinite;
 }
-.stage-info { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; }
+.stage-info {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  text-align: center;
+}
 .stage-info .nm {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
@@ -188,9 +210,13 @@
   cursor: pointer;
   box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
-  transition: opacity 0.18s ease, transform 0.18s ease;
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease;
 }
-.scroll-new:hover { transform: translateX(-50%) translateY(-1px); }
+.scroll-new:hover {
+  transform: translateX(-50%) translateY(-1px);
+}
 
 /* MEW's turn-in-flight row: the 3-dot typing pulse + a short working label */
 .mew-thinking {
@@ -214,11 +240,20 @@
   background: var(--gold);
   animation: mewTyping 1.2s ease-in-out infinite;
 }
-.mew-thinking .typing .dot:nth-child(2) { animation-delay: 0.18s; }
-.mew-thinking .typing .dot:nth-child(3) { animation-delay: 0.36s; }
-.mew-thinking .working { color: var(--muted); margin-left: 4px; }
+.mew-thinking .typing .dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.mew-thinking .typing .dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+.mew-thinking .working {
+  color: var(--muted);
+  margin-left: 4px;
+}
 @media (prefers-reduced-motion: reduce) {
-  .mew-thinking .typing .dot { animation-duration: 2.4s; }
+  .mew-thinking .typing .dot {
+    animation-duration: 2.4s;
+  }
 }
 
 /* The pre-tool reasoning snapshot (#166): a quiet, collapsed note under MEW's
@@ -236,10 +271,18 @@
   user-select: none;
   opacity: 0.85;
 }
-.reasoning > summary::-webkit-details-marker { display: none; }
-.reasoning > summary::before { content: '▸ '; }
-.reasoning[open] > summary::before { content: '▾ '; }
-.reasoning > summary:hover { opacity: 1; }
+.reasoning > summary::-webkit-details-marker {
+  display: none;
+}
+.reasoning > summary::before {
+  content: '▸ ';
+}
+.reasoning[open] > summary::before {
+  content: '▾ ';
+}
+.reasoning > summary:hover {
+  opacity: 1;
+}
 .reasoning .reasoning-body {
   margin-top: 4px;
   padding-left: 14px;
@@ -249,10 +292,15 @@
   line-height: 1.5;
 }
 
-.session-compose { padding: 0 16px 16px; flex: none; }
+.session-compose {
+  padding: 0 16px 16px;
+  flex: none;
+}
 
 /* ── focus orbit (lanes — DESIGN_LANGUAGE §3 FINAL) ───────────── */
-.nx-stage { position: relative; }
+.nx-stage {
+  position: relative;
+}
 /* screen-reader-only: in the a11y tree (announced) but visually gone. Used for
    the dial's <h2> context heading + any text that names a control for AT without
    adding visible chrome (WCAG 2.2 §1.1.1, §4.1.2). The standard clip pattern. */
@@ -276,7 +324,9 @@
    stage AND a same-coloured arc) — a thicker stroke + a 4px-standoff halo. The
    non-SVG controls (the application surface, the demote chip) take a real
    outline with the 4px offset the spec calls for. */
-.nx-stage:focus-visible { outline: none; } /* the surface delegates focus to its items */
+.nx-stage:focus-visible {
+  outline: none;
+} /* the surface delegates focus to its items */
 .pri-arc:focus-visible {
   outline: none; /* SVG path: indicator is drawn, not a box outline */
   stroke: var(--ice);
@@ -319,26 +369,75 @@
   font-weight: 600;
   fill: var(--muted);
 }
-.nx-time { display: inline-flex; align-items: baseline; gap: 3px; }
+.nx-time {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+}
 /* time is the hero: large, full-contrast ink */
-.nx-clock .hm { font-family: 'JetBrains Mono', monospace; font-weight: 700; font-size: 24px; letter-spacing: 0.02em; color: var(--ink); line-height: 1; }
+.nx-clock .hm {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 24px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  line-height: 1;
+}
 /* seconds + date share one gold-mono type system, both quieter than the time */
-.nx-clock .sc { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--gold); }
-.nx-clock .dt { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.04em; color: var(--gold); }
+.nx-clock .sc {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  color: var(--gold);
+}
+.nx-clock .dt {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--gold);
+}
 /* every item is the same thin arc; hierarchy is brightness, never thickness */
-.pri-arc { cursor: pointer; transition: opacity 0.18s, stroke-width 0.15s ease, r 0.15s ease; }
+.pri-arc {
+  cursor: pointer;
+  transition:
+    opacity 0.18s,
+    stroke-width 0.15s ease,
+    r 0.15s ease;
+}
+/* keyboard focus on a dial item (WCAG 2.2 §2.4.7). An <outline> is unreliable on
+   SVG geometry, so the ring is expressed the SVG-native way: the arc/dot glows
+   (drop-shadow) and goes full-opacity, the same vocabulary the focus item already
+   uses — so a Tab-focused arc reads exactly like the live one. opacity wins over
+   the inline at-rest value via !important (the inline style sets a dimmed
+   opacity for unfocused arcs). The arcs are made tabbable + Enter/Space-
+   activatable in FocusOrbit (roving tabindex: one stop, ↑/↓ or ←/→ moves it). */
+.pri-arc:focus-visible {
+  outline: none;
+  opacity: 1 !important;
+  filter: drop-shadow(0 0 6px var(--glowc)) drop-shadow(0 0 2px var(--ice));
+}
 /* one shared dial reveal (#88): hover-revealed elements fade via opacity, never
    mount/unmount — same easing/duration everywhere so the dial reads as one system */
-.dial-reveal { transition: opacity 0.18s ease; }
-.pri-lbl { cursor: pointer; transition: opacity 0.18s ease, font-size 0.18s ease; }
-.pri-lbl:hover, .pri-lbl:hover tspan { opacity: 1 !important; }
+.dial-reveal {
+  transition: opacity 0.18s ease;
+}
+.pri-lbl {
+  cursor: pointer;
+  transition:
+    opacity 0.18s ease,
+    font-size 0.18s ease;
+}
+.pri-lbl:hover,
+.pri-lbl:hover tspan {
+  opacity: 1 !important;
+}
 .pri-demote {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   /* out of the .clk-center flex flow: anchored just below the centre stack so the
-     reveal never reflows the countdown/meta/task (#88). pointer-events/opacity are
-     driven inline by dialHover; opacity timing matches .dial-reveal. */
+     reveal never reflows the countdown/meta/task (#88). At rest it's hidden and
+     inert; dialHover reveals it inline (opacity/pointer-events), and so does a
+     keyboard focus (:focus-visible below) so it's never mouse-only. */
   position: absolute;
   left: 50%;
   top: 100%;
@@ -352,9 +451,24 @@
   border-radius: 999px;
   padding: 4px 11px;
   cursor: pointer;
-  transition: opacity 0.18s ease, color 0.15s, border-color 0.15s;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.18s ease,
+    color 0.15s,
+    border-color 0.15s;
 }
-.pri-demote:hover { color: var(--gold); border-color: var(--ice-bd); }
+.pri-demote:hover {
+  color: var(--gold);
+  border-color: var(--ice-bd);
+}
+/* keyboard reveal: a focused demote chip shows itself and its focus ring */
+.pri-demote:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
 /* hover readout — fixed in the dial's clear lower interior (positioned inline by
    FocusOrbit at the dial axis). Time range is the hero; title the quiet second
    line. Reveal opacity is driven inline by dialHover (shares .dial-reveal). */
@@ -375,7 +489,10 @@
   letter-spacing: 0.01em;
   color: var(--ink);
 }
-.pri-range .dash { margin: 0 0.18em; color: var(--muted); }
+.pri-range .dash {
+  margin: 0 0.18em;
+  color: var(--muted);
+}
 .pri-range .xd {
   margin-left: 0.4em;
   font-size: 9px;
@@ -396,7 +513,12 @@
   white-space: normal;
   text-align: center;
 }
-.pri-idle { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--faint); letter-spacing: 0.04em; }
+.pri-idle {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+  letter-spacing: 0.04em;
+}
 /* loose-threads pill — sits in the top bar beside the clock (horizontal) */
 .frail {
   display: inline-flex;
@@ -411,10 +533,27 @@
   pointer-events: auto;
   transition: border-color 0.18s;
 }
-.frail:hover { border-color: var(--ice-bd); }
-.frail .cnt { font-family: 'Space Grotesk', sans-serif; font-weight: 700; font-size: 14px; color: var(--ink); }
-.frail .dot { width: 7px; height: 7px; border-radius: 50%; }
-.frail .vlabel { font-family: 'JetBrains Mono', monospace; font-size: 8.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint); }
+.frail:hover {
+  border-color: var(--ice-bd);
+}
+.frail .cnt {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--ink);
+}
+.frail .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.frail .vlabel {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
 /* the thread box the pill expands into */
 .tbox {
   width: 300px;
@@ -430,9 +569,23 @@
   padding: 13px 15px;
   box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.6);
 }
-.tbox-h { display: flex; align-items: center; margin-bottom: 6px; }
-.tbox-h .t { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13.5px; }
-.tbox-h .x { margin-left: auto; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--faint); cursor: pointer; }
+.tbox-h {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.tbox-h .t {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.tbox-h .x {
+  margin-left: auto;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+  cursor: pointer;
+}
 .tgrp {
   font-family: 'JetBrains Mono', monospace;
   font-size: 8px;
@@ -445,13 +598,43 @@
   align-items: center;
   gap: 7px;
 }
-.tgrp:first-of-type { margin-top: 2px; }
-.tgrp::after { content: ''; flex: 1; height: 1px; background: var(--line2); }
-.trow { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 9px; }
-.trow:hover { background: var(--bg); }
-.trow .g { font-family: 'JetBrains Mono', monospace; font-size: 11px; width: 13px; text-align: center; flex: none; }
-.trow .tt { font-size: 12.5px; font-weight: 600; color: var(--ink); }
-.trow .mm { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 1px; }
+.tgrp:first-of-type {
+  margin-top: 2px;
+}
+.tgrp::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line2);
+}
+.trow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border-radius: 9px;
+}
+.trow:hover {
+  background: var(--bg);
+}
+.trow .g {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  width: 13px;
+  text-align: center;
+  flex: none;
+}
+.trow .tt {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.trow .mm {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 1px;
+}
 /* row actions now use the shared <Button variant="chip" size="sm"> (#68) —
    the old thin .tact/.tacts chips are retired in favour of the primitive */
 .clk-center {
@@ -477,10 +660,24 @@
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
   letter-spacing: -0.018em;
+  /* the live headline is also a button (opens the card); keep it a full-width
+     block so its words stay centred under the countdown like the old <div> did.
+     .clk-center is pointer-events:none (dial clicks pass through) — re-enable it
+     here so the headline is a real click + keyboard target, not a dead stop. */
+  display: block;
+  width: 100%;
+  pointer-events: auto;
+}
+.nx-task:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-radius: 8px;
 }
 /* the task is a StaggeredText (flex flex-wrap) — center its words under the
    countdown (text-align doesn't reach a flex container) */
-.nx-task .staggered-text { justify-content: center; }
+.nx-task .staggered-text {
+  justify-content: center;
+}
 .nx-meta {
   font-family: 'JetBrains Mono', monospace;
   font-size: 10px;
@@ -492,19 +689,70 @@
 }
 
 /* ── week columns (S1 solid material) ─────────────────────────── */
-.nxb-col { position: relative; border-radius: 12px; cursor: pointer; }
+.nxb-col {
+  position: relative;
+  border-radius: 12px;
+  cursor: pointer;
+}
+/* a focusable day column (it's a clickable region, made tabbable in WeekColumns).
+   A plain outline would be clipped by the lane's own clipping, so the ring is a
+   box-shadow that follows the 12px radius. */
+.nxb-col:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--ice);
+}
+.nxb-col.today:focus-visible {
+  box-shadow:
+    inset 0 0 0 1.4px var(--ice-bd),
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--ice);
+}
 .nxb-col.today {
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   box-shadow: inset 0 0 0 1.4px var(--ice-bd);
   cursor: default;
 }
-.nxb-col.past { opacity: 0.45; }
-.nxb-dl { text-align: center; margin-bottom: 8px; cursor: pointer; }
-.nxb-dl .d { font-family: 'Space Grotesk', sans-serif; font-weight: 600; font-size: 13px; }
-.nxb-dl .n { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--muted); margin-top: 1px; }
-.nxb-dl .n .heavy { color: var(--gold); font-weight: 700; }
-.nxb-dl.today .d { color: var(--ice); font-size: 15px; }
-.nxb-hl { font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--faint); }
+.nxb-col.past {
+  opacity: 0.45;
+}
+.nxb-dl {
+  text-align: center;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+/* day header button — a tight inset ring (the 4px outset default would graze the
+   neighbouring column header) */
+.nxb-dl:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+.nxb-dl .d {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 13px;
+}
+.nxb-dl .n {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.nxb-dl .n .heavy {
+  color: var(--gold);
+  font-weight: 700;
+}
+.nxb-dl.today .d {
+  color: var(--ice);
+  font-size: 15px;
+}
+.nxb-hl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--faint);
+}
 .nxb-now {
   position: absolute;
   left: 2px;
@@ -541,7 +789,19 @@
   cursor: pointer;
 }
 /* thin slices (no room for a second line): trim padding so one clamped line still fits */
-.nxb-blk.thin { padding: 0 7px; gap: 0; }
+.nxb-blk.thin {
+  padding: 0 7px;
+  gap: 0;
+}
+/* a focusable time block (tabbable in WeekColumns; Enter/Space opens its card).
+   Blocks pack tightly in a lane, so the ring is a crisp 2px outline at a small
+   offset — visible against the solid S1 fill on either theme, but never reaching
+   far enough to read as a neighbour's. (overflow:hidden clips the block's own
+   text, never its outline, so the ring is fully drawn.) */
+.nxb-blk:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
 .nxb-blk .t {
   font-family: 'Hanken Grotesk', sans-serif;
   font-size: 10.5px;
@@ -551,11 +811,22 @@
   text-overflow: ellipsis;
   line-height: 1.2;
 }
-.nxb-blk .t.small { font-size: 9.5px; font-weight: 650; }
+.nxb-blk .t.small {
+  font-size: 9.5px;
+  font-weight: 650;
+}
 /* the smallest blocks (≈≤35 min): shrink so a single line is still legible in ~10px */
-.nxb-blk .t.tiny { font-size: 8px; line-height: 1; }
+.nxb-blk .t.tiny {
+  font-size: 8px;
+  line-height: 1;
+}
 /* inline start time on a wide single-line block — Google's "9:00 Standup" density */
-.nxb-blk .t .ti { font-family: 'JetBrains Mono', monospace; font-size: 0.86em; font-weight: 600; opacity: 0.7; }
+.nxb-blk .t .ti {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.86em;
+  font-weight: 600;
+  opacity: 0.7;
+}
 .nxb-blk .m {
   font-family: 'JetBrains Mono', monospace;
   font-size: 8.5px;
@@ -566,25 +837,39 @@
 }
 
 /* S1 · SOLID — ink on color */
-.nxs1 .nxb-blk.work { background: var(--ice); color: var(--on-acc); }
+.nxs1 .nxb-blk.work {
+  background: var(--ice);
+  color: var(--on-acc);
+}
 .nxs1 .nxb-blk.private,
-.nxs1 .nxb-blk.health { background: var(--teal); color: var(--on-acc); }
+.nxs1 .nxb-blk.health {
+  background: var(--teal);
+  color: var(--on-acc);
+}
 .nxs1 .nxb-blk.rest {
   background: transparent;
   box-shadow: inset 0 0 0 1.4px var(--teal);
   color: var(--teal);
 }
-.nxs1 .nxb-blk .m { opacity: 0.66; }
+.nxs1 .nxb-blk .m {
+  opacity: 0.66;
+}
 .nxs1 .nxb-blk.done {
   background: transparent;
   box-shadow: inset 0 0 0 1.2px var(--faint);
   color: var(--muted);
 }
-.nxs1 .nxb-blk.done .t { text-decoration: line-through; font-weight: 600; }
+.nxs1 .nxb-blk.done .t {
+  text-decoration: line-through;
+  font-weight: 600;
+}
 .nxs1 .nxb-blk.now {
   background: var(--ice);
   color: var(--on-acc);
-  box-shadow: 0 0 0 2px var(--bg), 0 0 0 3.6px var(--ice), 0 0 22px var(--glowc);
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 3.6px var(--ice),
+    0 0 22px var(--glowc);
 }
 
 .week-nav {
@@ -607,7 +892,10 @@
   line-height: 1.2;
   transition: all 0.18s ease;
 }
-.week-nav button:hover { color: var(--ice); border-color: var(--ice-bd); }
+.week-nav button:hover {
+  color: var(--ice);
+  border-color: var(--ice-bd);
+}
 .week-nav .wk-label {
   border: 0;
   background: none;
@@ -619,7 +907,9 @@
   min-width: 140px;
   text-align: center;
 }
-.week-nav .wk-label:hover { color: var(--gold); }
+.week-nav .wk-label:hover {
+  color: var(--gold);
+}
 
 /* optional events — a tint and a hairline, never a hard block */
 .nxs1 .nxb-blk.optional {
@@ -635,9 +925,17 @@
   border-left-color: var(--teal);
   background: rgba(var(--pb-rgb), 0.07);
 }
-.nxs1 .nxb-blk.optional .t { font-weight: 600; color: var(--muted); }
-.nxs1 .nxb-blk.optional .m { opacity: 0.8; }
-.nxs1 .nxb-blk.optional.done { border-left-color: var(--faint); background: transparent; }
+.nxs1 .nxb-blk.optional .t {
+  font-weight: 600;
+  color: var(--muted);
+}
+.nxs1 .nxb-blk.optional .m {
+  opacity: 0.8;
+}
+.nxs1 .nxb-blk.optional.done {
+  border-left-color: var(--faint);
+  background: transparent;
+}
 
 /* hover time scrubber */
 .scrub-line {
@@ -663,6 +961,104 @@
   background: var(--bg);
 }
 
+/* ── drag-to-reschedule (#158) ─────────────────────────────────────────
+   Direct manipulation on the week grid: a held block becomes a 50%-opacity
+   dashed ghost that slides to its drop. A drop onto a time-holding block glows
+   a warning rose (it will bounce — MEW never silently stacks); a protected or
+   calendar block carries its status in the ghost so its fixed nature stays
+   visible. Rose is a self-contained literal (no danger token in the system),
+   matching how the scrubber uses literal rgba. */
+.wk-grid.dragging {
+  cursor: grabbing;
+  user-select: none;
+}
+.wk-grid.dragging .nxb-blk {
+  cursor: grabbing;
+}
+.nxb-blk {
+  cursor: grab;
+}
+/* the original block, dimmed while its ghost is in flight */
+.nxs1 .nxb-blk.drag-src {
+  opacity: 0.32;
+}
+/* a block the candidate drop would overlap — warning glow, never moved unasked */
+.nxs1 .nxb-blk.clash {
+  box-shadow:
+    0 0 0 1.6px rgba(214, 92, 92, 0.9),
+    0 0 16px rgba(214, 92, 92, 0.55);
+}
+/* rejected drop (calendar event or conflict) snapping home */
+.nxb-blk.bounced {
+  animation: wkBounce 0.34s ease;
+}
+@keyframes wkBounce {
+  0% {
+    transform: scale(1.04);
+  }
+  45% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.wk-ghost {
+  position: absolute;
+  z-index: 25;
+  pointer-events: none;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 3px 8px;
+  opacity: 0.5;
+  border: 1.5px dashed var(--ice);
+  background: rgba(var(--acc-rgb), 0.16);
+  color: var(--ice);
+}
+.wk-ghost.private,
+.wk-ghost.health,
+.wk-ghost.rest {
+  border-color: var(--teal);
+  background: rgba(var(--pb-rgb), 0.16);
+  color: var(--teal);
+}
+.wk-ghost.clash {
+  border-color: rgba(214, 92, 92, 0.95);
+  background: rgba(214, 92, 92, 0.16);
+  color: #b34141;
+}
+.wk-ghost.external {
+  border-style: dotted;
+}
+.wk-ghost-t {
+  font-family: 'Hanken Grotesk', sans-serif;
+  font-size: 10.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+.wk-ghost-m {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 8.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+  opacity: 0.85;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nxb-blk.bounced {
+    animation: none;
+  }
+}
+
 /* ── hover preview (S1 material; read-only, floats BESIDE a block) ──────
    pointer-events:none so the block underneath stays hoverable; above the grid
    so it's never occluded. Position (left/top) is set inline by sidePlacement. */
@@ -679,10 +1075,18 @@
   border-radius: 12px;
   box-shadow: 0 18px 44px -22px rgba(0, 0, 0, 0.7);
 }
-.sys--light .wk-preview { box-shadow: 0 18px 44px -24px rgba(60, 45, 15, 0.32); }
-.wk-preview.life { border-color: var(--teal-bd); }
-.wk-preview-clock { flex: 0 0 auto; }
-.wk-preview-body { min-width: 0; }
+.sys--light .wk-preview {
+  box-shadow: 0 18px 44px -24px rgba(60, 45, 15, 0.32);
+}
+.wk-preview.life {
+  border-color: var(--teal-bd);
+}
+.wk-preview-clock {
+  flex: 0 0 auto;
+}
+.wk-preview-body {
+  min-width: 0;
+}
 .wk-preview-t {
   font-family: 'Space Grotesk', sans-serif;
   font-weight: 600;
@@ -712,8 +1116,15 @@
   margin-top: 14px;
   letter-spacing: 0.03em;
 }
-.week-summary .life { color: var(--teal); font-weight: 700; }
-.week-summary .att { color: var(--gold); font-weight: 700; cursor: pointer; }
+.week-summary .life {
+  color: var(--teal);
+  font-weight: 700;
+}
+.week-summary .att {
+  color: var(--gold);
+  font-weight: 700;
+  cursor: pointer;
+}
 
 /* ── error boundary fallback (#122) ───────────────────────────────
    A contained panel crash reads as a calm steel card in place — same
@@ -737,7 +1148,10 @@
   color: var(--gold);
   flex: none;
 }
-.err-boundary .err-body { min-width: 0; flex: 1; }
+.err-boundary .err-body {
+  min-width: 0;
+  flex: 1;
+}
 .err-boundary .err-head {
   font-family: 'Space Grotesk', sans-serif;
   font-size: 14px;
@@ -761,4 +1175,619 @@
   height: max-content;
   padding: 26px;
 }
-.err-boundary.err-full .err-body { flex: none; }
+.err-boundary.err-full .err-body {
+  flex: none;
+}
+
+/* ── command palette (#169) + global search (#170) + quick-capture (#171) ──
+   One keyboard-first overlay in MEW's tty world: JetBrains Mono, steel
+   panels, the pet accent (--ice) on the active row. role=dialog + focus trap
+   + Esc live in CommandPalette.tsx; this is the skin. A11y helpers (.sr-only,
+   a standalone .k keycap) live here too — additive, scoped, no overrides. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* a standalone keycap (the prompt composer scopes its own under .prompt-hints) */
+.k {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 0.92em;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(4, 5, 6, 0.55);
+  backdrop-filter: blur(3px);
+  animation: cmdk-fade 0.18s ease-out;
+}
+.sys--light .cmdk-scrim {
+  background: rgba(40, 30, 10, 0.28);
+}
+
+.cmdk {
+  width: min(620px, 92vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--ice) 24%, var(--line));
+  border-radius: 15px;
+  box-shadow:
+    0 30px 80px -28px rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  animation: cmdk-rise 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.sys--light .cmdk {
+  box-shadow: 0 30px 80px -32px rgba(60, 45, 15, 0.42);
+}
+
+.cmdk-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 11px;
+}
+.cmdk-tabs button {
+  font: inherit;
+  color: var(--faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.cmdk-tabs button:hover {
+  color: var(--muted);
+}
+.cmdk-tabs button.on {
+  color: var(--ice);
+  background: var(--ice-soft);
+  border-color: var(--ice-bd);
+  font-weight: 700;
+}
+.cmdk-tabs .cmdk-spacer {
+  flex: 1;
+}
+.cmdk-tabs .cmdk-esc {
+  color: var(--faint);
+  font-size: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cmdk-input-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.cmdk-input-row .p-arr {
+  color: var(--ice);
+  font-weight: 700;
+}
+.cmdk-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  caret-color: var(--ice);
+}
+.cmdk-input::placeholder {
+  color: var(--faint);
+  opacity: 1;
+}
+
+.cmdk-body {
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cmdk-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.cmdk-group + .cmdk-group {
+  margin-top: 6px;
+}
+.cmdk-group-h {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 6px 10px 3px;
+}
+
+.cmdk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 8px 11px;
+  cursor: pointer;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+.cmdk-row:hover {
+  color: var(--ink);
+}
+/* the highlighted row (↑/↓ or hover): the pet accent, the way a focused block reads */
+.cmdk-row.sel {
+  background: var(--ice-soft);
+  border-color: var(--ice-bd);
+  color: var(--ink);
+}
+.cmdk-row-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmdk-row-hint {
+  flex: none;
+  font-size: 10px;
+  opacity: 0.85;
+}
+.cmdk-row-meta {
+  flex: none;
+  font-size: 10px;
+  color: var(--faint);
+  max-width: 48%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmdk-row.sel .cmdk-row-meta {
+  color: var(--muted);
+}
+
+.cmdk-empty {
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+/* quick-capture pane */
+.cmdk-capture {
+  padding: 14px 14px 16px;
+}
+.cmdk-capture-help {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+.cmdk-capture-acts {
+  display: flex;
+  gap: 9px;
+}
+.cmdk-capture-foot {
+  margin: 12px 0 0;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+/* inline result chip — a mew-colored confirmation that auto-dismisses (3s) */
+.cmdk-toast {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 11.5px;
+  animation: cmdk-fade 0.16s ease-out;
+}
+.cmdk-toast .mw {
+  color: var(--gold);
+}
+
+@keyframes cmdk-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes cmdk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+/* motion is decoration, never function — honor the OS reduced-motion flag */
+@media (prefers-reduced-motion: reduce) {
+  .cmdk-scrim,
+  .cmdk,
+  .cmdk-toast {
+    animation: none;
+  }
+}
+
+/* ── guided API-key setup modal (#161) ─────────────────────────────
+   Portaled to <body>; .aks-portal carries the theme tokens so the card +
+   .stl primitives read the same vars as the page behind it. */
+.aks-portal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+}
+.aks-backdrop {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+}
+.aks-modal {
+  width: min(440px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px -18px rgba(0, 0, 0, 0.6);
+  padding: 20px 22px 18px;
+  outline: none;
+}
+.aks-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.aks-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.aks-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+  line-height: 1.5;
+}
+.aks-x {
+  margin-left: auto;
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--faint);
+  padding: 4px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.aks-x:hover {
+  color: var(--ink);
+  background: var(--panel2);
+}
+
+/* the 3-step indicator */
+.aks-steps {
+  display: flex;
+  gap: 6px;
+  margin: 16px 0 14px;
+}
+.aks-dot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+  padding-bottom: 7px;
+  border-bottom: 2px solid var(--line);
+}
+.aks-dot .aks-dot-n {
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  font-size: 9.5px;
+  flex: none;
+}
+.aks-dot.on {
+  color: var(--ink);
+  border-bottom-color: var(--ice);
+}
+.aks-dot.on .aks-dot-n {
+  border-color: var(--ice);
+  color: var(--ice);
+}
+.aks-dot.done {
+  color: var(--muted);
+  border-bottom-color: var(--ice-bd);
+}
+.aks-dot.done .aks-dot-n {
+  background: var(--ice);
+  color: var(--on-acc);
+  border-color: var(--ice);
+}
+.aks-dot-l {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aks-panel {
+  min-height: 140px;
+}
+.aks-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.aks-lead {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.aks-copy {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.aks-floor {
+  font-size: 11px;
+  color: var(--faint);
+}
+.aks-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.aks-key {
+  display: inline-flex;
+  margin-top: 2px;
+}
+.aks-key input {
+  width: 100%;
+}
+.aks-ok {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--teal);
+}
+.aks-err {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ice);
+  background: var(--ice-soft);
+  border: 1px solid var(--ice-bd);
+  border-radius: 9px;
+  padding: 8px 11px;
+  margin-top: 2px;
+}
+.aks-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line2);
+}
+.aks-foot-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+}
+
+/* ── onboarding tour (#160) — first-run concept modal ─────────── */
+/* z-index 250 sits above the app; the boot Preloader (300) has already wiped
+   by the time this renders post-hydration. Fixed + inset:0 so it covers the
+   whole frame wherever it mounts in the page tree. */
+.ob-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 250;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  animation: obFade 0.22s ease;
+}
+.sys--light .ob-scrim {
+  background: rgba(40, 30, 10, 0.28);
+}
+.ob-card {
+  position: relative;
+  width: min(420px, 100%);
+  background: var(--glass);
+  border: 1px solid var(--ice-bd);
+  border-radius: 18px;
+  padding: 22px 24px 20px;
+  box-shadow: 0 30px 70px -28px rgba(0, 0, 0, 0.75);
+  animation: obRise 0.26s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.sys--light .ob-card {
+  box-shadow: 0 30px 70px -32px rgba(60, 45, 15, 0.4);
+}
+.ob-skip {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--faint);
+  transition: color 0.18s ease;
+}
+.ob-skip:hover {
+  color: var(--gold);
+}
+.ob-art {
+  height: 156px;
+  border-radius: 13px;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  animation: obSwap 0.32s ease;
+}
+.ob-art-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.ob-art-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 18px;
+  font-weight: 700;
+  fill: var(--ink);
+}
+.ob-art-cap {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 7px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--muted);
+}
+.ob-eyebrow {
+  margin-top: 16px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ice);
+}
+.ob-title {
+  margin: 6px 0 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+.ob-body {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.ob-dots {
+  display: flex;
+  gap: 6px;
+  margin-top: 18px;
+}
+.ob-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--line);
+  transition:
+    background 0.2s ease,
+    width 0.2s ease;
+}
+.ob-dot.on {
+  width: 18px;
+  border-radius: 3px;
+  background: var(--ice);
+}
+.ob-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+.ob-count {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  .aks-backdrop {
+    backdrop-filter: none;
+  }
+}
+
+@keyframes obFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes obRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes obSwap {
+  from {
+    opacity: 0.4;
+  }
+  to {
+    opacity: 1;
+  }
+}

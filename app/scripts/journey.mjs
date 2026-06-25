@@ -26,7 +26,7 @@ await page.waitForTimeout(800)
 
 await page.evaluate(
   ([k, m]) => window.__mewConfigure({ remoteProvider: 'openai', openaiKey: k, openaiModel: m }),
-  [key, model],
+  [key, model]
 )
 
 async function say(text) {
@@ -35,7 +35,9 @@ async function say(text) {
   // wait for the thinking blink in the log to clear (model round trips)
   await page.waitForTimeout(400)
   await page
-    .waitForFunction(() => !document.querySelector('.session-scroll .log .blink'), null, { timeout: 45000 })
+    .waitForFunction(() => !document.querySelector('.session-scroll .log .blink'), null, {
+      timeout: 45000,
+    })
     .catch(() => console.log('  (timed out waiting for reply)'))
   await page.waitForTimeout(400)
 }
@@ -53,7 +55,7 @@ for (const j of journeys) {
   console.log(`\nyou ❯ ${j}`)
   await say(j)
   const tail = await page.$$eval('.session-scroll .log > div, .session-scroll .tui-nudge', (els) =>
-    els.slice(-4).map((e) => e.textContent?.replace(/\s+/g, ' ').trim()),
+    els.slice(-4).map((e) => e.textContent?.replace(/\s+/g, ' ').trim())
   )
   for (const line of tail) console.log(`  ${line}`)
 }

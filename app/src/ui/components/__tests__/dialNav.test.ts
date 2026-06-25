@@ -7,7 +7,13 @@
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../../../domain/types'
 import { dialKeyAction } from '../dialGeometry'
-import { arcAriaLabel, dialFocusOrder, radiiFor, rovingFocusId, stepDialFocus } from '../orbitGeometry'
+import {
+  arcAriaLabel,
+  dialFocusOrder,
+  radiiFor,
+  rovingFocusId,
+  stepDialFocus,
+} from '../orbitGeometry'
 
 const D = '2026-06-09'
 function mk(over: Partial<Block>): Block {
@@ -55,16 +61,26 @@ describe('dialKeyAction — keys map to dial intents (APG Application pattern)',
 
 describe('arcAriaLabel — a spoken name for each arc (§1.1.1, §4.1.2)', () => {
   it('reads title · start–end · tag', () => {
-    expect(arcAriaLabel(mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60, tag: 'work' }))).toBe('Deep work · 9:00–11:00 · work')
+    expect(
+      arcAriaLabel(mk({ title: 'Deep work', startMin: 9 * 60, endMin: 11 * 60, tag: 'work' }))
+    ).toBe('Deep work · 9:00–11:00 · work')
   })
 
   it('takes the title before a "— note" tail, matching the visible label', () => {
-    expect(arcAriaLabel(mk({ title: 'Standup — with the pod', startMin: 10 * 60, endMin: 10 * 60 + 30 }))).toContain('Standup · ')
+    expect(
+      arcAriaLabel(mk({ title: 'Standup — with the pod', startMin: 10 * 60, endMin: 10 * 60 + 30 }))
+    ).toContain('Standup · ')
     expect(arcAriaLabel(mk({ title: 'Standup — with the pod' }))).not.toContain('with the pod')
   })
 
   it('a deadline-only background block reads its due time, not a span', () => {
-    const dueBg = mk({ title: 'Ship', attention: 'background', due: 17 * 60, startMin: 9 * 60, endMin: 10 * 60 })
+    const dueBg = mk({
+      title: 'Ship',
+      attention: 'background',
+      due: 17 * 60,
+      startMin: 9 * 60,
+      endMin: 10 * 60,
+    })
     expect(arcAriaLabel(dueBg)).toBe('Ship · due 17:00 · work')
   })
 
@@ -76,9 +92,15 @@ describe('arcAriaLabel — a spoken name for each arc (§1.1.1, §4.1.2)', () =>
   })
 
   it('external (calendar) blocks say so; tentative is named; done is announced — never a blame word', () => {
-    expect(arcAriaLabel(mk({ title: 'Sync', external: { calId: 'c', eventId: 'e' } }))).toContain('· calendar')
-    expect(arcAriaLabel(mk({ title: 'Maybe lunch', optional: true, tag: 'private' }))).toContain('· life, tentative')
-    const done = arcAriaLabel(mk({ title: 'Inbox', status: 'done', startMin: 8 * 60, endMin: 8 * 60 + 30 }))
+    expect(arcAriaLabel(mk({ title: 'Sync', external: { calId: 'c', eventId: 'e' } }))).toContain(
+      '· calendar'
+    )
+    expect(arcAriaLabel(mk({ title: 'Maybe lunch', optional: true, tag: 'private' }))).toContain(
+      '· life, tentative'
+    )
+    const done = arcAriaLabel(
+      mk({ title: 'Inbox', status: 'done', startMin: 8 * 60, endMin: 8 * 60 + 30 })
+    )
     expect(done).toBe('Inbox · 8:00–8:30 · work, done')
     expect(done).not.toMatch(/fail|overdue|missed|late/i)
   })

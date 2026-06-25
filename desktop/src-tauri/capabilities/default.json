@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Least privilege: the SPA needs only the core window APIs, plus the auto-backup's narrow slice (fs strictly under $DOCUMENT/MEW, opener for that folder) and the calendar-connect slice (loopback start/cancel, opener for Google's auth origin only). The gbrain sidecar is deliberately absent: Rust spawns, restarts, and kills it — granting the webview shell:allow-execute (even sidecar-scoped) would hand it arbitrary-argument spawn rights it never needs; it only receives {url, token} via the brain_endpoint handshake.",
+  "description": "Least privilege: the SPA needs only the core window APIs, plus the auto-backup's narrow slice (fs strictly under $DOCUMENT/MEW, opener for that folder), the calendar-connect slice (loopback start/cancel, opener for Google's auth origin only), and the nudge-notification slice (notification:default — ask permission + post local OS alerts; no network). The gbrain sidecar is deliberately absent: Rust spawns, restarts, and kills it — granting the webview shell:allow-execute (even sidecar-scoped) would hand it arbitrary-argument spawn rights it never needs; it only receives {url, token} via the brain_endpoint handshake.",
   "windows": [
     "main"
   ],
@@ -37,6 +37,7 @@
       "allow": [{ "url": "https://accounts.google.com/*" }]
     },
     "oauth:allow-start",
-    "oauth:allow-cancel"
+    "oauth:allow-cancel",
+    "notification:default"
   ]
 }

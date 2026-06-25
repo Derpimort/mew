@@ -3,7 +3,19 @@
    through runTool — one schema, one executor path, identical behavior. */
 
 import type { ToolExecutor } from './types'
+import { normalizeRrule, type Rrule } from '../../domain/recurrence'
 import { clampInt, optInt } from './rules'
+
+/** A model's loose `recurrence` arg → a clean Rrule, or undefined. The byday
+    arrives as a CSV ("MO,WE") here; normalizeRrule wants an array, so split
+    first, then let it validate freq/interval/byday/until/count (#159). */
+function parseRecurrence(raw: unknown): Rrule | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const o = raw as Record<string, unknown>
+  const byday =
+    typeof o.byday === 'string' ? o.byday.split(',') : Array.isArray(o.byday) ? o.byday : []
+  return normalizeRrule({ ...o, byday }) ?? undefined
+}
 
 export interface NeutralTool {
   name: string
@@ -27,14 +39,80 @@ export const MEW_TOOLS: NeutralTool[] = [
           items: {
             type: 'object',
             properties: {
-              title: { type: 'string', description: 'Short block title — no dates or times inside' },
-              tag: { ...TAG_SCHEMA, description: 'walks/meals/family → private; appointments → health; recovery → rest; else work' },
-              dayOffset: { type: 'integer', description: 'Days from today (0 = today). Resolve weekday words against the context date.' },
-              startMin: { type: 'integer', description: 'Start in minutes from midnight (9:00 = 540). Omit to auto-place in the first free slot.' },
-              durationMin: { type: 'integer', description: 'Duration in minutes. Default 60; "morning" = startMin 540, durationMin 180 unless the user says otherwise; "afternoon" ≈ 240 from 780.' },
-              protected: { type: 'boolean', description: 'Default true — except short rests (≤20 min), which default false so reshaping can absorb them.' },
-              attention: { type: 'string', enum: ['focus', 'background'], description: 'background = holds the clock, not the user (a 3h restore): never the Focus center, transparent to slot search. Default focus.' },
-              dueMin: { type: 'integer', description: 'Hard deadline in minutes from midnight, independent of the end time ("due by 1pm" = 780). MEW watches the latest start.' },
+              title: {
+                type: 'string',
+                description: 'Short block title — no dates or times inside',
+              },
+              tag: {
+                ...TAG_SCHEMA,
+                description:
+                  'walks/meals/family → private; appointments → health; recovery → rest; else work',
+              },
+              dayOffset: {
+                type: 'integer',
+                description:
+                  'Days from today (0 = today). Resolve weekday words against the context date.',
+              },
+              startMin: {
+                type: 'integer',
+                description:
+                  'Start in minutes from midnight (9:00 = 540). Omit to auto-place in the first free slot.',
+              },
+              durationMin: {
+                type: 'integer',
+                description:
+                  'Duration in minutes. Default 60; "morning" = startMin 540, durationMin 180 unless the user says otherwise; "afternoon" ≈ 240 from 780.',
+              },
+              protected: {
+                type: 'boolean',
+                description:
+                  'Default true — except short rests (≤20 min), which default false so reshaping can absorb them.',
+              },
+              attention: {
+                type: 'string',
+                enum: ['focus', 'background'],
+                description:
+                  'background = holds the clock, not the user (a 3h restore): never the Focus center, transparent to slot search. Default focus.',
+              },
+              dueMin: {
+                type: 'integer',
+                description:
+                  'Hard deadline in minutes from midnight, independent of the end time ("due by 1pm" = 780). MEW watches the latest start.',
+              },
+              recurrence: {
+                type: 'object',
+                description:
+                  'Make this a repeating block ("gym every Monday and Wednesday until end of August", "standup every weekday for 6 weeks"). dayOffset/startMin set the FIRST occurrence; MEW expands the rest itself — do NOT add one place per day. Daily and weekly only.',
+                properties: {
+                  freq: {
+                    type: 'string',
+                    enum: ['DAILY', 'WEEKLY'],
+                    description:
+                      'DAILY repeats every day (or every N with interval); WEEKLY repeats on the byday weekdays.',
+                  },
+                  interval: {
+                    type: 'integer',
+                    description: 'Repeat every N days/weeks (default 1; "every other week" = 2).',
+                  },
+                  until: {
+                    type: 'string',
+                    description:
+                      'Inclusive last date YYYY-MM-DD ("until end of August" = that year\'s 08-31). Omit for open-ended.',
+                  },
+                  count: {
+                    type: 'integer',
+                    description:
+                      'Stop after this many occurrences ("for 12 weeks" with two weekdays = count 24, or use until). Omit for open-ended.',
+                  },
+                  byday: {
+                    type: 'string',
+                    description:
+                      'WEEKLY only: comma-separated weekdays MO,TU,WE,TH,FR,SA,SU ("Monday and Wednesday" = "MO,WE"). Omit ⇒ repeats on the first occurrence\'s own weekday.',
+                  },
+                },
+                required: ['freq'],
+                additionalProperties: false,
+              },
             },
             required: ['title', 'tag', 'dayOffset'],
             additionalProperties: false,
@@ -113,8 +191,15 @@ export const MEW_TOOLS: NeutralTool[] = [
         durationMin: { type: 'integer', description: 'New duration in minutes (keeps the start)' },
         title: { type: 'string', description: 'New title' },
         tag: { ...TAG_SCHEMA, description: 'New tag' },
-        attention: { type: 'string', enum: ['focus', 'background'], description: 'background = holds the clock, not the user; focus = holds the user again' },
-        dueMin: { type: 'integer', description: 'Hard deadline, minutes from midnight — independent of the end time' },
+        attention: {
+          type: 'string',
+          enum: ['focus', 'background'],
+          description: 'background = holds the clock, not the user; focus = holds the user again',
+        },
+        dueMin: {
+          type: 'integer',
+          description: 'Hard deadline, minutes from midnight — independent of the end time',
+        },
       },
       required: ['query'],
       additionalProperties: false,
@@ -129,8 +214,14 @@ export const MEW_TOOLS: NeutralTool[] = [
       properties: {
         durationMin: { type: 'integer', description: 'Minutes needed' },
         dayOffset: { type: 'integer', description: 'Day to search, days from today (default 0)' },
-        notBeforeMin: { type: 'integer', description: 'Earliest acceptable start, minutes from midnight' },
-        notAfterMin: { type: 'integer', description: 'Latest acceptable END, minutes from midnight ("before 5pm" = 1020)' },
+        notBeforeMin: {
+          type: 'integer',
+          description: 'Earliest acceptable start, minutes from midnight',
+        },
+        notAfterMin: {
+          type: 'integer',
+          description: 'Latest acceptable END, minutes from midnight ("before 5pm" = 1020)',
+        },
       },
       required: ['durationMin'],
       additionalProperties: false,
@@ -144,10 +235,22 @@ export const MEW_TOOLS: NeutralTool[] = [
       type: 'object',
       properties: {
         title: { type: 'string', description: 'Short task title — what you intend to place' },
-        tag: { ...TAG_SCHEMA, description: 'walks/meals/family → private; appointments → health; recovery → rest; else work' },
+        tag: {
+          ...TAG_SCHEMA,
+          description:
+            'walks/meals/family → private; appointments → health; recovery → rest; else work',
+        },
         durationMin: { type: 'integer', description: 'Minutes needed (default 60)' },
-        dueMin: { type: 'integer', description: 'Optional same-day deadline, minutes from midnight — confines candidates to today' },
-        window: { type: 'string', enum: ['morning', 'afternoon', 'evening'], description: 'Optional preferred time of day' },
+        dueMin: {
+          type: 'integer',
+          description:
+            'Optional same-day deadline, minutes from midnight — confines candidates to today',
+        },
+        window: {
+          type: 'string',
+          enum: ['morning', 'afternoon', 'evening'],
+          description: 'Optional preferred time of day',
+        },
       },
       required: ['title', 'durationMin'],
       additionalProperties: false,
@@ -169,13 +272,21 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'remove_blocks',
     description:
-      'Take a specific block off the week — when the user asks to drop, remove, delete, or cancel a named one ("drop the prod release"). By default this removes the single intended block. When several blocks share that title, pass `at` (its start time) to identify which one — resolve "the larger/earlier/morning one" to a clock time from the week context you already see. Set `all:true` ONLY when the user explicitly says "both/all/every" ("drop both prod release blocks"). For wiping a whole day or week, clear_blocks is the broom.',
+      'Take a specific block off the week — when the user asks to drop, remove, delete, or cancel a named one ("drop the prod release"). By default this removes the single intended block. When several blocks share that title, pass `at` (its start time) to identify which one — resolve "the larger/earlier/morning one" to a clock time from the week context you already see. Set `all:true` ONLY when the user explicitly says "both/all/every" ("drop both prod release blocks"); for a recurring block, `all:true` also clears the whole repeating series ("cancel all my gym sessions"), while a single delete leaves the rest of the series in place. For wiping a whole day or week, clear_blocks is the broom.',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'A few words from the block title' },
-        at: { type: 'string', description: 'Start time of the one to remove ("22:30", "10am") — pins which when several share the title' },
-        all: { type: 'boolean', description: 'Remove every match, not just one. Default false; set true only on an explicit "both/all".' },
+        at: {
+          type: 'string',
+          description:
+            'Start time of the one to remove ("22:30", "10am") — pins which when several share the title',
+        },
+        all: {
+          type: 'boolean',
+          description:
+            'Remove every match, not just one. Default false; set true only on an explicit "both/all".',
+        },
       },
       required: ['query'],
       additionalProperties: false,
@@ -184,14 +295,15 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'clear_blocks',
     description:
-      "Sweep a whole scope clean when the user asks to clear, clean up, wipe, or reset their calendar/week, or to start over and re-plan. For one or a few named blocks, reach for remove_blocks instead — this broom takes the whole scope. Done blocks (their mews) and events from connected calendars always survive a clear; the tool result tells you what was kept. Call this before re-planning when they ask for a fresh start.",
+      'Sweep a whole scope clean when the user asks to clear, clean up, wipe, or reset their calendar/week, or to start over and re-plan. For one or a few named blocks, reach for remove_blocks instead — this broom takes the whole scope. Done blocks (their mews) and events from connected calendars always survive a clear; the tool result tells you what was kept. Call this before re-planning when they ask for a fresh start.',
     parameters: {
       type: 'object',
       properties: {
         scope: {
           type: 'string',
           enum: ['today', 'tomorrow', 'week', 'upcoming'],
-          description: '"week" = the rest of this week; "upcoming" = everything from today forward (default for "clean up my calendar")',
+          description:
+            '"week" = the rest of this week; "upcoming" = everything from today forward (default for "clean up my calendar")',
         },
       },
       required: ['scope'],
@@ -208,10 +320,17 @@ export const MEW_TOOLS: NeutralTool[] = [
         kind: {
           type: 'string',
           enum: ['time-default', 'duration-default', 'flexibility', 'ordering', 'fact'],
-          description: 'time-default = when it usually starts · duration-default = how long it really takes · flexibility = can it move · ordering = what comes before/after what · fact = anything else durable',
+          description:
+            'time-default = when it usually starts · duration-default = how long it really takes · flexibility = can it move · ordering = what comes before/after what · fact = anything else durable',
         },
-        match: { type: 'string', description: 'What the rule is about — "gym", "order lunch", "deep work"' },
-        value: { type: 'string', description: 'The rule itself — "starts 07:00", "45m", "never moves", "before standup"' },
+        match: {
+          type: 'string',
+          description: 'What the rule is about — "gym", "order lunch", "deep work"',
+        },
+        value: {
+          type: 'string',
+          description: 'The rule itself — "starts 07:00", "45m", "never moves", "before standup"',
+        },
         stated: { type: 'string', description: "The user's own words, verbatim" },
       },
       required: ['kind', 'match', 'value', 'stated'],
@@ -225,9 +344,23 @@ export const MEW_TOOLS: NeutralTool[] = [
     parameters: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: "The question, naming the project/person/task it's about" },
+        question: {
+          type: 'string',
+          description: "The question, naming the project/person/task it's about",
+        },
       },
       required: ['question'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'undo_last_action',
+    description:
+      'Reverse YOUR most recent change this exchange — the graceful "undo that" when the user catches a misclick or a wrong placement ("no, put it back", "that was wrong"). It rolls the blocks just placed/moved/removed back to how they were before that one call and drops any note logged with it; the tool result names what it took back ("removed the 3 blocks you just placed"). It reaches only the last action, not the whole history, and changes nothing if you have not acted yet. Chat stays — your reply about the undone action remains as context.',
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: [],
       additionalProperties: false,
     },
   },
@@ -251,6 +384,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           protected: typeof p.protected === 'boolean' ? p.protected : undefined,
           attention: p.attention === 'background' ? ('background' as const) : undefined,
           due: optInt(p.dueMin, 0, 1439),
+          rrule: parseRecurrence(p.recurrence),
         }))
       const frees = (Array.isArray(o.frees) ? o.frees : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -265,7 +399,11 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
     case 'complete_task':
       return exec.complete(String(o.query ?? ''))
     case 'move_task':
-      return exec.move(String(o.query ?? ''), optInt(o.toDayOffset, 0, 13), optInt(o.toStartMin, 0, 1439))
+      return exec.move(
+        String(o.query ?? ''),
+        optInt(o.toDayOffset, 0, 13),
+        optInt(o.toStartMin, 0, 1439)
+      )
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))
     case 'edit_block': {
@@ -277,7 +415,8 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (em != null) patch.endMin = em
       if (dm != null) patch.durationMin = dm
       if (typeof o.title === 'string' && o.title.trim()) patch.title = o.title.trim()
-      if ((['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)) patch.tag = o.tag as 'work'
+      if ((['work', 'private', 'health', 'rest'] as const).includes(o.tag as never))
+        patch.tag = o.tag as 'work'
       if (o.attention === 'background' || o.attention === 'focus') patch.attention = o.attention
       const due = optInt(o.dueMin, 0, 1439)
       if (due != null) patch.due = due
@@ -288,14 +427,22 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         clampInt(o.durationMin, 5, 600, 30),
         clampInt(o.dayOffset, 0, 13, 0),
         optInt(o.notBeforeMin, 0, 1439),
-        optInt(o.notAfterMin, 1, 1440),
+        optInt(o.notAfterMin, 1, 1440)
       )
     case 'suggest_slots': {
       const win = (['morning', 'afternoon', 'evening'] as const).includes(o.window as never)
         ? (o.window as 'morning')
         : undefined
-      const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never) ? (o.tag as 'work') : 'work'
-      return exec.suggestSlots(String(o.title ?? '').trim(), tag, clampInt(o.durationMin, 5, 600, 60), optInt(o.dueMin, 0, 1439), win)
+      const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
+        ? (o.tag as 'work')
+        : 'work'
+      return exec.suggestSlots(
+        String(o.title ?? '').trim(),
+        tag,
+        clampInt(o.durationMin, 5, 600, 60),
+        optInt(o.dueMin, 0, 1439),
+        win
+      )
     }
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
@@ -326,6 +473,8 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (!question) return 'nothing to look up — the call was empty'
       return exec.queryBrain(question)
     }
+    case 'undo_last_action':
+      return exec.undoLast()
     default:
       return `unknown tool: ${name}`
   }

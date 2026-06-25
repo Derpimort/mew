@@ -67,6 +67,9 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
     async putCaptures(captures) {
       upsert('captures', captures)
     },
+    async deleteCaptures(ids) {
+      delByIds('captures', ids)
+    },
     async putChat(msgs) {
       upsert('chat', msgs)
     },

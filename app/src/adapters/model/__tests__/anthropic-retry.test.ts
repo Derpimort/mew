@@ -68,7 +68,10 @@ vi.mock('../retry', async () => {
   }
 })
 
-const textEvent = (t: string) => ({ type: 'content_block_delta', delta: { type: 'text_delta', text: t } })
+const textEvent = (t: string) => ({
+  type: 'content_block_delta',
+  delta: { type: 'text_delta', text: t },
+})
 
 async function collect(it: AsyncIterable<ConverseChunk>): Promise<string> {
   let out = ''
@@ -104,7 +107,9 @@ describe('anthropic adapter — transient resilience', () => {
     let attempt = 0
     state.streamFactory = () => {
       attempt++
-      return attempt === 1 ? fakeStream([], { failFirstNext: 1, error: httpError(status) }) : fakeStream([textEvent('ok')])
+      return attempt === 1
+        ? fakeStream([], { failFirstNext: 1, error: httpError(status) })
+        : fakeStream([textEvent('ok')])
     }
     const adapter = createAnthropicAdapter('sk-ant-x', 'claude-x')
     const out = await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
@@ -139,8 +144,9 @@ describe('anthropic adapter — transient resilience', () => {
     let streamed = ''
     await expect(
       (async () => {
-        for await (const c of adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec)) streamed += c
-      })(),
+        for await (const c of adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+          streamed += c
+      })()
     ).rejects.toThrow('503')
     expect(attempt).toBe(1) // created exactly once — never replayed
     expect(streamed).toBe('partial answer') // the token that did stream is kept; the store handles the throw
@@ -153,7 +159,9 @@ describe('anthropic adapter — transient resilience', () => {
       return fakeStream([], { failFirstNext: 1, error: httpError(401) })
     }
     const adapter = createAnthropicAdapter('sk-ant-x', 'claude-x')
-    await expect(collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))).rejects.toThrow('401')
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    ).rejects.toThrow('401')
     expect(attempt).toBe(1)
   })
 })

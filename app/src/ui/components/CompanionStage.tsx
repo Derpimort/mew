@@ -8,7 +8,7 @@
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { useMew, usePixie } from '../../state/store'
 import { pixieCopy } from '../../domain/pixie'
-import { petById } from '../primitives'
+import { petById } from '../primitives/pets'
 import { usePetPalette } from './petPalette'
 
 const AIBlob = lazy(() => import('../react-bits/ai-blob'))
@@ -22,6 +22,10 @@ export function CompanionStage() {
   const [celebrating, setCelebrating] = useState(false)
   useEffect(() => {
     if (!celebratePulse) return
+    // Intentional: a store pulse starts a transient 3.5s celebration that the
+    // timer clears itself. The setState begins a self-contained animation, not a
+    // render-derived value, so this stays in an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- transient timed animation kicked off by an external store pulse
     setCelebrating(true)
     const t = setTimeout(() => setCelebrating(false), 3500)
     return () => clearTimeout(t)
@@ -50,8 +54,17 @@ export function CompanionStage() {
         {settings.pet === 'cat' ? (
           <>
             <Suspense fallback={null}>
-              <div style={{ position: 'absolute', inset: -34, opacity: 0.55, pointerEvents: 'none' }} aria-hidden>
-                <AIBlob size={256} animationSpeed={speed} glowIntensity={glow} colors={colors} resolution={0.75} />
+              <div
+                style={{ position: 'absolute', inset: -34, opacity: 0.55, pointerEvents: 'none' }}
+                aria-hidden
+              >
+                <AIBlob
+                  size={256}
+                  animationSpeed={speed}
+                  glowIntensity={glow}
+                  colors={colors}
+                  resolution={0.75}
+                />
               </div>
             </Suspense>
             <img
@@ -69,7 +82,9 @@ export function CompanionStage() {
                 <br />
                 3D companion
                 <br />
-                <span style={{ color: 'var(--faint)' }}>art per pet · {pet.name.toLowerCase()}</span>
+                <span style={{ color: 'var(--faint)' }}>
+                  art per pet · {pet.name.toLowerCase()}
+                </span>
               </div>
             }
           >

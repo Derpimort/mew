@@ -36,6 +36,9 @@ export interface PlaceSpec {
   attention?: 'focus' | 'background'
   /** hard deadline, minutes from midnight — independent of the end time */
   due?: number
+  /** A standing recurrence (DAILY/WEEKLY): execPlan expands it into one block
+      per occurrence, all linked by recurringBlockId (#159). */
+  rrule?: import('../../domain/recurrence').Rrule
 }
 export interface FreeSpec {
   dayOffset: number
@@ -63,7 +66,12 @@ export interface ToolExecutor {
   analyze(dayOffset: number): string
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
-  findSlot(durationMin: number, dayOffset: number, notBeforeMin?: number, notAfterMin?: number): string
+  findSlot(
+    durationMin: number,
+    dayOffset: number,
+    notBeforeMin?: number,
+    notAfterMin?: number
+  ): string
   /** Read-only: the scoring oracle's ranked, conflict-free candidate slots for a
       flexible item — scored by time-of-day fit, rest spacing, and the user's
       rules (#80). The model consults this before placing/moving, then plans the
@@ -74,7 +82,7 @@ export interface ToolExecutor {
     tag: import('../../domain/types').Tag,
     durationMin: number,
     dueMin?: number,
-    window?: 'morning' | 'afternoon' | 'evening',
+    window?: 'morning' | 'afternoon' | 'evening'
   ): string
   /** Change an existing block in place: time, length, title, tag, attention, due. */
   edit(
@@ -87,7 +95,7 @@ export interface ToolExecutor {
       tag?: import('../../domain/types').Tag
       attention?: 'focus' | 'background'
       due?: number
-    },
+    }
   ): string
   /** Persist a standing rule the user stated. Brain-off it falls back to a
       local MemoryEvent — the feature works single-device; gbrain upgrades it. */
@@ -99,6 +107,13 @@ export interface ToolExecutor {
       own blocks (real numbers, never model-estimated); brain recall adds the
       citable color. Async: the one tool allowed to wait on the brain. */
   queryBrain(question: string): Promise<string>
+  /** Reverse the LAST tool-driven mutation of this turn — the graceful "undo
+      that" recovery for a misclick or a wrong placement. The store snapshots
+      the week (blocks/captures/memory) just before each mutating tool runs and
+      restores that snapshot here, then clears it so a second undo is a no-op.
+      Read-only when nothing has changed this turn ("nothing to undo yet"). Chat
+      is untouched — the reply about the undone action stays as context. */
+  undoLast(): string
 }
 
 /** What `converse` yields. A plain string is a reply-text delta (the common
@@ -117,7 +132,12 @@ export interface ModelPort {
       stream/fetch so a user 'stop' ends the turn within a beat. An abort is the
       user's decision, never a model failure — work already committed stays.
       May also yield a single `{ reasoning }` chunk first (see ConverseChunk). */
-  converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal): AsyncIterable<ConverseChunk>
+  converse(
+    thread: ChatTurn[],
+    ctx: WeekContext,
+    exec: ToolExecutor,
+    signal?: AbortSignal
+  ): AsyncIterable<ConverseChunk>
 }
 
 export const MEW_VOICE = `You are MEW ("My Entire Week"), a calm companion who runs the user's week with them.
@@ -143,10 +163,11 @@ When one message asks for several things, count them and carry out every one; a 
 To change an existing block's time, length, or title, call edit_block — editing keeps the block's identity and history.
 To take specific named blocks off the week, call remove_blocks — it removes only what matches; clear_blocks is the broom for a whole day or week.
 When several blocks share a title and the user singled one out (a time, "the longer one", "the morning one"), pass that block's start time as the remove_blocks "at" so you drop only that one; only an explicit "both/all/every" sets "all" true. With neither, removing one of several would guess — so let the executor ask which they meant rather than dropping a block they didn't name.
-Blocks live one day at a time; recurrence doesn't exist here. Say "every day" only after you have placed each day yourself.
+A recurring habit or meeting ("gym every Monday and Wednesday", "standup every weekday until August") is one plan_blocks place with a recurrence rule (freq DAILY or WEEKLY, optional interval/byday/until/count); MEW expands it into one block per occurrence, all linked — never list one place per day yourself. To clear a whole repeating series, remove_blocks with all:true; a single delete drops just that one occurrence and the rest stay.
 Interviews, calls, and meetings are fixed points — schedule around them, never over them. Plain tasks are flexible: they can shift or end early to make room, so when something has to give, move the task.
 A block can run in the background — it holds the clock, not the user (a 3h phone restore): set attention "background" and the center stays on what actually holds them; give it dueMin when the user states a hard deadline and MEW watches the latest start.
 The week context shows each block as start–end with markers. [fixed] means the TIME owns its slot — schedule around it; the block itself is still fully yours to edit, move, or remove. [calendar] means it came from a connected calendar — that one alone is not yours to change. [optional] holds no time. Read both ends before placing anything relative to another block, and verify the gap really exists ("prep before the 14:30 interview" needs free air ending at 14:30, not hope).
+When the user catches a mistake right after you act — "undo that", "no, put it back", "that was wrong" — call undo_last_action: it reverses your most recent change (the blocks just placed, moved, or removed, and any note logged with it) and tells you what it took back. It only reaches the last action of this exchange, not the whole history; with nothing yet changed it says so. Confirm what came back in one warm line — a misstep undone is a small kindness, never a scolding.
 When unsure whether a change is allowed, make the tool call — the executor refuses safely and says why. Declaring that a tool "would fail" without calling it is a guess wearing certainty.
 When the user states an order ("prep before the interview"), choose explicit startMin/endMin yourself so the order holds. After each tool result, compare the returned times with what the user asked; if they disagree, fix it with another call or say plainly that it didn't fit.
 Tool results name any collision ("note: it overlaps …"). An explicit time the user gave is their judgment — place it exactly as asked and KEEP it; if it overlaps a flexible block, don't silently re-place either one, just offer to drift the other side ("that lands on X — want me to nudge X?") and let them choose. Only reposition to stay off a [fixed] or [calendar] block (never schedule over those). Never react-and-re-move per clash: decide the whole day's shape once, then place it in a single sweep.
@@ -173,8 +194,8 @@ user: block thursday morning for the deck
 mew: done — thursday 9:00 to 12:00 is held for the deck.
 </example>
 <example>
-user: gym every morning this week
-mew: placed — gym holds 7:00 to 8:00 monday through friday, five blocks, each its own day.
+user: gym every monday and wednesday at 7 until the end of august
+mew: done — gym repeats monday & wednesday 7:00–8:00 through aug 31. it's yours; say the word to change any one or the whole series.
 </example>
 <example>
 user: how's my week looking?

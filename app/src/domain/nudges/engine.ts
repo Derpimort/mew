@@ -5,7 +5,14 @@
 import type { Block, Capture, MemoryEvent, NudgeId, PrefPayload } from '../types'
 import type { MemoryAggregates } from '../memory'
 import { liveNow, type LiveNow } from '../liveNow'
-import { computeInsights, dayDebrief, delegationCandidates, prefContradictions, prefKey, weekReview } from '../insights'
+import {
+  computeInsights,
+  dayDebrief,
+  delegationCandidates,
+  prefContradictions,
+  prefKey,
+  weekReview,
+} from '../insights'
 import {
   blocksForDay,
   dayEndMin,
@@ -57,7 +64,7 @@ export interface TickInputs {
 export function findHeavyDay(
   blocks: Block[],
   todayKey: string,
-  realisticBestH: number | null,
+  realisticBestH: number | null
 ): { dayKey: string; plannedH: number } | null {
   if (realisticBestH == null || realisticBestH <= 0) return null
   let heaviest: { dayKey: string; plannedH: number } | null = null
@@ -75,7 +82,7 @@ export function findHeavyDay(
 
 function findRestCollision(
   blocks: Block[],
-  todayKey: string,
+  todayKey: string
 ): { rest: Block; intruder: Block } | null {
   for (let i = 0; i <= 1; i++) {
     const key = addDaysKey(todayKey, i)
@@ -87,7 +94,7 @@ function findRestCollision(
         b.status === 'open' &&
         b.protected &&
         !b.optional &&
-        (b.tag === 'rest' || (b.tag === 'private' && b.endMin - b.startMin >= 30)),
+        (b.tag === 'rest' || (b.tag === 'private' && b.endMin - b.startMin >= 30))
     )
     for (const rest of rests) {
       const intruder = day.find(
@@ -96,7 +103,7 @@ function findRestCollision(
           b.status === 'open' &&
           b.tag === 'work' &&
           !b.optional &&
-          overlaps(b.startMin, b.endMin, rest.startMin, rest.endMin),
+          overlaps(b.startMin, b.endMin, rest.startMin, rest.endMin)
       )
       if (intruder) return { rest, intruder }
     }
@@ -110,7 +117,7 @@ function findRestCollision(
 function findStartBy(
   blocks: Block[],
   todayKey: string,
-  nowMin: number,
+  nowMin: number
 ): { block: Block; latestStart: number } | null {
   for (const b of blocksForDay(blocks, todayKey)) {
     if (b.status !== 'open' || !isBackground(b) || b.due == null || b.startedAt != null) continue
@@ -127,7 +134,7 @@ function findHeadsUp(
   blocks: Block[],
   todayKey: string,
   nowMin: number,
-  personRecall: Record<string, string[]> | undefined,
+  personRecall: Record<string, string[]> | undefined
 ): { block: Block; lines: string[] } | null {
   if (!personRecall) return null
   for (const b of blocksForDay(blocks, todayKey)) {
@@ -143,7 +150,11 @@ function findHeadsUp(
 export function buildCtx(
   t: TickInputs,
   engine: EngineState,
-  event?: { justCompleted?: Block; newCapture?: Capture; justCleared?: { scope: string; count: number } },
+  event?: {
+    justCompleted?: Block
+    newCapture?: Capture
+    justCleared?: { scope: string; count: number }
+  }
 ): NudgeCtx {
   const live: LiveNow = liveNow(t.blocks, t.todayKey, t.nowMin)
   const tomorrow = addDaysKey(t.todayKey, 1)
@@ -167,7 +178,7 @@ export function buildCtx(
         b.status === 'open' &&
         !b.external &&
         b.dayKey >= t.todayKey &&
-        b.title.split('—')[0].trim().toLowerCase() === roller.title,
+        b.title.split('—')[0].trim().toLowerCase() === roller.title
     )
     if (open) {
       const todaySlot = findFreeSlot(t.blocks, t.todayKey, 25, Math.max(t.nowMin + 15, 8 * 60))
@@ -176,7 +187,9 @@ export function buildCtx(
         title: roller.title,
         rolls: roller.rolls,
         blockId: open.id,
-        proposal: slot ? { dayKey: todaySlot ? t.todayKey : tomorrow, startMin: slot.startMin } : null,
+        proposal: slot
+          ? { dayKey: todaySlot ? t.todayKey : tomorrow, startMin: slot.startMin }
+          : null,
       }
     }
   }
@@ -237,8 +250,8 @@ export function buildCtx(
                 n.status === 'open' &&
                 !n.optional &&
                 n.startMin >= b.endMin &&
-                n.startMin <= b.endMin + 20,
-            ),
+                n.startMin <= b.endMin + 20
+            )
         ) ?? null)
       : null
 
@@ -277,7 +290,11 @@ export function buildCtx(
     debriefLines: pastDayEnd ? dayDebrief(t.blocks, events, t.todayKey, t.agg, t.nowMin) : [],
     weekReview:
       (fromDayKey(t.todayKey).getDay() + 6) % 7 === 0
-        ? weekReview(events, weekKeys(fromDayKey(addDaysKey(t.todayKey, -7))), t.brainWeekLines ?? [])
+        ? weekReview(
+            events,
+            weekKeys(fromDayKey(addDaysKey(t.todayKey, -7))),
+            t.brainWeekLines ?? []
+          )
         : null,
     dowMon0: (fromDayKey(t.todayKey).getDay() + 6) % 7,
     stalled,
@@ -291,7 +308,7 @@ export function buildCtx(
     task or a breather depends on how long the engine has been running. */
 function earlyFinish(
   t: TickInputs,
-  done: Block | null,
+  done: Block | null
 ): Pick<NudgeCtx, 'earlyGapMin' | 'workStreakMin' | 'breakDue' | 'nextUp'> {
   const none = { earlyGapMin: 0, workStreakMin: 0, breakDue: false, nextUp: null }
   if (!done || done.dayKey !== t.todayKey || t.nowMin < done.startMin || t.nowMin >= done.endMin) {
@@ -332,7 +349,7 @@ function earlyFinish(
       !b.optional &&
       b.id !== done.id &&
       b.startMin > t.nowMin &&
-      duration(b) <= earlyGapMin + 10,
+      duration(b) <= earlyGapMin + 10
   )
   if (fitBlock) {
     nextUp = {

@@ -19,6 +19,7 @@
     "e2e": "playwright test",
     "shoot": "node scripts/shoot.mjs",
     "shoot:overlap": "node scripts/shoot-overlap.mjs",
+    "shoot:onboarding": "node scripts/shoot-onboarding.mjs",
     "prepare": "cd .. && husky || true"
   },
   "dependencies": {

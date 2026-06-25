@@ -27,7 +27,7 @@ const SALT_BYTES = 16
 export async function sealProfile(
   crypto: CryptoPort,
   plaintext: Uint8Array,
-  passphrase: string,
+  passphrase: string
 ): Promise<{ envelope: Envelope; dek: Uint8Array }> {
   const dek = crypto.randomBytes(DEK_BYTES)
   const salt = crypto.randomBytes(SALT_BYTES)
@@ -45,7 +45,7 @@ export async function sealProfile(
 export async function openProfile(
   crypto: CryptoPort,
   env: Envelope,
-  passphrase: string,
+  passphrase: string
 ): Promise<{ plaintext: Uint8Array; dek: Uint8Array }> {
   const kek = await crypto.kdf(passphrase, env.salt)
   const dek = crypto.open(kek, env.localWrap)
@@ -58,10 +58,13 @@ export function addDeviceWrap(
   crypto: CryptoPort,
   env: Envelope,
   dek: Uint8Array,
-  devicePublicKey: Uint8Array,
+  devicePublicKey: Uint8Array
 ): Envelope {
   const { kemCt, sharedSecret } = crypto.kemEncapsulate(devicePublicKey)
-  return { ...env, deviceWraps: [...env.deviceWraps, { kemCt, wrap: crypto.seal(sharedSecret, dek) }] }
+  return {
+    ...env,
+    deviceWraps: [...env.deviceWraps, { kemCt, wrap: crypto.seal(sharedSecret, dek) }],
+  }
 }
 
 /** Unlock via a device's KEM secret (sync, or recovery from a hosted Core).
@@ -70,7 +73,7 @@ export function addDeviceWrap(
 export function openWithDevice(
   crypto: CryptoPort,
   env: Envelope,
-  deviceSecretKey: Uint8Array,
+  deviceSecretKey: Uint8Array
 ): { plaintext: Uint8Array; dek: Uint8Array } {
   for (const dw of env.deviceWraps) {
     try {

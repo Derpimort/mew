@@ -44,13 +44,13 @@ export function liveNow(blocks: Block[], todayKey: string, nowMin: number): Live
       !b.optional &&
       !isBackground(b) &&
       b.startMin <= nowMin &&
-      nowMin < b.endMin,
+      nowMin < b.endMin
   )
   const next = day.find(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.startMin > nowMin,
+    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.startMin > nowMin
   )
   const backgroundLive = day.some(
-    (b) => b.status === 'open' && isBackground(b) && b.startMin <= nowMin && nowMin < b.endMin,
+    (b) => b.status === 'open' && isBackground(b) && b.startMin <= nowMin && nowMin < b.endMin
   )
 
   const total = Math.max(tasks.length, 1)
@@ -72,7 +72,7 @@ export function liveNow(blocks: Block[], todayKey: string, nowMin: number): Live
     /* only background runs right now — nothing holds the user (§3 center) */
     headline = 'Nothing holds you.'
     meta.push(
-      `everything is running on its own${next ? ` · next: ${next.title.split('—')[0].trim()} ${fmtTime(next.startMin)}` : ''}`,
+      `everything is running on its own${next ? ` · next: ${next.title.split('—')[0].trim()} ${fmtTime(next.startMin)}` : ''}`
     )
   } else if (resting) {
     headline = 'Resting — the good kind of tired.'

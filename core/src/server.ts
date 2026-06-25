@@ -14,6 +14,7 @@ const METHODS: ReadonlySet<string> = new Set([
   'putBlocks',
   'deleteBlocks',
   'putCaptures',
+  'deleteCaptures',
   'putChat',
   'putMemory',
   'deleteMemory',

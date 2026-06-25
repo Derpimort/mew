@@ -86,7 +86,13 @@ export default function App() {
             {/* outermost last-resort catch: a render error nothing else caught
                 still lands on a calm fallback, never a white screen */}
             <ErrorBoundary variant="full" label="mew">
-              {page === 'week' ? <MainPage /> : <ErrorBoundary label="settings"><SettingsPage /></ErrorBoundary>}
+              {page === 'week' ? (
+                <MainPage />
+              ) : (
+                <ErrorBoundary label="settings">
+                  <SettingsPage />
+                </ErrorBoundary>
+              )}
             </ErrorBoundary>
           </>
         )}

@@ -34,7 +34,12 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
   return {
     id: 'anthropic',
 
-    async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor, signal?: AbortSignal) {
+    async *converse(
+      thread: ChatTurn[],
+      ctx: WeekContext,
+      exec: ToolExecutor,
+      signal?: AbortSignal
+    ) {
       /* history: first message must be user; consecutive same-role is fine */
       const firstUser = thread.findIndex((t) => t.role === 'user')
       const messages: Anthropic.MessageParam[] = thread
@@ -73,7 +78,7 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
             /* the user's stop aborts the live request; the SDK rejects the
                stream with an APIUserAbortError, which the store reads as a
                clean stop (never a failure → never the rules fallback). */
-            { signal },
+            { signal }
           )
 
         /* Retry only stream-creation + the first event — a transient 429 / 529 /
@@ -91,7 +96,11 @@ export function createAnthropicAdapter(apiKey: string, model: string): ModelPort
 
         for (let step = first; !step.done; step = await stream.it.next()) {
           const event = step.value
-          if (event.type === 'content_block_start' && event.content_block.type === 'text' && yieldedText) {
+          if (
+            event.type === 'content_block_start' &&
+            event.content_block.type === 'text' &&
+            yieldedText
+          ) {
             yield '\n' // a fresh thought after acting gets its own line
           }
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {

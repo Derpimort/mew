@@ -35,7 +35,7 @@ export function aggregates(events: MemoryEvent[], today: Date): MemoryAggregates
       ? Math.round(
           (recent.length % 2
             ? recent[(recent.length - 1) / 2]
-            : (recent[recent.length / 2 - 1] + recent[recent.length / 2]) / 2) * 2,
+            : (recent[recent.length / 2 - 1] + recent[recent.length / 2]) / 2) * 2
         ) / 2
       : null
 
@@ -54,11 +54,9 @@ export function aggregates(events: MemoryEvent[], today: Date): MemoryAggregates
     .filter(([wk]) => wk < thisWeek && wk >= thisWeek - 4)
     .sort(([a], [b]) => a - b)
   const carryRatioByWeek = weeks.map(([, v]) =>
-    v.rolled + v.completed === 0 ? 0 : v.rolled / (v.rolled + v.completed),
+    v.rolled + v.completed === 0 ? 0 : v.rolled / (v.rolled + v.completed)
   )
-  const carryRatio = carryRatioByWeek.length
-    ? carryRatioByWeek[carryRatioByWeek.length - 1]
-    : 0
+  const carryRatio = carryRatioByWeek.length ? carryRatioByWeek[carryRatioByWeek.length - 1] : 0
 
   /* rest kept, trailing 7 days */
   const floor7 = addDaysKey(todayKey, -7)
@@ -110,7 +108,11 @@ export interface ConsolidationResult {
   summaries: MemoryEvent[]
 }
 
-export function consolidate(events: MemoryEvent[], today: Date, uid: () => string): ConsolidationResult {
+export function consolidate(
+  events: MemoryEvent[],
+  today: Date,
+  uid: () => string
+): ConsolidationResult {
   const floor = addDaysKey(dayKey(today), -CONSOLIDATE_AFTER_DAYS)
   const kept: MemoryEvent[] = []
   const old: MemoryEvent[] = []
@@ -138,7 +140,9 @@ export function consolidate(events: MemoryEvent[], today: Date, uid: () => strin
       summary: {
         completed: evs.filter((e) => e.kind === 'completed').length,
         rolled: evs.filter((e) => e.kind === 'rolled').length,
-        deepMin: evs.filter((e) => e.kind === 'completed' && e.deep).reduce((s, e) => s + (e.plannedMin ?? 0), 0),
+        deepMin: evs
+          .filter((e) => e.kind === 'completed' && e.deep)
+          .reduce((s, e) => s + (e.plannedMin ?? 0), 0),
         restKept: evs.filter((e) => e.kind === 'rest_kept').length,
         restSkipped: evs.filter((e) => e.kind === 'rest_skipped').length,
         drifts: evs.filter((e) => e.kind === 'drift').length,

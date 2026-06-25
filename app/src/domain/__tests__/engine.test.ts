@@ -66,11 +66,11 @@ describe('nudge engine', () => {
   it('drift respects an active guard and never re-fires for the same block', () => {
     const b = mk({})
     const guarded = evaluateTick(
-      buildCtx(tick({ blocks: [b], idleMin: 15, guardUntilMin: 11.5 * 60 }), fresh),
+      buildCtx(tick({ blocks: [b], idleMin: 15, guardUntilMin: 11.5 * 60 }), fresh)
     )
     expect(guarded).toHaveLength(0)
     const repeated = evaluateTick(
-      buildCtx(tick({ blocks: [b], idleMin: 15 }), { lastFired: {}, lastDriftBlockId: b.id }),
+      buildCtx(tick({ blocks: [b], idleMin: 15 }), { lastFired: {}, lastDriftBlockId: b.id })
     )
     expect(repeated).toHaveLength(0)
   })
@@ -84,9 +84,13 @@ describe('nudge engine', () => {
 
   it('close-the-loop lands in the wind-down before quiet hours — "tonight" must mean tonight', () => {
     const quietStart = 18.5 * 60
-    const early = evaluateTick(buildCtx(tick({ nowMin: 17 * 60 + 45, quietStartMin: quietStart }), fresh))
+    const early = evaluateTick(
+      buildCtx(tick({ nowMin: 17 * 60 + 45, quietStartMin: quietStart }), fresh)
+    )
     expect(early).toHaveLength(0)
-    const windDown = evaluateTick(buildCtx(tick({ nowMin: 18 * 60, quietStartMin: quietStart }), fresh))
+    const windDown = evaluateTick(
+      buildCtx(tick({ nowMin: 18 * 60, quietStartMin: quietStart }), fresh)
+    )
     expect(windDown[0]?.type).toBe('close-loop')
   })
 
@@ -104,7 +108,10 @@ describe('nudge engine', () => {
   it('right-size stays silent without history — MEW never invents numbers', () => {
     const heavy = [mk({ startMin: 8 * 60, endMin: 17 * 60 })]
     const out = evaluateTick(
-      buildCtx(tick({ blocks: heavy, nowMin: 7 * 60, agg: { ...agg, realisticBestH: null } }), fresh),
+      buildCtx(
+        tick({ blocks: heavy, nowMin: 7 * 60, agg: { ...agg, realisticBestH: null } }),
+        fresh
+      )
     )
     expect(out.find((n) => n.type === 'right-size')).toBeUndefined()
   })
@@ -127,7 +134,7 @@ describe('nudge engine', () => {
       buildCtx(tick({ agg: heavyAgg, blocks: [] }), {
         lastFired: { 'kinder-plan': { ts: ctx.nowMs - 1000 } },
         lastDriftBlockId: null,
-      }),
+      })
     )
     expect(again).toHaveLength(0)
   })
@@ -146,7 +153,9 @@ describe('nudge engine', () => {
     expect(fired[0]?.type).toBe('fresh-start')
     expect(fired[0].footnote).toContain('Dai, Milkman & Riis')
     const tuesday = tick({ todayKey: '2026-06-09', nowMin: 9 * 60, blocks: [] })
-    expect(evaluateTick(buildCtx(tuesday, fresh)).find((n) => n.type === 'fresh-start')).toBeUndefined()
+    expect(
+      evaluateTick(buildCtx(tuesday, fresh)).find((n) => n.type === 'fresh-start')
+    ).toBeUndefined()
   })
 
   it('fresh-start also answers a deliberate blank page (clear event)', () => {
@@ -171,7 +180,7 @@ describe('nudge engine', () => {
     const open = mk({ title: 'Inbox sweep', startMin: 14 * 60, endMin: 15 * 60 })
     const ctx = buildCtx(
       tick({ blocks: [open], events: [rolledEv(), rolledEv(), rolledEv()], nowMin: 8 * 60 }),
-      fresh,
+      fresh
     )
     const fired = evaluateTick(ctx)
     expect(fired[0]?.type).toBe('break-smaller')
@@ -202,32 +211,55 @@ describe('nudge engine', () => {
       nudgeType: 'right-size',
       outcome: 'declined',
     }))
-    const engineState = { lastFired: { 'right-size': { ts: nowMs - 8 * 60 * 60 * 1000, key: D } }, lastDriftBlockId: null }
+    const engineState = {
+      lastFired: { 'right-size': { ts: nowMs - 8 * 60 * 60 * 1000, key: D } },
+      lastDriftBlockId: null,
+    }
     const suppressed = evaluateTick(
-      buildCtx(tick({ blocks: heavy, nowMin: 7 * 60, nowMs, events: declines }), engineState),
+      buildCtx(tick({ blocks: heavy, nowMin: 7 * 60, nowMs, events: declines }), engineState)
     )
     expect(suppressed.find((x) => x.type === 'right-size')).toBeUndefined()
     /* same 8h gap with no declines would have fired (base cooldown 6h) */
-    const wouldFire = evaluateTick(buildCtx(tick({ blocks: heavy, nowMin: 7 * 60, nowMs }), engineState))
+    const wouldFire = evaluateTick(
+      buildCtx(tick({ blocks: heavy, nowMin: 7 * 60, nowMs }), engineState)
+    )
     expect(wouldFire[0]?.type).toBe('right-size')
   })
 
   describe('early finish is context-aware (no "engine\'s warm" noise)', () => {
-    const done = mk({ id: 'meet', title: 'Standup that never happened', startMin: 10 * 60, endMin: 11 * 60, status: 'done' })
+    const done = mk({
+      id: 'meet',
+      title: 'Standup that never happened',
+      startMin: 10 * 60,
+      endMin: 11 * 60,
+      status: 'done',
+    })
     const at = (blocks: Block[]) =>
       buildCtx(tick({ blocks, nowMin: 10 * 60 + 5, nowMs: Date.UTC(2026, 5, 9, 10, 5) }), fresh, {
         justCompleted: done,
       })
 
     it('mid-rest: completing a block suggests nothing', () => {
-      const rest = mk({ id: 'rest', title: 'Recover', tag: 'rest', startMin: 9 * 60 + 30, endMin: 10 * 60 + 30 })
+      const rest = mk({
+        id: 'rest',
+        title: 'Recover',
+        tag: 'rest',
+        startMin: 9 * 60 + 30,
+        endMin: 10 * 60 + 30,
+      })
       const ctx = at([done, rest])
       expect(ctx.nextUp).toBeNull()
       expect(ctx.breakDue).toBe(false)
     })
 
     it('inside another commitment: the window reclaims nothing', () => {
-      const meeting = mk({ id: 'm2', title: 'Other meeting', external: { calId: 'c1', eventId: 'e1' }, startMin: 10 * 60, endMin: 11 * 60 })
+      const meeting = mk({
+        id: 'm2',
+        title: 'Other meeting',
+        external: { calId: 'c1', eventId: 'e1' },
+        startMin: 10 * 60,
+        endMin: 11 * 60,
+      })
       const ctx = at([done, meeting])
       expect(ctx.earlyGapMin).toBe(0)
       expect(ctx.nextUp).toBeNull()
@@ -241,7 +273,12 @@ describe('nudge engine', () => {
   })
 
   describe('post-buffer — a review offer right after a big meeting', () => {
-    const interview = mk({ id: 'iv', title: 'Interview — Mira', startMin: 13.5 * 60, endMin: 14.5 * 60 })
+    const interview = mk({
+      id: 'iv',
+      title: 'Interview — Mira',
+      startMin: 13.5 * 60,
+      endMin: 14.5 * 60,
+    })
     const at = (blocks: Block[], nowMin: number) =>
       buildCtx(tick({ blocks, nowMin, nowMs: Date.UTC(2026, 5, 9, 14, 35) }), fresh)
 
@@ -289,7 +326,9 @@ describe('start-by — latest-start intelligence for due-bearing background', ()
   })
 
   const at = (nowMin: number, blocks = [restore]) =>
-    evaluateTick(buildCtx(tick({ nowMin, nowMs: Date.UTC(2026, 5, 9, 0, 0) + nowMin * 60_000, blocks }), fresh))
+    evaluateTick(
+      buildCtx(tick({ nowMin, nowMs: Date.UTC(2026, 5, 9, 0, 0) + nowMin * 60_000, blocks }), fresh)
+    )
 
   it('stays quiet while there is still slack, fires inside the 10-min warning window', () => {
     expect(at(9 * 60 + 49).some((n) => n.type === 'start-by')).toBe(false) // 9:49 + 180 = 12:49 ≤ 12:50
@@ -302,26 +341,37 @@ describe('start-by — latest-start intelligence for due-bearing background', ()
   })
 
   it('never fires once started, without a due, for focus blocks, or past the deadline', () => {
-    expect(at(10 * 60, [{ ...restore, startedAt: 5 }]).some((n) => n.type === 'start-by')).toBe(false)
-    expect(at(10 * 60, [{ ...restore, due: undefined }]).some((n) => n.type === 'start-by')).toBe(false)
-    expect(at(10 * 60, [{ ...restore, attention: undefined }]).some((n) => n.type === 'start-by')).toBe(false)
+    expect(at(10 * 60, [{ ...restore, startedAt: 5 }]).some((n) => n.type === 'start-by')).toBe(
+      false
+    )
+    expect(at(10 * 60, [{ ...restore, due: undefined }]).some((n) => n.type === 'start-by')).toBe(
+      false
+    )
+    expect(
+      at(10 * 60, [{ ...restore, attention: undefined }]).some((n) => n.type === 'start-by')
+    ).toBe(false)
     expect(at(13 * 60 + 1, [restore]).some((n) => n.type === 'start-by')).toBe(false)
   })
 
   it('fires once per block: the key + 8h cooldown swallow the re-trigger', () => {
     const nowMs = Date.UTC(2026, 5, 9, 0, 0) + (10 * 60 + 30) * 60_000
     const again = evaluateTick(
-      buildCtx(
-        tick({ nowMin: 10 * 60 + 30, nowMs, blocks: [restore] }),
-        { lastFired: { 'start-by': { ts: nowMs - 30 * 60_000, key: 'bg1' } }, lastDriftBlockId: null },
-      ),
+      buildCtx(tick({ nowMin: 10 * 60 + 30, nowMs, blocks: [restore] }), {
+        lastFired: { 'start-by': { ts: nowMs - 30 * 60_000, key: 'bg1' } },
+        lastDriftBlockId: null,
+      })
     )
     expect(again.some((n) => n.type === 'start-by')).toBe(false)
   })
 })
 
 describe('pref-drift — the rulebook keeps up with the life it describes', () => {
-  const gymRule = { kind: 'time-default' as const, match: 'gym', value: 'starts 07:00', stated: 'gym is always 7am' }
+  const gymRule = {
+    kind: 'time-default' as const,
+    match: 'gym',
+    value: 'starts 07:00',
+    stated: 'gym is always 7am',
+  }
   const lived = (offset: number): MemoryEvent => ({
     id: `e${offset}`,
     ts: 0,
@@ -337,13 +387,11 @@ describe('pref-drift — the rulebook keeps up with the life it describes', () =
       ...e,
       dayKey: ['2026-06-06', '2026-06-07', '2026-06-08'][i],
     }))
-    const fired = evaluateTick(
-      buildCtx(tick({ blocks: [], events, prefs: [gymRule] }), fresh),
-    )
+    const fired = evaluateTick(buildCtx(tick({ blocks: [], events, prefs: [gymRule] }), fresh))
     const pd = fired.find((n) => n.type === 'pref-drift')
     expect(pd).toBeDefined()
     expect(pd!.body).toBe(
-      'your rule says gym starts 07:00, but it has lived near 18:00 three times running — update the rule, or keep 07:00?',
+      'your rule says gym starts 07:00, but it has lived near 18:00 three times running — update the rule, or keep 07:00?'
     )
     expect(pd!.actions.map((a) => a.id)).toEqual(['update', 'keep'])
     expect(pd!.body).not.toMatch(/breaking|failed|broke/)
@@ -360,25 +408,44 @@ describe('pref-drift — the rulebook keeps up with the life it describes', () =
       buildCtx(tick({ blocks: [], events, prefs: [gymRule], nowMs }), {
         lastFired: { 'pref-drift': { ts: nowMs - 60 * 60_000, key: 'time-default:gym' } },
         lastDriftBlockId: null,
-      }),
+      })
     )
     expect(again.some((n) => n.type === 'pref-drift')).toBe(false)
   })
 
   it('a kept rule never starves the queue: a second drifted rule fires inside the first one’s window', () => {
-    const deployRule = { kind: 'time-default' as const, match: 'deploy', value: 'starts 09:00', stated: 'deploys at 9' }
+    const deployRule = {
+      kind: 'time-default' as const,
+      match: 'deploy',
+      value: 'starts 09:00',
+      stated: 'deploys at 9',
+    }
     const nowMs = Date.UTC(2026, 5, 9, 9, 52)
     const events: MemoryEvent[] = ['2026-06-06', '2026-06-07', '2026-06-08'].flatMap((dk, i) => [
       { ...lived(0 as never), id: `g${i}`, dayKey: dk }, // gym lives at 18:00 against 07:00
-      { ...lived(0 as never), id: `d${i}`, dayKey: dk, title: 'Deploy', startMin: 15 * 60, endMin: 16 * 60 },
+      {
+        ...lived(0 as never),
+        id: `d${i}`,
+        dayKey: dk,
+        title: 'Deploy',
+        startMin: 15 * 60,
+        endMin: 16 * 60,
+      },
     ])
     /* gym was kept an hour ago: declined outcome stretches its cooldown to 14d */
-    events.push({ id: 'o1', ts: nowMs - 60 * 60_000, kind: 'nudge_outcome', dayKey: '2026-06-09', nudgeType: 'pref-drift', outcome: 'declined' })
+    events.push({
+      id: 'o1',
+      ts: nowMs - 60 * 60_000,
+      kind: 'nudge_outcome',
+      dayKey: '2026-06-09',
+      nudgeType: 'pref-drift',
+      outcome: 'declined',
+    })
     const fired = evaluateTick(
       buildCtx(tick({ blocks: [], events, prefs: [gymRule, deployRule], nowMs }), {
         lastFired: { 'pref-drift': { ts: nowMs - 60 * 60_000, key: 'time-default:gym' } },
         lastDriftBlockId: null,
-      }),
+      })
     )
     const pd = fired.find((n) => n.type === 'pref-drift')
     expect(pd).toBeDefined()
@@ -413,16 +480,23 @@ describe('delegate — handoff suggestions at week-shaping moments', () => {
   const at = (over: Partial<TickInputs>, engine: EngineState = freshStartCooling) =>
     evaluateTick(
       buildCtx(
-        tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events: EVENTS, brainLinks: LINKS, ...over }),
-        engine,
-      ),
+        tick({
+          nowMs: NOW,
+          nowMin: 9 * 60,
+          todayKey: MON,
+          events: EVENTS,
+          brainLinks: LINKS,
+          ...over,
+        }),
+        engine
+      )
     )
 
   it('fires in the Monday window with receipts: body, actions, per-pair key', () => {
     const fired = at({})
     expect(fired[0]?.type).toBe('delegate')
     expect(fired[0].body).toBe(
-      'doc review has run with Robin three times this month — worth handing them the thread this week?',
+      'doc review has run with Robin three times this month — worth handing them the thread this week?'
     )
     expect(fired[0].actions.map((a) => a.id)).toEqual(['capture', 'later'])
     expect(fired[0].key).toBe('robin:doc-review')
@@ -430,7 +504,10 @@ describe('delegate — handoff suggestions at week-shaping moments', () => {
 
   it('fresh-start outranks it on the same tick — the opener lands first', () => {
     const fired = evaluateTick(
-      buildCtx(tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events: EVENTS, brainLinks: LINKS }), fresh),
+      buildCtx(
+        tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events: EVENTS, brainLinks: LINKS }),
+        fresh
+      )
     )
     expect(fired[0]?.type).toBe('fresh-start')
   })
@@ -445,13 +522,16 @@ describe('delegate — handoff suggestions at week-shaping moments', () => {
   })
 
   it('once per pair per week: same key cools, a different pair still fires', () => {
-    const cooled = at({}, {
-      lastFired: {
-        'fresh-start': { ts: NOW - 60_000, key: MON },
-        delegate: { ts: NOW - 2 * 24 * 60 * 60 * 1000, key: 'robin:doc-review' },
-      },
-      lastDriftBlockId: null,
-    })
+    const cooled = at(
+      {},
+      {
+        lastFired: {
+          'fresh-start': { ts: NOW - 60_000, key: MON },
+          delegate: { ts: NOW - 2 * 24 * 60 * 60 * 1000, key: 'robin:doc-review' },
+        },
+        lastDriftBlockId: null,
+      }
+    )
     expect(cooled.some((n) => n.type === 'delegate')).toBe(false)
 
     const other = at(
@@ -472,7 +552,7 @@ describe('delegate — handoff suggestions at week-shaping moments', () => {
           delegate: { ts: NOW - 2 * 24 * 60 * 60 * 1000, key: 'robin:doc-review' },
         },
         lastDriftBlockId: null,
-      },
+      }
     )
     expect(other[0]?.type).toBe('delegate')
     expect(other[0].key).toBe('dana:sprint-notes')
@@ -496,7 +576,7 @@ describe('debrief — the day gets its story after the loop closes', () => {
   ]
   const at = (nowMin: number, engine = fresh, over: Partial<TickInputs> = {}) =>
     evaluateTick(
-      buildCtx(tick({ nowMs: NOW, nowMin, blocks: [open], events: EVENTS, ...over }), engine),
+      buildCtx(tick({ nowMs: NOW, nowMin, blocks: [open], events: EVENTS, ...over }), engine)
     )
 
   it('close-loop owns the first wind-down tick; the story follows once the loop is cooling', () => {
@@ -557,7 +637,9 @@ describe('fresh-start carries the week review', () => {
     },
   ]
   const monday = (events: MemoryEvent[], over: Partial<TickInputs> = {}) =>
-    evaluateTick(buildCtx(tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events, ...over }), fresh))
+    evaluateTick(
+      buildCtx(tick({ nowMs: NOW, nowMin: 9 * 60, todayKey: MON, events, ...over }), fresh)
+    )
 
   it('Monday with history: the body leads with last week and keeps the actions', () => {
     const out = monday(LASTWEEK)
@@ -584,11 +666,7 @@ describe('fresh-start carries the week review', () => {
 
   it('a mid-week clear keeps the blank-page copy — last week is not the story', () => {
     const out = evaluateTick(
-      buildCtx(
-        tick({ events: LASTWEEK }),
-        fresh,
-        { justCleared: { scope: 'week', count: 3 } },
-      ),
+      buildCtx(tick({ events: LASTWEEK }), fresh, { justCleared: { scope: 'week', count: 3 } })
     )
     const fs = out.find((n) => n.type === 'fresh-start')
     expect(fs).toBeDefined()
@@ -604,12 +682,17 @@ describe('heads-up — pre-meeting recall with a shelf life', () => {
     endMin: 10 * 60 + 30,
     protected: false,
   })
-  const RECALL = { m1: ['task/q3-deck — 14:05 completed · ran over +20m', 'person/mira — prefers decisions pre-read'] }
+  const RECALL = {
+    m1: [
+      'task/q3-deck — 14:05 completed · ran over +20m',
+      'person/mira — prefers decisions pre-read',
+    ],
+  }
   const at = (
     nowMin: number,
     blocks: Block[] = [meeting],
     personRecall: Record<string, string[]> | undefined = RECALL,
-    engine = fresh,
+    engine = fresh
   ) => evaluateTick(buildCtx(tick({ nowMin, blocks, personRecall }), engine))
 
   it('fires only inside the 8–12 minute window before a fixed block', () => {
@@ -630,7 +713,9 @@ describe('heads-up — pre-meeting recall with a shelf life', () => {
 
   it('needs a fixed-time, non-optional block — flexible work never triggers it', () => {
     const flexible = { ...meeting, title: 'Draft notes for mira' } // no fixed word
-    expect(at(10 * 60 - 10, [flexible], { m1: RECALL.m1 }).some((n) => n.type === 'heads-up')).toBe(false)
+    expect(at(10 * 60 - 10, [flexible], { m1: RECALL.m1 }).some((n) => n.type === 'heads-up')).toBe(
+      false
+    )
     const optional = { ...meeting, optional: true }
     expect(at(10 * 60 - 10, [optional]).some((n) => n.type === 'heads-up')).toBe(false)
   })
@@ -659,7 +744,7 @@ describe('heads-up — pre-meeting recall with a shelf life', () => {
 
   it('caps the body at two lines — a heads-up, not a dossier', () => {
     const hu = at(10 * 60 - 10, [meeting], { m1: ['one', 'two', 'three', 'four'] }).find(
-      (n) => n.type === 'heads-up',
+      (n) => n.type === 'heads-up'
     )
     expect(hu!.body.split('\n').slice(1)).toEqual(['one', 'two'])
   })

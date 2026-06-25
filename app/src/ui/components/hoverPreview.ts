@@ -35,7 +35,11 @@ const EDGE_PAD = 6
  * - Y: top-aligned to the block, then clamped so a tall block still yields a
  *   fully visible card (top never negative, bottom never past the stage).
  */
-export function sidePlacement(anchor: Rect, size: { width: number; height: number }, bounds: { width: number; height: number }): Placement {
+export function sidePlacement(
+  anchor: Rect,
+  size: { width: number; height: number },
+  bounds: { width: number; height: number }
+): Placement {
   const anchorRight = anchor.left + anchor.width
   const leftRoom = anchor.left
   const rightRoom = bounds.width - anchorRight

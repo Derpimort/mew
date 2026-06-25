@@ -14,8 +14,18 @@ describe('Pixie — condition mirrors sustainability, never volume (acceptance #
   it('a sustainable plan keeps her healthy regardless of how MANY tasks exist', () => {
     // 4 hours of deep work against a 5.5h realistic best — sustainable.
     // pixieInputs has no task-count parameter at all; that is the point.
-    const few = pixieInputs({ plannedDeepTodayH: 4, agg: healthyAgg, dayClear: false, nudgeWaiting: false })
-    const many = pixieInputs({ plannedDeepTodayH: 4, agg: healthyAgg, dayClear: false, nudgeWaiting: false })
+    const few = pixieInputs({
+      plannedDeepTodayH: 4,
+      agg: healthyAgg,
+      dayClear: false,
+      nudgeWaiting: false,
+    })
+    const many = pixieInputs({
+      plannedDeepTodayH: 4,
+      agg: healthyAgg,
+      dayClear: false,
+      nudgeWaiting: false,
+    })
     expect(few.mood).toBe('healthy')
     expect(many.mood).toBe('healthy')
     expect(few.pace).toBe(many.pace)
@@ -49,7 +59,12 @@ describe('Pixie — condition mirrors sustainability, never volume (acceptance #
   })
 
   it('a clear day rests her; pace stays in [0,1]', () => {
-    const p = pixieInputs({ plannedDeepTodayH: 0, agg: healthyAgg, dayClear: true, nudgeWaiting: false })
+    const p = pixieInputs({
+      plannedDeepTodayH: 0,
+      agg: healthyAgg,
+      dayClear: true,
+      nudgeWaiting: false,
+    })
     expect(p.resting).toBe(true)
     expect(p.pace).toBeGreaterThanOrEqual(0)
     expect(p.pace).toBeLessThanOrEqual(1)
