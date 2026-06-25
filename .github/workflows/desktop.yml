@@ -20,7 +20,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # ubuntu is case-sensitive, so two paths differing only in case (e.g.
       # markdown.ts vs Markdown.tsx) coexist here but collide on case-insensitive
       # Windows — that's the class that broke the v0.1.7 release (#144). Catch it
@@ -74,7 +74,7 @@ jobs:
       contents: read
       pull-requests: write # post/update the coverage comment
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
       - uses: actions/setup-node@v4
@@ -144,7 +144,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
       - uses: actions/setup-node@v4
@@ -176,7 +176,7 @@ jobs:
           - os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v4
         with: { version: 9 }
       - uses: actions/setup-node@v4
@@ -236,7 +236,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Use this version's CHANGELOG.md section as the GitHub Release body, so
       # the release reads the same story as the changelog (Keep a Changelog).
       # The awk slices everything between this tag's `## [x.y.z]` heading and the
