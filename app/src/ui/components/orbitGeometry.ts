@@ -13,6 +13,7 @@
 
 import type { Block } from '../../domain/types'
 import { isBackground } from '../../domain/week'
+import { fmtTime } from '../../domain/time'
 import { clockDeg, rPolar } from './dialGeometry'
 
 /* Radii, centre → out (SVG units around cx,cy). Radius encodes COMMITMENT within
@@ -235,4 +236,107 @@ export function dayFill(minutesOfDay: number): DayFill {
     inner: (Math.min(m, 720) / 720) * 360,
     outer: (Math.max(0, m - 720) / 720) * 360,
   }
+}
+
+/* ── Accessibility: name & order for the dial's arcs (WCAG 2.2 §1.1.1, §4.1.2,
+   §2.1.1 · APG Application pattern) ──────────────────────────────────────────
+   Each arc is an interactive button on a 2-D surface, so it needs a text name and
+   the visible set needs a deterministic focus order. Both are pure functions of
+   (blocks [, radii]) — the component only wires the roving tabindex and reads
+   these, keeping the a11y contract testable like the rest of the geometry. */
+
+/** A spoken tag word for an arc's name. External (calendar) blocks say so; rest
+    reads as "rest" (the earned-rest framing is the chip's, not the dial name's);
+    optional adds "tentative". Positive-only voice — never "overdue"/"failed". */
+function spokenTag(b: Block): string {
+  if (b.external) return 'calendar'
+  const base = b.tag === 'work' ? 'work' : b.tag === 'rest' ? 'rest' : b.tag === 'health' ? 'health' : 'life'
+  return b.optional ? `${base}, tentative` : base
+}
+
+/** The arc's accessible name: "{title} · {start}–{end} · {tag}". A deadline-only
+    background block (holds the clock, not you) reads its due time; a cross-midnight
+    block reads its real (folded) end so the name agrees with the painted arc. Done
+    blocks are announced complete so a screen-reader user hears the same "quiet
+    marker" the eye sees. The title is taken before any "— note" tail, matching the
+    dial's visible label. */
+export function arcAriaLabel(b: Block): string {
+  const title = b.title.split('—')[0].trim()
+  const span = crossDaySpan(b.startMin, b.endMin)
+  const dueOnly = isBackground(b) && b.due != null
+  const when = dueOnly
+    ? `due ${fmtTime(b.due!)}`
+    : `${fmtTime(b.startMin)}–${fmtTime(span.endLabelMin)}${span.continuesAfter ? ', continues tomorrow' : span.continuesFrom ? ', from yesterday' : ''}`
+  const done = b.status === 'done' ? ', done' : ''
+  return `${title} · ${when} · ${spokenTag(b)}${done}`
+}
+
+/** Which single arc holds the roving tab stop (the one tabindex=0 — APG roving
+    tabindex). Preference: the arc the keyboard last landed on (if still visible),
+    else the live focus item (so Tab lands on "now" first), else the first arc in
+    reading order. Returns null only when the face is empty. Pure so the
+    "exactly one tab stop, and it's the right one" rule is unit-tested. */
+export function rovingFocusId(order: string[], kbFocus: string | null, focusId: string | null): string | null {
+  if (kbFocus && order.includes(kbFocus)) return kbFocus
+  if (focusId && order.includes(focusId)) return focusId
+  return order[0] ?? null
+}
+
+/** Tab/Shift+Tab order for the visible arcs: the same time-then-drawn-end order
+    the dial sorts by (visibleOrbit), so the focus ring walks the face the way the
+    eye reads it — earliest first, ties broken by the arc actually painted. Pure:
+    visible blocks in, their ids in focus order out. */
+export function dialFocusOrder(vis: Block[]): string[] {
+  return [...vis]
+    .sort((a, b) => a.startMin - b.startMin || crossDaySpan(a.startMin, a.endMin).drawEnd - crossDaySpan(b.startMin, b.endMin).drawEnd)
+    .map((b) => b.id)
+}
+
+/** The next focus target when an arrow key steps along one axis from `currentId`.
+    TIME (←/→): step to the previous/next arc by start time around the face (wraps,
+    so a keyboard-only user never dead-ends). LANE (↑/↓): among arcs near the same
+    clock angle, step inward/outward by radius (commitment band); with no near-angle
+    neighbour it falls back to a time step so the key is never inert. Returns the
+    current id when the set has ≤1 item. Pure: (vis, radii, current, axis, dir) →
+    next id, so the stepping contract is unit-tested, not eyeballed. */
+export function stepDialFocus(
+  vis: Block[],
+  radii: Map<string, number>,
+  currentId: string | null,
+  axis: 'time' | 'lane',
+  dir: 1 | -1,
+): string | null {
+  if (vis.length === 0) return currentId
+  const order = dialFocusOrder(vis)
+  if (vis.length === 1) return order[0]
+  // no anchor yet → first/last in reading order, so the first arrow lands on the face
+  if (currentId == null || !order.includes(currentId)) return dir === 1 ? order[0] : order[order.length - 1]
+
+  if (axis === 'time') {
+    const i = order.indexOf(currentId)
+    return order[(i + dir + order.length) % order.length]
+  }
+
+  // LANE: walk the radius among arcs sharing (roughly) the current clock angle.
+  const deg = (b: Block) => clockDeg(crossDaySpan(b.startMin, b.endMin).drawStart / 60)
+  const cur = vis.find((b) => b.id === currentId)!
+  const curDeg = deg(cur)
+  const curR = radii.get(currentId) ?? OG.ro
+  // angular distance on a circle (handles the 360/0 seam)
+  const angGap = (a: number, b: number) => {
+    const d = Math.abs(a - b) % 360
+    return Math.min(d, 360 - d)
+  }
+  const sameAngle = vis.filter((b) => b.id !== currentId && angGap(deg(b), curDeg) <= 12)
+  // dir −1 = ↑ (toward the rim, larger radius); dir +1 = ↓ (toward the centre,
+  // smaller radius) — matching the dial's "background rides outward" mental model.
+  const wantLarger = dir === -1
+  const candidates = sameAngle
+    .map((b) => ({ id: b.id, r: radii.get(b.id) ?? OG.ro }))
+    .filter((c) => (wantLarger ? c.r > curR : c.r < curR))
+    .sort((a, b) => (wantLarger ? a.r - b.r : b.r - a.r)) // nearest lane first
+  if (candidates.length > 0) return candidates[0].id
+  // nothing to step to in this band → keep the key useful by stepping in time
+  const i = order.indexOf(currentId)
+  return order[(i + dir + order.length) % order.length]
 }

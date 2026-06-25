@@ -8,12 +8,12 @@
    chip under the task lets it run in background. Those clicks write `attention`
    on the block — that's the whole mechanism. */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMew, useLive, clockNow } from '../../state/store'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
 import { isBackground } from '../../domain/week'
-import { clockDeg, rArc, rPolar, sector } from './dialGeometry'
-import { crossDaySpan, dayFill, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, visibleOrbit } from './orbitGeometry'
+import { clockDeg, dialKeyAction, rArc, rPolar, sector } from './dialGeometry'
+import { arcAriaLabel, crossDaySpan, dayFill, dialFocusOrder, LANE_STEP, OG, isRunning, orbitColor, radiiFor, resolveLabels, rovingFocusId, stepDialFocus, visibleOrbit } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
@@ -80,6 +80,56 @@ export function FocusOrbit() {
     setCardId(null)
   }
 
+  /* ── keyboard access (WCAG 2.2 §2.1.1 · APG Application pattern) ────────────
+     A roving tabindex: exactly one arc sits in the tab order (the live focus item,
+     else the first by time), so native Tab reaches the dial then the demote chip
+     then leaves (no keyboard trap, §2.1.2), while arrow keys move focus among ALL
+     arcs across the two clock axes. `kbFocus` is the roving anchor; `arcRefs` lets
+     us imperatively move DOM focus to the next arc so a screen reader announces
+     it. The interaction reads from the same pure geometry the dial draws with. */
+  const order = useMemo(() => dialFocusOrder(vis), [vis])
+  const [kbFocus, setKbFocus] = useState<string | null>(null)
+  const [chipFocused, setChipFocused] = useState(false) // keyboard focus on the demote chip reveals it
+  // the single roving tab stop (one tabindex=0): last keyboard arc, else the live
+  // focus item, else the first by time — so Tab always reaches the dial.
+  const rovingId = rovingFocusId(order, kbFocus, focusId)
+  const arcRefs = useRef(new Map<string, SVGElement | null>())
+  const focusArc = (id: string | null) => {
+    if (!id) return
+    setKbFocus(id)
+    // move DOM focus on the next frame so the freshly-rendered tabindex=0 takes
+    requestAnimationFrame(() => arcRefs.current.get(id)?.focus())
+  }
+  const promote = (id: string) => {
+    setAttention(id, 'focus') // the inverse of the demote chip — id becomes the centre
+    setKbFocus(id)
+  }
+  /* one keydown handler for every arc. The pressed arc's id is the anchor, so the
+     handler is the same function for all of them — it just reads which arc fired.
+     Tab/Shift+Tab fall through unclaimed, keeping native focus traversal. */
+  const onArcKeyDown = (id: string) => (e: React.KeyboardEvent) => {
+    const action = dialKeyAction(e.key)
+    if (!action) return
+    switch (action.kind) {
+      case 'step':
+        e.preventDefault()
+        focusArc(stepDialFocus(vis, radii, id, action.axis, action.dir))
+        break
+      case 'promote':
+        e.preventDefault()
+        promote(id)
+        break
+      case 'open':
+        e.preventDefault()
+        openCard(id) // Space activates like a click — the detail card
+        break
+      case 'demote':
+        e.preventDefault()
+        demote()
+        break
+    }
+  }
+
   /* countdown to the FOCUS item's end, ticking seconds */
   const secOfDay = minOfDay(now) * 60 + now.getSeconds()
   const current = live.current
@@ -99,10 +149,21 @@ export function FocusOrbit() {
     <div
       className="nx-stage"
       style={{ width: OG.w, height: OG.h, position: 'relative' }}
+      /* role=application: this is a custom 2-D widget with its own arrow-key model,
+         not a document region, so AT hands keystrokes straight to it (APG). The
+         label names what it is; the hint line describes how to read it. */
+      role="application"
+      aria-label="focus dial: 12-hour clock showing today's tasks"
+      aria-describedby="dial-hint"
       onClick={() => setCardId(null)}
       onMouseEnter={() => setDialHover(true)}
       onMouseLeave={() => setDialHover(false)}
     >
+      {/* announced first on load so a screen-reader user has context before the
+          arcs (visually hidden — the clock face IS the visible heading) */}
+      <h2 id="dial-title" className="sr-only">
+        Focus dial
+      </h2>
       {/* top-center: the live clock and the loose-threads pill, side by side */}
       <div className="nx-topbar">
         <NxClock now={now} />
@@ -121,7 +182,7 @@ export function FocusOrbit() {
         {(() => {
           const f = dayFill(minOfDay(now))
           return (
-            <g pointerEvents="none">
+            <g pointerEvents="none" aria-hidden="true">
               {f.inner > 0.3 && <path d={sector(OG.cx, OG.cy, OG.disk, OG.ri, 0, f.inner)} fill="var(--ice)" opacity={0.18} />}
               {f.outer > 0.3 && <path d={sector(OG.cx, OG.cy, OG.ri, OG.pm, 0, f.outer)} fill="var(--ice)" opacity={0.12} />}
               <circle cx={OG.cx} cy={OG.cy} r={OG.ri} fill="none" stroke="var(--line2)" strokeWidth="1.6" opacity={0.7} />
@@ -131,7 +192,7 @@ export function FocusOrbit() {
         })()}
 
         {/* fixed bezel: hour ticks at all 12 (12/3/6/9 major), 12 pinned at top */}
-        <g pointerEvents="none">
+        <g pointerEvents="none" aria-hidden="true">
           {Array.from({ length: 12 }, (_, i) => {
             const deg = i * 30
             const major = i % 3 === 0
@@ -155,7 +216,8 @@ export function FocusOrbit() {
           const isF = b.id === focusId
           const isDone = b.status === 'done'
           const r = radii.get(b.id) ?? OG.ro
-          const isH = hover === b.id
+          const isKb = kbFocus === b.id // keyboard focus reveals the same detail hover does
+          const isH = hover === b.id || isKb
           const col = isDone ? 'var(--faint)' : orbitColor(b, isF)
           const op = isDone ? 0.34 : isF ? 1 : isH ? 0.95 : 0.42
           const dueBg = isBackground(b) && b.due != null
@@ -189,11 +251,31 @@ export function FocusOrbit() {
                 : isRunning(b, nowH)
                   ? `→ ${fmtTime(b.endMin)}`
                   : `@ ${fmtTime(b.startMin)}`
+          const arcPath = rArc(OG.cx, OG.cy, r, d0, d1)
           return (
             <g key={b.id}>
+              {/* keyboard focus ring: drawn (not a CSS box-outline, which reads
+                  oddly on a thin SVG arc) in the full-saturation accent so it
+                  clears 3:1 over both the stage and a same-coloured arc, with a
+                  4px standoff halo — the §1.4.11/§2.4.7 indicator. Only on
+                  keyboard focus; a mouse promote never shows it. */}
+              {isKb && (
+                <path
+                  d={arcPath}
+                  fill="none"
+                  stroke="var(--ice)"
+                  strokeWidth={9}
+                  strokeLinecap="round"
+                  opacity={0.9}
+                  pointerEvents="none"
+                  aria-hidden="true"
+                  style={{ filter: 'drop-shadow(0 0 0 4px var(--bg)) drop-shadow(0 0 7px var(--ice))' }}
+                />
+              )}
               <path
                 className="pri-arc"
-                d={rArc(OG.cx, OG.cy, r, d0, d1)}
+                aria-hidden="true"
+                d={arcPath}
                 fill="none"
                 stroke={col}
                 strokeWidth={isDone ? 2.5 : isF ? 5 : isH ? 5 : 3.5}
@@ -203,13 +285,23 @@ export function FocusOrbit() {
                 style={isF && !isDone ? { filter: 'drop-shadow(0 0 9px var(--glowc))' } : undefined}
                 {...handlers}
               />
-              {/* fat invisible hit-target — the visible arc is thin; this makes
-                  hover + click forgiving so an item is easy to grab */}
+              {/* fat invisible hit-target — also the keyboard button: a thin arc
+                  is a tiny mouse + focus target, so this forgiving overlay carries
+                  the role, the name, and the roving tabindex (APG button). */}
               <path
-                d={rArc(OG.cx, OG.cy, r, d0, d1)}
+                className="pri-arc"
+                d={arcPath}
                 fill="none"
                 stroke="transparent"
                 strokeWidth={18}
+                role="button"
+                aria-label={arcAriaLabel(b)}
+                tabIndex={rovingId === b.id ? 0 : -1}
+                ref={(el) => {
+                  arcRefs.current.set(b.id, el)
+                }}
+                onKeyDown={onArcKeyDown(b.id)}
+                onFocus={() => setKbFocus(b.id)}
                 style={{ cursor: 'pointer' }}
                 {...handlers}
               />
@@ -222,6 +314,7 @@ export function FocusOrbit() {
                 opacity={Math.min(op + 0.15, 1)}
                 style={isF && !isDone ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : dueBg ? { filter: 'drop-shadow(0 0 8px var(--glowc))' } : undefined}
                 className="pri-arc"
+                aria-hidden="true"
                 {...handlers}
               />
               {/* continuation cue: a multi-day block is clipped to today, so the
@@ -237,7 +330,7 @@ export function FocusOrbit() {
                   const [cxp, cyp] = rPolar(OG.cx, OG.cy, r, edgeDeg + (fwd ? 5 : -5))
                   const [txp, typ] = rPolar(OG.cx, OG.cy, r + 13, edgeDeg + (fwd ? 7 : -7))
                   return (
-                    <g pointerEvents="none">
+                    <g pointerEvents="none" aria-hidden="true">
                       <text
                         x={cxp}
                         y={cyp}
@@ -265,6 +358,7 @@ export function FocusOrbit() {
               {lbl && lbl.moved && (
                 <line
                   className="dial-reveal"
+                  aria-hidden="true"
                   x1={ex}
                   y1={ey}
                   x2={lbl.x + (lbl.right ? -4 : 4)}
@@ -278,6 +372,7 @@ export function FocusOrbit() {
               {lbl && (
                 <text
                   className="pri-lbl"
+                  aria-hidden="true"
                   x={lbl.x}
                   y={lbl.y}
                   textAnchor={lbl.right ? 'start' : 'end'}
@@ -312,7 +407,7 @@ export function FocusOrbit() {
           const [hx, hy] = rPolar(OG.cx, OG.cy, OG.tick, deg)
           const [tx, ty] = rPolar(OG.cx, OG.cy, OG.disk - 6, deg)
           return (
-            <g pointerEvents="none">
+            <g pointerEvents="none" aria-hidden="true">
               <line x1={tx} y1={ty} x2={hx} y2={hy} stroke="var(--ice)" strokeWidth="2" opacity={0.85} style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }} />
               <circle cx={hx} cy={hy} r="5.5" fill="var(--ice)" style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }} />
             </g>
@@ -337,11 +432,24 @@ export function FocusOrbit() {
           </div>
           <span
             className="pri-demote"
-            style={{ opacity: dialHover ? 1 : 0, pointerEvents: dialHover ? 'auto' : 'none' }}
+            role="button"
+            tabIndex={0}
+            aria-label={`let ${current.title.split('—')[0].trim()} run in background`}
+            /* visible on hover OR keyboard focus, so a keyboard-only user reaches
+               it in the tab order and sees it appear (never a hidden control) */
+            style={{ opacity: dialHover || chipFocused ? 1 : 0, pointerEvents: 'auto' }}
             onClick={(e) => {
               e.stopPropagation()
               demote()
             }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+                e.preventDefault()
+                demote()
+              }
+            }}
+            onFocus={() => setChipFocused(true)}
+            onBlur={() => setChipFocused(false)}
           >
             ↓ let it run in background
           </span>
@@ -377,6 +485,7 @@ export function FocusOrbit() {
           line. When nothing's hovered the same slot carries a faint affordance, so
           there's never a separate strip crossing the arcs. */}
       <div
+        id="dial-hint"
         className="pri-readout dial-reveal"
         style={{
           left: OG.cx + OG.ox,
@@ -414,6 +523,11 @@ export function FocusOrbit() {
           }
           return <span className="pri-idle">hover any item for its time · click to open</span>
         })()}
+        {/* keyboard guidance, always present so aria-describedby is stable; the
+            visual line above stays mouse-worded by design — this is for AT only */}
+        <span className="sr-only">
+          Use arrow keys to move between tasks, Enter to bring a task to the centre, Space to open its details, Escape to let the centre task run in the background.
+        </span>
       </div>
     </div>
   )

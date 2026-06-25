@@ -253,6 +253,43 @@
 
 /* ── focus orbit (lanes — DESIGN_LANGUAGE §3 FINAL) ───────────── */
 .nx-stage { position: relative; }
+/* screen-reader-only: in the a11y tree (announced) but visually gone. Used for
+   the dial's <h2> context heading + any text that names a control for AT without
+   adding visible chrome (WCAG 2.2 §1.1.1, §4.1.2). The standard clip pattern. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Keyboard focus on the dial (WCAG 2.2 §2.4.7, §1.4.11 non-text contrast ≥3:1).
+   Only :focus-visible — a mouse promote never shows the ring, a Tab/arrow always
+   does. The arc is a thin SVG path, so a bounding-box outline would read oddly;
+   instead the focused arc draws its OWN indicator in the full-saturation accent
+   (--ice, not the 0.5-alpha --ice-bd, so the ring clears 3:1 over both the dark
+   stage AND a same-coloured arc) — a thicker stroke + a 4px-standoff halo. The
+   non-SVG controls (the application surface, the demote chip) take a real
+   outline with the 4px offset the spec calls for. */
+.nx-stage:focus-visible { outline: none; } /* the surface delegates focus to its items */
+.pri-arc:focus-visible {
+  outline: none; /* SVG path: indicator is drawn, not a box outline */
+  stroke: var(--ice);
+  stroke-width: 6;
+  opacity: 1 !important;
+  filter: drop-shadow(0 0 0 4px var(--bg)) drop-shadow(0 0 7px var(--ice));
+}
+.pri-demote:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 4px;
+  color: var(--ink);
+  border-color: var(--ice-bd);
+}
 /* top-center bar: the live clock readout + the loose-threads pill, side by
    side and centred above the dial (clicks pass through except on the pill) */
 .nx-topbar {
