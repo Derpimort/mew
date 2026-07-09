@@ -2,8 +2,11 @@
    Drives the built app across views and crowded clock times, then PROVES no two
    text runs collide. One pass covers DOM text AND SVG <text> because it measures
    in viewport coordinates via Range.getClientRects() (not SVG-local getBBox()).
-   Any collision prints the offending pair and exits non-zero, so overlapping
-   text cannot ship again. Usage: node scripts/shoot-overlap.mjs [baseUrl] */
+   A second dial-specific pass PROVES the centre text stack stays inside the
+   drawn inner ring (text↔ring is a different failure mode than text↔text — the
+   ri=150-era bug where long titles lapped the ring line). Any collision prints
+   the offending pair and exits non-zero, so neither can ship again.
+   Usage: node scripts/shoot-overlap.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
@@ -131,6 +134,73 @@ const DETECTOR = (pad, skipSel) => {
   return hits
 }
 
+/* Runs IN the page. The dial-specific companion net: the centre stack
+   (.clk-center — countdown → meta → task) must stay INSIDE the drawn inner
+   ring, never touch or cross its stroke. Geometry is read from the live SVG
+   (circle.r × getScreenCTM), not re-derived from OG constants, so the gate
+   follows any future retune of OG.ri / .clk-center width for free and measures
+   what the eye sees. The clear limit is the stroke's INNER edge minus antialias
+   slack: touching the drawn line fails; daylight inside it — including the
+   designed worst case (text-box corners ≈168 vs ri=170, see .clk-center's
+   comment in components.css) — passes. */
+const RING_DETECTOR = () => {
+  const centerBox = document.querySelector('.clk-center')
+  if (!centerBox) return { engaged: false, hits: [] } // not on the dial view
+  // the two drawn rings are the only fill="none" var(--line2) circles;
+  // the inner ring is the smaller radius (ri < pm)
+  const rings = [...document.querySelectorAll('.nx-stage svg circle[fill="none"]')]
+    .filter((c) => (c.getAttribute('stroke') ?? '').includes('--line2'))
+    .sort((a, b) => a.r.baseVal.value - b.r.baseVal.value)
+  const ring = rings[0]
+  const ctm = ring?.getScreenCTM()
+  if (!ring || !ctm) return { engaged: false, hits: [] }
+  const scale = Math.hypot(ctm.a, ctm.b) // dial svg scales uniformly
+  const cx = ctm.a * ring.cx.baseVal.value + ctm.c * ring.cy.baseVal.value + ctm.e
+  const cy = ctm.b * ring.cx.baseVal.value + ctm.d * ring.cy.baseVal.value + ctm.f
+  const halfStroke = (parseFloat(ring.getAttribute('stroke-width') ?? '1.6') / 2) * scale
+  const limit = ring.r.baseVal.value * scale - halfStroke - 0.5
+  // hidden-ANCESTOR walk, mirroring the text↔text net's `hidden()` semantics
+  const hidden = (el) => {
+    for (let n = el; n && n !== document.body; n = n.parentElement) {
+      const s = getComputedStyle(n)
+      if (s.visibility === 'hidden' || s.display === 'none' || Number(s.opacity) === 0) return true
+    }
+    return false
+  }
+  const hits = []
+  const walker = document.createTreeWalker(centerBox, NodeFilter.SHOW_TEXT)
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const txt = node.nodeValue.trim()
+    if (!txt) continue
+    const el = node.parentElement
+    if (!el || hidden(el)) continue
+    const range = document.createRange()
+    range.selectNodeContents(node)
+    for (const r of range.getClientRects()) {
+      if (r.width < 1 || r.height < 1) continue
+      // strip line-box leading like the text↔text net — glyphs graze, not leading
+      const vi = Math.min(r.height * 0.16, 6)
+      const corners = [
+        [r.left, r.top + vi],
+        [r.right, r.top + vi],
+        [r.left, r.bottom - vi],
+        [r.right, r.bottom - vi],
+      ]
+      let worst = 0
+      for (const [x, y] of corners) worst = Math.max(worst, Math.hypot(x - cx, y - cy))
+      if (worst > limit) {
+        hits.push({
+          a: txt.slice(0, 36),
+          b: 'inner ring',
+          overlap: `corner ${(worst - limit).toFixed(1)}px past the clear limit (${worst.toFixed(1)} > ${limit.toFixed(1)})`,
+          at: `${Math.round(cx)},${Math.round(cy)}`,
+        })
+      }
+    }
+  }
+  return { engaged: true, hits }
+}
+
 const browser = await chromium.launch({ executablePath: exe })
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 840 } })).newPage()
 page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
@@ -139,14 +209,21 @@ page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
 const SKIP = '.nx-card, .detail-card, [role="dialog"], .toast, .tooltip'
 const PAD = 2 // sub-pixel antialias slack — only real overlaps clear this
 
-// re-define the detector on every fresh document (runs before page scripts)
+// re-define the detectors on every fresh document (runs before page scripts)
 await page.addInitScript((src) => {
   window.__overlapDetect = (0, eval)('(' + src + ')')
 }, DETECTOR.toString())
+await page.addInitScript((src) => {
+  window.__ringClear = (0, eval)('(' + src + ')')
+}, RING_DETECTOR.toString())
 
 const findings = []
+let ringEngagements = 0
 const detect = async (label, shot = true) => {
-  const hits = await page.evaluate(([p, s]) => window.__overlapDetect(p, s), [PAD, SKIP])
+  const textHits = await page.evaluate(([p, s]) => window.__overlapDetect(p, s), [PAD, SKIP])
+  const ring = await page.evaluate(() => window.__ringClear())
+  if (ring.engaged) ringEngagements++
+  const hits = [...textHits, ...ring.hits]
   if (shot) await page.screenshot({ path: `${outDir}/${label.replace(/[^a-z0-9]+/gi, '-')}.png` })
   if (hits.length) {
     console.log(`✗ ${label}: ${hits.length} overlap(s)`)
@@ -184,7 +261,10 @@ await seed([
   'block 1h for standup today at 9',
   'block 1.5h for design review today at 11',
   'block 1h for lunch with sam today at 12:30',
-  'block 2h for deep work today at 15',
+  // deliberately long title: at 15:20 it wraps to a tall centre stack, so the
+  // focus-15:20 state exercises the text↔inner-ring net (RING_DETECTOR) at the
+  // designed envelope — on the ri=150 geometry this exact state lapped the ring
+  'block 2h for quarterly investor narrative deck review with legal and finance today at 15',
   'block 1h for gym today at 18:30',
 ])
 
@@ -222,6 +302,19 @@ await page.waitForTimeout(600)
 await detect('focus-crowded')
 
 await browser.close()
+
+/* the ring net must have ENGAGED on the dial states — if a design drop renames
+   .clk-center or restyles the ring circles, the detector would silently skip
+   instead of measuring, and "0 collisions" would be a lie. Silence is failure. */
+if (ringEngagements === 0) {
+  console.log('✗ ring-clearance net never engaged — .clk-center / inner-ring selector drift?')
+  findings.push({
+    label: 'ring-net-engagement',
+    hits: [{ a: 'ring net', b: 'dial states', overlap: 'never engaged', at: '-' }],
+  })
+} else {
+  console.log(`✓ ring-clearance net engaged on ${ringEngagements} dial state(s)`)
+}
 
 const total = findings.reduce((n, f) => n + f.hits.length, 0)
 console.log(

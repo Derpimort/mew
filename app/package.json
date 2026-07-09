@@ -28,7 +28,6 @@
     "@anthropic-ai/sdk": "^0.104.0",
     "@noble/ciphers": "^2.2.0",
     "@noble/post-quantum": "^0.6.1",
-    "@react-three/fiber": "^9.6.1",
     "ai": "^6.0.208",
     "clsx": "^2.1.1",
     "dexie": "^4.4.3",
@@ -38,7 +37,6 @@
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.6.0",
-    "three": "^0.184.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
@@ -48,7 +46,6 @@
     "@types/node": "^24.12.3",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^6.0.1",
     "@vitest/coverage-v8": "4.1.8",
     "eslint": "^10.3.0",

@@ -31,7 +31,9 @@ export const BUDGETS = {
   main: 450 * KB,
   // always-loaded vendor split: react, react-dom, zustand, dexie
   vendor: 340 * KB,
-  // lazy, only when the WebGL companion mounts: three + @react-three/fiber
+  // backstop only: three.js / @react-three were removed (the ambient WebGL anims
+  // are gone). No build emits a three chunk today; this ceiling stays so a stray
+  // re-introduction is caught with a budget rather than going unnoticed.
   three: 950 * KB,
   // lazy, only when a model call runs: ai + @ai-sdk/*
   ai: 560 * KB,
@@ -46,15 +48,11 @@ export const BUDGETS = {
   total: 2300 * KB,
 }
 
-/** A chunk whose name is three.js / @react-three (its code). The vendor + ai
- *  families get an explicit manual group (vite.config.ts), but three is left to
- *  auto-splitting — forcing it into a manual group promotes it to a static import
- *  of the entry, the boot-path regression issue #176 removes. The auto-split
- *  chunk is therefore named by rolldown (`three.module`, `react-three…`) rather
- *  than a group, so we match it by name pattern here to apply the lazy-three
- *  budget. Anchored at the start / on a `react-three`|`fiber` token so sibling
- *  lazy chunks (aurora-blur, ai-blob — the wrappers, not three's code) stay on
- *  the strict default `lazy` budget. */
+/** A chunk whose name is three.js / @react-three (its code). three was removed
+ *  from the app, so no build emits such a chunk today — this matcher exists only
+ *  so a re-introduced three chunk would be sorted into the `three` backstop budget
+ *  rather than silently failing the strict `lazy` default. Anchored at the start /
+ *  on a `react-three`|`fiber` token. */
 const isThreeChunk = (name) => /^three(\.|-|$)|react-three|fiber/i.test(name)
 
 /** Sort one chunk into a budget category by its manifest role + name.

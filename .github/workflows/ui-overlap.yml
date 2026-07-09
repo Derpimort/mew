@@ -2,8 +2,10 @@ name: ui-overlap
 
 # Text-overlap guard — the "for everything" net. shoot-overlap.mjs drives the
 # built app across the dial clock-sweep (incl. crowded times), week, and
-# settings, and fails the job if any two text runs collide (DOM or SVG). This is
-# what keeps overlapping text from shipping again.
+# settings, and fails the job if any two text runs collide (DOM or SVG) OR if
+# the dial's centre text touches the drawn inner ring (the text↔ring net, which
+# must also prove it engaged). This is what keeps overlapping text from
+# shipping again.
 on:
   pull_request:
     # Heavy gate: only on release-promotion PRs (base=main, i.e. develop → main).

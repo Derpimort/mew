@@ -158,11 +158,13 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
     expect(radii.get('amC')).not.toBe(radii.get('pmC'))
   })
 
-  it('the AM-bg band and PM-confirmed band do not cross at realistic density (≤3 lanes each)', () => {
-    // 3 overlapping AM-bg climb outward; 3 overlapping PM-confirmed climb inward —
+  it('the AM-bg band and PM-confirmed band do not cross at realistic density (≤2 lanes each)', () => {
+    // 2 overlapping AM-bg climb outward; 2 overlapping PM-confirmed climb inward —
     // the deepest of each must still respect AM-bg < PM-confirmed (their seam sits
-    // midway between the two divider rings, ri and ro).
-    const amBg = Array.from({ length: 3 }, (_, i) =>
+    // midway between the two divider rings, ri and ro). ri=170 sits closer to that
+    // seam than the old 150, so the guarantee is 2 de-collision lanes each, not 3
+    // (a deliberate trade for a larger inner ring + tighter inner→outer gap).
+    const amBg = Array.from({ length: 2 }, (_, i) =>
       mk({
         id: `ab${i}`,
         startMin: (9 + i * 0.1) * 60,
@@ -170,7 +172,7 @@ describe('radiiFor — four tiers: confirmed inside the ring, background outside
         attention: 'background',
       })
     )
-    const pmCf = Array.from({ length: 3 }, (_, i) =>
+    const pmCf = Array.from({ length: 2 }, (_, i) =>
       mk({ id: `pc${i}`, startMin: (20 + i * 0.1) * 60, endMin: (22 + i * 0.1) * 60, tag: 'work' })
     )
     const radii = radiiFor([...amBg, ...pmCf], null, 10)

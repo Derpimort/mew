@@ -39,9 +39,6 @@ export default defineConfig({
     // Warn during `vite build` when any single chunk crosses this (uncompressed)
     // size. 400KB is the soft line; the hard budget that fails CI lives in
     // scripts/check-bundle-size.mjs. Keep the two in sync with CONTRIBUTING.md.
-    // (three.js is far larger but lands in its own auto-split lazy chunk, which
-    // carries a larger hard budget in the BUDGETS map and is off the boot path —
-    // a single warning for the known-heavy lazy lib is expected, not a regression.)
     chunkSizeWarningLimit: 400,
     // Vite 8 bundles with rolldown, whose chunk grouping is `codeSplitting.groups`
     // (rolldown's `manualChunks` only accepts a function, not Rollup's object form,
@@ -56,23 +53,12 @@ export default defineConfig({
     //            runs, behind a dynamic import('./aiAdapter'); stays off the
     //            keyless/brainless boot path).
     //
-    // three.js + @react-three/fiber are deliberately NOT given a manual group.
-    // They are reached only through the React.lazy imports of aurora-blur / ai-blob,
-    // and the default splitter already isolates them in a lazy `three.module` chunk.
-    // Forcing them into a manual group makes rolldown promote that chunk to a STATIC
-    // import of the entry — pulling three.js back onto the boot path, the exact
-    // regression issue #176 removes (proven by codeSplitting.test.ts, which fails
-    // the moment a `three` group is added). Leave them to auto-splitting; that test
-    // guards they stay off the entry's static graph, and check-bundle-size.mjs
-    // recognizes the auto-split chunk by its `three*` name to apply the lazy-three
-    // budget rather than the strict default.
-    //
     // codeSplitting stays on (the default) so the existing dynamic import() chunks
-    // — aiAdapter, ai-blob, aurora-blur — remain separate lazy chunks. Priority
-    // orders the groups: a higher-priority group claims its modules first and
-    // removes them from lower ones, so the catch-all `vendor` never swallows the
-    // AI SDK. The chunk NAMES (vendor/ai) are load-bearing — check-bundle-size.mjs
-    // categorizes each chunk by name against its budget (see CONTRIBUTING.md).
+    // — e.g. aiAdapter — remain separate lazy chunks. Priority orders the groups:
+    // a higher-priority group claims its modules first and removes them from lower
+    // ones, so the catch-all `vendor` never swallows the AI SDK. The chunk NAMES
+    // (vendor/ai) are load-bearing — check-bundle-size.mjs categorizes each chunk
+    // by name against its budget (see CONTRIBUTING.md).
     rolldownOptions: {
       output: {
         codeSplitting: {

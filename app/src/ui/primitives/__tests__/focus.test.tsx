@@ -107,6 +107,13 @@ describe('focus tokens & rings exist in the stylesheets (consistent ring + offse
       /\.modelsel:focus-visible\s*\{[^}]*outline:\s*var\(--focus-ring\)/
     )
     expect(primitivesCss).toMatch(/\.keyfield:focus-within[\s,]/)
+    // the composer textarea suppresses the app-wide ring (which out-specifics its
+    // plain outline:none) — legal only because the CARD carries the indication:
+    // the caret plus the :focus-within border lift. Pin all three so the
+    // suppression can never outlive its replacement indicator.
+    expect(primitivesCss).toMatch(/\.prompt-row textarea:focus-visible\s*\{[^}]*outline:\s*none/)
+    expect(primitivesCss).toMatch(/\.prompt-card:focus-within\s*\{[^}]*border-color/)
+    expect(primitivesCss).toMatch(/\.prompt-row textarea\s*\{[^}]*caret-color:\s*var\(--ice\)/)
   })
 
   it('SVG arcs ring via glow, not outline (outline is unreliable on SVG)', () => {

@@ -1,8 +1,9 @@
-/* Pet palette → plain color strings. The React Bits canvas/WebGL components
-   (AIBlob, AuroraBlur, GlitchText, SimpleGraph) can't read CSS custom
-   properties, so this resolves the live token values off the themed root —
-   re-read whenever the pet or theme changes, so the companion and ambience
-   always wear the pet's colors. */
+/* Pet palette → plain color strings. Canvas consumers (SimpleGraph) can't read
+   CSS custom properties at draw time, and the companion orb's registered
+   gradient stops (--orb-a/--orb-b, see components.css) want concrete color
+   values to interpolate — so this resolves the live token values off the
+   themed root, re-read whenever the pet or theme changes, so the companion
+   always wears the pet's colors. */
 
 import { useEffect, useState } from 'react'
 import { useMew } from '../../state/store'

@@ -39,8 +39,8 @@ export const OG = {
   // countdown can anchor at left:50% and margins stay symmetric.
   ox: 80,
   disk: 90, // clear centre for the countdown; the AM zone fill starts here
-  ri: 150, // inner ring (drawn) — bigger so it clears the centre text and the AM fill (disk→ri) reads as a real band, not a sliver
-  ro: 224, // PM commitment divider — a band-placement reference, NOT drawn (two rings only); tracks ri to keep the AM-bg/PM-confirmed gap
+  ri: 170, // inner ring (drawn) — pushed out so it clears the centre text stack (countdown→meta→task) and tightens the formerly-wide inner→outer gap; the AM-bg/PM-confirmed seam now guarantees ≤2 de-collision lanes (was 3) — see the seam test. PAIRED with .clk-center's width bound in components.css (ri=170 → 340px ring; the 290px text box's corners sit ≈168 from centre) — change both together
+  ro: 224, // PM commitment divider — a band-placement reference, NOT drawn (two rings only); held as ri grew (raising it would push PM-bg past the bezel), narrowing the AM-bg→PM-confirmed seam to a 2-lane guarantee. That guarantee is CENTRE-LINE ordering, not daylight: at full 2+2 density the deepest lanes sit at 196/198, so 3.5px arc strokes can visually graze where angles overlap — the seam test pins the ordering invariant
   pm: 258, // outer ring (drawn) — the bezel, now carrying the hour ticks + numerals
   tick: 258, // hour ticks sit ON the outer ring (pm), unifying ring + markers
   num: 272, // numerals just outside the outer ring + ticks

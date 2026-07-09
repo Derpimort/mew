@@ -94,17 +94,31 @@
   margin-left: -32px;
   margin-top: -26px;
 }
-.stage-pet .pet-blank {
-  width: 100%;
-  height: 100%;
-  display: grid;
-  place-items: center;
-  background: rgba(var(--acc-rgb), 0.14);
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: var(--gold);
-  text-align: center;
-  line-height: 1.6;
+/* the static companion orb (and the cat's behind-the-face aura). Pixie state
+   arrives via inline style: --orb-a/--orb-b are the mood gradient's stops,
+   opacity is the glow (attention) × rest dim. Gradient images themselves never
+   interpolate (a `background` transition snaps on Chromium/WebView2 — the
+   deployment target), so the stops are REGISTERED custom properties and the
+   transition runs on THEM: mood shifts genuinely ease. Where @property is
+   unsupported the gradient still renders from the vars and a change just
+   snaps — graceful degradation to the old behavior. A state transition, not
+   an animation loop. */
+@property --orb-a {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+@property --orb-b {
+  syntax: '<color>';
+  inherits: false;
+  initial-value: transparent;
+}
+.stage-orb {
+  background: radial-gradient(circle at 42% 38%, var(--orb-a), var(--orb-b) 58%, transparent 74%);
+  transition:
+    opacity 0.3s ease,
+    --orb-a 0.3s ease,
+    --orb-b 0.3s ease;
 }
 .stage-tag {
   position: absolute;
@@ -645,8 +659,13 @@
   top: 354px;
   transform: translate(-50%, -50%);
   text-align: center;
-  /* must stay inside the inner ring (ri=150 → 300px diameter) so long titles
-     wrap within the ring instead of crossing it */
+  /* paired with OG.ri in orbitGeometry.ts (ri=170 → 340px diameter): long titles
+     must wrap INSIDE the drawn inner ring, never cross it. width stays 290px on
+     purpose — the centre stack runs ~170px tall, so a 290px-wide box's worst-case
+     corner sits at √(145²+85²) ≈ 168 < 170 and still clears the ring; widening
+     toward 340px would push those corners through it. Change ri and this bound
+     together (OG.ri's comment points back here); shoot-overlap.mjs measures the
+     rendered text against the rendered ring as the gate. */
   width: 290px;
   pointer-events: none;
 }

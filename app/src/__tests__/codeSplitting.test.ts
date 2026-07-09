@@ -1,26 +1,24 @@
-/* Bundle-shape guard for the lazy-load contract (issue #176).
+/* Bundle-shape guard: three.js stays out of the bundle entirely.
 
-   three.js + @react-three/fiber are the app's heaviest dependency, reached only
-   through the React.lazy() imports of aurora-blur / ai-blob. They must NEVER sit
-   on the boot path: a keyless, settings-only session that never reaches the stage
-   should not pay for a 3D engine it won't render. Lazy splitting is easy to break
-   silently — a stray top-level `import 'three'`, or a manual chunk group that
-   makes Rolldown promote the three chunk to a static import of the entry — so this
-   test runs the real production build (in memory, no writes) and asserts the
-   invariants directly on the emitted module graph.
+   three.js + @react-three/fiber were the app's heaviest dependency, reached only
+   through the ambient aurora and the companion blob. Both ambient WebGL anims were
+   removed (they pegged a rAF loop and heated the machine for pure ornament), and
+   the libraries were dropped from the app. This test runs the real production build
+   (in memory, no writes) and asserts no emitted chunk is three.js / @react-three —
+   so a stray re-introduction (a new `import 'three'`, a re-added dependency) trips
+   here rather than shipping a 3D engine the UI no longer renders.
 
-   It is the regression net behind vite.config.ts's deliberate choice to leave
-   three.js to the default splitter rather than force it into a vendor group. */
+   It also keeps the main-chunk size budget (acceptance #1: "main chunk < 500 kB"). */
 
 import { beforeAll, describe, expect, it } from 'vitest'
 import { build, type Rollup } from 'vite'
 
-/** A chunk's file name matches one of three.js / @react-three (their code). */
+/** A chunk's file name matches three.js / @react-three (their code). */
 const isThreeChunk = (file: string) => /three|react-three|fiber/i.test(file)
 
 /** The entry's main JS chunk must stay under this minified size (acceptance #1:
-    "main chunk < 500 kB"). Today it is ~371 kB after the vendor split; the
-    headroom catches real regressions without flapping on small additions. */
+    "main chunk < 500 kB"). The headroom catches real regressions without
+    flapping on small additions. */
 const MAIN_CHUNK_LIMIT = 500 * 1024
 
 let chunks: Rollup.OutputChunk[]
@@ -41,53 +39,10 @@ beforeAll(async () => {
   entry = e
 }, 120_000)
 
-describe('lazy-load contract: three.js / @react-three stay off the boot path', () => {
-  it('the entry does not STATICALLY import three.js or @react-three', () => {
-    const eagerThree = entry.imports.filter(isThreeChunk)
-    expect(eagerThree).toEqual([])
-  })
-
-  it("aurora-blur and ai-blob are reached only via the entry's DYNAMIC imports", () => {
-    // the lazy wrappers must be dynamic (React.lazy), never static, on the entry.
-    const dyn = entry.dynamicImports
-    expect(dyn.some((f) => /aurora-blur/.test(f))).toBe(true)
-    expect(dyn.some((f) => /ai-blob/.test(f))).toBe(true)
-    const eagerWrappers = entry.imports.filter((f) => /aurora-blur|ai-blob/.test(f))
-    expect(eagerWrappers).toEqual([])
-  })
-
-  it('a dedicated three.js chunk exists and is imported only by the lazy wrappers', () => {
+describe('three.js stays out of the bundle entirely', () => {
+  it('emits no three.js / @react-three chunk', () => {
     const threeChunks = chunks.filter((c) => isThreeChunk(c.fileName))
-    expect(threeChunks.length).toBeGreaterThan(0)
-
-    // every static importer of a three chunk must itself be a deferred wrapper
-    // (aurora-blur / ai-blob), so three only loads when the stage mounts.
-    for (const tc of threeChunks) {
-      const staticImporters = chunks
-        .filter((c) => c.imports.includes(tc.fileName))
-        .map((c) => c.fileName)
-      for (const importer of staticImporters) {
-        expect(importer, `${importer} statically imports ${tc.fileName}`).toMatch(
-          /aurora-blur|ai-blob/
-        )
-      }
-    }
-  })
-
-  it('no eager (statically reachable) chunk contains three.js', () => {
-    // walk the entry's static-import closure; none of it may be a three chunk.
-    const byName = new Map(chunks.map((c) => [c.fileName, c]))
-    const seen = new Set<string>()
-    const stack = [entry.fileName]
-    while (stack.length) {
-      const name = stack.pop()!
-      if (seen.has(name)) continue
-      seen.add(name)
-      const c = byName.get(name)
-      if (c) stack.push(...c.imports)
-    }
-    const eagerThree = [...seen].filter(isThreeChunk)
-    expect(eagerThree).toEqual([])
+    expect(threeChunks).toEqual([])
   })
 })
 

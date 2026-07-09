@@ -20,7 +20,7 @@ describe('bundle-size budget policy', () => {
     expect(categorize({ isEntry: false, name: 'vendor' })).toBe('vendor')
     expect(categorize({ isEntry: false, name: 'three' })).toBe('three')
     expect(categorize({ isEntry: false, name: 'ai' })).toBe('ai')
-    expect(categorize({ isEntry: false, name: 'aurora-blur' })).toBe('lazy')
+    expect(categorize({ isEntry: false, name: 'aiAdapter' })).toBe('lazy')
   })
 
   it('passes a healthy build (every chunk + total within budget)', () => {

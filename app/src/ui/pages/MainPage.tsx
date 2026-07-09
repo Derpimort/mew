@@ -1,9 +1,6 @@
 /* The main page — left stage (Focus ⇄ Week) + the persistent right column
-   (companion stage above the session). SurfaceMain in the handoff.
-   The left stage breathes: a React Bits aurora in the pet's colors drifts
-   behind the dial, and the brand mark is a cursor-reactive glitch canvas. */
+   (companion stage above the session). SurfaceMain in the handoff. */
 
-import { Suspense, lazy, useEffect, useState } from 'react'
 import { useMew } from '../../state/store'
 import { FocusOrbit } from '../components/FocusOrbit'
 import { WeekColumns } from '../components/WeekColumns'
@@ -12,25 +9,6 @@ import { SessionLog } from '../components/SessionLog'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { CommandPalette } from '../components/CommandPalette'
 import { OnboardingModal } from '../components/OnboardingModal'
-import { usePetPalette } from '../components/petPalette'
-import { prefersReducedMotion, shouldShowAurora } from '../components/auroraGate'
-
-const AuroraBlur = lazy(() => import('../react-bits/aurora-blur'))
-
-/* Reduced-motion gate for the ambient aurora. Gating the mount (not just the
-   lazy import) keeps three.js + @react-three/fiber off the wire entirely for a
-   reduced-motion session, and re-evaluates live if the OS preference flips. */
-function useShowAurora(): boolean {
-  const [reducedMotion, setReducedMotion] = useState(prefersReducedMotion)
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const onChange = () => setReducedMotion(mq.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
-  return shouldShowAurora({ reducedMotion })
-}
 
 export function MainPage() {
   const view = useMew((s) => s.view)
@@ -40,8 +18,6 @@ export function MainPage() {
      this flag is already the persisted value, not the default. Its own error
      boundary so a tour render fault never blocks the week behind it. */
   const showOnboarding = useMew((s) => !s.settings.hasSeenOnboarding)
-  const pal = usePetPalette()
-  const showAurora = useShowAurora()
 
   return (
     <div
@@ -53,36 +29,6 @@ export function MainPage() {
         </ErrorBoundary>
       )}
       <div className="left-stage">
-        {/* ambient aurora in the pet's palette, melting into the app bg —
-            only mounted when motion is welcome, so the lazy three.js chunk
-            stays off the wire for a reduced-motion session */}
-        {showAurora && (
-          <Suspense fallback={null}>
-            <div
-              style={{ position: 'absolute', inset: 0, zIndex: 0, pointerEvents: 'none' }}
-              aria-hidden
-            >
-              <AuroraBlur
-                width="100%"
-                height="100%"
-                speed={0.45}
-                opacity={0.38}
-                brightness={0.7}
-                bloomIntensity={1.5}
-                verticalFade={1.1}
-                layers={[
-                  { color: pal.pa, speed: 0.16, intensity: 0.42 },
-                  { color: pal.pb, speed: 0.09, intensity: 0.3 },
-                  { color: pal.pa, speed: 0.05, intensity: 0.12 },
-                ]}
-                skyLayers={[
-                  { color: pal.bg, blend: 0.85 },
-                  { color: pal.bg, blend: 0.6 },
-                ]}
-              />
-            </div>
-          </Suspense>
-        )}
         <div style={{ position: 'absolute', top: 20, left: 28, zIndex: 10 }}>
           {/* crisp wordmark — the GlitchText canvas mangled "MEW" at bold weight
               (autoFit + scatter in an 88px box); brand text renders clean */}

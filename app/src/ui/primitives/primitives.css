@@ -486,26 +486,34 @@
     border-color 0.25s ease,
     box-shadow 0.25s ease;
 }
-/* a visible focus ring — the keyboard-reachable composer reads as focused.
-   The textarea inside drops its own outline (below), so the card carries the
-   caret: a full-opacity 2px --ice ring (the same intent as --focus-ring, drawn
-   as a box-shadow because the card's rounded corners need the radius the shadow
-   inherits — an outline would square them). Meets §2.4.7's 3:1 on both themes. */
+/* focus reads through the caret (caret-color, set on the textarea below) plus
+   a border brighten — no ring box. WCAG 2.4.7 asks for a VISIBLE focus
+   indicator, not specifically a ring: for a text field the blinking caret is
+   an accepted primary indicator (the card is only focusable via its field —
+   :focus-within can't fire without the caret being live), and the border lift
+   20%→45% ice mix is the secondary cue. Verified in both themes in the PR
+   shots — against light --line #e7dfcd the 45% mix reads as a clearly defined
+   accent edge (--ice is pet-tinted, so its hue follows the palette). The
+   composer is the .keyfield precedent again: the WRAPPER carries the focus
+   indication, the inner field stays quiet (below). */
 .prompt-card:focus-within {
   border-color: color-mix(in srgb, var(--ice) 45%, var(--line));
-  box-shadow:
-    inset 0 1.5px 4px rgba(0, 0, 0, 0.35),
-    0 0 0 2px var(--ice);
+}
+/* Suppress the app-wide ring ON THE TEXTAREA ONLY. The global `.stl
+   :focus-visible` (tokens.css) out-specifics the plain `outline: none` in
+   .prompt-row textarea — and text fields match :focus-visible on ANY focus
+   method (mouse included), so without this override every click into the
+   composer painted the 2px ring at a 4px offset around the whole row: the
+   exact "thick ring while typing" this PR exists to remove. Not a bare
+   outline:none (the tokens.css invariant): the indicator MOVES to the card —
+   caret + border lift above — it doesn't vanish. */
+.prompt-row textarea:focus-visible {
+  outline: none;
 }
 .sys--light .prompt-card {
   box-shadow:
     inset 0 1.5px 4px rgba(80, 60, 20, 0.08),
     0 1px 0 #fff;
-}
-.sys--light .prompt-card:focus-within {
-  box-shadow:
-    inset 0 1.5px 4px rgba(80, 60, 20, 0.08),
-    0 0 0 2px var(--ice);
 }
 .prompt-row {
   display: flex;

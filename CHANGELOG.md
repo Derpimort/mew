@@ -12,6 +12,25 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-09
+
+### Changed
+
+- The companion is now a serene static orb — it still wears mood (color), attention (glow) and
+  rest (a gentle dim), with mood shifts easing smoothly; the always-on WebGL aurora and blob
+  loops are gone, so typing stays cool and quiet and ~880 kB of three.js never ships (#231).
+- Typing in the chat composer is calm: focus reads through the caret and a soft border lift —
+  the thick focus ring (both of them: the card's and the app-wide one that out-specificed the
+  composer's quiet styling) no longer paints (#231).
+
+### Fixed
+
+- The focus dial's inner ring sits further out, so the centre readout — countdown, meta and
+  even long wrapped titles — always clears the drawn ring, and the dial's two rings sit closer
+  for a fuller face (#232).
+- The UI overlap gate now also proves the dial's centre text stays inside the drawn inner ring
+  (and that the check itself engaged), so this class of overlap can't ship again (#232).
+
 ## [0.2.0] — 2026-06-25
 
 ### Added
@@ -127,7 +146,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   release build (#144).
 - "Update later" no longer silently restores a backup; the retime `startMin` is now `const` (#138).
 
-[Unreleased]: https://github.com/Derpimort/mew/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Derpimort/mew/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Derpimort/mew/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Derpimort/mew/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/Derpimort/mew/compare/v0.1.8...v0.1.9
 [0.1.8]: https://github.com/Derpimort/mew/compare/v0.1.7...v0.1.8
