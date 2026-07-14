@@ -11,6 +11,6 @@
     "audit:desktop": "cargo audit --deny warnings --file src-tauri/Cargo.lock"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.3"
+    "@tauri-apps/cli": "^2.11.4"
   }
 }
