@@ -9,35 +9,16 @@
    Usage: node scripts/shoot-overlap.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
-import os from 'node:os'
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
+import { findChromium } from './lib/chromium.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots/overlap')
 mkdirSync(outDir, { recursive: true })
 
-/* Resolve the installed chromium without pinning a build number — playwright's
-   cache folder name (chromium-NNNN) tracks the playwright version, so a hard
-   path breaks across machines/CI. Honor PW_CHROMIUM, else pick the newest
-   chromium-* in the cache, else fall back to a known local build. */
-function findChromium() {
-  if (process.env.PW_CHROMIUM && existsSync(process.env.PW_CHROMIUM)) return process.env.PW_CHROMIUM
-  const root = path.join(os.homedir(), '.cache/ms-playwright')
-  try {
-    const dir = readdirSync(root)
-      .filter((d) => d.startsWith('chromium-'))
-      .sort()
-      .reverse()[0]
-    for (const rel of ['chrome-linux64/chrome', 'chrome-linux/chrome']) {
-      const p = dir && path.join(root, dir, rel)
-      if (p && existsSync(p)) return p
-    }
-  } catch {
-    /* fall through to the pinned default */
-  }
-  return path.join(root, 'chromium-1223/chrome-linux64/chrome')
-}
+/* unpinned chromium: shared resolver (PW_CHROMIUM seam → newest cached build →
+   pinned fallback), so both CI nets in ui-overlap.yml pick the same browser */
 const exe = findChromium()
 
 /* Runs IN the page. Returns every pair of text runs whose *rendered* boxes

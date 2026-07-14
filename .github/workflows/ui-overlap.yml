@@ -1,11 +1,18 @@
 name: ui-overlap
 
-# Text-overlap guard — the "for everything" net. shoot-overlap.mjs drives the
-# built app across the dial clock-sweep (incl. crowded times), week, and
-# settings, and fails the job if any two text runs collide (DOM or SVG) OR if
-# the dial's centre text touches the drawn inner ring (the text↔ring net, which
-# must also prove it engaged). This is what keeps overlapping text from
-# shipping again.
+# Two UI nets on the same built app + preview server (one build, two verdicts):
+#
+# 1. Text-overlap guard — the "for everything" net. shoot-overlap.mjs drives the
+#    built app across the dial clock-sweep (incl. crowded times), week, and
+#    settings, and fails the job if any two text runs collide (DOM or SVG) OR if
+#    the dial's centre text touches the drawn inner ring (the text↔ring net,
+#    which must also prove it engaged). This is what keeps overlapping text from
+#    shipping again.
+# 2. Dial a11y contract + canonical shots — shoot.mjs asserts the #205/#172
+#    keyboard contract on the real DOM (role=application, names, roving
+#    tabindex, ArrowRight actually moves focus) and captures the canonical
+#    design moments. Wired here after #253: the contract existed only as a
+#    local gate, so a keyboard regression could reach a release unseen.
 on:
   pull_request:
     # Heavy gate: only on release-promotion PRs (base=main, i.e. develop → main).
@@ -35,9 +42,15 @@ jobs:
           pnpm exec vite preview --port 5199 --strictPort &
           for i in $(seq 1 30); do curl -sf http://localhost:5199/ >/dev/null && break || sleep 1; done
           node scripts/shoot-overlap.mjs http://localhost:5199
+      # the preview server from the previous step keeps running (same job), so
+      # the a11y contract drives the exact build the overlap net just cleared
+      - name: dial a11y contract + canonical shots
+        run: node scripts/shoot.mjs http://localhost:5199
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: overlap-shots
-          path: app/shots/overlap
+          name: ui-shots
+          path: |
+            app/shots/overlap
+            app/shots/*.png
           if-no-files-found: ignore

@@ -100,15 +100,13 @@ export function ThreadRail({ onOpen }: { onOpen: (blockId: string) => void }) {
         [done(b), resume(b)]
       )
     ),
-    ...threads.unplaced.map(
-      (c: Capture): Row => ({
-        state: 'unplaced',
-        id: c.id,
-        title: short(c.title),
-        meta: 'captured · no time yet',
-        actions: [{ label: 'place', run: () => placeCapture(c.id) }],
-      })
-    ),
+    ...threads.unplaced.map((c: Capture): Row => ({
+      state: 'unplaced',
+      id: c.id,
+      title: short(c.title),
+      meta: 'captured · no time yet',
+      actions: [{ label: 'place', run: () => placeCapture(c.id) }],
+    })),
   ]
 
   /* When the last thread clears, the box unmounts (below) but `open` lingers.

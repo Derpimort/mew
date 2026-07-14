@@ -5,8 +5,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage } from '../../../domain/types'
 import {
+  CONDENSE_MAX_LINES,
   blockEventPage,
   chatBatchPage,
+  condenseChatPage,
+  condensedChatSlug,
   debriefPage,
   explicitProjectFrom,
   knownProjectsFrom,
@@ -247,5 +250,75 @@ describe('makeChatBatcher — one write per quiet minute', () => {
     b.add(turn('a'), D)
     b.flushNow()
     expect(flush).toHaveBeenCalledOnce()
+  })
+})
+
+/* ── condensation (#250 phase 2): a past day's chat → one durable digest ── */
+
+describe('condenseChatPage', () => {
+  const DAY = '2026-05-20'
+  const m = (role: ChatMessage['role'], body: string, i = 0): ChatMessage => ({
+    id: `c${i}`,
+    role,
+    body,
+    ts: 1_000 + i,
+  })
+
+  it('keeps what the user said and MEW’s committed facts; prose and asides fall away', () => {
+    const page = condenseChatPage(
+      [
+        m('user', 'block thursday morning for the deck', 1),
+        m('mew', 'Done — thursday 9:00–11:00 is held for the deck.', 2),
+        m('mew', 'The week is tight everywhere — want to look at it together?', 3),
+        m('mew', '(the local model was busy — I retried, then handled it myself.)', 4),
+      ],
+      DAY
+    )!
+    expect(page.body).toContain('- you: block thursday morning for the deck')
+    expect(page.body).toContain('- mew: Done — thursday 9:00–11:00 is held for the deck.')
+    expect(page.body).not.toContain('tight everywhere')
+    expect(page.body).not.toContain('the local model was busy')
+  })
+
+  it('the page is a recallable body upsert on the week namespace, linked to its day — and carries NO timeline', () => {
+    const page = condenseChatPage([m('user', 'gym at 7', 1)], DAY)!
+    expect(page.slug).toBe(condensedChatSlug(DAY))
+    expect(page.slug).toMatch(/^week\//) // MEW-scope recall surfaces week/ pages
+    expect(page.links).toEqual([`week/${DAY}`])
+    expect(page.timeline).toBeUndefined() // idempotent by design: a retry overwrites, never appends
+    expect(page.body).toContain(DAY)
+  })
+
+  it('nudges never condense — a nudge-only day is engine chatter, not a story (null)', () => {
+    const nudge: ChatMessage = { id: 'n1', role: 'nudge', body: 'time to stretch', ts: 1 }
+    expect(condenseChatPage([nudge], DAY)).toBeNull()
+    const page = condenseChatPage([nudge, m('user', 'sure', 2)], DAY)!
+    expect(page.body).not.toContain('time to stretch')
+  })
+
+  it('a day of pure prose keeps its turns rather than condensing to nothing', () => {
+    const page = condenseChatPage(
+      [m('mew', 'Your week holds 12h of deep work against a 5.5h best.', 1)],
+      DAY
+    )!
+    expect(page.body).toContain('- mew: Your week holds 12h')
+  })
+
+  it('caps at CONDENSE_MAX_LINES and 160 chars a line — the story, not the transcript', () => {
+    const turns = Array.from({ length: CONDENSE_MAX_LINES + 15 }, (_, i) =>
+      m('user', `note ${i} ${'x'.repeat(300)}`, i)
+    )
+    const page = condenseChatPage(turns, DAY)!
+    const lines = page.body!.split('\n').filter((l) => l.startsWith('- '))
+    expect(lines).toHaveLength(CONDENSE_MAX_LINES)
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual('- you: '.length + 160)
+  })
+
+  it('is deterministic — a retried pass reproduces the digest byte-for-byte', () => {
+    const turns = [
+      m('user', 'move gym to 8', 1),
+      m('mew', 'Moved — gym now lives today at 8:00.', 2),
+    ]
+    expect(condenseChatPage(turns, DAY)).toEqual(condenseChatPage(turns, DAY))
   })
 })

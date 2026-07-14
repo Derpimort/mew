@@ -21,8 +21,7 @@ import type { RemoteProvider } from './aiAdapter'
     - 'busy'    — a transient network/429/5xx blip; "try again" is honest here.
     - 'unknown' — anything else (offline, CORS, an odd status). */
 export type KeyProbe =
-  | { ok: true }
-  | { ok: false; reason: 'auth' | 'model' | 'busy' | 'unknown'; status?: number }
+  { ok: true } | { ok: false; reason: 'auth' | 'model' | 'busy' | 'unknown'; status?: number }
 
 const PROBE_TIMEOUT_MS = 8000
 
@@ -36,8 +35,10 @@ export type FetchLike = (
 
 /** Where each provider lists its models, and the headers that authorize a
     browser-direct GET. Anthropic needs its version + the explicit
-    direct-browser-access opt-in (the SDK sets these on the chat path; here we
-    set them by hand since we bypass the SDK). OpenAI takes a bearer token. */
+    direct-browser-access opt-in — the latter from the shared contract, the
+    same header the chat path sends, so probe and live turn can't drift. The
+    auth + version headers the SDK owns on the chat path are set by hand here
+    since the probe bypasses the SDK. OpenAI takes a bearer token. */
 function probeRequest(
   provider: RemoteProvider,
   apiKey: string
@@ -53,7 +54,7 @@ function probeRequest(
     headers: {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
+      ...PROVIDER_CONTRACT.anthropic.requiredHeaders,
     },
   }
 }
@@ -97,8 +98,12 @@ export async function validateKey(
   }
 
   // classifyFailure reads `.status` off the error; the fetch path carries it on
-  // the Response, so hand it the same shape the SDK errors have.
-  return { ok: false, reason: classifyFailure({ status: res.status }), status: res.status }
+  // the Response, so hand it the same shape the SDK errors have. 'rejected'
+  // (a 400 on a bare models-listing GET) has no probe-specific fix the user
+  // could act on — fold it into the retry-worded 'unknown' rather than invent
+  // copy for a shape a GET shouldn't produce.
+  const kind = classifyFailure({ status: res.status })
+  return { ok: false, reason: kind === 'rejected' ? 'unknown' : kind, status: res.status }
 }
 
 /** Does the models listing contain `model`? Returns null (don't disqualify) when

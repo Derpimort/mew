@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createOpenAIAdapter } from '../openai'
+import { createAiAdapter } from '../aiAdapter'
 import { createRulesAdapter } from '../rules'
 import { runTool } from '../tools'
-import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
+import { CHOICES_POSTED, type ConverseChunk, type ToolExecutor, type WeekContext } from '../types'
 
 const NOW = () => new Date(2026, 5, 9, 9, 40) // Tuesday, June 9
 
@@ -14,6 +14,7 @@ const ctx: WeekContext = {
   realisticBestH: 5.5,
   mewsToday: 2,
   recallLines: [],
+  brainOn: false,
   prefLines: [],
   insightLines: ['mornings hold: 9/10 finished there'],
 }
@@ -65,6 +66,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
     queryBrain: vi.fn(async (q: string) => {
       calls.push('queryBrain')
       return `Spicanova this week: 2.5h across 2 blocks. (asked: ${q})`
+    }),
+    offerChoices: vi.fn((prompt: string, options: { label: string }[]) => {
+      calls.push('offerChoices')
+      return `${CHOICES_POSTED}: ${options.map((o) => `"${o.label}"`).join(' · ')}. (asked: ${prompt})`
     }),
     clear: vi.fn((scope) => {
       calls.push('clear')
@@ -132,7 +137,7 @@ describe('rules adapter — converse', () => {
   })
 })
 
-describe('anthropic tool dispatch — runTool', () => {
+describe('tool dispatch — runTool (every provider rides this)', () => {
   it('sanitizes plan_blocks input (clamps, defaults, drops junk)', async () => {
     const exec = mockExec()
     await runTool(
@@ -221,6 +226,89 @@ describe('remember rides the tool registry', () => {
   })
 })
 
+describe('offer_choices rides the tool registry (#254)', () => {
+  it('routes prompt + options to the executor, defaulting reply to the label', async () => {
+    const exec = mockExec()
+    const out = await runTool(
+      'offer_choices',
+      {
+        prompt: 'which gym block?',
+        options: [
+          { label: 'the 7:00', reply: 'remove gym 7:00' },
+          { label: 'both' }, // no reply — defaults to the label
+        ],
+      },
+      exec
+    )
+    expect(out).toContain(CHOICES_POSTED)
+    const [prompt, options] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(prompt).toBe('which gym block?')
+    expect(options).toEqual([
+      { label: 'the 7:00', reply: 'remove gym 7:00' },
+      { label: 'both', reply: 'both' },
+    ])
+  })
+
+  it('caps at five options and drops junk entries — a hand of chips, not a menu', async () => {
+    const exec = mockExec()
+    await runTool(
+      'offer_choices',
+      {
+        prompt: 'pick a slot',
+        options: [
+          { label: ' 9:00 ' },
+          { label: '10:00' },
+          { label: '11:00' },
+          { label: '12:00' },
+          { label: '13:00' },
+          { label: '14:00' }, // sixth — sliced off
+          { label: '   ' }, // blank — dropped
+          null,
+          'nope',
+        ],
+      },
+      exec
+    )
+    const [, options] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(options).toHaveLength(5)
+    expect(options[0]).toEqual({ label: '9:00', reply: '9:00' }) // trimmed
+    expect(options.map((o: { label: string }) => o.label)).not.toContain('14:00')
+  })
+
+  it('refuses an empty call without reaching the executor', async () => {
+    const exec = mockExec()
+    expect(await runTool('offer_choices', { prompt: '  ', options: [] }, exec)).toMatch(
+      /nothing to offer/
+    )
+    expect(await runTool('offer_choices', { options: [{ label: 'x' }] }, exec)).toMatch(
+      /nothing to offer/
+    )
+    expect(exec.offerChoices).not.toHaveBeenCalled()
+  })
+})
+
+describe('the keyless floor stays quiet once chips are on screen (#254)', () => {
+  it('a CHOICES_POSTED remove result yields no reply text — the chips message IS the reply', async () => {
+    const exec = mockExec()
+    ;(exec.remove as ReturnType<typeof vi.fn>).mockImplementation(
+      () => `${CHOICES_POSTED}: "the 14:00" · "the 10:00" · "both". END your turn.`
+    )
+    const reply = await collect(
+      createRulesAdapter(NOW).converse([{ role: 'user', text: 'drop the prod release' }], ctx, exec)
+    )
+    expect(exec.remove).toHaveBeenCalledOnce()
+    expect(reply).toBe('')
+  })
+
+  it('an ordinary remove result still speaks', async () => {
+    const exec = mockExec()
+    const reply = await collect(
+      createRulesAdapter(NOW).converse([{ role: 'user', text: 'drop the prod release' }], ctx, exec)
+    )
+    expect(reply).toBe('Removed prod release.')
+  })
+})
+
 describe('attention + due ride the tool registry', () => {
   it('plan_blocks passes attention/dueMin through to the executor as attention/due', async () => {
     const exec = mockExec()
@@ -264,78 +352,184 @@ describe('attention + due ride the tool registry', () => {
   })
 })
 
-describe('openai adapter — abort', () => {
+describe('unified adapter — abort (#117, on the SDK path)', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  /** A fetch stub that speaks the chat-completions JSON shape. Round 1 returns a
-      tool_call (so the loop runs the executor and commits a real action, then
-      loops); from round 2 on it behaves like the browser does once a request is
-      aborted — rejecting with an AbortError DOMException — and records the
-      `signal` it was handed so we can prove the adapter threaded it through. */
-  function abortingFetch() {
-    const signals: (AbortSignal | undefined)[] = []
-    const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
-      signals.push(init?.signal ?? undefined)
-      if (fetch.mock.calls.length === 1) {
-        return new Response(
-          JSON.stringify({
-            choices: [
+  /* Minimal OpenAI-compatible SSE stream — what the local Ollama surface
+     (`/v1/chat/completions`) sends. The unified adapter is driven through the
+     REAL SDK against this stubbed wire, so the abort contract is proven on the
+     shipping code path, not a mock of it. */
+  function sseResponse(lines: string[]) {
+    const enc = new TextEncoder()
+    return new Response(
+      new ReadableStream({
+        start(c) {
+          for (const l of lines) c.enqueue(enc.encode(`data: ${l}\n\n`))
+          c.enqueue(enc.encode('data: [DONE]\n\n'))
+          c.close()
+        },
+      }),
+      { status: 200, headers: { 'content-type': 'text/event-stream' } }
+    )
+  }
+  const delta = (d: unknown, finish: string | null = null) =>
+    JSON.stringify({
+      id: '1',
+      object: 'chat.completion.chunk',
+      created: 0,
+      model: 'm',
+      choices: [{ index: 0, delta: d, finish_reason: finish }],
+    })
+
+  it('stops cleanly when the signal aborts mid-loop — no replay, action kept', async () => {
+    const signals: (AbortSignal | null | undefined)[] = []
+    /* Round 1 streams text + a complete_task tool call (the SDK runs the
+       executor, committing a real action, then loops). The user's stop fires
+       inside that tool — mid-loop, exactly where the store's ■/Esc lands — so
+       any later round behaves like an aborted browser fetch. */
+    const fetchSpy = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      signals.push(init?.signal)
+      if (fetchSpy.mock.calls.length === 1) {
+        return sseResponse([
+          delta({ role: 'assistant', content: 'on it.' }),
+          delta({
+            tool_calls: [
               {
-                message: {
-                  role: 'assistant',
-                  content: 'on it.',
-                  tool_calls: [
-                    {
-                      id: 'c1',
-                      type: 'function',
-                      function: { name: 'complete_task', arguments: '{"query":"deck"}' },
-                    },
-                  ],
-                },
+                index: 0,
+                id: 'c1',
+                type: 'function',
+                function: { name: 'complete_task', arguments: '{"query":"deck"}' },
               },
             ],
           }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }
-        )
+          delta({}, 'tool_calls'),
+        ])
       }
-      if (init?.signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
-      throw new Error('round 2 fetch ran without the abort signal')
+      throw new DOMException('The operation was aborted.', 'AbortError')
     })
-    return { fetch, signals }
-  }
-
-  it('stops cleanly when the signal aborts mid-loop — no retry, no replay', async () => {
-    const { fetch, signals } = abortingFetch()
-    vi.stubGlobal('fetch', fetch)
+    vi.stubGlobal('fetch', fetchSpy)
 
     const exec = mockExec()
     const abort = new AbortController()
-    const adapter = createOpenAIAdapter('sk-test', 'gpt-test')
-    const stream = adapter.converse(
-      [{ role: 'user', text: 'done with the deck' }],
-      ctx,
-      exec,
-      abort.signal
-    )
-    const it = stream[Symbol.asyncIterator]()
+    exec.complete = vi.fn((q: string) => {
+      exec.calls.push('complete')
+      abort.abort() // the stop control fires the instant the action commits
+      return `Marked ${q} done.`
+    })
 
-    /* drive round 1 (commits the tool action), then stop before round 2 — the
-       store's ■/Esc fires between rounds, exactly as in the live loop. */
-    await it.next()
-    abort.abort()
+    const adapter = createAiAdapter({
+      provider: 'ollama',
+      baseUrl: 'http://localhost:11434',
+      model: 'llama3.2',
+    })
+    const out: string[] = []
+    const run = (async () => {
+      for await (const c of adapter.converse(
+        [{ role: 'user', text: 'done with the deck' }],
+        ctx,
+        exec,
+        abort.signal
+      )) {
+        if (typeof c === 'string') out.push(c)
+      }
+    })()
 
-    await expect(it.next()).rejects.toMatchObject({ name: 'AbortError' })
+    /* an aborted turn REJECTS (the store reads the rejection against
+       signal.aborted for its "(stopped — …)" copy) — v7 would otherwise end the
+       stream silently, which the adapter deliberately un-silences. */
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
 
-    /* round 2's fetch was reached once and handed the signal — and the
-       non-transient AbortError short-circuited withRetry: no 3rd attempt. */
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(signals[1]).toBe(abort.signal)
-
-    /* the action committed in round 1 stays — the abort keeps partial work,
-       it never rolls back or replays the turn (store.ts honesty guard). */
+    // the text that streamed before the stop was yielded, and stays
+    expect(out.join('')).toContain('on it.')
+    // the action committed before the stop stays — exactly once, never replayed
     expect(exec.calls).toEqual(['complete'])
     expect(exec.complete).toHaveBeenCalledTimes(1)
+    // the turn's signal was threaded into the wire request
+    expect(signals[0]).toBeInstanceOf(AbortSignal)
+  })
+})
+
+describe('graceful step-cap end-to-end (#153) — the SDK loop, capped at 14 steps', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('a model that wants a 15th step gets paused with the honest keep-going line', async () => {
+    const enc = new TextEncoder()
+    const sse = (lines: string[]) =>
+      new Response(
+        new ReadableStream({
+          start(c) {
+            for (const l of lines) c.enqueue(enc.encode(`data: ${l}\n\n`))
+            c.enqueue(enc.encode('data: [DONE]\n\n'))
+            c.close()
+          },
+        }),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } }
+      )
+    let round = 0
+    /* every round: a fresh tool call and the wish to continue (finish_reason
+       tool_calls) — a genuinely large plan, not an error. The cap must end the
+       turn kindly after 14 rounds, with every committed action kept. */
+    const fetchSpy = vi.fn(async () => {
+      round++
+      return sse([
+        JSON.stringify({
+          id: String(round),
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'm',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                role: 'assistant',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: `c${round}`,
+                    type: 'function',
+                    function: { name: 'complete_task', arguments: `{"query":"item ${round}"}` },
+                  },
+                ],
+              },
+              finish_reason: null,
+            },
+          ],
+        }),
+        JSON.stringify({
+          id: String(round),
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'm',
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+        }),
+      ])
+    })
+    vi.stubGlobal('fetch', fetchSpy)
+
+    const exec = mockExec()
+    const adapter = createAiAdapter({
+      provider: 'ollama',
+      baseUrl: 'http://localhost:11434',
+      model: 'llama3.2',
+    })
+    let out = ''
+    for await (const c of adapter.converse(
+      [{ role: 'user', text: 'work through my whole backlog' }],
+      ctx,
+      exec
+    )) {
+      if (typeof c === 'string') out += c
+    }
+
+    // the loop ran exactly to the cap — every capped step's action committed
+    expect(fetchSpy).toHaveBeenCalledTimes(14)
+    expect(exec.complete).toHaveBeenCalledTimes(14)
+    // …and the turn ended with the kind pause, not a silent dead stop
+    expect(out).toContain("that's a full turn of changes")
+    expect(out).toContain('say "keep going"')
   })
 })

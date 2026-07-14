@@ -143,6 +143,21 @@ export function registerCloseFlush(isDirty: () => boolean, flush: () => Promise<
   }
 }
 
+/** Raise the MEW window — show if hidden, unminimize, focus — for a
+    notification click that must land back on the week. The window ops live
+    behind one shell command (`focus_main_window`), so the webview needs no
+    core:window capability grants. Outside the shell, or if the shell
+    refuses, this quietly does nothing: the nudge still lives in chat. */
+export async function focusMainWindow(): Promise<void> {
+  const t = api()
+  if (!t) return
+  try {
+    await t.core.invoke('focus_main_window')
+  } catch (err) {
+    log.warn('focus/unavailable', {}, err)
+  }
+}
+
 /* ── OAuth loopback (Google blocks sign-in inside embedded webviews) ──── */
 
 /* Fixed candidate ports, not random: Google Web clients demand an EXACT
@@ -239,6 +254,31 @@ export function onBrainEndpoint(cb: (e: BrainEndpoint) => void): void {
   const t = api()
   if (!t) return
   void t.event.listen<BrainEndpoint>('mew://brain-endpoint', (e) => cb(e.payload))
+}
+
+/** Fires on the sidecar's lifecycle beats — "starting" on each spawn,
+    "retrying" after a death, "unavailable" once the shell gives up (#249).
+    Connected is not a beat: it arrives as the onBrainEndpoint handshake,
+    which alone carries credentials. Payload stays a plain string so the
+    webview needs no shared type with the shell. */
+export function onBrainStatus(cb: (status: string) => void): void {
+  const t = api()
+  if (!t) return
+  void t.event.listen<string>('mew://brain-status', (e) => cb(String(e.payload)))
+}
+
+/** The last beat the shell kept — pull side of onBrainStatus, for a webview
+    that mounted after "starting" fired (React boots slower than the manager
+    thread) or reloaded after the give-up, when no beat will ever re-fire.
+    Null in a browser or before the shell's first beat. */
+export async function brainStatus(): Promise<string | null> {
+  const t = api()
+  if (!t) return null
+  try {
+    return (await t.core.invoke<string>('brain_status')) || null
+  } catch {
+    return null
+  }
 }
 
 /* ── self-update (the shell stages, the human decides) ────────────────── */

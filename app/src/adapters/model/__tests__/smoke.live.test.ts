@@ -19,6 +19,9 @@ import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
 const SMOKE = process.env.MEW_SMOKE === '1'
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY?.trim()
 const OPENAI_KEY = process.env.OPENAI_API_KEY?.trim()
+/* Ollama's "key" is a reachable server: opt in with OLLAMA_URL (and optionally
+   OLLAMA_MODEL for a tag you have pulled). */
+const OLLAMA_URL = process.env.OLLAMA_URL?.trim()
 
 /* Skip-WHY at module load (a describe.skip body never runs, so logging there is
    invisible). Printed every run so a skip is never silently green. */
@@ -30,7 +33,8 @@ if (!SMOKE) {
   if (!OPENAI_KEY) console.log('[smoke] OPENAI_API_KEY absent — OpenAI live smoke SKIPPED.')
   if (!ANTHROPIC_KEY)
     console.log('[smoke] ANTHROPIC_API_KEY absent — Anthropic live smoke SKIPPED.')
-  if (OPENAI_KEY || ANTHROPIC_KEY)
+  if (!OLLAMA_URL) console.log('[smoke] OLLAMA_URL absent — Ollama live smoke SKIPPED.')
+  if (OPENAI_KEY || ANTHROPIC_KEY || OLLAMA_URL)
     console.log('[smoke] MEW_SMOKE=1 — exercising live model contract.')
 }
 
@@ -42,6 +46,7 @@ const ctx: WeekContext = {
   realisticBestH: 6,
   mewsToday: 0,
   recallLines: [],
+  brainOn: false,
   prefLines: [],
   insightLines: [],
 }
@@ -67,7 +72,11 @@ maybe('live model-contract smoke', () => {
   oa(
     'OpenAI: a real turn streams text with the contract param',
     async () => {
-      const adapter = createAiAdapter('openai', OPENAI_KEY!, PROVIDER_CONTRACT.openai.defaultModel)
+      const adapter = createAiAdapter({
+        provider: 'openai',
+        apiKey: OPENAI_KEY!,
+        model: PROVIDER_CONTRACT.openai.defaultModel,
+      })
       const text = await firstText(
         adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec)
       )
@@ -80,16 +89,33 @@ maybe('live model-contract smoke', () => {
   an(
     'Anthropic: a real turn streams text within the contract ceiling',
     async () => {
-      const adapter = createAiAdapter(
-        'anthropic',
-        ANTHROPIC_KEY!,
-        PROVIDER_CONTRACT.anthropic.defaultModel
-      )
+      const adapter = createAiAdapter({
+        provider: 'anthropic',
+        apiKey: ANTHROPIC_KEY!,
+        model: PROVIDER_CONTRACT.anthropic.defaultModel,
+      })
       const text = await firstText(
         adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec)
       )
       expect(text.length).toBeGreaterThan(0)
     },
     30_000
+  )
+
+  const ol = OLLAMA_URL ? it : it.skip
+  ol(
+    'Ollama: a real turn streams text through the OpenAI-compatible surface (#152)',
+    async () => {
+      const adapter = createAiAdapter({
+        provider: 'ollama',
+        baseUrl: OLLAMA_URL!,
+        model: process.env.OLLAMA_MODEL?.trim() || PROVIDER_CONTRACT.ollama.defaultModel,
+      })
+      const text = await firstText(
+        adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec)
+      )
+      expect(text.length).toBeGreaterThan(0)
+    },
+    60_000
   )
 })

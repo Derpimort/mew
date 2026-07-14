@@ -1,7 +1,9 @@
-/* GBrain pattern analyses — the brain that informs (vision: "Grow with it").
-   Pure functions over the append-only memory; every insight carries the
-   user's OWN numbers, in MEW's voice. History informs; the live week decides:
-   nothing here answers "now", it only parameterizes proposals and copy. */
+/* Local pattern analyses — computed on-device from the append-only memory,
+   zero brain I/O (vision: "Grow with it"). Pure functions; every insight
+   carries the user's OWN numbers, in MEW's voice. History informs; the live
+   week decides: nothing here answers "now", it only parameterizes proposals
+   and copy. Never presented as "the brain" — recall is a separate, connected
+   thing (#249). */
 
 import type { Block, MemoryEvent, PrefPayload } from './types'
 import { addDaysKey, dayKey, fmtDowLong, fmtTime, spell } from './time'

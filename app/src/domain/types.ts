@@ -84,6 +84,16 @@ export interface NudgeAction {
   kind: 'primary' | 'secondary'
 }
 
+/** A clickable option chip on a mew message (#254 · offer_choices). A pick
+    posts `reply` as the user's next turn — the chips never touch the week
+    themselves. `picked` persists with the message so chips rehydrate inert. */
+export interface ChatChoice {
+  id: string
+  label: string
+  reply: string
+  picked?: boolean
+}
+
 export interface ChatMessage {
   id: string
   role: 'user' | 'mew' | 'nudge'
@@ -96,6 +106,10 @@ export interface ChatMessage {
      stream and the user opted in (Settings.showReasoning); a short, human-readable
      slice rendered as a collapsible note. Absent on every keyless/local turn. */
   reasoning?: string
+  /* mew messages: clickable option chips (#254) — MEW's enumerable questions
+     and offers, answerable with one tap. Chat-only by law: a pick posts the
+     choice's reply as an ordinary user turn; the week changes only via tools. */
+  choices?: ChatChoice[]
   /* nudge messages */
   nudgeType?: NudgeId
   nudgeLabel?: string
@@ -223,6 +237,13 @@ export interface Settings {
   /** Recall scope: MEW's own pages only (default) or the whole shared brain
       — strictly opt-in; whole-brain in a calendar is noise until it isn't. */
   brainScope: 'mew' | 'all'
+  /** Backfill ledger (#249), machine state like dismissedEvents — not a
+      preference. Per-brain watermark: the newest event ts that brain has
+      already been OFFERED (live dispatch or replay), keyed by
+      effectiveBrainKey, so switching brains replays the gap into the one
+      that missed it and never re-offers to one that saw it. Absent ⇒ that
+      brain has been offered nothing yet. */
+  brainBackfillAt?: Record<string, number>
   /** Quick-capture default (Cmd/Ctrl+Shift+C, #171): 'open' queues a capture
       with no when-where interrupt; 'auto-place' drops it in the first free
       30-min slot today, falling back to 'open' when the day is full. Default

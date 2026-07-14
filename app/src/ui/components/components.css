@@ -205,6 +205,42 @@
   gap: 12px;
   overflow-y: auto;
   justify-content: flex-start;
+  /* the windowed log (#250) restores its own position when a page of history
+     prepends (delta-exact, in SessionLog); the browser's native scroll
+     anchoring would compensate a second time, so it stays off. */
+  overflow-anchor: none;
+}
+/* "· earlier ·" — the windowed log's sentinel (#250): a real button, so the
+   keyboard can page history in; scrolling it into view does the same through
+   an IntersectionObserver. A quiet comment-line that wakes on hover. */
+.log-earlier {
+  align-self: center;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--faint);
+  background: none;
+  border: none;
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+.log-earlier:hover {
+  color: var(--muted);
+}
+.log-earlier:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 2px;
+  color: var(--muted);
+}
+/* the endstop once history is fully paged in — focusable (it receives focus
+   when the sentinel it replaces was under the keyboard), never interactive */
+.log-beginning {
+  align-self: center;
+  padding: 2px 10px;
+}
+.log-beginning:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 2px;
 }
 /* "↓ new" — appears only when the user has scrolled up while output streams;
    one tap returns to the live bottom and resumes the stick. */

@@ -76,7 +76,7 @@ describe('recall scope', () => {
     ])
     const lines = await port().recall('q')
     expect(lines).toHaveLength(4)
-    expect(lines.join('\n')).not.toContain('foreign')
+    expect(lines!.join('\n')).not.toContain('foreign')
   })
 
   it('whole-brain asks only for what it shows; MEW scope over-fetches to outlast the filter', async () => {
@@ -88,6 +88,19 @@ describe('recall scope', () => {
     await port().recall('q', { scope: 'mew', limit: 3 })
     // 'mew' drops foreign pages after the fetch, so it asks for limit×5 up front
     expect(calls.find((c) => c.name === 'query')!.args).toMatchObject({ query: 'q', limit: 15 })
+  })
+
+  it("recall honesty (#249): a brain that errors answers null — didn't answer, not empty", async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 }))
+    )
+    expect(await port().recall('q')).toBeNull()
+  })
+
+  it('recall honesty (#249): a brain with zero hits answers [] — a real empty', async () => {
+    fakeServe([])
+    expect(await port().recall('q')).toEqual([])
   })
 
   it('a foreign-heavy brain still surfaces MEW pages — over-fetch beats the post-filter starve', async () => {

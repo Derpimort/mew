@@ -154,9 +154,9 @@ export function seed(now: Date): SeedResult {
   }
 
   /* three earlier weeks of history → realistic best ≈ 5.5h, light carry-over,
-     rest mostly kept — and enough texture for the brain's pattern analyses:
-     mornings hold, late afternoons slip, "inbox sweep" keeps rolling,
-     blocks finish ~20 min past their end, drift clusters late. */
+     rest mostly kept — and enough texture for the on-device pattern analyses
+     (domain/insights): mornings hold, late afternoons slip, "inbox sweep"
+     keeps rolling, blocks finish ~20 min past their end, drift clusters late. */
   const tsAtMin = (key: string, min: number) => {
     const d = fromDayKey(key)
     d.setHours(0, min, 0, 0)

@@ -2,6 +2,7 @@
    the SQLite impl (bun:test, here) and, later, the Dexie impl (vitest): parity
    by one shared suite, not two drifting ones (coding_principles §15/§16/§19).
    Storage treats entities as opaque JSON, so fixtures are cast minimally. */
+import { CHAT_BOOT_PAGE } from '../../../app/src/adapters/storage-port'
 import type { StoragePort } from '../../../app/src/adapters/storage-port'
 import type { Block, Settings } from '../../../app/src/domain/types'
 import type { SyncEntry } from '../../../app/src/adapters/calendar/types'
@@ -81,5 +82,50 @@ export function storageContract(makeStore: () => StoragePort, h: TestHarness): v
   test('getAuditLog returns an array (empty on a fresh store)', async () => {
     const s = makeStore()
     expect(await s.getAuditLog()).toEqual([])
+  })
+
+  /* ── chat paging (#250 phase 2): the boot window + the cursor seam ── */
+
+  const chatMsg = (id: string, ts: number) =>
+    ({ id, role: 'user', body: id, ts }) as unknown as import('../../../app/src/domain/types').ChatMessage
+
+  test('load() hydrates only the newest CHAT_BOOT_PAGE chat messages, ascending; count sees the whole table', async () => {
+    const s = makeStore()
+    const total = CHAT_BOOT_PAGE + 25
+    await s.putChat(Array.from({ length: total }, (_, i) => chatMsg(`m${String(i).padStart(4, '0')}`, 1000 + i)))
+    const out = await s.load()
+    expect(out.chat.length).toBe(CHAT_BOOT_PAGE)
+    expect(out.chat[0].id).toBe('m0025') // the oldest 25 sit outside the window
+    expect(out.chat[CHAT_BOOT_PAGE - 1].id).toBe(`m${String(total - 1).padStart(4, '0')}`)
+    expect(await s.countChat()).toBe(total)
+  })
+
+  test('loadChatBefore pages strictly before the (ts, id) cursor — tied timestamps neither skip nor double', async () => {
+    const s = makeStore()
+    /* five rows share one millisecond: the cursor must split the tie by id */
+    await s.putChat([chatMsg('a', 1), chatMsg('b', 2), chatMsg('c', 2), chatMsg('d', 2), chatMsg('e', 3)])
+    const page = await s.loadChatBefore(2, 'd', 2)
+    expect(page.map((m) => m.id)).toEqual(['b', 'c'])
+    const rest = await s.loadChatBefore(page[0].ts, page[0].id, 10)
+    expect(rest.map((m) => m.id)).toEqual(['a'])
+    expect(await s.loadChatBefore(1, 'a', 10)).toEqual([])
+  })
+
+  test('loadChatOlderThan is strictly below the horizon; deleteChat prunes only the named ids', async () => {
+    const s = makeStore()
+    await s.putChat([chatMsg('old', 10), chatMsg('edge', 20), chatMsg('new', 30)])
+    expect((await s.loadChatOlderThan(20)).map((m) => m.id)).toEqual(['old'])
+    await s.deleteChat(['old'])
+    expect(await s.countChat()).toBe(2)
+  })
+
+  test('exportJson carries the WHOLE chat table — the boot window never leaks into a backup', async () => {
+    const s = makeStore()
+    await s.putChat(
+      Array.from({ length: CHAT_BOOT_PAGE + 10 }, (_, i) => chatMsg(`m${String(i).padStart(4, '0')}`, 1000 + i)),
+    )
+    const backup = JSON.parse(await s.exportJson()) as { chat: { id: string }[] }
+    expect(backup.chat.length).toBe(CHAT_BOOT_PAGE + 10)
+    expect(backup.chat.some((m) => m.id === 'm0000')).toBe(true) // the very first message travels
   })
 }

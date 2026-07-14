@@ -22,17 +22,33 @@ async fn apply_update(state: tauri::State<'_, PendingUpdate>) -> Result<(), Stri
     }
 }
 
+/* Clicking a native nudge toast must bring the week back: show (hidden),
+   unminimize (taskbar), focus (raise). One app command keeps window ops in
+   the shell — the webview's notification click route (#216) invokes it
+   without any extra core:window capability grants. Best-effort on purpose:
+   a window op the platform refuses must never surface as an error. */
+#[tauri::command]
+fn focus_main_window(app: AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+}
+
 /* ── gbrain sidecar: the brain that ships invisibly ─────────────────────
    The installer bundles a bun-compiled `gbrain` binary; the shell owns its
    whole lifecycle against an app-managed PGLite brain under
    app_data_dir()/brain. The webview never spawns anything — it receives
    {url, token} over one handshake (event + pull command) and talks plain
-   HTTP from there. A dead brain is never an error the user sees: MEW's
-   keyless floor carries the week. A user who already runs their own gbrain
-   opts in via Settings, which outranks the sidecar in the webview. */
+   HTTP from there. A dead brain never blocks the week (MEW's keyless floor
+   carries it) but is never invisible either: mew://brain-status reports each
+   lifecycle beat so Settings can show it. A user who already runs their own
+   gbrain opts in via Settings, which outranks the sidecar in the webview. */
 
 const SIDECAR: &str = "gbrain";
-/// after this many unexpected exits the shell gives up quietly — floor takes over
+/// after this many unexpected exits the shell gives up — floor takes over,
+/// and the webview hears "unavailable" rather than silence
 const MAX_RESTARTS: u32 = 3;
 /// PGLite's first boot loads WASM and writes a fresh datadir — generous on purpose
 const PORT_WAIT: Duration = Duration::from_secs(90);
@@ -46,6 +62,11 @@ struct BrainEndpoint {
 #[derive(Default)]
 struct BrainState {
     endpoint: Mutex<Option<BrainEndpoint>>,
+    /// last lifecycle beat ("starting" / "connected" / "retrying" /
+    /// "unavailable"; "" before the first) — the pull side of
+    /// mew://brain-status, for a webview that mounts or reloads after
+    /// beats fired (the manager thread never re-emits)
+    status: Mutex<String>,
     child: Mutex<Option<CommandChild>>,
     shutting_down: AtomicBool,
 }
@@ -53,6 +74,11 @@ struct BrainState {
 #[tauri::command]
 fn brain_endpoint(state: tauri::State<'_, BrainState>) -> Option<BrainEndpoint> {
     state.endpoint.lock().expect("brain lock").clone()
+}
+
+#[tauri::command]
+fn brain_status(state: tauri::State<'_, BrainState>) -> String {
+    state.status.lock().expect("brain status lock").clone()
 }
 
 /// Ask the OS for a free loopback port. `gbrain serve --port 0` falls back
@@ -156,7 +182,11 @@ async fn spawn_brain(
 
 /// Whole-lifecycle manager: spawn, hand the endpoint to the webview, park on
 /// the event stream, respawn on unexpected death (fresh port + token each
-/// time), give up quietly after MAX_RESTARTS — no error theater, floor mode.
+/// time), give up after MAX_RESTARTS — still no error theater, but never
+/// silent: every lifecycle beat is emitted as mew://brain-status ("starting" /
+/// "retrying" / "unavailable"; connected is the mew://brain-endpoint handshake
+/// itself) and kept in BrainState for the brain_status pull, so any webview —
+/// even one that mounts late or reloads — can answer "is my brain on?" (#249).
 fn manage_brain(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let Ok(data_dir) = app.path().app_data_dir() else { return };
@@ -165,6 +195,16 @@ fn manage_brain(app: AppHandle) {
             return;
         }
         let home = home_path.to_string_lossy().into_owned();
+        /* each beat is stored AND emitted: the event serves a live webview,
+           the stored copy serves the brain_status pull — a webview that
+           mounts after "starting" (React boots slower than this thread) or
+           reloads after the give-up must not miss the lifecycle. Plain
+           strings keep the webview decoupled from Rust types. */
+        let beat = |status: &str| {
+            *app.state::<BrainState>().status.lock().expect("brain status lock") =
+                status.to_string();
+            let _ = app.emit("mew://brain-status", status);
+        };
         /* deliberately never reset on healthy uptime: the budget is 3 deaths
            per app session, so a slow-flapping brain still converges to the
            floor instead of restarting forever; relaunching MEW renews it */
@@ -174,11 +214,15 @@ fn manage_brain(app: AppHandle) {
             if state.shutting_down.load(Ordering::SeqCst) {
                 return;
             }
+            beat("starting");
             match spawn_brain(&app, &home).await {
                 Err(e) => eprintln!("mew: brain sidecar unavailable: {e}"),
                 Ok((endpoint, child, mut rx)) => {
                     *state.child.lock().expect("child lock") = Some(child);
                     *state.endpoint.lock().expect("brain lock") = Some(endpoint.clone());
+                    /* stored only, never a beat event: the endpoint handshake
+                       below is the one connected signal (it carries the keys) */
+                    *state.status.lock().expect("brain status lock") = "connected".to_string();
                     let _ = app.emit("mew://brain-endpoint", endpoint);
                     /* park here for the life of the process, draining stdio */
                     while let Some(ev) = rx.recv().await {
@@ -196,8 +240,10 @@ fn manage_brain(app: AppHandle) {
             restarts += 1;
             if restarts > MAX_RESTARTS {
                 eprintln!("mew: brain sidecar gave up after {MAX_RESTARTS} restarts — running on the floor");
+                beat("unavailable");
                 return;
             }
+            beat("retrying");
             tokio::time::sleep(Duration::from_secs(1 << restarts.min(4))).await;
         }
     });
@@ -215,7 +261,12 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PendingUpdate(Mutex::new(None)))
         .manage(BrainState::default())
-        .invoke_handler(tauri::generate_handler![apply_update, brain_endpoint])
+        .invoke_handler(tauri::generate_handler![
+            apply_update,
+            brain_endpoint,
+            brain_status,
+            focus_main_window
+        ])
         .setup(|app| {
             /* check-on-launch: download quietly in the background, then let
                the webview ask in MEW's voice (mew://update-ready). Install

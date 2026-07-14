@@ -26,10 +26,7 @@ type Step = 0 | 1 | 2
 const STEPS = ['Why?', 'Get a key', 'Paste & test'] as const
 
 type TestState =
-  | { phase: 'idle' }
-  | { phase: 'testing' }
-  | { phase: 'ok' }
-  | { phase: 'error'; message: string }
+  { phase: 'idle' } | { phase: 'testing' } | { phase: 'ok' } | { phase: 'error'; message: string }
 
 export interface ApiKeySetupFlowProps {
   provider: RemoteProvider

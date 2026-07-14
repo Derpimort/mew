@@ -30,8 +30,9 @@ updates:
       security:
         applies-to: version-updates
         patterns:
+          # '@anthropic-ai/*' left with the hand-rolled adapters (#152); the
+          # AI SDK packages below are the path every key rides now.
           - '@noble/*'
-          - '@anthropic-ai/*'
           - '@ai-sdk/*'
           - 'ai'
           - 'hash-wasm'

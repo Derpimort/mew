@@ -210,3 +210,52 @@ export function makeChatBatcher(
     },
   }
 }
+
+/* ── condensation (#250 phase 2): old chat → one durable digest per day ──
+   Chat older than the horizon stops being scrollback and becomes knowledge:
+   the day's turns distill into ONE page the brain can recall, then the raw
+   rows prune locally (store.ts owns when; this owns what). The page is an
+   idempotent BODY upsert — no timeline entries — because the prune waits for
+   proof the write landed: a retried ingest must overwrite itself, never
+   append a second copy. The slug stays in the week/ namespace so MEW-scope
+   recall surfaces it, but is its own page (`-chat` suffix) so the day page's
+   timeline is never clobbered. */
+
+/** Cap on digest lines per day — a digest is the story, not the transcript. */
+export const CONDENSE_MAX_LINES = 20
+
+/* MEW lines that carry a committed fact (the ✓-class confirmations every
+   executor returns) — the durable half of a day's story. Prose replies and
+   parenthetical asides are conversation, not facts, and fall away. */
+const DURABLE_MEW =
+  /^(done|moved|held|released|kept|placed|started|right-sized|updated|removed|cleared|marked|remembered|captured|imported|restored|undone|paused|guarded|pulled)\b/i
+
+/** The digest page's slug for a day — named here so the store's read-back
+    proof (links of this slug must include the day page) can't drift. */
+export function condensedChatSlug(dayKey: string): string {
+  return `week/${dayKey}-chat`
+}
+
+/** A past day's chat turns → one digest page, or null when the day holds no
+    user/mew turns at all (nudges are engine chatter, not the user's story —
+    same rule as chatBatchPage). Kept lines: everything the user said, plus
+    MEW's committed facts; a day of pure prose keeps its turns rather than
+    condensing to nothing. Deterministic, so a retry re-produces the same
+    page byte-for-byte. */
+export function condenseChatPage(turns: ChatMessage[], dayKey: string): BrainPage | null {
+  const said = turns.filter((t) => t.role === 'user' || t.role === 'mew')
+  if (!said.length) return null
+  const durable = said.filter((t) => t.role === 'user' || DURABLE_MEW.test(t.body))
+  const kept = (durable.length ? durable : said).slice(0, CONDENSE_MAX_LINES)
+  const lines = kept.map(
+    (t) =>
+      `- ${t.role === 'user' ? 'you' : 'mew'}: ${t.body.replace(/\s+/g, ' ').trim().slice(0, 160)}`
+  )
+  return {
+    slug: condensedChatSlug(dayKey),
+    type: 'week',
+    tags: ['mew', 'chat-digest'],
+    body: `# chat — ${dayKey}, distilled\n\n${lines.join('\n')}\n`,
+    links: [`week/${dayKey}`],
+  }
+}

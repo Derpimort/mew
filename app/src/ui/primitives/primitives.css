@@ -451,6 +451,16 @@
 .tui-nudge .research {
   color: var(--faint);
 }
+/* option chips under a mew question (#254 · offer_choices) — same row rhythm
+   as the nudge actions, indented to the log's 34px text gutter so the chips
+   read as part of the message. The buttons themselves are the shared chip
+   primitive (.btn-chip); tokens only. */
+.chip-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 2px 34px;
+}
 .tui-btn {
   display: inline-block;
   border: 1px solid var(--line);

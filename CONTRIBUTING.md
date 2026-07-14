@@ -114,7 +114,9 @@ Two checks guard it:
 
 **Budgets** (uncompressed; the targets to keep):
 
-- **main (entry) chunk < 450 KB** — first paint depends on it; keep it tightest.
+- **main (entry) chunk < 330 KB** — first paint depends on it; keep it tightest.
+- **vendor chunk < 460 KB** — react, react-dom, zustand, dexie, lucide + the motion family
+  (motion 12.41+ ships a non-dissolvable re-export shim, so framer-motion/motion-dom ride here).
 - **lazy chunks < 300 KB** by default. The known-heavy lazy families have their own
   larger ceilings (`three`, `ai`) — all the hard budgets live in the `BUDGETS` map
   at the top of `app/scripts/check-bundle-size.mjs`; everything else holds the

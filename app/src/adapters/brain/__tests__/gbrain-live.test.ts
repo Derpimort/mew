@@ -45,7 +45,8 @@ describe.skipIf(!LIVE)('gbrain serve, live round-trip', () => {
        has an embedding key) */
     const lines = await port.recall('gym 7am', { limit: 5 })
     console.log('recall lines:', lines)
-    expect(lines.some((l) => l.includes('pref/'))).toBe(true)
+    expect(lines, 'recall must answer, not degrade (#249)').not.toBeNull()
+    expect(lines!.some((l) => l.includes('pref/'))).toBe(true)
 
     const prefs = await port.listPrefs()
     console.log('prefs:', prefs)

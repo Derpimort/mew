@@ -9,12 +9,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createBrowserNotifier, createNotifier, createTauriNotifier } from '../notify'
 
 const isTauriMock = vi.fn<() => boolean>()
-vi.mock('../desktop', () => ({ isTauri: () => isTauriMock() }))
+const focusMainWindowMock = vi.fn(() => Promise.resolve())
+vi.mock('../desktop', () => ({
+  isTauri: () => isTauriMock(),
+  focusMainWindow: () => focusMainWindowMock(),
+}))
 
 const NUDGE = { title: 'pixie · MEW', body: 'still on it?\nsecond line', tag: 'n1' }
 
 afterEach(() => vi.unstubAllGlobals())
-beforeEach(() => isTauriMock.mockReset())
+beforeEach(() => {
+  isTauriMock.mockReset()
+  focusMainWindowMock.mockClear()
+})
 
 /* ── browser channel (Alternative A) ──────────────────────────────────── */
 
@@ -120,25 +127,47 @@ describe('browser notifier', () => {
 
 /* ── native channel (Alternative B) ───────────────────────────────────── */
 
+type SentNative = { id?: number; title: string; body?: string; icon?: string }
+
 function fakeShellNotification(opts?: {
   granted?: boolean
   grantOnRequest?: boolean
   throwOnSend?: boolean
+  /** how the plugin treats onAction: capture the callback ('deliver'),
+      reject registration (the pinned desktop plugin), or lack the API */
+  clicks?: 'deliver' | 'reject' | 'absent'
 }) {
-  const sent: Array<{ title: string; body?: string; icon?: string }> = []
+  const sent: SentNative[] = []
   const requested = { count: 0 }
-  const notification = {
+  const clicks = {
+    registrations: 0,
+    fire: undefined as ((n?: { id?: number }) => void) | undefined,
+  }
+  const notification: {
+    isPermissionGranted(): Promise<boolean>
+    requestPermission(): Promise<string>
+    sendNotification(o: SentNative): void
+    onAction?(cb: (n?: { id?: number }) => void): Promise<unknown>
+  } = {
     isPermissionGranted: async () => opts?.granted ?? false,
     requestPermission: async () => {
       requested.count++
       return (opts?.grantOnRequest ?? true) ? 'granted' : 'denied'
     },
-    sendNotification: (o: { title: string; body?: string; icon?: string }) => {
+    sendNotification: (o) => {
       if (opts?.throwOnSend) throw new Error('plugin missing')
       sent.push(o)
     },
   }
-  return { sent, requested, win: { __TAURI_INTERNALS__: {}, __TAURI__: { notification } } }
+  if (opts?.clicks !== 'absent') {
+    notification.onAction = (cb) => {
+      clicks.registrations++
+      if (opts?.clicks === 'reject') return Promise.reject(new Error('no desktop listener command'))
+      clicks.fire = cb
+      return Promise.resolve({})
+    }
+  }
+  return { sent, requested, clicks, win: { __TAURI_INTERNALS__: {}, __TAURI__: { notification } } }
 }
 
 const settle = () => new Promise<void>((r) => setTimeout(r, 0))
@@ -152,7 +181,7 @@ describe('tauri notifier', () => {
     createTauriNotifier().mirror({ ...NUDGE, onClick: () => {} })
     await settle()
     expect(shell.sent).toEqual([
-      { title: NUDGE.title, body: NUDGE.body, icon: '/pixie-poly-face.svg' },
+      { id: 1, title: NUDGE.title, body: NUDGE.body, icon: '/pixie-poly-face.svg' },
     ])
   })
 
@@ -187,6 +216,82 @@ describe('tauri notifier', () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {}, __TAURI__: {} })
     expect(() => createTauriNotifier().mirror({ ...NUDGE, onClick: () => {} })).not.toThrow()
     await settle()
+  })
+
+  /* ── click-to-focus (#216) ─────────────────────────────────────────── */
+
+  it('registers the click listener once and stamps each toast with its own id', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    const notifier = createTauriNotifier()
+    notifier.mirror({ ...NUDGE, onClick: () => {} })
+    notifier.mirror({ ...NUDGE, tag: 'n2', onClick: () => {} })
+    await settle()
+    expect(shell.clicks.registrations).toBe(1)
+    expect(shell.sent.map((s) => s.id)).toEqual([1, 2])
+  })
+
+  it('a toast click focuses the window and routes to that nudge, not the newest', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    const first = vi.fn()
+    const second = vi.fn()
+    const notifier = createTauriNotifier()
+    notifier.mirror({ ...NUDGE, onClick: first })
+    notifier.mirror({ ...NUDGE, tag: 'n2', onClick: second })
+    await settle()
+    shell.clicks.fire?.({ id: 1 })
+    expect(focusMainWindowMock).toHaveBeenCalledOnce()
+    expect(first).toHaveBeenCalledOnce()
+    expect(second).not.toHaveBeenCalled()
+  })
+
+  it('a click without a recognizable id still lands on the newest nudge', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    const first = vi.fn()
+    const second = vi.fn()
+    const notifier = createTauriNotifier()
+    notifier.mirror({ ...NUDGE, onClick: first })
+    notifier.mirror({ ...NUDGE, tag: 'n2', onClick: second })
+    await settle()
+    shell.clicks.fire?.() // a future desktop payload shape we don't know yet
+    expect(focusMainWindowMock).toHaveBeenCalledOnce()
+    expect(second).toHaveBeenCalledOnce()
+    expect(first).not.toHaveBeenCalled()
+  })
+
+  it('keeps a bounded click registry — a pruned stale toast falls to the newest nudge', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    const first = vi.fn()
+    const newest = vi.fn()
+    const notifier = createTauriNotifier()
+    notifier.mirror({ ...NUDGE, onClick: first })
+    for (let i = 0; i < 7; i++) notifier.mirror({ ...NUDGE, tag: `n${i + 2}`, onClick: () => {} })
+    notifier.mirror({ ...NUDGE, tag: 'n9', onClick: newest }) // 9th — id 1 pruned
+    await settle()
+    shell.clicks.fire?.({ id: 1 })
+    expect(first).not.toHaveBeenCalled()
+    expect(newest).toHaveBeenCalledOnce()
+  })
+
+  it('still posts when the plugin rejects listener registration (pinned desktop today)', async () => {
+    const shell = fakeShellNotification({ granted: true, clicks: 'reject' })
+    vi.stubGlobal('window', shell.win)
+    expect(() => createTauriNotifier().mirror({ ...NUDGE, onClick: () => {} })).not.toThrow()
+    await settle()
+    expect(shell.clicks.registrations).toBe(1)
+    expect(shell.sent).toHaveLength(1)
+    expect(focusMainWindowMock).not.toHaveBeenCalled()
+  })
+
+  it('still posts when the plugin has no onAction API at all', async () => {
+    const shell = fakeShellNotification({ granted: true, clicks: 'absent' })
+    vi.stubGlobal('window', shell.win)
+    expect(() => createTauriNotifier().mirror({ ...NUDGE, onClick: () => {} })).not.toThrow()
+    await settle()
+    expect(shell.sent).toHaveLength(1)
   })
 })
 

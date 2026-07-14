@@ -72,7 +72,8 @@ describe('scheduler — scoreSlots (ranking)', () => {
     ]
     const ranked = scoreSlots(blocks, { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW)
     expect(ranked.length).toBeGreaterThan(0)
-    for (const c of ranked.filter((c) => c.dayKey === D)) // the blocks are all on D
+    for (const c of ranked.filter((c) => c.dayKey === D))
+      // the blocks are all on D
       for (const b of blocks)
         expect(overlaps(c.startMin, c.endMin, b.startMin, b.endMin)).toBe(false)
   })

@@ -3,7 +3,7 @@
    exactly as the Dexie vehicle does, so the engine above the seam is unchanged.
    ARCHITECTURE.md §2: "the core never changes; B/C just swap the adapter." */
 import { Database } from 'bun:sqlite'
-import { stripSecrets } from '../../../app/src/adapters/storage-port'
+import { CHAT_BOOT_PAGE, chatOrder, stripSecrets } from '../../../app/src/adapters/storage-port'
 import type { AuditEntry, PersistedState, StoragePort } from '../../../app/src/adapters/storage-port'
 import type { Block, Capture, ChatMessage, MemoryEvent, Settings } from '../../../app/src/domain/types'
 import type { SyncEntry } from '../../../app/src/adapters/calendar/types'
@@ -41,6 +41,11 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
     })()
   }
 
+  /* rows are opaque JSON blobs, so chat ordering/paging happens in JS over
+     the parsed rows — same (ts, id) order the Dexie index walks, one shared
+     comparator (storage-port.chatOrder) so the vehicles cannot drift */
+  const chatAsc = (): ChatMessage[] => allOf<ChatMessage>('chat').sort(chatOrder)
+
   const getSettings = (): Settings | null => {
     const row = db.query("SELECT json FROM kv WHERE key = 'settings'").get() as { json: string } | null
     return row ? (JSON.parse(row.json) as Settings) : null
@@ -53,7 +58,8 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
       return {
         blocks: allOf<Block>('blocks'),
         captures: allOf<Capture>('captures'),
-        chat: allOf<ChatMessage>('chat'),
+        /* the boot window, same contract as the Dexie vehicle (#250 phase 2) */
+        chat: chatAsc().slice(-CHAT_BOOT_PAGE),
         memory: allOf<MemoryEvent>('memory'),
         settings: getSettings(),
       }
@@ -72,6 +78,20 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
     },
     async putChat(msgs) {
       upsert('chat', msgs)
+    },
+    async countChat(): Promise<number> {
+      return (db.query('SELECT COUNT(*) AS n FROM chat').get() as { n: number }).n
+    },
+    async loadChatBefore(ts, id, limit) {
+      /* strictly before the (ts, id) cursor — the newest `limit`, ascending */
+      const older = chatAsc().filter((m) => m.ts < ts || (m.ts === ts && m.id < id))
+      return older.slice(-limit)
+    },
+    async loadChatOlderThan(ts) {
+      return chatAsc().filter((m) => m.ts < ts)
+    },
+    async deleteChat(ids) {
+      delByIds('chat', ids)
     },
     async putMemory(events) {
       upsert('memory', events)
@@ -97,11 +117,18 @@ export function createSqliteStorage(path = ':memory:'): StoragePort {
       db.prepare('DELETE FROM sync WHERE calId = ?').run(calId)
     },
     async exportJson(): Promise<string> {
-      const state = await this.load()
-      /* a backup travels (downloads folder, cloud drives) — API keys don't.
+      /* a backup is EVERYTHING: whole tables, never load() — load() windows
+         chat to the boot page (#250 phase 2). Keys still don't travel:
          stripSecrets owns the redaction (app storage-port.ts), shared with the
          Dexie vehicle so both strip the same set; restore re-enters this
          device's keys in Settings. */
+      const state: PersistedState = {
+        blocks: allOf<Block>('blocks'),
+        captures: allOf<Capture>('captures'),
+        chat: chatAsc(),
+        memory: allOf<MemoryEvent>('memory'),
+        settings: getSettings(),
+      }
       return JSON.stringify({ ...state, settings: stripSecrets(state.settings) }, null, 2)
     },
     async importJson(json) {

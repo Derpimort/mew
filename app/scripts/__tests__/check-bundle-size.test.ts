@@ -31,9 +31,9 @@ describe('bundle-size budget policy', () => {
   })
 
   it('fails when the main chunk regresses by 50KB past its budget (acceptance: a +50KB main regression fails)', () => {
-    // main budget is 450KB; sit at 410KB so a +50KB regression lands at 460KB.
+    // main budget is 330KB; sit at 290KB so a +50KB regression lands at 340KB.
     const chunks = healthyChunks()
-    chunks[0].bytes = 410 * KB
+    chunks[0].bytes = 290 * KB
     expect(evaluate(chunks).ok).toBe(true) // baseline within budget
 
     chunks[0].bytes += 50 * KB // the regression
@@ -84,8 +84,8 @@ describe('bundle-size budget policy', () => {
     // Spread the eager weight across chunks each under its own per-chunk cap, so
     // only the first-load *sum* is what trips — proving that budget is real.
     const eager = [
-      { file: 'a.js', name: 'index', isEntry: true, bytes: 440 * KB }, // < 450 main
-      { file: 'b.js', name: 'vendor', isEntry: false, bytes: 330 * KB }, // < 340 vendor
+      { file: 'a.js', name: 'index', isEntry: true, bytes: 320 * KB }, // < 330 main
+      { file: 'b.js', name: 'vendor', isEntry: false, bytes: 450 * KB }, // < 460 vendor
       { file: 'c.js', name: 'shared', isEntry: false, bytes: 290 * KB }, // < 300 lazy
     ]
     const allEager = new Set(['a.js', 'b.js', 'c.js'])

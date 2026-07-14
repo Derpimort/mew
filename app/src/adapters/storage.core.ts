@@ -44,6 +44,11 @@ export function createCoreStorage(baseUrl: string, token: string): StoragePort {
     putCaptures: (captures: Capture[]) => rpc<void>('putCaptures', [captures]),
     deleteCaptures: (ids: string[]) => rpc<void>('deleteCaptures', [ids]),
     putChat: (msgs: ChatMessage[]) => rpc<void>('putChat', [msgs]),
+    countChat: () => rpc<number>('countChat', []),
+    loadChatBefore: (ts: number, id: string, limit: number) =>
+      rpc<ChatMessage[]>('loadChatBefore', [ts, id, limit]),
+    loadChatOlderThan: (ts: number) => rpc<ChatMessage[]>('loadChatOlderThan', [ts]),
+    deleteChat: (ids: string[]) => rpc<void>('deleteChat', [ids]),
     putMemory: (events: MemoryEvent[]) => rpc<void>('putMemory', [events]),
     deleteMemory: (ids: string[]) => rpc<void>('deleteMemory', [ids]),
     putSettings: (s: Settings) => rpc<void>('putSettings', [s]),

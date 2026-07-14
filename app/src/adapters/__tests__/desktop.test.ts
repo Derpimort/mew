@@ -8,6 +8,8 @@ import {
   applyUpdate,
   backupPath,
   brainEndpoint,
+  brainStatus,
+  focusMainWindow,
   isTauri,
   latestBackupDate,
   oauthLoopback,
@@ -269,6 +271,48 @@ describe('brain sidecar bridge', () => {
     emit({ payload: { url: 'http://127.0.0.1:1000', token: 'a' } })
     emit({ payload: { url: 'http://127.0.0.1:2000', token: 'b' } })
     expect(seen.map((e) => e.url)).toEqual(['http://127.0.0.1:1000', 'http://127.0.0.1:2000'])
+  })
+
+  it('brainStatus pulls the last kept beat — the recovery for a late mount or reload', async () => {
+    const shell = fakeShell()
+    shell.win.__TAURI__.core.invoke = async (cmd: string) =>
+      cmd === 'brain_status' ? ('unavailable' as never) : (undefined as never)
+    vi.stubGlobal('window', shell.win)
+    expect(await brainStatus()).toBe('unavailable')
+  })
+
+  it('brainStatus is honestly empty: null in a browser, and before the first beat', async () => {
+    vi.stubGlobal('window', {})
+    expect(await brainStatus()).toBeNull()
+    const shell = fakeShell()
+    shell.win.__TAURI__.core.invoke = async () => '' as never // shell up, no beat yet
+    vi.stubGlobal('window', shell.win)
+    expect(await brainStatus()).toBeNull()
+  })
+})
+
+describe('window focus bridge', () => {
+  it('is inert outside the shell', async () => {
+    vi.stubGlobal('window', {})
+    await expect(focusMainWindow()).resolves.toBeUndefined()
+  })
+
+  it('hands off to the shell command', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    await focusMainWindow()
+    expect(shell.invokes.map((i) => i.cmd)).toContain('focus_main_window')
+  })
+
+  it('a refusing shell is swallowed, never thrown — the nudge still lives in chat', async () => {
+    const shell = fakeShell()
+    shell.win.__TAURI__.core.invoke = async () => {
+      throw new Error('window gone')
+    }
+    vi.stubGlobal('window', shell.win)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await expect(focusMainWindow()).resolves.toBeUndefined()
+    warn.mockRestore()
   })
 })
 

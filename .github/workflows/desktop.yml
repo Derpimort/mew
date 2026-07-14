@@ -178,6 +178,13 @@ jobs:
         include:
           - os: ubuntu-latest
           - os: windows-latest
+          # macOS leg (#249): macos-latest is Apple silicon — build-sidecar.mjs
+          # resolves aarch64-apple-darwin from the host rustc, and
+          # tauri.macos.conf.json swaps bundle.targets to app+dmg (the base
+          # msi/nsis/deb list would bundle nothing on darwin). Unsigned until
+          # Apple signing secrets exist; Intel needs its own leg or a
+          # universal build if anyone asks.
+          - os: macos-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -212,7 +219,7 @@ jobs:
         env:
           HAS_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: node -e "const f='desktop/src-tauri/tauri.conf.json',c=require('./'+f);c.bundle.createUpdaterArtifacts=true;require('fs').writeFileSync(f,JSON.stringify(c,null,2)+'\n');console.log('createUpdaterArtifacts set true (signing key present)')"
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # updater artifact signing — without these the build still works,
@@ -231,7 +238,8 @@ jobs:
           # it live once every platform's assets are in.
           releaseDraft: true
           # …and only assemble + upload latest.json when those signatures exist.
-          includeUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+          # (tauri-action v1 renamed includeUpdaterJson → uploadUpdaterJson; #245)
+          uploadUpdaterJson: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
 
   # flip the shared draft to a published release once all platforms have
   # uploaded — these are real builds, so they go live (no manual publish step).

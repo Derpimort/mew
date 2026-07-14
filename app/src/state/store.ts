@@ -25,8 +25,11 @@ import {
   inQuietHours,
   minOfDay,
   spell,
+  stripWeekPhrase,
   uid,
   weekKeys,
+  weekOffsetFromQuestion,
+  weekOffsetLabel,
 } from '../domain/time'
 import * as week from '../domain/week'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
@@ -50,8 +53,11 @@ import { createDexieStorage, type StoragePort } from '../adapters/storage'
 import { createGbrainHttp } from '../adapters/brain/gbrainHttp'
 import type { BrainPort } from '../adapters/brain/types'
 import {
+  type BlockEventKind,
   blockEventPage,
   chatBatchPage,
+  condenseChatPage,
+  condensedChatSlug,
   debriefPage,
   knownProjectsFrom,
   makeChatBatcher,
@@ -59,28 +65,41 @@ import {
   prefPage,
   slugify,
 } from '../adapters/brain/senses'
-import { effectiveBrain, setSidecarBrain } from '../adapters/brain/sidecar'
+import {
+  adoptSidecarSnapshot,
+  effectiveBrain,
+  effectiveBrainKey,
+  setSidecarBrain,
+  setSidecarStatus,
+  sidecarStatus,
+  type SidecarStatus,
+} from '../adapters/brain/sidecar'
 import { applyPrefs } from '../domain/prefs'
 import {
   applyUpdate,
   brainEndpoint,
+  brainStatus,
   isTauri,
   latestBackupDate,
   onBrainEndpoint,
+  onBrainStatus,
   onUpdateReady,
   readBackup,
   registerCloseFlush,
   writeBackup,
 } from '../adapters/desktop'
 import {
+  CHOICES_POSTED,
   classifyFailure,
   selectAdapters,
   type ChatTurn,
+  type ChoiceOption,
   type FreeSpec,
   type PlaceSpec,
   type ToolExecutor,
   type WeekContext,
 } from '../adapters/model'
+import { choicesActive } from '../domain/choices'
 import { createNotifier } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
@@ -103,11 +122,25 @@ const brain: BrainPort = createGbrainHttp({
 })
 /** brain-on truth for the store's own gates — same ranking the port reads */
 const brainOn = () => effectiveBrain(useMew.getState().settings).on
+/** the same truth for UI selectors: Settings health must render the EFFECTIVE
+    brain (sidecar included), never the bare toggle — a running or dead sidecar
+    must not look "Off" (#249). Reactive through useMew: brainSidecar ticks on
+    every sidecar transition, re-running any selector that calls this. */
+export const brainIsOn = (settings: Settings) => effectiveBrain(settings).on
 /** recall scope truth — the live toggle, so a 'Whole brain' choice reaches
     every recall site (heads-up, week-review, rollups), not just chat */
 const brainScope = () => useMew.getState().settings.brainScope
+/* recall races: a slow brain must never hold a turn hostage. The chat turn's
+   context ride-along stays tight; query_brain is the one tool whose whole job
+   is history, so it gets a looser bound (#249 — under the transport's 3s cap,
+   so a hang is still the race's to call). Losing the race (or a port error)
+   reads as "the brain didn't answer", never as an empty history. */
+const TURN_RECALL_RACE_MS = 1500
+const QUERY_BRAIN_RACE_MS = 2500
 /** exposed for the Settings health dot — same instance the store writes through */
 export const mewBrain = brain
+/** re-exported so the UI reads sidecar state through the store, not the adapter */
+export type { SidecarStatus } from '../adapters/brain/sidecar'
 
 /* the always-on pref slice: brain-backed when connected, memory-backed
    otherwise. Cached per session; refreshed after every remember. */
@@ -171,7 +204,15 @@ export interface MewState {
   hydrated: boolean
   blocks: Block[]
   captures: Capture[]
+  /** The hydrated chat window (#250 phase 2): boot loads only the newest
+      page from storage; scrolling up prepends older pages via
+      loadEarlierChat. Appends land at the tail exactly as before — every
+      tail-anchored reader (thread building, live streaming, nudge lookups)
+      sees the same world it always did. */
   chat: ChatMessage[]
+  /** True while storage holds chat older than the window's head — drives the
+      session log's "· earlier ·" sentinel past the in-memory rows. */
+  chatHasEarlier: boolean
   memory: import('../domain/types').MemoryEvent[]
   settings: Settings
 
@@ -191,6 +232,11 @@ export interface MewState {
   /** Draft prompt text — held in the store so it survives a screen switch
       (Focus/Week/Settings unmount the composer, which would drop local state). */
   promptDraft: string
+  /** Non-persisted: the desktop sidecar brain's lifecycle, live from the
+      shell's mew://brain-status beats ('off' on the web, or before the first
+      beat). Settings renders it so a dead built-in brain is visibly dead —
+      the user can always answer "is my brain on?" (#249). */
+  brainSidecar: SidecarStatus
 
   engine: EngineState
   lastActivityMs: number
@@ -215,6 +261,11 @@ export interface MewState {
   commandPaletteOpen: boolean
 
   hydrate(): Promise<void>
+  /** Prepend the previous page of chat from storage onto the window (#250
+      phase 2) — the session log calls this once its in-memory head is
+      exhausted. Returns how many messages arrived (0 = history fully loaded);
+      flips chatHasEarlier off on the final page. Concurrent calls coalesce. */
+  loadEarlierChat(): Promise<number>
   tick(): void
   activity(): void
   interruption(): void
@@ -224,11 +275,18 @@ export interface MewState {
       committed stays — an abort is the user's call, never a rollback, and
       never replayed through a fallback. No-op when nothing is mewing. */
   stopSpeaking(): void
-  /** Read-only history answer: real sums from the live week + brain recall
-      color. Never mutates — chat is where the reply lands, via the tool. */
+  /** Read-only history answer: real sums from the asked week — this one, or
+      a past one ("last week", "two weeks ago") — + brain recall color. Never
+      mutates — chat is where the reply lands, via the tool. */
   queryBrain(question: string): Promise<string>
   toggleComplete(blockId: string): void
   nudgeAction(msgId: string, actionId: string): void
+  /** Pick an option chip (#254): mark it picked, then post its reply as an
+      ordinary user turn — the same speak() path as typing, so the model sees
+      a normal message and the week still changes only via tools. Inert by
+      law: a no-op once any option was picked, once a newer user message
+      landed, or while a turn is mewing (the composer is closed then too). */
+  pickChoice(msgId: string, choiceId: string): Promise<void>
   focusDay(key: string | null): void
   setPage(page: 'week' | 'settings'): void
   setView(view: 'focus' | 'week'): void
@@ -344,7 +402,7 @@ function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   return ` — note: it overlaps ${parts.join(' and ')}`
 }
 
-function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
+function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = false): WeekContext {
   const now = new Date(s.nowMs)
   const todayKey = dayKey(now)
   const live = liveNow(s.blocks, todayKey, minOfDay(now))
@@ -371,6 +429,8 @@ function weekContext(s: MewState, recallLines: string[] = []): WeekContext {
     mewsToday: live.mewsToday,
     insightLines: computeInsights(s.memory, agg, now).lines,
     recallLines,
+    recallDegraded,
+    brainOn: brainOn(),
     prefLines: prefLinesFrom(s.memory, brainOn() ? brainPrefs : null),
   }
 }
@@ -499,21 +559,145 @@ export const useMew = create<MewState>((set, get) => {
      again with fresh credentials after a health-restart; module state in
      adapters/brain/sidecar absorbs every ordering. Each handshake also
      refreshes the pref cache: the brain that just came on must serve the
-     always-on rulebook, not only receive the senses' writes. */
+     always-on rulebook, not only receive the senses' writes. The shell's
+     status beats land in state (brainSidecar) so Settings renders the
+     lifecycle live — a spawn that never succeeds is visible, not silent. */
   let sidecarSubscribed = false
   function connectSidecarBrain() {
     if (sidecarSubscribed || !isTauri()) return
     sidecarSubscribed = true
+    onBrainStatus((status) => {
+      setSidecarStatus(status)
+      set({ brainSidecar: sidecarStatus() })
+    })
     onBrainEndpoint((e) => {
       setSidecarBrain(e)
+      set({ brainSidecar: sidecarStatus() })
       refreshBrainPrefs()
+      maybeBackfillBrain()
     })
-    void brainEndpoint().then((e) => {
+    /* pull both snapshots too: the shell beats "starting" while React is
+       still mounting, and a reload after the give-up gets no beat ever —
+       event-only status would show the retired "Off" copy for the first-boot
+       PGLite window (up to 90s) and forget "unavailable" for the session */
+    void Promise.all([brainEndpoint(), brainStatus()]).then(([e, s]) => {
+      adoptSidecarSnapshot(e, s)
       if (e) {
-        setSidecarBrain(e)
         refreshBrainPrefs()
+        maybeBackfillBrain() // pre-hydrate adoptions are re-offered by hydrate's own call
       }
+      set({ brainSidecar: sidecarStatus() })
     })
+  }
+
+  /* ── backfill-on-connect (#249 fix 4) ──────────────────────────────
+     Ingest no-ops while no brain is on, so every block event of a brainless
+     stretch used to be lost to the brain forever. When one becomes reachable,
+     replay the recent events it never saw through the same sense
+     (blockEventPage). The ledger is a per-brain watermark
+     (settings.brainBackfillAt): an event ts ≤ the mark has had its ONE offer
+     — live dispatch or replay — because add_timeline_entry cannot be deduped
+     from this side (the gbrain server is an external pin; page upserts are
+     safe, timeline appends are not). Each event is claimed BEFORE it is
+     sent, one at a time: a quit mid-replay costs at most the event in
+     flight, and the next connect resumes at the mark instead of forfeiting
+     the tail — while a sent-but-unclaimed event (the duplicate window) can
+     never exist. The claim persists per event for the same reason: batching
+     the writes would reopen that window across a quit. */
+  const BACKFILL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000 // raw events outlive it (56d consolidation)
+  const BACKFILL_MAX_EVENTS = 400 // a decade of imported history must not turn connect into a flood
+  /* one live replay pass per brain: a newer pass (second connect beat, or a
+     sidecar restart mid-replay) re-selects from the advanced mark and
+     supersedes the old loop, which aborts at its next event — between them,
+     every event is offered exactly once */
+  const backfillPass = new Map<string, number>()
+
+  /** Advance one brain's offer mark — monotonic, persisted. The key is the
+      caller's truth: live dispatch claims for the brain it dispatches to,
+      a replay claims for the brain it captured at start. */
+  function claimBrainOffer(key: string, ts: number) {
+    const s = get()
+    if (ts <= (s.settings.brainBackfillAt?.[key] ?? 0)) return
+    const settings = {
+      ...s.settings,
+      brainBackfillAt: { ...s.settings.brainBackfillAt, [key]: ts },
+    }
+    set({ settings })
+    persistSettings(settings)
+  }
+
+  /** The one path a live block event reaches the brain. Dispatch and claim
+      are inseparable: once offered — even if this send silently fails while
+      the sidecar is between deaths — the event is never offered again. `ts`
+      must be the ts the matching MemoryEvent is logged with, or a later
+      replay window could half-overlap the event and double it. */
+  function ingestBlockEvent(b: Block, kind: BlockEventKind, atMin: number, ts: number) {
+    if (brainOn()) claimBrainOffer(effectiveBrainKey(get().settings), ts)
+    const known = knownProjectsFrom(get().blocks.map((x) => x.title)).keys()
+    void brain.ingest(blockEventPage(b, kind, b.dayKey, atMin, known))
+  }
+
+  /** Replay what the effective brain missed — fire-and-forget, off-gated,
+      never blocks the UI. Hydration-gated too: claiming over an unloaded
+      memory would mark events as offered that were never even seen. Only
+      events carrying the full block shape replay (title, tag, times) —
+      a page can't be honest about a block it can't describe. */
+  function maybeBackfillBrain() {
+    const s = get()
+    if (!s.hydrated || !effectiveBrain(s.settings).on) return
+    const key = effectiveBrainKey(s.settings)
+    const mark = s.settings.brainBackfillAt?.[key]
+    const since = Math.max(mark ?? 0, nowFn() - BACKFILL_WINDOW_MS)
+    const events = s.memory
+      .filter(
+        (e) =>
+          (e.kind === 'completed' || e.kind === 'rolled') &&
+          e.ts > since &&
+          e.title != null &&
+          e.tag != null &&
+          e.startMin != null
+      )
+      .sort((a, b) => a.ts - b.ts)
+      .slice(-BACKFILL_MAX_EVENTS)
+    if (!events.length) return // an empty pass claims nothing and supersedes nothing
+    const pass = (backfillPass.get(key) ?? 0) + 1
+    backfillPass.set(key, pass)
+    const known = [
+      ...knownProjectsFrom([
+        ...s.blocks.map((b) => b.title),
+        ...events.map((e) => e.title!),
+      ]).keys(),
+    ]
+    void (async () => {
+      for (const ev of events) {
+        /* abort while the loop holds the thread, before claiming or sending:
+           — a newer pass owns this brain (it re-selected from the advanced
+             mark, so stopping here is what keeps the handover overlap-free);
+           — the effective brain is no longer the one this replay claimed
+             for: the port reads config live, so the remainder would land on
+             the NEW brain while claimed under the old key — and the new
+             brain's own pass offers these same events. Its ledger stops at
+             the last event actually offered, so switching back resumes
+             exactly there; at most the event in flight straddles a switch. */
+        if (backfillPass.get(key) !== pass || effectiveBrainKey(get().settings) !== key) return
+        claimBrainOffer(key, ev.ts)
+        /* the sense reads only title/tag/times — the rest is shape filler */
+        const b: Block = {
+          id: ev.id,
+          title: ev.title!,
+          tag: ev.tag!,
+          dayKey: ev.dayKey,
+          startMin: ev.startMin!,
+          endMin: ev.endMin ?? ev.startMin! + (ev.plannedMin ?? 30),
+          protected: false,
+          status: 'open',
+          calendarRefs: [],
+          estimateSource: 'user',
+        }
+        const kind: BlockEventKind = ev.kind === 'completed' ? 'completed' : 'rolled'
+        await brain.ingest(blockEventPage(b, kind, ev.dayKey, minOfDay(new Date(ev.ts)), known))
+      }
+    })()
   }
 
   /* chat → brain: user/mew turns batch into one timeline write per quiet
@@ -522,6 +706,70 @@ export const useMew = create<MewState>((set, get) => {
     const page = chatBatchPage(turns, day)
     if (page) void brain.ingest(page)
   })
+
+  /* ── chat condensation (#250 phase 2) ────────────────────────────────
+     At the day-debrief moment, chat older than the horizon distills into one
+     durable digest page per day (senses.condenseChatPage) and the raw rows
+     prune — locally bounded store, old conversations recallable instead of
+     dead scrollback. Two hard laws:
+       · brainless profiles prune NOTHING — no brain, no condensation, ever;
+       · a day prunes only on PROOF its digest landed. ingest never throws
+         (failures are swallowed to a health flip), so proof is a read-back:
+         the digest page's links must include the day page. The digest is an
+         idempotent body upsert, so a pass that failed mid-way simply re-runs
+         next debrief — history is never destroyed un-condensed.
+     The horizon rounds to a DAY boundary: only whole days condense, so one
+     day is distilled exactly once and its digest never self-overwrites with
+     a partial remainder. */
+  const CONDENSE_HORIZON_DAYS = 14
+  let condenseInFlight = false
+  /* the earlier-page loader's single-flight handle (loadEarlierChat) — page
+     size mirrors the session log's render page, but any size stays correct:
+     the log reveals exactly what a page returns */
+  const EARLIER_CHAT_PAGE = 50
+  let earlierChatPending: Promise<number> | null = null
+  async function condenseOldChat(): Promise<void> {
+    if (condenseInFlight || !brainOn()) return
+    condenseInFlight = true
+    try {
+      const todayKey = dayKey(new Date(get().nowMs))
+      /* everything before the first kept day (today − horizon) condenses */
+      const cutoffTs = fromDayKey(addDaysKey(todayKey, -CONDENSE_HORIZON_DAYS)).getTime()
+      const old = await storage.loadChatOlderThan(cutoffTs)
+      if (!old.length) return
+      const byDay = new Map<string, ChatMessage[]>()
+      for (const m of old) {
+        const k = dayKey(new Date(m.ts))
+        const day = byDay.get(k)
+        if (day) day.push(m)
+        else byDay.set(k, [m])
+      }
+      const pruneIds: string[] = []
+      for (const [day, msgs] of byDay) {
+        const page = condenseChatPage(msgs, day)
+        if (page) {
+          await brain.ingest(page)
+          /* the proof: the digest's link to its day page is readable back.
+             Absent (brain down, write lost), the day stays — next debrief
+             retries the same upsert. */
+          const linked = await brain.links(condensedChatSlug(day))
+          if (!linked.includes(`week/${day}`)) continue
+        }
+        /* page === null: the day held only nudges — engine chatter carries
+           no user story, so it prunes without an ingest */
+        for (const m of msgs) pruneIds.push(m.id)
+      }
+      if (!pruneIds.length) return
+      await storage.deleteChat(pruneIds)
+      /* the window may reach that far back on a small profile — drop the
+         pruned rows from live state so the log and storage agree */
+      const drop = new Set(pruneIds)
+      set((s) => ({ chat: s.chat.filter((m) => !drop.has(m.id)) }))
+      queueBackup() // the desktop's on-disk copy converges to the pruned table
+    } finally {
+      condenseInFlight = false
+    }
+  }
 
   function post(msgs: ChatMessage[], opts?: { mirror?: boolean }) {
     if (!msgs.length) return
@@ -639,7 +887,7 @@ export const useMew = create<MewState>((set, get) => {
         scope: brainScope(),
       })
       .then((lines) => {
-        weekColor = { day: todayKey, lines }
+        weekColor = { day: todayKey, lines: lines ?? [] } // color-only: degraded = no color
       })
       .catch(() => {
         weekColor = { day: todayKey, lines: [] }
@@ -672,7 +920,7 @@ export const useMew = create<MewState>((set, get) => {
           scope: brainScope(),
         })
         .then((lines) => {
-          personRecall[b.id] = lines
+          personRecall[b.id] = lines ?? [] // color-only: degraded = no color
         })
         .catch(() => {
           personRecall[b.id] = [] // silence, not error — the floor never hears about it
@@ -721,9 +969,12 @@ export const useMew = create<MewState>((set, get) => {
         post([msg], { mirror: s.settings.browserMirror })
       }
       /* the day's story is durable knowledge, not just chat — when a brain
-         is connected it lands on the day page for week-in-review to read */
+         is connected it lands on the day page for week-in-review to read.
+         The same once-an-evening moment runs the condensation pass: old chat
+         distills into digests and prunes (#250 phase 2, brain-gated). */
       if (n.type === 'debrief' && brainOn()) {
         void brain.ingest(debriefPage(n.body, todayKey))
+        void condenseOldChat()
       }
     }
   }
@@ -1237,46 +1488,110 @@ export const useMew = create<MewState>((set, get) => {
     return `Remembered — ${pref.match} ${pref.value}.`
   }
 
-  /** History/entity answers: the live week supplies the NUMBERS (rollup over
+  /* Words a single-token subject capture must never be — pronouns,
+     determiners, quantifiers, wh-words, counts. The rollup filter matches
+     subjects as raw slug substrings, so these function words hide inside
+     real titles ("my" ⊂ anatomy, "many" ⊂ germany) and would sum the wrong
+     blocks with full confidence; an unresolved subject answers honestly
+     instead. Multi-word captures pass through untouched. */
+  const SUBJECT_STOP = new Set([
+    ...['my', 'our', 'your', 'his', 'her', 'their', 'its', 'me', 'us', 'them', 'it', 'i'],
+    ...['the', 'a', 'an', 'this', 'that', 'these', 'those'],
+    ...['what', 'which', 'whose', 'how'],
+    ...['any', 'all', 'some', 'few', 'more', 'most', 'many', 'much', 'several'],
+    ...['both', 'each', 'every', 'either', 'neither', 'no', 'none', 'other'],
+    ...['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'],
+    ...['first', 'last', 'past', 'next', 'previous', 'recent', 'earlier', 'final'],
+  ])
+
+  /** History/entity answers: the asked week supplies the NUMBERS (rollup over
       real blocks — never an estimate), the brain supplies citable color. The
-      week of the question is this week; "eaten" means held clock time. The
-      subject is matched as a title fragment, so projects, tasks, and people
-      all answer — and a name only ever spoken to the keyless floor (which
-      lowercases titles) still resolves. */
+      question names its week: "last week" / "two weeks ago" reach back through
+      block history (kept forever), so past weeks answer with real sums even
+      with no brain; no time phrase means this week. "Eaten" means held clock
+      time. The subject is matched as a title fragment, so projects, tasks,
+      and people all answer — and a name only ever spoken to the keyless floor
+      (which lowercases titles) still resolves. */
   async function execQueryBrain(question: string): Promise<string> {
     const s = get()
     const known = knownProjectsFrom(s.blocks.map((b) => b.title))
-    const qSlug = `-${slugify(question)}-`
-    /* subject: a declared project named in the question, else the noun the
-       question's own shape points at ("how much has X eaten/taken") */
-    const projectHit = [...known.entries()].find(([slug]) => qSlug.includes(`-${slug}-`))
+    /* a subject NAMED with week words ("Last week review", asked by name)
+       must not be mis-windowed by the phrase parser: when a known project
+       or a block title that carries a week phrase matches the un-stripped
+       question, it IS the subject and the window stays the live week */
+    const rawSlug = `-${slugify(question)}-`
+    const namedHit: [string, string] | null =
+      [...known.entries()].find(
+        ([slug, name]) => stripWeekPhrase(name) !== name && rawSlug.includes(`-${slug}-`)
+      ) ??
+      s.blocks
+        .map((b) => b.title.split('—')[0].trim())
+        .filter((t) => t && stripWeekPhrase(t) !== t)
+        .map((t): [string, string] => [slugify(t), t])
+        .find(([slug]) => slug && rawSlug.includes(`-${slug}-`)) ??
+      null
+    /* which Mon–Sun window the question means — and the question with the
+       week phrase removed, so "gym last week" never reads as one title */
+    const offset = namedHit ? 0 : weekOffsetFromQuestion(question)
+    const subjectText = namedHit ? question : stripWeekPhrase(question)
+    const label = weekOffsetLabel(offset)
+    const qSlug = `-${slugify(subjectText)}-`
+    /* subject: the week-worded name if one matched, else a declared project
+       named in the question, else the noun the question's own shape points
+       at ("how much has X eaten", "how long did X take", "my X sessions") —
+       single-token captures are stoplist-checked so a bare function word
+       never becomes a subject */
+    const projectHit =
+      namedHit ?? [...known.entries()].find(([slug]) => qSlug.includes(`-${slug}-`))
+    const unstopped = (w: string | undefined) =>
+      w && !SUBJECT_STOP.has(w.toLowerCase()) ? w : null
     const asked =
-      question.match(/\b(?:has|have|did)\s+(.+?)\s+(?:eaten|taken|cost|consumed|used)\b/i)?.[1] ??
-      question.match(
+      subjectText.match(
+        /\b(?:has|have|did)\s+(.+?)\s+(?:eaten|taken|cost|consumed|used)\b/i
+      )?.[1] ??
+      subjectText.match(
         /\b(?:time|much|long)\s+(?:on|for|with)\s+(.+?)(?:\s+this\s+week|[?.!]|$)/i
       )?.[1] ??
+      /* duration shape only — the final take/took/taken is the verb, so the
+         greedy capture keeps a subject that itself contains "take" whole */
+      unstopped(
+        subjectText.match(
+          /\bhow\s+(?:long|much\s+time)\s+(?:did|does|has|have)\s+(.+)\s+(?:take|took|taken)\b/i
+        )?.[1]
+      ) ??
+      unstopped(subjectText.match(/\b([\w'-]+)\s+sessions?\b/i)?.[1]) ??
       null
     const slug = projectHit?.[0] ?? (asked ? slugify(asked) : null)
     const name = projectHit?.[1] ?? asked?.trim() ?? null
 
-    /* recall rides along when a brain is connected — capped, optional-path */
+    /* recall rides along when a brain is connected — raced, optional-path;
+       it gets the question verbatim, week phrase and all. null from either
+       leg (port error, race timeout) means the brain DIDN'T ANSWER — kept
+       apart from an empty answer so the tails below stay honest (#249) */
     let recall: string[] = []
+    let brainAnswered = true
     if (brainOn()) {
-      recall = await Promise.race([
+      const got = await Promise.race([
         brain.recall(question, { limit: 3, scope: brainScope() }),
-        new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1200)),
-      ]).catch(() => [])
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), QUERY_BRAIN_RACE_MS)),
+      ]).catch(() => null)
+      if (got == null) brainAnswered = false
+      else recall = got
     }
 
     if (slug && name) {
-      const days = weekKeys(new Date(s.nowMs))
+      const days = weekKeys(new Date(s.nowMs), offset)
       const r = week.rollup(s.blocks, days, (b) => slugify(b.title).includes(slug))
       if (r.plannedMin > 0 || r.rolled > 0) {
         const h = (min: number) =>
           min % 60 === 0 ? `${min / 60}h` : `${Math.round((min / 60) * 10) / 10}h`
+        const openMin = r.plannedMin - r.doneMin
         const parts = [
-          `${name} this week: ${h(r.plannedMin)} across ${r.done + r.open} block${r.done + r.open === 1 ? '' : 's'}`,
-          `${h(r.doneMin)} done, ${h(r.plannedMin - r.doneMin)} still open`,
+          `${name} ${label}: ${h(r.plannedMin)} across ${r.done + r.open} block${r.done + r.open === 1 ? '' : 's'}`,
+          /* a past week that finished clean needs no "0h still open" tail */
+          offset < 0 && openMin === 0
+            ? `${h(r.doneMin)} done`
+            : `${h(r.doneMin)} done, ${h(openMin)} still open`,
         ]
         if (r.rolled) parts.push(`${r.rolled} rolled forward`)
         const lines = recall.length ? `\n${recall.join('\n')}` : ''
@@ -1284,11 +1599,39 @@ export const useMew = create<MewState>((set, get) => {
       }
     }
 
-    /* no local numbers — recall may still know it; absent both, say so honestly */
+    /* no local numbers — recall may still know it; absent both, say so
+       honestly, naming the week the question asked about. "Or the brain" is
+       claimed only when the brain really answered: an unanswering brain is
+       named as such (it may know more) — its silence is never passed off as
+       an empty history (#249) */
     if (recall.length) return recall.join('\n')
-    return `I can't see ${name ?? 'that'} yet — nothing in this week's blocks${
-      brainOn() ? ' or the brain' : ''
-    } mentions it.`
+    const brainChecked = brainOn() && brainAnswered ? ' or the brain' : ''
+    const brainSilent =
+      brainOn() && !brainAnswered
+        ? ` The brain didn't answer just now — it may know more; worth asking again in a moment.`
+        : ''
+    if (offset < 0)
+      return `I can't see ${name ?? 'that'} ${label} — nothing in that week's blocks${brainChecked} mentions it.${brainSilent}`
+    return `I can't see ${name ?? 'that'} yet — nothing in this week's blocks${brainChecked} mentions it.${brainSilent}`
+  }
+
+  /** The ask-a-question / suggestions engine (#254): post one mew message
+      carrying clickable choice chips. Chat-only by law — the week never
+      changes here; a pick posts the choice's reply as an ordinary user turn
+      (pickChoice), so tools remain the only mutation path. The returned
+      string leads with CHOICES_POSTED: the model reads it as "end your turn",
+      the keyless floor reads it as "stay quiet — the chips ARE the reply". */
+  function execOfferChoices(prompt: string, options: ChoiceOption[]): string {
+    post([
+      {
+        id: uid(),
+        role: 'mew',
+        body: prompt,
+        ts: nowFn(),
+        choices: options.map((o, i) => ({ id: `c${i + 1}`, label: o.label, reply: o.reply })),
+      },
+    ])
+    return `${CHOICES_POSTED}: ${options.map((o) => `"${o.label}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
   }
 
   function execRemove(query: string, opts: { at?: string; all?: boolean } = {}): string {
@@ -1306,7 +1649,31 @@ export const useMew = create<MewState>((set, get) => {
           ? `${list[0]} or ${list[1]}`
           : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
       const base = query.split('—')[0].trim()
-      return `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`
+      /* the question rides a chips message (#254) — the same structure the
+         offer_choices tool posts, so the keyless floor gets clickable answers
+         too. Each reply is a complete remove the parser (and any model) acts
+         on; times dedupe because `at` pins by start minute — one chip removes
+         exactly what typing that time would. ≤5 chips: 4 times + the sweep. */
+      const seen = new Set<string>()
+      const timeOptions = candidates
+        .filter((b) => {
+          const t = fmtTime(b.startMin)
+          if (seen.has(t)) return false
+          seen.add(t)
+          return true
+        })
+        .slice(0, 4)
+        .map((b) => ({
+          label: `the ${fmtTime(b.startMin)}`,
+          reply: `remove ${base} ${fmtTime(b.startMin)}`,
+        }))
+      return execOfferChoices(
+        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`,
+        [
+          ...timeOptions,
+          { label: candidates.length === 2 ? 'both' : 'all of them', reply: `remove all ${base}` },
+        ]
+      )
     }
     if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
     /* "drop all the gym sessions" (#159): an explicit all over a recurring block
@@ -1588,6 +1955,7 @@ export const useMew = create<MewState>((set, get) => {
     blocks: [],
     captures: [],
     chat: [],
+    chatHasEarlier: false,
     memory: [],
     settings: DEFAULT_SETTINGS,
 
@@ -1601,6 +1969,7 @@ export const useMew = create<MewState>((set, get) => {
     thinking: false,
     workingStatus: null,
     promptDraft: '',
+    brainSidecar: 'off',
 
     engine: { lastFired: {}, lastDriftBlockId: null },
     lastActivityMs: nowFn(),
@@ -1631,6 +2000,7 @@ export const useMew = create<MewState>((set, get) => {
           blocks: s.blocks,
           memory: s.memory,
           chat: s.chat,
+          chatHasEarlier: false, // a fresh seed IS the whole history
           settings: s.settings,
           hydrated: true,
           nowMs: nowFn(),
@@ -1665,10 +2035,14 @@ export const useMew = create<MewState>((set, get) => {
           })()
         }
       } else {
+        /* loaded.chat is the newest window (#250 phase 2); counting after the
+           load keeps the flag exact even if load's recovery cleared the table */
+        const chatTotal = await storage.countChat().catch(() => loaded.chat.length)
         set({
           blocks: loaded.blocks,
           captures: loaded.captures,
           chat: loaded.chat,
+          chatHasEarlier: chatTotal > loaded.chat.length,
           memory: loaded.memory,
           // merge so settings keys added in newer versions (pet, themeMode, …) backfill
           settings: { ...DEFAULT_SETTINGS, ...(loaded.settings ?? {}) },
@@ -1683,6 +2057,32 @@ export const useMew = create<MewState>((set, get) => {
         stagedUpdateVersion = null
       }
       refreshBrainPrefs()
+      /* a brain already on at boot (persisted Settings opt-in, or a sidecar
+         adopted before memory loaded) gets its offer now that memory exists */
+      maybeBackfillBrain()
+    },
+
+    async loadEarlierChat() {
+      /* one page in flight at a time: the sentinel can fire repeatedly while
+         a slow read runs, and a doubled prepend would duplicate rows */
+      if (earlierChatPending) return earlierChatPending
+      const head = get().chat[0]
+      if (!head || !get().chatHasEarlier) return 0
+      earlierChatPending = (async () => {
+        try {
+          const older = await storage.loadChatBefore(head.ts, head.id, EARLIER_CHAT_PAGE)
+          if (older.length) set((s) => ({ chat: [...older, ...s.chat] }))
+          /* a short page means the table's head is reached — the sentinel
+             yields to the beginning-of-session endstop */
+          if (older.length < EARLIER_CHAT_PAGE) set({ chatHasEarlier: false })
+          return older.length
+        } catch {
+          return 0 // a failed read leaves the flag on — scrolling retries
+        } finally {
+          earlierChatPending = null
+        }
+      })()
+      return earlierChatPending
     },
 
     tick() {
@@ -1829,6 +2229,14 @@ export const useMew = create<MewState>((set, get) => {
           working('remembering that…')
           return execRemember(pref)
         },
+        offerChoices: (prompt, options) => {
+          /* chat-only, but the ask is now on screen — a fallback replay would
+             double it, so the turn counts as acted. Never a snapshot: there is
+             nothing week-side to undo (#254 law: this tool mutates nothing). */
+          acted = true
+          working('offering choices…')
+          return execOfferChoices(prompt, options)
+        },
         undoLast: () => {
           /* the reversal itself isn't a fresh action: it consumes the snapshot
              rather than taking one, so a misfired "undo that" can't be undone
@@ -1839,24 +2247,30 @@ export const useMew = create<MewState>((set, get) => {
       }
 
       try {
-        /* hybrid recall rides into context — capped so a slow brain can
-           never hold the turn hostage (history informs; liveNow decides) */
+        /* hybrid recall rides into context — raced so a slow brain can never
+           hold the turn hostage (history informs; liveNow decides). null from
+           either leg = the brain didn't answer: the context carries an
+           explicit degraded marker instead of a silence that would read as an
+           empty history (#249) */
         let recallLines: string[] = []
+        let recallDegraded = false
         if (brainOn()) {
           const today = week
             .blocksForDay(get().blocks, dayKey(new Date(get().nowMs)))
             .map((b) => b.title.split('—')[0].trim())
             .join(', ')
-          recallLines = await Promise.race([
+          const got = await Promise.race([
             brain.recall(`${text} · today: ${today}`, { limit: 5, scope: brainScope() }),
-            new Promise<string[]>((resolve) => setTimeout(() => resolve([]), 1500)),
-          ])
+            new Promise<null>((resolve) => setTimeout(() => resolve(null), TURN_RECALL_RACE_MS)),
+          ]).catch(() => null)
+          if (got == null) recallDegraded = true
+          else recallLines = got
         }
-        const ctx = weekContext(get(), recallLines)
+        const ctx = weekContext(get(), recallLines, recallDegraded)
         const thread = buildThread(get().chat)
         const adapters = selectAdapters(get().settings, () => new Date(nowFn()))
         const failed: string[] = []
-        let lastRemoteErr: unknown = null // why a remote adapter threw, for honest fallback copy
+        let lastModelErr: unknown = null // why a model adapter threw, for honest fallback copy
 
         for (const adapter of adapters) {
           let msgId: string | null = null
@@ -1908,23 +2322,29 @@ export const useMew = create<MewState>((set, get) => {
             }
             if (failed.length && adapter.id === 'rules') {
               /* an upstream adapter threw and we've landed on the rules floor.
-                 Tell the truth about WHY: a rejected key (401/403) or unknown
-                 model (404) is PERMANENT — the user must fix it in Settings, so
-                 calling it "busy" (and implying a retry that never happened) sends
-                 them looking in the wrong place. Transient blips were already
-                 retried in-adapter (#116). */
-              const remoteFailed = failed.includes('anthropic') || failed.includes('openai')
-              const kind = classifyFailure(lastRemoteErr)
+                 Tell the truth about WHY, per class (#153) — the fixes live in
+                 different places: a rejected key (401/403) or unknown model
+                 (404) is PERMANENT and points at Settings; a refused request
+                 (400/422) is the model saying no — for a local model, usually
+                 one that can't run tools; busy is transient. Only the LOCAL
+                 busy line claims a retry, because only the local adapter
+                 retries (the SDK's backoff) — remote fails fast to this floor
+                 by design (#156), so its copy never claims a retry that didn't
+                 happen. */
+              const local = failed.includes('ollama')
+              const kind = classifyFailure(lastModelErr)
               post([
                 mewMsg(
-                  !remoteFailed
-                    ? `(the local model was busy — I retried, then handled it myself.)`
-                    : kind === 'auth'
-                      ? `(your API key was rejected — open Settings to check it. I handled this one myself.)`
-                      : kind === 'model'
-                        ? `(I couldn't reach that model — check the model name in Settings. I handled this myself.)`
+                  kind === 'auth'
+                    ? `(your API key was rejected — open Settings to check it. I handled this one myself.)`
+                    : kind === 'model'
+                      ? `(I couldn't reach that model — check the model name in Settings. I handled this myself.)`
+                      : kind === 'rejected'
+                        ? `(the model rejected that request — I handled this myself.)`
                         : kind === 'busy'
-                          ? `(the model was busy — I retried, then handled it myself.)`
+                          ? local
+                            ? `(the local model was busy — I retried, then handled it myself.)`
+                            : `(the model was busy — I handled this one myself.)`
                           : `(I couldn't reach the model just now — I handled this myself.)`
                 ),
               ])
@@ -1955,10 +2375,12 @@ export const useMew = create<MewState>((set, get) => {
               ])
               return
             }
-            /* surface WHY (never swallow): the remote adapter's error drives the
-               honest fallback copy above, and every non-rules failure is logged
-               so a key/model/network cause is diagnosable in devtools. */
-            if (adapter.id === 'anthropic' || adapter.id === 'openai') lastRemoteErr = err
+            /* surface WHY (never swallow): the failed adapter's error drives
+               the honest per-class fallback copy above (#153, local included —
+               a 404'd model tag or a tool-less local model must not read as
+               "busy"), and every non-rules failure is logged so a key/model/
+               network cause is diagnosable in devtools. */
+            if (adapter.id !== 'rules') lastModelErr = err
             if (adapter.id !== 'rules') log.error('model/adapter', { adapter: adapter.id }, err)
             failed.push(adapter.id)
           }
@@ -2005,15 +2427,7 @@ export const useMew = create<MewState>((set, get) => {
       if (target.status !== 'open') return
       const nowMs = nowFn()
       setBlocks(week.complete(s.blocks, blockId, nowMs))
-      void brain.ingest(
-        blockEventPage(
-          target,
-          'completed',
-          target.dayKey,
-          minOfDay(new Date(nowMs)),
-          knownProjectsFrom(s.blocks.map((b) => b.title)).keys()
-        )
-      )
+      ingestBlockEvent(target, 'completed', minOfDay(new Date(nowMs)), nowMs)
       logMemory({
         kind: 'completed',
         dayKey: target.dayKey,
@@ -2028,6 +2442,29 @@ export const useMew = create<MewState>((set, get) => {
       set({ celebratePulse: nowMs })
       const done = { ...target, status: 'done' as const, completedAt: nowMs }
       fireEventNudges({ justCompleted: done })
+    },
+
+    async pickChoice(msgId: string, choiceId: string) {
+      const s = get()
+      if (s.thinking) return // the composer is closed while mewing; chips match it
+      const msg = s.chat.find((m) => m.id === msgId)
+      const choice = msg?.choices?.find((c) => c.id === choiceId)
+      if (!msg || !choice) return
+      if (!choicesActive(s.chat, msg)) return // picked or superseded — inert by law
+      set((st) => ({
+        chat: st.chat.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                choices: m.choices!.map((c) => (c.id === choiceId ? { ...c, picked: true } : c)),
+              }
+            : m
+        ),
+      }))
+      const updated = get().chat.find((m) => m.id === msgId)
+      if (updated) persistChat([updated]) // delta putChat, same as resolveNudge
+      /* the pick IS the user's next message — the normal turn does the rest */
+      await get().speak(choice.reply)
     },
 
     nudgeAction(msgId: string, actionId: string) {
@@ -2157,15 +2594,8 @@ export const useMew = create<MewState>((set, get) => {
           if (target && target.status === 'open') {
             const { blocks } = week.roll(s.blocks, id, toKey, toStart)
             setBlocks(blocks)
-            void brain.ingest(
-              blockEventPage(
-                target,
-                'rolled',
-                target.dayKey,
-                minOfDay(new Date(s.nowMs)),
-                knownProjectsFrom(s.blocks.map((b) => b.title)).keys()
-              )
-            )
+            const evTs = nowFn() // one ts for the event and its brain offer
+            ingestBlockEvent(target, 'rolled', minOfDay(new Date(evTs)), evTs)
             logMemory({
               kind: 'rolled',
               dayKey: target.dayKey,
@@ -2175,6 +2605,7 @@ export const useMew = create<MewState>((set, get) => {
               title: target.title,
               startMin: target.startMin,
               endMin: target.endMin,
+              ts: evTs,
             })
             const dayLabel = toKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(toKey)
             post([
@@ -2570,21 +3001,20 @@ export const useMew = create<MewState>((set, get) => {
       }
       const { blocks: rolled, rolled: next } = week.roll(s.blocks, blockId, toKey, slot.startMin)
       setBlocks(rolled)
-      void brain.ingest(
-        blockEventPage(
-          target,
-          'interrupted',
-          target.dayKey,
-          nowMin,
-          knownProjectsFrom(s.blocks.map((b) => b.title)).keys()
-        )
-      )
+      const evTs = nowFn() // one ts for the event and its brain offer
+      ingestBlockEvent(target, 'interrupted', nowMin, evTs)
+      /* full block shape, matching the close-loop roll — the backfill replay
+         can only re-tell an interruption its event fully describes */
       logMemory({
         kind: 'rolled',
         dayKey: target.dayKey,
-        title: target.title,
+        tag: target.tag,
         plannedMin: week.duration(target),
+        deep: week.isDeep(target),
+        title: target.title,
         startMin: target.startMin,
+        endMin: target.endMin,
+        ts: evTs,
       })
       logMemory({ kind: 'interruption', dayKey: todayKey })
       const base = target.title.split('—')[0].trim()
@@ -2702,6 +3132,11 @@ export const useMew = create<MewState>((set, get) => {
       const settings = { ...get().settings, ...patch }
       set({ settings })
       persistSettings(settings)
+      /* flipping the brain choice is a connect: the now-effective brain
+         (opt-in on, or the sidecar it falls back to) gets its offer (#249).
+         URL/token edits alone don't trigger — a half-typed endpoint must not
+         be sprayed with a replay; the next launch converges it. */
+      if ('brainEnabled' in patch) maybeBackfillBrain()
     },
 
     cycleVisibility(calId, tag) {
@@ -3095,6 +3530,10 @@ declare global {
     /** Dev/scenario helper: drive the turn-in-flight UI (typing-indicator /
         working-status visual proofs) without a live model. */
     __mewSetTurn?: (thinking: boolean, workingStatus?: string | null) => void
+    /** Dev/scenario helper: drive the sidecar lifecycle DISPLAY state (#249) —
+        the web build has no shell to emit real beats. Display-only: it never
+        touches the effective-brain ranking, so recall stays honestly off. */
+    __mewSetBrainSidecar?: (status: SidecarStatus) => void
     /** Dev/scenario helper (E2E): rewind last-activity by `minutes` and run one
         tick, so the drift check-in can be exercised deterministically without
         advancing the wall clock. Mirrors how the real ticker evaluates drift. */
@@ -3117,6 +3556,9 @@ if (typeof window !== 'undefined') {
   }
   window.__mewSetTurn = (thinking, workingStatus = null) => {
     useMew.setState({ thinking, workingStatus })
+  }
+  window.__mewSetBrainSidecar = (status) => {
+    useMew.setState({ brainSidecar: status })
   }
   window.__mewSetIdle = (minutes) => {
     useMew.setState({ lastActivityMs: nowFn() - minutes * 60_000 })

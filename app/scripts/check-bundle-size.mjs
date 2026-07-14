@@ -28,9 +28,9 @@ const KB = 1024
 // strict `lazy` default. See vite.config.ts codeSplitting.groups.
 export const BUDGETS = {
   // entry (main) chunk — first paint depends on it
-  main: 450 * KB,
+  main: 330 * KB,
   // always-loaded vendor split: react, react-dom, zustand, dexie
-  vendor: 340 * KB,
+  vendor: 460 * KB,
   // backstop only: three.js / @react-three were removed (the ambient WebGL anims
   // are gone). No build emits a three chunk today; this ceiling stays so a stray
   // re-introduction is caught with a budget rather than going unnoticed.

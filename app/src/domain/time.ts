@@ -32,9 +32,12 @@ export function mondayOf(d: Date): Date {
   return out
 }
 
-/** The 7 day-keys (Mon–Sun) of the week containing `d`. */
-export function weekKeys(d: Date): string[] {
+/** The 7 day-keys (Mon–Sun) of the week containing `d`, optionally shifted by
+    whole weeks (`offsetWeeks = -1` → the week before). Calendar math via
+    setDate, so a DST hour can never move the Monday. */
+export function weekKeys(d: Date, offsetWeeks = 0): string[] {
   const mon = mondayOf(d)
+  if (offsetWeeks) mon.setDate(mon.getDate() + offsetWeeks * 7)
   return Array.from({ length: 7 }, (_, i) => {
     const x = new Date(mon)
     x.setDate(mon.getDate() + i)
@@ -103,6 +106,70 @@ export function weekdayOffset(word: string, from: Date): number | null {
   const today = from.getDay()
   const diff = (idx - today + 7) % 7
   return diff
+}
+
+/* ── which week is a history question about? ──────────────────────────
+   Block history never expires, so "how were my gym sessions last week"
+   is answerable from real blocks — IF the question's week phrase becomes
+   a Mon–Sun window. Deliberately conservative: only the phrases below
+   move the window; any other wording stays 0 (the live week). */
+
+const WEEK_WORDS: Record<string, number> = {
+  a: 1,
+  an: 1,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+}
+
+/* "last week" / "the past week" (but not "the last week of June"), "this
+   week", "N weeks ago|back" with N a numeral or a small number word. An
+   optional leading preposition travels with the phrase so stripping heals
+   the sentence ("sessions in the past week" → "sessions"). */
+const WEEK_PHRASE =
+  /\b(?:(?:in|during|over|from|for)\s+)?(?:(?:the\s+)?(?:last|past)\s+week\b(?!\s+of\b)|this\s+week\b|(\d{1,2}|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+weeks?\s+(?:ago|back)\b)/i
+const WEEK_PHRASE_EVERY = new RegExp(WEEK_PHRASE.source, 'gi')
+
+/** Which Mon–Sun week a question means, as an offset from the current one:
+    "last week"/"the past week" → -1, "two weeks ago"/"2 weeks back" → -2,
+    "this week" or no time phrase → 0. Anything unrecognized (ranges like
+    "the past two weeks", "last weekend") stays 0 — current behavior. Pure
+    text → number; the caller holds the clock. */
+export function weekOffsetFromQuestion(question: string): number {
+  const m = question.match(WEEK_PHRASE)
+  if (!m) return 0
+  if (m[1] != null) {
+    const n = WEEK_WORDS[m[1].toLowerCase()] ?? Number(m[1])
+    return n > 0 ? -n : 0
+  }
+  return /\b(?:last|past)\b/i.test(m[0]) ? -1 : 0
+}
+
+/** `question` with every recognized week phrase removed (spacing and
+    punctuation healed) — so subject matching never mistakes "gym last week"
+    for a title fragment. */
+export function stripWeekPhrase(question: string): string {
+  return question
+    .replace(WEEK_PHRASE_EVERY, ' ')
+    .replace(/\s+([?.!,;])/g, '$1')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
+}
+
+/** How MEW names an offset week in a reply: 0 → "this week", -1 → "last
+    week", -2 → "two weeks ago" — small counts spelled the way MEW speaks. */
+export function weekOffsetLabel(offset: number): string {
+  if (offset === 0) return 'this week'
+  if (offset === -1) return 'last week'
+  if (offset < 0) return `${spell(-offset)} weeks ago`
+  return offset === 1 ? 'next week' : `in ${spell(offset)} weeks`
 }
 
 export function inQuietHours(min: number, q: { startMin: number; endMin: number }): boolean {

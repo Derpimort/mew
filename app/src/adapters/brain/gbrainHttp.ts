@@ -115,8 +115,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
     const rpc = await parseRpc(res)
     /* MCP tool failures arrive in-band: HTTP 200, isError in the result */
     const r = rpc.result as
-      | { isError?: boolean; content?: { type: string; text?: string }[] }
-      | undefined
+      { isError?: boolean; content?: { type: string; text?: string }[] } | undefined
     if (rpc.error) throw new Error(`${name}: ${JSON.stringify(rpc.error).slice(0, 200)}`)
     if (r?.isError)
       throw new Error(`${name}: ${r.content?.[0]?.text?.slice(0, 200) ?? 'tool error'}`)
@@ -170,7 +169,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
       }
     },
 
-    async recall(question: string, opts?: RecallOpts): Promise<string[]> {
+    async recall(question: string, opts?: RecallOpts): Promise<string[] | null> {
       if (!cfg.enabled()) return []
       const limit = opts?.limit ?? 5
       const scope = opts?.scope ?? 'mew'
@@ -233,7 +232,7 @@ export function createGbrainHttp(cfg: GbrainConfig): BrainPort {
         return lines.slice(0, limit)
       } catch (err) {
         warnOnce(err)
-        return []
+        return null // didn't answer ≠ answered empty — recall honesty (#249)
       }
     },
 

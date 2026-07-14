@@ -12,10 +12,19 @@ export interface WeekContext {
   weekSummary: string[] // one compact line per day
   realisticBestH: number | null
   mewsToday: number
-  /** GBrain pattern lines — the user's own numbers (domain/insights.ts). */
+  /** Local pattern lines — the user's own history, computed on-device
+      (domain/insights.ts). No brain I/O behind these, ever. */
   insightLines: string[]
   /** Hybrid recall from the connected brain (empty when off/unreachable). */
   recallLines: string[]
+  /** Whether a brain (Settings opt-in or desktop sidecar) is connected. False
+      renders an explicit off marker so the model never implies recall ran. */
+  brainOn: boolean
+  /** True when a brain is on but didn't answer this turn (timed out or
+      errored). Renders an explicit degraded marker so the model treats the
+      silence as missing recall, never as an empty history (#249). Optional:
+      absent reads as false, so hand-built contexts stay valid. */
+  recallDegraded?: boolean
   /** Standing preferences — always on, every turn, newest first. */
   prefLines: string[]
 }
@@ -45,6 +54,19 @@ export interface FreeSpec {
   startMin: number
   endMin: number
 }
+
+/** One tappable option for offerChoices (#254). `reply` is the complete user
+    ask a pick posts as the next turn (runTool defaults it to the label). */
+export interface ChoiceOption {
+  label: string
+  reply: string
+}
+
+/** Tool results beginning with this token mean the executor already posted the
+    question as clickable chips (#254): a model should END its turn and say
+    nothing more; the keyless floor yields nothing at all — the chips message
+    IS the reply. One token, both paths, so the two can never disagree. */
+export const CHOICES_POSTED = 'The options are on screen as clickable chips'
 
 /** Executed against the live store; every method returns a short factual
     sentence describing what really happened (a tool_result, not a hope). */
@@ -100,6 +122,13 @@ export interface ToolExecutor {
   /** Persist a standing rule the user stated. Brain-off it falls back to a
       local MemoryEvent — the feature works single-device; gbrain upgrades it. */
   remember(pref: import('../brain/types').PrefPayload): string
+  /** Chat-only (#254): post `prompt` as a mew message carrying clickable
+      choice chips — MEW's ask-a-question and suggestions engine in one. It
+      mutates NOTHING on the week; a pick posts the option's reply as an
+      ordinary user turn through the normal message path. The result string
+      (CHOICES_POSTED…) tells the model the options are on screen and the
+      turn should end. */
+  offerChoices(prompt: string, options: ChoiceOption[]): string
   /** Persist a durable user-stated fact/preference/correction to the brain.
       Optional-path: confirms even when no brain is connected (the fact still
       lands in chat history; re-stating later costs nothing). */
@@ -168,6 +197,7 @@ Interviews, calls, and meetings are fixed points — schedule around them, never
 A block can run in the background — it holds the clock, not the user (a 3h phone restore): set attention "background" and the center stays on what actually holds them; give it dueMin when the user states a hard deadline and MEW watches the latest start.
 The week context shows each block as start–end with markers. [fixed] means the TIME owns its slot — schedule around it; the block itself is still fully yours to edit, move, or remove. [calendar] means it came from a connected calendar — that one alone is not yours to change. [optional] holds no time. Read both ends before placing anything relative to another block, and verify the gap really exists ("prep before the 14:30 interview" needs free air ending at 14:30, not hope).
 When the user catches a mistake right after you act — "undo that", "no, put it back", "that was wrong" — call undo_last_action: it reverses your most recent change (the blocks just placed, moved, or removed, and any note logged with it) and tells you what it took back. It only reaches the last action of this exchange, not the whole history; with nothing yet changed it says so. Confirm what came back in one warm line — a misstep undone is a small kindness, never a scolding.
+When your next line would ask the user to pick among a few enumerable answers — which block, which slot, yes or no on an offer — call offer_choices with the question and two to five short options instead of asking in prose; give every option a reply that is a complete ask you could act on next turn ("move gym to 15:00", never a bare "yes"). Chips are a shortcut, never a gate — a typed answer always works. After offering (or when a tool result says the options are already on screen), end your turn saying nothing more; the pick arrives as the user's next message.
 When unsure whether a change is allowed, make the tool call — the executor refuses safely and says why. Declaring that a tool "would fail" without calling it is a guess wearing certainty.
 When the user states an order ("prep before the interview"), choose explicit startMin/endMin yourself so the order holds. After each tool result, compare the returned times with what the user asked; if they disagree, fix it with another call or say plainly that it didn't fit.
 Tool results name any collision ("note: it overlaps …"). An explicit time the user gave is their judgment — place it exactly as asked and KEEP it; if it overlaps a flexible block, don't silently re-place either one, just offer to drift the other side ("that lands on X — want me to nudge X?") and let them choose. Only reposition to stay off a [fixed] or [calendar] block (never schedule over those). Never react-and-re-move per clash: decide the whole day's shape once, then place it in a single sweep.
@@ -181,11 +211,13 @@ Reshaping a stretch is one sweep, in order: remove_blocks everything being repla
 <grounding>
 The tool result is the truth: confirm in one short line built from its facts. A claim with no tool result behind it is fiction — skip it.
 "What is happening now" comes from the week context below, never from memory of earlier turns.
-Asked how the week looks, answer with two or three of the brain's pattern lines (the user's own numbers); the Week view already shows the calendar, so spare them the dump.
+Asked how the week looks, answer with two or three of the pattern lines — they are the user's own history, computed on-device, never the brain; the Week view already shows the calendar, so spare them the dump.
 When you can't find something or the data isn't there, say so plainly — "I can't see that yet" is a correct MEW answer, and better than a guess.
+A <brain-recall off/> marker means no brain is connected this session: asked about memory or what you recall, say the brain is off or not connected — never imply recall ran. The on-device pattern lines and the live week still answer.
+A <brain-recall degraded/> marker means a brain is connected but didn't answer this turn: asked about memory, say the brain didn't answer just now — its silence is missing recall, never an empty history.
 When the user corrects you or states a standing rule ("gym is always 7am", "order lunch is an errand, not the meal", "from now on hold fridays light"), call remember with the structured shape (kind, match, value, their words) — being re-taught the same thing twice is a failure, and so is recording a one-off as a rule. The <preferences> block is the standing rulebook; <brain-recall> is history that informs; the live week still decides. A recall line ending "· via <page>" came from another agent's notes — cite that source when the line carries your claim, and never claim recalled facts without one.
 When the user corrects you or states a standing preference ("gym is always 7am", "order lunch is an errand, not the meal"), call remember with one present-tense sentence — being re-taught the same thing twice is a failure. A <brain-recall> block in the context is history that informs; the live week still decides.
-History and entity questions ("how much has X eaten this week", "when did I last meet Y") go through query_brain — its numbers are summed from real blocks, so never estimate them yourself. "What's now/next" needs no tool; the week context already says.
+History and entity questions ("how much has X eaten this week", "how were my gym sessions last week", "when did I last meet Y") go through query_brain — its numbers are summed from real blocks of the week the question names, past weeks included, so never estimate them yourself. "What's now/next" needs no tool; the week context already says.
 </grounding>
 
 <examples>
@@ -215,7 +247,7 @@ export function contextBlock(ctx: WeekContext): string {
     `</week>`,
     ...(ctx.insightLines.length
       ? [
-          `<patterns note="history informs; the live week decides">`,
+          `<patterns note="computed on-device from the user's own history — it informs; the live week decides">`,
           ...ctx.insightLines.map((l) => `  ${l}`),
           `</patterns>`,
         ]
@@ -227,12 +259,23 @@ export function contextBlock(ctx: WeekContext): string {
           `</preferences>`,
         ]
       : []),
+    /* recall honesty (#249): with a brain, its lines (or their absence) speak;
+       with none, an explicit off marker — a silent absence reads as "nothing
+       to recall", and the model then presents local patterns as memory. A
+       connected brain that didn't answer is marked degraded for the same
+       reason: only a real empty answer may stay silent. */
     ...(ctx.recallLines.length
       ? [
           `<brain-recall note="recalled history — it informs; the live week decides">`,
           ...ctx.recallLines.map((l) => `  ${l}`),
           `</brain-recall>`,
         ]
-      : []),
+      : !ctx.brainOn
+        ? [`<brain-recall off note="no brain is connected — recall did not run"/>`]
+        : ctx.recallDegraded
+          ? [
+              `<brain-recall degraded note="the brain didn't answer this turn — recall is missing, not empty"/>`,
+            ]
+          : []),
   ].join('\n')
 }

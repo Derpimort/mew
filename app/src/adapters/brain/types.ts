@@ -34,9 +34,11 @@ import type { PrefPayload } from '../../domain/types'
 export interface BrainPort {
   /** Fire-and-forget write; failures warn and flip health, never throw. */
   ingest(page: BrainPage): Promise<void>
-  /** Hybrid recall: short, citable lines for the model's context. Empty on
-      any failure — silence, not error. */
-  recall(question: string, opts?: RecallOpts): Promise<string[]>
+  /** Hybrid recall: short, citable lines for the model's context. [] is a
+      real empty answer; null means the brain didn't answer (unreachable or
+      errored) — degraded, not empty, so callers can say so instead of
+      passing silence off as an empty history (#249). Never rejects. */
+  recall(question: string, opts?: RecallOpts): Promise<string[] | null>
   /** Cheap reachability probe (also flipped by every failed call). */
   health(): Promise<boolean>
   /** Every stored preference (tag=preference), newest first; [] on failure. */

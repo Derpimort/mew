@@ -12,6 +12,53 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-07-14
+
+### Added
+
+- Ask MEW about past weeks — "how much time did gym take last week" answers with real sums
+  from your own history, with or without a brain connected (#251).
+- Clickable choices in chat: when MEW asks which block you mean or offers options, it shows
+  them as buttons you tap instead of typing — one surface for both its questions and its
+  suggestions (#254).
+- Notification click-to-focus: clicking a nudge toast brings MEW to the front and lands you on
+  that nudge (#216).
+
+### Changed
+
+- The model layer now runs on the Vercel AI SDK — Ollama joins Anthropic and OpenAI through one
+  unified adapter, the hand-rolled provider code is retired, and model failures explain
+  themselves honestly per failure class (a rejected key points at Settings, a busy model reads
+  "busy" only when a retry truly ran). Anthropic prompt caching trims cost and latency on the
+  stable prompt prefix, and long tool chains end gracefully instead of stopping mid-step
+  (#152, #153).
+- Long chat histories stay fast: the session log renders the newest messages and pages older
+  ones in on scroll ("· earlier ·"), boot hydrates only the newest page, and a streaming reply
+  no longer re-renders history — typing stays smooth on months-old profiles. Old conversations
+  condense into durable brain facts so the raw log can be pruned without losing what it meant
+  (#255, #250).
+- The built-in brain's state is visible end-to-end: Settings shows connected / starting /
+  unavailable truthfully (sidecar included), and when the brain is off MEW says so plainly
+  instead of implying recall ran. On connect it backfills recent history so past sessions
+  become recallable, and a recall that times out reads as "didn't answer," never as empty
+  (#252, #249).
+- Pattern insights are presented as what they are — on-device analyses of your own history —
+  and "brain recall" language is reserved for the brain (#252).
+
+### CI / build
+
+- The dial's keyboard-accessibility contract (arrow-key navigation, roving focus) now gates
+  every release promotion, with failure screenshots shipped as artifacts (#256; resolves #253
+  — the dial was never broken, the old check raced its own read).
+- macOS joins the desktop release matrix, so the app + its bundled brain build for macOS
+  alongside Linux and Windows (#249).
+
+### Dependencies
+
+- Routine refresh across the tree (Tauri toolchain, Vite, Dexie, lucide-react, tailwind,
+  typescript-eslint, and a tauri-plugin-oauth security bump), and the motion family is pinned
+  to the vendor chunk after its 12.41 re-export change moved code between bundles.
+
 ## [0.2.1] — 2026-07-09
 
 ### Changed
@@ -146,7 +193,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   release build (#144).
 - "Update later" no longer silently restores a backup; the retime `startMin` is now `const` (#138).
 
-[Unreleased]: https://github.com/Derpimort/mew/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/Derpimort/mew/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Derpimort/mew/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Derpimort/mew/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Derpimort/mew/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/Derpimort/mew/compare/v0.1.8...v0.1.9

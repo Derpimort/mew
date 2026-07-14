@@ -24,10 +24,20 @@ describe('dependency audit wiring', () => {
 
   it('keeps the Dependabot security fast-track group anchored to real dependencies', () => {
     // These are the highest-blast-radius packages (key handling + on-device
-    // crypto): the `security` group in .github/dependabot.yml auto-merges their
-    // patch/minor bumps. If one is renamed/removed here, the group goes stale —
-    // this guard makes that a failed test, not a silent gap.
-    const fastTracked = ['@noble/ciphers', '@noble/post-quantum', '@anthropic-ai/sdk']
+    // crypto + the AI SDK the keys ride through): the `security` group in
+    // .github/dependabot.yml auto-merges their patch/minor bumps. If one is
+    // renamed/removed here, the group goes stale — this guard makes that a
+    // failed test, not a silent gap. (@anthropic-ai/sdk left the list with the
+    // hand-rolled adapters, #152 — the AI SDK packages carry that duty now.)
+    const fastTracked = [
+      '@noble/ciphers',
+      '@noble/post-quantum',
+      'ai',
+      '@ai-sdk/anthropic',
+      '@ai-sdk/openai',
+      '@ai-sdk/openai-compatible',
+      'hash-wasm',
+    ]
     for (const dep of fastTracked) {
       expect(pkg.dependencies[dep], `${dep} should remain a direct dependency`).toBeDefined()
     }

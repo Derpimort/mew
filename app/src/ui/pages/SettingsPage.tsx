@@ -3,7 +3,7 @@
    and model settings keep their full behavior, re-skinned. */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { mewBrain, useMew } from '../../state/store'
+import { brainIsOn, mewBrain, useMew, type SidecarStatus } from '../../state/store'
 import type { PetId, Settings, VisibleTag } from '../../domain/types'
 import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
@@ -153,9 +153,10 @@ export function SettingsPage() {
   )
 }
 
-/* Your patterns — the brain's trailing-4-week numbers made visible: weekday
-   load as an animated line, MEW's own insight lines underneath. Appears only
-   once the memory has something honest to show. */
+/* Your patterns — trailing-4-week numbers computed on-device from local
+   memory (domain/insights, no brain I/O): weekday load as an animated line,
+   MEW's own insight lines underneath. Appears only once the memory has
+   something honest to show. */
 function PatternsCard() {
   const memory = useMew((s) => s.memory)
   const nowMs = useMew((s) => s.nowMs)
@@ -787,20 +788,55 @@ function NudgesCard() {
   )
 }
 
+/* The built-in (sidecar) brain's lifecycle, in Settings copy — the user must
+   always be able to answer "is my brain on?", dead or alive (#249). Tones
+   reuse the health-dot palette: teal = live, gold = needs a glance, faint =
+   in-between. 'off' renders nothing (no shell, or no beat yet). */
+const SIDECAR_STATE: Record<
+  Exclude<SidecarStatus, 'off'>,
+  { label: string; tone: string; copy: string }
+> = {
+  starting: {
+    label: 'starting…',
+    tone: 'var(--faint)',
+    copy: 'The desktop app is bringing your private brain up — memory comes online in a moment.',
+  },
+  connected: {
+    label: 'connected',
+    tone: 'var(--teal)',
+    copy: 'A private gbrain runs on this machine, managed by the desktop app. It remembers your week; nothing leaves your device.',
+  },
+  retrying: {
+    label: 'restarting…',
+    tone: 'var(--gold)',
+    copy: 'The brain hit a snag and the desktop app is bringing it back. The week keeps moving meanwhile.',
+  },
+  unavailable: {
+    label: 'unavailable — running on the floor',
+    tone: 'var(--gold)',
+    copy: "The built-in brain couldn't start this session. Your week still works fully; memory recall returns on the next launch.",
+  },
+}
+
 function PrivacyModelCard() {
   const settings = useMew((s) => s.settings)
   const updateSettings = useMew((s) => s.updateSettings)
   const exportData = useMew((s) => s.exportData)
   const importData = useMew((s) => s.importData)
+  const brainSidecar = useMew((s) => s.brainSidecar)
+  /* the EFFECTIVE brain (Settings opt-in OR live sidecar) drives the health
+     row — the bare toggle lies on desktop, where a sidecar runs with it off */
+  const effectiveOn = useMew((s) => brainIsOn(s.settings))
   const [editingKey, setEditingKey] = useState(false)
   const [editingBrainToken, setEditingBrainToken] = useState(false)
   const [setupOpen, setSetupOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
-  /* brain health: probed when the row is live, re-probed on edits */
+  /* brain health: probed while ANY brain is live (sidecar included), re-probed
+     on edits and on each sidecar beat — a reconnect means a new port */
   const [brainUp, setBrainUp] = useState<boolean | null>(null)
   useEffect(() => {
-    if (!settings.brainEnabled) {
+    if (!effectiveOn) {
       // Clearing the probe result when the row goes inert syncs UI state with an
       // external system (the brain service); the rest of the effect awaits an
       // async health check, so this whole block belongs in an effect.
@@ -815,7 +851,7 @@ function PrivacyModelCard() {
     return () => {
       alive = false
     }
-  }, [settings.brainEnabled, settings.brainUrl, settings.brainToken])
+  }, [effectiveOn, settings.brainUrl, settings.brainToken, brainSidecar])
 
   const downloadBackup = async () => {
     const json = await exportData()
@@ -954,22 +990,28 @@ function PrivacyModelCard() {
         s={
           settings.brainEnabled
             ? `Writes what happens, recalls what matters — gbrain at ${settings.brainUrl}.`
-            : 'Optional gbrain endpoint: MEW writes what happens and recalls what matters. Off = nothing leaves this tab.'
+            : brainSidecar !== 'off'
+              ? 'The desktop runs a built-in brain on this machine (status below). Toggle on to point MEW at your own gbrain instead.'
+              : 'Optional gbrain endpoint: MEW writes what happens and recalls what matters. Off = nothing leaves this tab.'
         }
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* the dot follows the EFFECTIVE brain — a live sidecar shows health
+              here even with the toggle off; a dead one honestly shows nothing */}
+          {effectiveOn && (
+            <span
+              title={brainUp == null ? 'checking…' : brainUp ? 'reachable' : 'unreachable'}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background:
+                  brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
+              }}
+            />
+          )}
           {settings.brainEnabled && (
             <>
-              <span
-                title={brainUp == null ? 'checking…' : brainUp ? 'reachable' : 'unreachable'}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: '50%',
-                  background:
-                    brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
-                }}
-              />
               <Segc
                 options={[
                   { id: 'sidecar', label: 'Built-in' },
@@ -1008,6 +1050,17 @@ function PrivacyModelCard() {
           />
         </span>
       </SetRow>
+      {/* the built-in brain's live state — connected / starting / restarting /
+          unavailable ("running on the floor"). Rendered whenever the shell has
+          reported a beat and the user hasn't opted into their own endpoint, so
+          a dead sidecar is visibly dead instead of masquerading as "Off". */}
+      {!settings.brainEnabled && brainSidecar !== 'off' && (
+        <SetRow t="Built-in brain" s={SIDECAR_STATE[brainSidecar].copy}>
+          <span className="mono" style={{ fontSize: 10, color: SIDECAR_STATE[brainSidecar].tone }}>
+            {SIDECAR_STATE[brainSidecar].label}
+          </span>
+        </SetRow>
+      )}
       {settings.brainEnabled && (
         <SetRow
           t="Recall scope"
@@ -1066,10 +1119,16 @@ function PrivacyModelCard() {
       {settings.brainEnabled && settings.brainMode === 'sidecar' && (
         <SetRow
           t="Built-in brain"
-          s="The desktop app manages a private brain for you — no setup. (Arrives with the desktop sidecar; until then this behaves like My gbrain.)"
+          s="The desktop app manages a private brain and engages it automatically while this toggle is off. Toggled on, this mode still reads the My gbrain URL — on the web there is no sidecar."
         >
-          <span className="mono" style={{ fontSize: 10, color: 'var(--faint)' }}>
-            desktop-managed
+          <span
+            className="mono"
+            style={{
+              fontSize: 10,
+              color: brainSidecar !== 'off' ? SIDECAR_STATE[brainSidecar].tone : 'var(--faint)',
+            }}
+          >
+            {brainSidecar !== 'off' ? SIDECAR_STATE[brainSidecar].label : 'desktop-managed'}
           </span>
         </SetRow>
       )}

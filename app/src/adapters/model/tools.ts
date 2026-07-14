@@ -340,16 +340,54 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'query_brain',
     description:
-      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'when did I last meet Y', 'what happened with Z'. Time sums come from the real week, recall from the brain. NOT for the live moment — the week context already says what's now and next.",
+      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'how were my gym sessions last week', 'when did I last meet Y', 'what happened with Z'. Time sums come from real blocks of the week the question names — 'last week' / 'N weeks ago' reach back through kept history, no time phrase means the current week; recall comes from the brain. NOT for the live moment — the week context already says what's now and next.",
     parameters: {
       type: 'object',
       properties: {
         question: {
           type: 'string',
-          description: "The question, naming the project/person/task it's about",
+          description:
+            "The question, naming the project/person/task it's about — keep the user's own time phrase ('last week', 'two weeks ago') in it",
         },
       },
       required: ['question'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'offer_choices',
+    description:
+      'Ask an enumerable question as clickable chips in the chat — one tool for both your questions ("which gym block?") and your offers ("15:00, 16:30, or pick for me?"). Use it whenever the user must choose among a few known answers, instead of asking in prose; chips are a shortcut, never a gate — typing still works. 2–5 short options; give each a reply that is a complete ask you could act on next turn ("remove the 7:00 gym", never a bare "yes"). Chat-only — it changes nothing on the week. After calling it, END your turn: the pick arrives as the next user message.',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description:
+            'The question the chips answer — it renders as the chat line right above them, in your own voice',
+        },
+        options: {
+          type: 'array',
+          description: 'The tappable options, in display order (2–5).',
+          items: {
+            type: 'object',
+            properties: {
+              label: {
+                type: 'string',
+                description: 'Chip text — a few words ("the 7:00", "both", "pick for me")',
+              },
+              reply: {
+                type: 'string',
+                description:
+                  'What a pick says as the user\'s next message — a complete, actionable ask ("remove the 7:00 gym"). Defaults to the label.',
+              },
+            },
+            required: ['label'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['prompt', 'options'],
       additionalProperties: false,
     },
   },
@@ -472,6 +510,24 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const question = String(o.question ?? '').trim()
       if (!question) return 'nothing to look up — the call was empty'
       return exec.queryBrain(question)
+    }
+    case 'offer_choices': {
+      const prompt = String(o.prompt ?? '').trim()
+      const options = (Array.isArray(o.options) ? o.options : [])
+        .filter((c): c is Record<string, unknown> => !!c && typeof c === 'object')
+        .filter((c) => typeof c.label === 'string' && (c.label as string).trim())
+        .slice(0, 5) // a hand of chips, not a menu — five is the law (#254)
+        .map((c) => {
+          const label = String(c.label).trim()
+          const reply =
+            typeof c.reply === 'string' && (c.reply as string).trim()
+              ? String(c.reply).trim()
+              : label
+          return { label, reply }
+        })
+      if (!prompt || !options.length)
+        return 'nothing to offer — the call needs a prompt and at least one option'
+      return exec.offerChoices(prompt, options)
     }
     case 'undo_last_action':
       return exec.undoLast()

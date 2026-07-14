@@ -7,9 +7,10 @@ import type { SyncEntry } from './calendar/types'
 
 /* The contract now lives in storage-port.ts (Dexie-free, so MEW Core can
    import it). Re-exported here so existing callers are unchanged. */
-import { stripSecrets } from './storage-port'
+import { CHAT_BOOT_PAGE, stripSecrets } from './storage-port'
 import type { AuditEntry, PersistedState, StoragePort, ValidationError } from './storage-port'
 export type { AuditEntry, PersistedState, StoragePort, ValidationError } from './storage-port'
+export { CHAT_BOOT_PAGE } from './storage-port'
 
 /** The Dexie schema version this file ships. A bump here adds a `.version(n)`
     block below and is recorded in the audit log on the load that first sees it. */
@@ -216,24 +217,31 @@ export function createDexieStorage(): StoragePort {
         )
       }
 
-      const [blocks, captures, chat, memory, settingsRow] = await Promise.all([
+      /* Chat hydrates as the newest window only (#250 phase 2): boot stays
+         flat however long the profile has lived. `reverse().limit(n)` walks
+         the (ts, id) index from the newest end; re-reversing restores the
+         ascending order the full `orderBy('ts')` scan used to return. Older
+         pages come through loadChatBefore on demand; exportJson still reads
+         the whole table. */
+      const [blocks, captures, chatWindow, memory, settingsRow] = await Promise.all([
         db.blocks.toArray(),
         db.captures.toArray(),
-        db.chat.orderBy('ts').toArray(),
+        db.chat.orderBy('ts').reverse().limit(CHAT_BOOT_PAGE).toArray(),
         db.memory.orderBy('ts').toArray(),
         db.kv.get('settings'),
       ])
       const state: PersistedState = {
         blocks,
         captures,
-        chat,
+        chat: chatWindow.reverse(),
         memory,
         settings: (settingsRow?.value as Settings) ?? null,
       }
 
-      /* Validate the loaded state. Old data that survived a version bump without
-         a now-required field is caught here — logged with context, never left to
-         cause undefined behavior downstream. */
+      /* Validate the loaded state (chat: the hydrated window — rows outside
+         it are validated when a page loads them in). Old data that survived a
+         version bump without a now-required field is caught here — logged
+         with context, never left to cause undefined behavior downstream. */
       const errors = validateSchema(state)
       if (errors.length) {
         console.warn(
@@ -278,6 +286,30 @@ export function createDexieStorage(): StoragePort {
     async putChat(msgs) {
       await db.chat.bulkPut(msgs)
     },
+    async countChat() {
+      return db.chat.count()
+    },
+    async loadChatBefore(ts, id, limit) {
+      /* the (ts, id) cursor, exactly: walk the ts index downward from the
+         cursor's millisecond; the filter drops the cursor row and any tied
+         sibling at/after it in chat order, so a burst of same-ms messages
+         pages without a skip or a double. Ties are a handful of rows at most
+         — the index bound (`belowOrEqual`) keeps the scan tight. */
+      const page = await db.chat
+        .where('ts')
+        .belowOrEqual(ts)
+        .reverse()
+        .filter((m) => m.ts < ts || m.id < id)
+        .limit(limit)
+        .toArray()
+      return page.reverse() // walked newest-first; hand back ascending
+    },
+    async loadChatOlderThan(ts) {
+      return db.chat.where('ts').below(ts).toArray() // index order: ascending
+    },
+    async deleteChat(ids) {
+      await db.chat.bulkDelete(ids)
+    },
     async putMemory(events) {
       await db.memory.bulkPut(events)
     },
@@ -300,19 +332,37 @@ export function createDexieStorage(): StoragePort {
       await db.sync.where('calId').equals(calId).delete()
     },
     async exportJson() {
-      const state = await this.load()
+      /* a backup is EVERYTHING: read the tables directly, never load() —
+         load() windows chat to the boot page (#250 phase 2), and a backup
+         that silently dropped old messages would betray the export promise. */
+      const [blocks, captures, chat, memory, settingsRow] = await Promise.all([
+        db.blocks.toArray(),
+        db.captures.toArray(),
+        db.chat.orderBy('ts').toArray(),
+        db.memory.orderBy('ts').toArray(),
+        db.kv.get('settings'),
+      ])
       /* a backup travels (downloads folder, cloud drives) — API keys don't.
          stripSecrets owns the redaction (storage-port.ts) so the SQLite vehicle
          and the key-audit suite share one source of truth; restore re-enters
          this device's keys in Settings. */
-      return JSON.stringify({ ...state, settings: stripSecrets(state.settings) }, null, 2)
+      return JSON.stringify(
+        {
+          blocks,
+          captures,
+          chat,
+          memory,
+          settings: stripSecrets((settingsRow?.value as Settings) ?? null),
+        },
+        null,
+        2
+      )
     },
     async importJson(json) {
       const state = JSON.parse(json) as PersistedState
       await db.transaction('rw', [db.blocks, db.captures, db.chat, db.memory, db.kv], async () => {
         const current = (await db.kv.get('settings'))?.value as
-          | { anthropicKey?: string; openaiKey?: string; brainToken?: string }
-          | undefined
+          { anthropicKey?: string; openaiKey?: string; brainToken?: string } | undefined
         await Promise.all([
           db.blocks.clear(),
           db.captures.clear(),

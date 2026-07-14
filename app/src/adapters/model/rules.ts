@@ -5,7 +5,13 @@
 import { parseCommand as ruleParse } from '../../domain/parse'
 import { normalizeRrule } from '../../domain/recurrence'
 import type { ScheduleIntent } from '../../domain/types'
-import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
+import {
+  CHOICES_POSTED,
+  type ChatTurn,
+  type ModelPort,
+  type ToolExecutor,
+  type WeekContext,
+} from './types'
 
 const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
   [
@@ -72,8 +78,13 @@ export function runIntent(
       return intent.pref
         ? exec.remember(intent.pref)
         : 'nothing to remember — the rule needs a subject and a value'
-    case 'remove':
-      return exec.remove(intent.query ?? '', intent.remove ?? {})
+    case 'remove': {
+      const out = exec.remove(intent.query ?? '', intent.remove ?? {})
+      /* the executor may have asked "which one?" as clickable chips (#254);
+         its result then addresses a model, not the user — the floor stays
+         quiet and the chips message IS the reply (empty yields never post). */
+      return out.startsWith(CHOICES_POSTED) ? '' : out
+    }
     case 'chat': {
       if (intent.reply) return intent.reply
       const hit = CHAT_REPLIES.find(([re]) => re.test(rawText))

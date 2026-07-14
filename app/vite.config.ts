@@ -72,6 +72,9 @@ export default defineConfig({
                 'scheduler',
                 'zustand',
                 'motion',
+                'framer-motion',
+                'motion-dom',
+                'motion-utils',
                 'lucide-react',
                 'dexie'
               ),

@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, MemoryEvent, PrefPayload, Settings } from '../../domain/types'
 import { addDaysKey, dayKey, uid } from '../../domain/time'
-import { stripSecrets } from '../../adapters/storage-port'
+import { CHAT_BOOT_PAGE, chatOrder, stripSecrets } from '../../adapters/storage-port'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
 
@@ -19,6 +19,10 @@ const fakeDb = {
   memory: new Map<string, unknown>(),
   settings: null as Settings | null,
   sync: new Map<string, unknown>(),
+  /** the chat table in storage order — the paging seam reads through this */
+  chatAsc(): ChatMessage[] {
+    return ([...this.chat.values()] as ChatMessage[]).sort(chatOrder)
+  },
   reset() {
     this.blocks.clear()
     this.captures.clear()
@@ -38,16 +42,20 @@ const desktopFake = {
   updateReady: null as ((v: string) => void) | null,
   applied: 0,
   brain: null as { url: string; token: string } | null,
+  brainLastBeat: null as string | null,
   brainReady: null as ((e: { url: string; token: string }) => void) | null,
+  brainBeat: null as ((s: string) => void) | null,
   reset() {
     this.tauri = false
     this.backup = null
     this.backupDate = null
     this.written = []
-    /* updateReady/brainReady survive reset: the real listeners register once
-       per app process and outlive any data wipe — the fake models that lifetime */
+    /* updateReady/brainReady/brainBeat survive reset: the real listeners
+       register once per app process and outlive any data wipe — the fake
+       models that lifetime */
     this.applied = 0
     this.brain = null
+    this.brainLastBeat = null
   },
 }
 
@@ -56,7 +64,8 @@ vi.mock('../../adapters/storage', () => ({
     load: async () => ({
       blocks: [...fakeDb.blocks.values()],
       captures: [...fakeDb.captures.values()],
-      chat: [...fakeDb.chat.values()],
+      /* the boot window, same contract as the real vehicles (#250 phase 2) */
+      chat: fakeDb.chatAsc().slice(-CHAT_BOOT_PAGE),
       memory: [...fakeDb.memory.values()],
       settings: fakeDb.settings,
     }),
@@ -65,6 +74,14 @@ vi.mock('../../adapters/storage', () => ({
     putCaptures: async (cs: { id: string }[]) => cs.forEach((c) => fakeDb.captures.set(c.id, c)),
     deleteCaptures: async (ids: string[]) => ids.forEach((i) => fakeDb.captures.delete(i)),
     putChat: async (ms: { id: string }[]) => ms.forEach((m) => fakeDb.chat.set(m.id, m)),
+    countChat: async () => fakeDb.chat.size,
+    loadChatBefore: async (ts: number, id: string, limit: number) =>
+      fakeDb
+        .chatAsc()
+        .filter((m) => m.ts < ts || (m.ts === ts && m.id < id))
+        .slice(-limit),
+    loadChatOlderThan: async (ts: number) => fakeDb.chatAsc().filter((m) => m.ts < ts),
+    deleteChat: async (ids: string[]) => ids.forEach((i) => fakeDb.chat.delete(i)),
     putMemory: async (es: { id: string }[]) => es.forEach((e) => fakeDb.memory.set(e.id, e)),
     deleteMemory: async (ids: string[]) => ids.forEach((i) => fakeDb.memory.delete(i)),
     putSettings: async (s: Settings) => {
@@ -81,7 +98,7 @@ vi.mock('../../adapters/storage', () => ({
       return JSON.stringify({
         blocks: [...fakeDb.blocks.values()],
         captures: [...fakeDb.captures.values()],
-        chat: [...fakeDb.chat.values()],
+        chat: fakeDb.chatAsc(), // the WHOLE table — a backup is never windowed
         memory: [...fakeDb.memory.values()],
         settings: stripSecrets(fakeDb.settings),
       })
@@ -117,8 +134,12 @@ vi.mock('../../adapters/desktop', () => ({
     desktopFake.applied++
   },
   brainEndpoint: async () => desktopFake.brain,
+  brainStatus: async () => desktopFake.brainLastBeat,
   onBrainEndpoint: (cb: (e: { url: string; token: string }) => void) => {
     desktopFake.brainReady = cb
+  },
+  onBrainStatus: (cb: (s: string) => void) => {
+    desktopFake.brainBeat = cb
   },
 }))
 
@@ -145,28 +166,49 @@ const brainCfg = vi.hoisted(() => ({
 }))
 const brainFake = {
   ingests: [] as { slug: string; links?: string[] }[],
+  /* replaces the default push when set — a backfill test scripts a hang
+     (the app "quits" mid-replay) or a mid-replay brain switch with it */
+  ingestImpl: null as null | ((page: { slug: string }) => void | Promise<void>),
   links: {} as Record<string, string[]>,
   recalls: [] as string[],
   recallOpts: [] as { limit?: number; scope?: string }[],
-  recallImpl: null as null | ((q: string) => string[] | Promise<string[]>),
+  /* null = the brain didn't answer (degraded, #249); a pending-forever
+     promise scripts a hang for the race-timeout scenarios */
+  recallImpl: null as null | ((q: string) => string[] | null | Promise<string[] | null>),
   recallLines: [] as string[],
   prefs: [] as PrefPayload[],
+  /* models the real port's swallowed write failure (ingest NEVER throws —
+     it warns and flips health): the page just doesn't land, so a read-back
+     (links) finds nothing. The condensation proof scenarios flip this. */
+  dropIngests: false,
   reset() {
     this.ingests = []
+    this.ingestImpl = null
     this.links = {}
     this.recalls = []
     this.recallOpts = []
     this.recallImpl = null
     this.recallLines = []
     this.prefs = []
+    this.dropIngests = false
   },
 }
 vi.mock('../../adapters/brain/gbrainHttp', () => ({
   createGbrainHttp: (cfg: { url(): string; token(): string; enabled(): boolean }) => {
     brainCfg.current = cfg
     return {
-      ingest: async (page: { slug: string }) => {
-        if (cfg.enabled()) brainFake.ingests.push(page)
+      ingest: async (page: { slug: string; links?: string[] }) => {
+        /* dropIngests models the port's swallowed write failure (#250); the
+           enabled() gate is the off-brain no-op — either way nothing lands. */
+        if (!cfg.enabled() || brainFake.dropIngests) return
+        if (brainFake.ingestImpl) return brainFake.ingestImpl(page)
+        brainFake.ingests.push(page)
+        /* a landed page's links are readable back (gbrain's add_link is
+           additive) — the condensation prune-proof reads through this */
+        if (page.links?.length) {
+          const cur = brainFake.links[page.slug] ?? []
+          brainFake.links[page.slug] = [...new Set([...cur, ...page.links])]
+        }
       },
       recall: async (q: string, opts?: { limit?: number; scope?: string }) => {
         if (!cfg.enabled()) return []
@@ -191,28 +233,55 @@ const scriptedModel = {
   /** an optional pre-tool reasoning snapshot (#166), yielded first like the real
       AI adapter so the store's reasoning routing is exercised end-to-end. */
   reasoning: null as string | null,
+  /** the WeekContext the turn handed the model — the recall-honesty scenarios
+      read the degraded flag off it (#249) */
+  lastCtx: null as import('../../adapters/model').WeekContext | null,
   /** runs between the first and last chunk — fire executors, snapshot state.
       Gets the turn's abort signal too, so a test can press stop mid-stream. */
   midTurn: null as
-    | null
-    | ((exec: import('../../adapters/model').ToolExecutor, signal?: AbortSignal) => void),
+    null | ((exec: import('../../adapters/model').ToolExecutor, signal?: AbortSignal) => void),
   throwAfter: false, // simulate a connection hiccup once the tool has acted
+  /** what the next remote (anthropic/openai) turn throws — a classifiable
+      failure for the honest-copy scenarios (#153); default = transient. */
+  remoteError: null as unknown,
+  /** thrown by the scripted local adapter before anything yields (#153). */
+  localError: null as unknown,
   reset() {
     this.chunks = []
     this.reasoning = null
+    this.lastCtx = null
     this.midTurn = null
     this.throwAfter = false
+    this.remoteError = null
+    this.localError = null
   },
 }
-vi.mock('../../adapters/model/ollama', () => ({
-  createOllamaAdapter: () => ({
-    id: 'ollama',
+/* Every non-rules provider routes through the unified AI-SDK adapter (#152);
+   these scenarios run modelLocation 'local', so the scripted stand-in answers
+   as the ollama adapter would. vi.mock is hoisted and intercepts the lazy
+   dynamic import inside selectAdapters. */
+vi.mock('../../adapters/model/aiAdapter', () => ({
+  createAiAdapter: (spec: { provider: string }) => ({
+    id: spec.provider,
     async *converse(
       _thread: unknown,
-      _ctx: unknown,
+      ctx: unknown,
       exec: import('../../adapters/model').ToolExecutor,
       signal?: AbortSignal
     ) {
+      scriptedModel.lastCtx = ctx as import('../../adapters/model').WeekContext
+      /* remote providers stay unreachable in scenarios — no scenario ever
+         scripts them, and no test may touch the network. Throwing a transient
+         (as the real SDK would offline) lands the chain on the rules floor,
+         exactly where the pre-#152 path ended up. (lastCtx is captured first so
+         the #258 recall-context assertions still see it on the local path.) */
+      if (spec.provider !== 'ollama') {
+        throw (
+          scriptedModel.remoteError ??
+          Object.assign(new Error('remote unavailable in scenarios'), { statusCode: 503 })
+        )
+      }
+      if (scriptedModel.localError) throw scriptedModel.localError
       // the plan lands ahead of any text/tool, exactly as the AI adapter emits it
       if (scriptedModel.reasoning) yield { reasoning: scriptedModel.reasoning }
       const [first, ...rest] = scriptedModel.chunks
@@ -267,6 +336,12 @@ const lastNudge = (type?: string) => nudges(type)[nudges(type).length - 1]
 
 async function say(text: string) {
   await useMew.getState().speak(text)
+}
+
+/** Drain a fire-and-forget microtask chain (the backfill replay awaits one
+    ingest per event) without touching the fake timer clock. */
+async function settle(turns = 400) {
+  for (let i = 0; i < turns; i++) await Promise.resolve()
 }
 
 function act(msg: ChatMessage, actionId: string) {
@@ -414,6 +489,125 @@ describe('a seeded Tuesday morning', () => {
     expect(after).toHaveLength(1)
     expect(after[0].startMin).toBe(10 * 60) // the 14:00 went; tomorrow's 10:00 stands
     expect(lastMsg().body).toMatch(/^Removed — /)
+  })
+
+  /* #254 — offer_choices: MEW's enumerable questions and offers as clickable
+     chips. The keyless remove disambiguation is the floor's own chips flow, so
+     these scenarios run the REAL store end to end: chips post → a pick posts
+     the reply as an ordinary user turn → the week changes only via the tool. */
+  describe('#254 — clickable option chips', () => {
+    const twoProdReleases = async () => {
+      await fresh(TUE(9, 40))
+      await say('block 45m for prod release today at 2pm')
+      await say('block 45m for prod release tomorrow at 10am')
+      await say('drop the prod release')
+      return lastMsg()
+    }
+
+    it('keyless disambiguation posts ONE chips message — no prose echo behind it', async () => {
+      const msg = await twoProdReleases()
+      expect(msg.role).toBe('mew')
+      expect(msg.body).toMatch(/2 "prod release" blocks ahead/)
+      expect(msg.choices).toBeDefined()
+      expect(msg.choices!.map((c) => c.label)).toEqual(['the 14:00', 'the 10:00', 'both'])
+      expect(msg.choices!.find((c) => c.label === 'the 14:00')!.reply).toBe(
+        'remove prod release 14:00'
+      )
+      expect(msg.choices!.find((c) => c.label === 'both')!.reply).toBe('remove all prod release')
+      /* the floor stayed quiet: exactly one message asks, nothing dropped yet */
+      expect(chat().filter((m) => /blocks ahead/.test(m.body))).toHaveLength(1)
+      expect(useMew.getState().blocks.filter((b) => /prod release/i.test(b.title))).toHaveLength(2)
+    })
+
+    it('a pick posts the reply as a user turn, resolves the removal, and goes inert', async () => {
+      const msg = await twoProdReleases()
+      const pick = msg.choices!.find((c) => c.label === 'the 14:00')!
+      await useMew.getState().pickChoice(msg.id, pick.id)
+
+      /* the pick IS an ordinary user message — the model saw a normal turn */
+      const userTurns = chat().filter((m) => m.role === 'user')
+      expect(userTurns[userTurns.length - 1].body).toBe('remove prod release 14:00')
+      expect(lastMsg().body).toMatch(/^Removed — /)
+
+      /* the week changed through the remove tool, not through the chips */
+      const open = useMew
+        .getState()
+        .blocks.filter((b) => /prod release/i.test(b.title) && b.status === 'open')
+      expect(open).toHaveLength(1)
+      expect(open[0].startMin).toBe(10 * 60)
+
+      /* picked is marked and persisted; the chips are now inert */
+      const after = chat().find((m) => m.id === msg.id)!
+      expect(after.choices!.find((c) => c.id === pick.id)!.picked).toBe(true)
+      const stored = fakeDb.chat.get(msg.id) as ChatMessage
+      expect(stored.choices!.find((c) => c.id === pick.id)!.picked).toBe(true)
+    })
+
+    it('a second pick after the first is a no-op — one question, one answer', async () => {
+      const msg = await twoProdReleases()
+      await useMew.getState().pickChoice(msg.id, msg.choices![0].id)
+      const turns = chat().length
+      const blocks = useMew.getState().blocks.length
+      await useMew.getState().pickChoice(msg.id, msg.choices![1].id)
+      expect(chat()).toHaveLength(turns) // no new user turn, no new reply
+      expect(useMew.getState().blocks).toHaveLength(blocks)
+    })
+
+    it('any newer user message supersedes the chips — a stale pick changes nothing', async () => {
+      const msg = await twoProdReleases()
+      await say('hello')
+      const turns = chat().length
+      await useMew.getState().pickChoice(msg.id, msg.choices![0].id)
+      expect(chat()).toHaveLength(turns)
+      expect(
+        useMew.getState().blocks.filter((b) => /prod release/i.test(b.title) && b.status === 'open')
+      ).toHaveLength(2) // both still stand — the question expired unanswered
+    })
+
+    it('chips persist and rehydrate across a reload, picked state intact', async () => {
+      const msg = await twoProdReleases()
+      await useMew.getState().pickChoice(msg.id, msg.choices![0].id)
+
+      /* reload: same storage, fresh store state — the delta putChat must have
+         carried the choices, and picked survives so the chips wake up inert */
+      useMew.setState(
+        { ...pristine, lastTickDay: dayKey(TUE(9, 41)), nowMs: TUE(9, 41).getTime() },
+        true
+      )
+      await useMew.getState().hydrate()
+      const back = chat().find((m) => m.id === msg.id)!
+      expect(back.choices).toBeDefined()
+      expect(back.choices!.map((c) => c.label)).toEqual(['the 14:00', 'the 10:00', 'both'])
+      expect(back.choices![0].picked).toBe(true)
+    })
+
+    it('the offer_choices executor posts chips mid-turn and tells the model to end (suggestions engine)', async () => {
+      await fresh(TUE(9, 40))
+      useMew.getState().updateSettings({ modelLocation: 'local' }) // the scripted model
+      let result = ''
+      scriptedModel.chunks = ['on it.']
+      scriptedModel.midTurn = (exec) => {
+        result = exec.offerChoices('where should the deck live?', [
+          { label: '15:00', reply: 'place the deck at 15:00' },
+          { label: '16:30', reply: 'place the deck at 16:30' },
+          { label: 'pick for me', reply: 'pick a slot for the deck yourself' },
+        ])
+      }
+      await say('find a slot for the deck')
+
+      expect(result).toMatch(/^The options are on screen as clickable chips/)
+      expect(result).toMatch(/END your turn/)
+      const offer = chat().find((m) => m.choices?.length === 3)!
+      expect(offer.role).toBe('mew')
+      expect(offer.body).toBe('where should the deck live?')
+      expect(offer.choices!.map((c) => c.label)).toEqual(['15:00', '16:30', 'pick for me'])
+
+      /* a pick posts the offer's reply as the next ordinary user turn */
+      scriptedModel.midTurn = null
+      await useMew.getState().pickChoice(offer.id, offer.choices![0].id)
+      const userTurns = chat().filter((m) => m.role === 'user')
+      expect(userTurns[userTurns.length - 1].body).toBe('place the deck at 15:00')
+    })
   })
 
   it('placing over an interview names the collision in the reply', async () => {
@@ -842,6 +1036,292 @@ describe('brain senses', () => {
     expect(useMew.getState().settings.brainEnabled).toBe(false) // sidecar-only, zero settings mutation
     await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
   })
+
+  it('desktop sidecar: shell lifecycle beats land in state — a dead brain is visibly dead (#249)', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().brainSidecar).toBe('off') // no beat yet
+    desktopFake.brainBeat?.('starting')
+    expect(useMew.getState().brainSidecar).toBe('starting')
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_fresh' })
+    expect(useMew.getState().brainSidecar).toBe('connected')
+    expect(brainCfg.current!.enabled()).toBe(true)
+    /* the child dies, the shell respawns, then spends its restart budget:
+       retrying keeps the brain effective (fresh credentials are imminent) */
+    desktopFake.brainBeat?.('retrying')
+    expect(useMew.getState().brainSidecar).toBe('retrying')
+    expect(brainCfg.current!.enabled()).toBe(true)
+    /* the final give-up hands back the floor: recall/senses stop dialing the
+       dead port, and the prompt gets its <brain-recall off/> marker */
+    desktopFake.brainBeat?.('unavailable')
+    expect(useMew.getState().brainSidecar).toBe('unavailable')
+    expect(brainCfg.current!.enabled()).toBe(false)
+    /* the beats are display state only — they never mutate Settings */
+    expect(useMew.getState().settings.brainEnabled).toBe(false)
+    await vi.advanceTimersByTimeAsync(60_000) // drain the handshake's chat batcher window
+  })
+})
+
+/* ── backfill on connect: a brain is offered what it missed, exactly once ── */
+
+describe('brain backfill on connect (#249 fix 4)', () => {
+  /* the seed carries 3 earlier weeks × 5 days × 2 block events with the full
+     block shape (title/tag/times) — the replayable history of a fresh install.
+     Same-week seeded events carry no titles, so they honestly stay local. */
+  const SEEDED_REPLAYABLE = 30
+
+  it('the first sidecar handshake replays the recent history, oldest first — and claims the ledger before sending', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    expect(brainFake.ingests).toHaveLength(0)
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_x' })
+    /* each event is claimed ahead of its send (the first claim lands
+       synchronously with the handshake) — a quit mid-replay can only lose
+       the event in flight, never double one */
+    expect(useMew.getState().settings.brainBackfillAt?.sidecar).toBeGreaterThan(0)
+    await settle()
+    const replayed = brainFake.ingests.map((p) => p.slug)
+    expect(replayed).toHaveLength(SEEDED_REPLAYABLE)
+    expect(replayed[0]).toBe('task/deep-work') // three Mondays back — history reads forward
+    expect(replayed.at(-1)).toBe('task/q3-deck') // last Friday's late polish
+    /* a sidecar restart hands fresh credentials — nothing is offered twice */
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:50000', token: 'gbrain_y' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE)
+    await vi.advanceTimersByTimeAsync(30_000) // drain the settings-claim backup timer
+  })
+
+  it('events that land while the brain is down are replayed on the next connect — never twice', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_x' })
+    await settle()
+    const afterConnect = brainFake.ingests.length
+    /* the shell spends its restart budget — the brain is off for the session */
+    desktopFake.brainBeat?.('unavailable')
+    at(TUE(9, 41))
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(9, 41)))!
+    useMew.getState().toggleComplete(deck.id)
+    await settle()
+    expect(brainFake.ingests).toHaveLength(afterConnect) // live ingest no-ops, event NOT claimed
+    /* next launch's shell spawns fresh: exactly the missed mew is replayed */
+    at(TUE(9, 42))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:50001', token: 'gbrain_z' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(afterConnect + 1)
+    expect(brainFake.ingests.at(-1)!.slug).toBe('task/q3-deck')
+    /* and only once — the replay claimed it */
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:50002', token: 'gbrain_w' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(afterConnect + 1)
+    await vi.advanceTimersByTimeAsync(30_000)
+  })
+
+  it('the ledger is per-brain: a newly configured endpoint gets the history the sidecar already saw', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_x' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE)
+    at(TUE(9, 41))
+    /* the user points MEW at their own brain — it has seen NONE of this */
+    useMew
+      .getState()
+      .updateSettings({ brainEnabled: true, brainUrl: 'http://my-brain:9999', brainToken: 'mine' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE * 2)
+    expect(
+      useMew.getState().settings.brainBackfillAt?.['endpoint:http://my-brain:9999']
+    ).toBeGreaterThan(0)
+    /* toggling back falls to the sidecar, whose ledger is current — no re-offer */
+    useMew.getState().updateSettings({ brainEnabled: false })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE * 2)
+    await vi.advanceTimersByTimeAsync(30_000)
+  })
+
+  it('a quit mid-replay resumes where it left off — the tail is not forfeited, nothing rides twice', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    /* the app "quits" at event 10: its send never settles, the loop parks */
+    brainFake.ingestImpl = (page) => {
+      brainFake.ingests.push(page)
+      if (brainFake.ingests.length === 10) return new Promise(() => {})
+    }
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_x' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(10) // claimed+sent 1–10; 11–30 still unsent
+    /* relaunch: same storage (the per-event claims persisted), fresh webview */
+    brainFake.ingestImpl = null
+    setSidecarBrain(null)
+    vi.setSystemTime(TUE(9, 45))
+    useMew.setState(
+      {
+        ...pristine,
+        lastTickDay: dayKey(TUE(9, 45)),
+        nowMs: TUE(9, 45).getTime(),
+        lastActivityMs: TUE(9, 45).getTime(),
+      },
+      true
+    )
+    await useMew.getState().hydrate()
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:60000', token: 'gbrain_next' })
+    await settle()
+    /* the mark stopped at event 10, so the resume offers exactly 11–30 */
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE)
+    const identities = brainFake.ingests.map((p) =>
+      JSON.stringify((p as { timeline?: unknown }).timeline ?? p.slug)
+    )
+    expect(new Set(identities).size).toBe(identities.length) // every event exactly once
+    await vi.advanceTimersByTimeAsync(30_000)
+  })
+
+  it('a brain switch mid-replay aborts the old pass — each brain still gets every event exactly once', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    /* at event 5 of the sidecar replay, the user points MEW at their own
+       brain — the port reads config live, so an unguarded loop would leak
+       the remainder onto the NEW brain under the OLD ledger key */
+    brainFake.ingestImpl = (page) => {
+      brainFake.ingests.push(page)
+      if (brainFake.ingests.length === 5) {
+        useMew.getState().updateSettings({
+          brainEnabled: true,
+          brainUrl: 'http://my-brain:9999',
+          brainToken: 'mine',
+        })
+      }
+    }
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_x' })
+    await settle()
+    /* sidecar stream stopped at the switch (5); the endpoint ran its own
+       clean full pass (30) under its own key — no event doubled on it */
+    expect(brainFake.ingests).toHaveLength(5 + SEEDED_REPLAYABLE)
+    /* switching back resumes the sidecar exactly where its ledger stopped:
+       events 6–30 (25 more), so both brains end at every event exactly once
+       — 30 each, 60 sends total */
+    brainFake.ingestImpl = null
+    useMew.getState().updateSettings({ brainEnabled: false })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE * 2)
+    await vi.advanceTimersByTimeAsync(30_000)
+  })
+
+  it('a second connect beat mid-replay supersedes the first pass — no event rides twice', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    /* the endpoint event and the snapshot pull can land together; a sidecar
+       can also restart while the first replay drains — same shape */
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_a' })
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43218', token: 'gbrain_b' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE)
+    const identities = brainFake.ingests.map((p) =>
+      JSON.stringify((p as { timeline?: unknown }).timeline ?? p.slug)
+    )
+    expect(new Set(identities).size).toBe(identities.length)
+    await vi.advanceTimersByTimeAsync(30_000)
+  })
+
+  it('the ledger survives a restart: a reload replays nothing it already offered', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:43217', token: 'gbrain_x' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(SEEDED_REPLAYABLE)
+    await vi.advanceTimersByTimeAsync(30_000)
+    /* the app restarts: storage persists, the webview state does not */
+    brainFake.reset()
+    setSidecarBrain(null)
+    vi.setSystemTime(TUE(9, 45))
+    useMew.setState(
+      {
+        ...pristine,
+        lastTickDay: dayKey(TUE(9, 45)),
+        nowMs: TUE(9, 45).getTime(),
+        lastActivityMs: TUE(9, 45).getTime(),
+      },
+      true
+    )
+    await useMew.getState().hydrate()
+    desktopFake.brainReady?.({ url: 'http://127.0.0.1:60000', token: 'gbrain_next' })
+    await settle()
+    expect(brainFake.ingests).toHaveLength(0) // the persisted mark: everything already offered
+  })
+})
+
+/* ── recall honesty: "didn't answer" is not "answered empty" (#249 fix 6) ── */
+
+describe('recall honesty — degraded vs empty', () => {
+  it('query_brain, brain answered empty: the honest miss names the brain as checked', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    await settle() // let the enable-connect replay drain out of the way
+    brainFake.recallImpl = () => []
+    const out = await useMew.getState().queryBrain('how did the pottery class go last week')
+    expect(out).toContain('or the brain mentions it')
+    expect(out).not.toContain(`didn't answer`)
+  })
+
+  it("query_brain, brain errored: MEW says the brain didn't answer — never that it was empty", async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    await settle()
+    brainFake.recallImpl = () => {
+      throw new Error('brain down')
+    }
+    const out = await useMew.getState().queryBrain('how did the pottery class go last week')
+    expect(out).toContain(`The brain didn't answer just now`)
+    expect(out).not.toContain('or the brain')
+  })
+
+  it('query_brain, brain hung: the race frees the answer at ~2500ms (raised from 1200) and says so', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    await settle()
+    brainFake.recallImpl = () => new Promise<string[]>(() => {})
+    let out: string | undefined
+    void useMew
+      .getState()
+      .queryBrain('how did the pottery class go last week')
+      .then((s) => {
+        out = s
+      })
+    await vi.advanceTimersByTimeAsync(2_400)
+    expect(out).toBeUndefined() // still waiting well past the old 1200ms bound
+    await vi.advanceTimersByTimeAsync(200)
+    expect(out).toContain(`didn't answer`)
+  })
+
+  it('chat turn: a hung brain marks the context degraded — the model is told recall is missing, not empty', async () => {
+    const { contextBlock } = await import('../../adapters/model/types')
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true, modelLocation: 'local' })
+    await settle()
+    brainFake.recallImpl = () => new Promise<string[]>(() => {})
+    scriptedModel.chunks = ['okay.']
+    const p = say('what do you remember about my gym weeks?')
+    await vi.advanceTimersByTimeAsync(1_500) // the turn's tight race frees the context
+    await p
+    expect(scriptedModel.lastCtx?.recallDegraded).toBe(true)
+    expect(contextBlock(scriptedModel.lastCtx!)).toContain('<brain-recall degraded')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+
+  it('chat turn: a real empty answer stays silent — absence that means itself', async () => {
+    const { contextBlock } = await import('../../adapters/model/types')
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true, modelLocation: 'local' })
+    await settle()
+    brainFake.recallImpl = () => []
+    scriptedModel.chunks = ['okay.']
+    await say('what do you remember about my gym weeks?')
+    expect(scriptedModel.lastCtx?.recallDegraded).toBe(false)
+    expect(contextBlock(scriptedModel.lastCtx!)).not.toContain('<brain-recall')
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
 })
 
 /* ── preferences: stated once, applied every turn ─────────────────────── */
@@ -1166,6 +1646,159 @@ describe('queryBrain (project rollups)', () => {
     expect(task).toBeDefined()
     expect(task!.links).toContain('project/spicanova')
     await vi.advanceTimersByTimeAsync(60_000)
+  })
+})
+
+/* ── past weeks (#249 fix 2): history persists forever, so "last week"
+   answers with real sums — brain OFF — and the reply names its week ──── */
+
+describe('queryBrain (past weeks)', () => {
+  /* the canonical week is Mon Jun 8 – Sun Jun 14; last week = Jun 1–7 */
+  const gymDone = (id: string, day: string) => ({
+    id,
+    title: 'Gym — strength',
+    tag: 'health' as const,
+    dayKey: day,
+    startMin: 7 * 60,
+    endMin: 9 * 60 + 30, // 2.5h, twice → the 5h the reply sums
+    protected: false,
+    status: 'done' as const,
+    calendarRefs: [],
+    estimateSource: 'user' as const,
+  })
+  const seedLastWeekGym = () =>
+    useMew.setState((st) => ({
+      blocks: [...st.blocks, gymDone('gym-lw-1', '2026-06-03'), gymDone('gym-lw-2', '2026-06-05')],
+    }))
+
+  it('"how much time did gym take last week" sums the past week and names it', async () => {
+    await fresh(TUE(9, 40))
+    seedLastWeekGym()
+    const reply = await useMew.getState().queryBrain('how much time did gym take last week')
+    expect(reply).toContain('gym last week: 5h across 2 blocks')
+    expect(reply).toContain('5h done')
+    expect(reply).not.toContain('still open') // the week finished clean — no 0h tail
+    expect(reply).not.toContain('this week')
+    expect(reply).not.toMatch(/missed|overdue|failed/)
+  })
+
+  it('the field phrasing works brain-off: "how were my gym sessions last week"', async () => {
+    await fresh(TUE(9, 40))
+    brainFake.reset()
+    seedLastWeekGym()
+    const reply = await useMew.getState().queryBrain('how were my gym sessions last week?')
+    expect(reply).toContain('gym last week: 5h across 2 blocks')
+    expect(reply).not.toContain('or the brain')
+    expect(brainFake.recalls).toHaveLength(0) // never asked — the sums are local
+  })
+
+  it('no time phrase still means the live week', async () => {
+    await fresh(TUE(9, 40))
+    /* 5h of pottery sit in LAST week; only today's 1h may answer (the seed
+       holds no pottery, so the sums are exact) */
+    useMew.setState((st) => ({
+      blocks: [
+        ...st.blocks,
+        { ...gymDone('pot-lw-1', '2026-06-03'), title: 'Pottery' },
+        { ...gymDone('pot-lw-2', '2026-06-05'), title: 'Pottery' },
+      ],
+    }))
+    await say('block 1h for pottery today at 15')
+    const reply = await useMew.getState().queryBrain('how much time on pottery')
+    expect(reply).toContain('pottery this week: 1h across 1 block')
+    expect(reply).not.toContain('5h')
+  })
+
+  it('an empty past week is honest and names the week it looked at', async () => {
+    await fresh(TUE(9, 40))
+    seedLastWeekGym() // data sits in week -1, the question asks about -2
+    const reply = await useMew.getState().queryBrain('how much time did gym take two weeks ago')
+    expect(reply).toMatch(/can't see gym two weeks ago/i)
+    expect(reply).toContain("that week's blocks")
+    expect(reply).not.toContain("this week's")
+    expect(reply).not.toMatch(/missed|overdue|failed/)
+  })
+
+  it('brain on: recall rides under past-week sums, asked with the question verbatim', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    brainFake.recallLines = ['task/gym — fridays run heavy']
+    seedLastWeekGym()
+    const reply = await useMew.getState().queryBrain('how much time did gym take last week')
+    expect(reply).toContain('gym last week: 5h across 2 blocks')
+    expect(reply).toContain('fridays run heavy')
+    expect(brainFake.recalls[0]).toContain('last week') // the brain hears the week phrase
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+
+  it('a pronoun or quantifier before "sessions" is never a subject — honest, not a wrong sum', async () => {
+    await fresh(TUE(9, 40))
+    /* "many" hides inside germany, "my" inside anatomy — the substring
+       rollup must never be reached with a bare function word */
+    useMew.setState((st) => ({
+      blocks: [
+        ...st.blocks,
+        { ...gymDone('de-lw-1', '2026-06-03'), title: 'Germany trip planning' },
+        { ...gymDone('an-lw-1', '2026-06-05'), title: 'Anatomy study' },
+      ],
+    }))
+    const many = await useMew.getState().queryBrain('how many sessions did I do last week')
+    expect(many).toMatch(/can't see that last week/i) // not Germany's 2.5h
+    expect(many).not.toMatch(/\dh across/)
+    const my = await useMew.getState().queryBrain('how were my sessions last week?')
+    expect(my).toMatch(/can't see that last week/i) // not Anatomy's 2.5h
+    expect(my).not.toMatch(/\dh across/)
+  })
+
+  it('a block NAMED with week words, asked by name, is the subject — live week, no mis-window', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((st) => ({
+      blocks: [
+        ...st.blocks,
+        {
+          ...gymDone('lwr-1', dayKey(TUE(9, 40))),
+          title: 'Last week review',
+          startMin: 10 * 60,
+          endMin: 11 * 60,
+        },
+      ],
+    }))
+    const reply = await useMew.getState().queryBrain('how much time did last week review take?')
+    expect(reply).toContain('Last week review this week: 1h across 1 block')
+    expect(reply).toContain('1h done')
+  })
+
+  it('a subject containing "take" keeps its full name — never shrunk to "the"', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((st) => ({
+      blocks: [
+        ...st.blocks,
+        {
+          ...gymDone('to-tw-1', dayKey(TUE(9, 40))),
+          title: 'The take out order',
+          startMin: 12 * 60,
+          endMin: 13 * 60,
+        },
+        {
+          ...gymDone('to-lw-1', '2026-06-04'),
+          title: 'The take out order',
+          startMin: 12 * 60,
+          endMin: 13 * 60,
+        },
+      ],
+    }))
+    /* current-week phrasing rides the pre-existing verb list — byte-identical */
+    const eaten = await useMew
+      .getState()
+      .queryBrain('how much time has the take out order eaten this week')
+    expect(eaten).toContain('the take out order this week: 1h across 1 block')
+    /* duration shape: the FINAL "take" is the verb, the noun keeps its "take" */
+    const took = await useMew
+      .getState()
+      .queryBrain('how much time did the take out order take last week')
+    expect(took).toContain('the take out order last week: 1h across 1 block')
+    expect(took).toContain('1h done')
   })
 })
 
@@ -2714,5 +3347,344 @@ describe('structured logging (#181) — a calendar sync failure is logged, not s
       expect(blob).not.toMatch(/Bearer\s+\S/)
       expect(blob).not.toMatch(/https?:\/\//)
     }
+  })
+})
+
+/* ── #250 phase 2: paged boot hydration — the window, the pager, the export ── */
+describe('paged boot hydration (#250 phase 2)', () => {
+  const TUE_KEY = '2026-06-09'
+  const drain = () => vi.advanceTimersByTimeAsync(0)
+  /** an old chat row, deterministic (ts, id) so the window edge is exact */
+  const oldMsg = (i: number, ts: number): ChatMessage => ({
+    id: `old${String(i).padStart(4, '0')}`,
+    role: i % 2 ? 'mew' : 'user',
+    body: `line ${i}`,
+    ts,
+  })
+  /** a big profile: `total` chat rows + one block so hydrate takes the loaded
+      branch (an empty week would re-seed and hide the window) */
+  async function freshBigProfile(start: Date, total: number) {
+    fakeDb.reset()
+    mirrors.length = 0
+    vi.setSystemTime(start)
+    const base = start.getTime() - total * 60_000
+    for (let i = 0; i < total; i++) {
+      const m = oldMsg(i, base + i * 60_000)
+      fakeDb.chat.set(m.id, m)
+    }
+    fakeDb.blocks.set('b-anchor', {
+      id: 'b-anchor',
+      title: 'Deep work',
+      tag: 'work',
+      dayKey: TUE_KEY,
+      startMin: 9 * 60,
+      endMin: 10 * 60,
+      protected: false,
+      status: 'open',
+      calendarRefs: [],
+      estimateSource: 'user',
+    })
+    useMew.setState(
+      {
+        ...pristine,
+        lastTickDay: dayKey(start),
+        nowMs: start.getTime(),
+        lastActivityMs: start.getTime(),
+      },
+      true
+    )
+    await useMew.getState().hydrate()
+  }
+
+  it('boot hydrates only the newest 200 messages of a 260-message profile — and knows more wait in storage', async () => {
+    await freshBigProfile(TUE(9, 40), 260)
+    const s = useMew.getState()
+    expect(s.chat.length).toBe(200)
+    expect(s.chat[0].id).toBe('old0060') // the oldest 60 stayed in storage
+    expect(s.chat[s.chat.length - 1].id).toBe('old0259')
+    expect(s.chatHasEarlier).toBe(true)
+    expect(fakeDb.chat.size).toBe(260) // hydration is a read, never a trim
+  })
+
+  it('loadEarlierChat prepends the previous page until storage is exhausted, then flips the flag', async () => {
+    await freshBigProfile(TUE(9, 40), 260)
+    expect(await useMew.getState().loadEarlierChat()).toBe(50)
+    expect(useMew.getState().chat.length).toBe(250)
+    expect(useMew.getState().chat[0].id).toBe('old0010')
+    expect(useMew.getState().chatHasEarlier).toBe(true)
+    /* the final, short page carries the rest and retires the sentinel */
+    expect(await useMew.getState().loadEarlierChat()).toBe(10)
+    expect(useMew.getState().chat.length).toBe(260)
+    expect(useMew.getState().chat[0].id).toBe('old0000')
+    expect(useMew.getState().chatHasEarlier).toBe(false)
+    expect(await useMew.getState().loadEarlierChat()).toBe(0) // idempotent at the head
+    /* the window prepends OLDER rows only — order stays (ts, id) ascending */
+    const chatNow = useMew.getState().chat
+    for (let i = 1; i < chatNow.length; i++)
+      expect(chatNow[i].ts).toBeGreaterThanOrEqual(chatNow[i - 1].ts)
+  })
+
+  it('concurrent sentinel fires coalesce to ONE page — no doubled prepend', async () => {
+    await freshBigProfile(TUE(9, 40), 260)
+    const [a, b] = await Promise.all([
+      useMew.getState().loadEarlierChat(),
+      useMew.getState().loadEarlierChat(),
+    ])
+    expect(a).toBe(50)
+    expect(b).toBe(50) // the same in-flight page, not a second one
+    expect(useMew.getState().chat.length).toBe(250)
+  })
+
+  it('a small profile boots whole: no earlier flag, nothing to page', async () => {
+    await freshBigProfile(TUE(9, 40), 40)
+    expect(useMew.getState().chat.length).toBe(40)
+    expect(useMew.getState().chatHasEarlier).toBe(false)
+    expect(await useMew.getState().loadEarlierChat()).toBe(0)
+  })
+
+  it('the live tail is unmoved: speaking appends past the window exactly as before', async () => {
+    await freshBigProfile(TUE(9, 40), 260)
+    await say('block thursday morning for the deck')
+    const s = useMew.getState()
+    expect(s.chat[s.chat.length - 1].body).toMatch(/^Done — /)
+    expect(s.chat[s.chat.length - 2].body).toBe('block thursday morning for the deck')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+
+  it('export reads the TABLE: all 260 messages travel while the window holds 200', async () => {
+    await freshBigProfile(TUE(9, 40), 260)
+    expect(useMew.getState().chat.length).toBe(200)
+    const backup = JSON.parse(await useMew.getState().exportData()) as { chat: ChatMessage[] }
+    expect(backup.chat.length).toBe(260)
+    expect(backup.chat.some((m) => m.id === 'old0000')).toBe(true) // beyond the window
+    await drain()
+  })
+})
+
+/* ── #250 phase 2: chat → facts condensation at the day-debrief moment ── */
+
+describe('chat condensation at the debrief (#250 phase 2)', () => {
+  const TUE_KEY = '2026-06-09'
+  /** the condensation pass chains one await per step per day — drain a
+      generous microtask budget without touching the fake-timer clock */
+  const settle = async (turns = 60) => {
+    for (let i = 0; i < turns; i++) await Promise.resolve()
+  }
+  const awake = (d: Date) => {
+    useMew.setState({ lastActivityMs: d.getTime() })
+    at(d)
+  }
+  /** plant a past day's chat directly in storage (the boot window doesn't
+      reach it — exactly the shape of a long-lived profile) */
+  const plantDay = (dayOffset: number, mkMsgs: (ts0: number) => ChatMessage[]): string[] => {
+    /* 10:00 on TUE_KEY+dayOffset — JS Date normalizes the negative day */
+    const ts0 = new Date(2026, 5, 9 + dayOffset, 10, 0).getTime()
+    const msgs = mkMsgs(ts0)
+    for (const m of msgs) fakeDb.chat.set(m.id, m)
+    return msgs.map((m) => m.id)
+  }
+  const storyDay = (dayOffset: number) =>
+    plantDay(dayOffset, (ts0) => [
+      { id: `u-${dayOffset}`, role: 'user', body: 'block the deck review', ts: ts0 },
+      {
+        id: `m-${dayOffset}`,
+        role: 'mew',
+        body: 'Done — 9:00–10:00 is held for the deck review.',
+        ts: ts0 + 1,
+      },
+      { id: `n-${dayOffset}`, role: 'nudge', body: 'time for a breather', ts: ts0 + 2 },
+    ])
+  /** the day must have a story for the debrief to fire: one completed block */
+  const liveDayStory = () => {
+    at(TUE(11, 30))
+    const deck = useMew
+      .getState()
+      .blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === TUE_KEY)!
+    useMew.getState().toggleComplete(deck.id)
+  }
+  const debriefMoment = async () => {
+    awake(TUE(18, 15)) // close-loop takes the first wind-down slot
+    awake(TUE(18, 16)) // the story lands — and the condensation pass runs
+    await settle()
+  }
+
+  it('brain on: whole days older than 14 days distill into digests and prune; the boundary day stays', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    const oldIds = storyDay(-15) // beyond the horizon — condenses
+    const edgeIds = storyDay(-14) // the first kept day — must NOT condense
+    liveDayStory()
+    await debriefMoment()
+
+    /* the digest landed: one recallable page, story only (nudges out) */
+    const digest = brainFake.ingests.find(
+      (p) => p.slug === `week/${addDaysKey(TUE_KEY, -15)}-chat`
+    ) as { slug: string; body?: string } | undefined
+    expect(digest).toBeDefined()
+    expect(digest!.body).toContain('- you: block the deck review')
+    expect(digest!.body).toContain('- mew: Done — 9:00–10:00 is held for the deck review.')
+    expect(digest!.body).not.toContain('breather')
+    /* the raw rows pruned — the nudge included (engine chatter) */
+    for (const id of oldIds) expect(fakeDb.chat.has(id)).toBe(false)
+    /* boundary exactness: day −14 is inside the horizon, untouched, no digest */
+    for (const id of edgeIds) expect(fakeDb.chat.has(id)).toBe(true)
+    expect(brainFake.ingests.some((p) => p.slug === `week/${addDaysKey(TUE_KEY, -14)}-chat`)).toBe(
+      false
+    )
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+
+  it('an ingest that silently fails prunes NOTHING — un-condensed history is never destroyed', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    brainFake.dropIngests = true // the port swallows failures; the page never lands
+    const oldIds = storyDay(-15)
+    liveDayStory()
+    await debriefMoment()
+    for (const id of oldIds) expect(fakeDb.chat.has(id)).toBe(true) // still here, un-condensed
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('the failed pass retries at the next debrief and prunes once the digest provably lands', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    brainFake.dropIngests = true
+    const oldIds = storyDay(-15)
+    liveDayStory()
+    await debriefMoment()
+    expect(fakeDb.chat.has(oldIds[0])).toBe(true)
+
+    /* next evening: the brain is healthy again — same digest, now provable */
+    brainFake.dropIngests = false
+    const WED = (h: number, m = 0) => new Date(2026, 5, 10, h, m)
+    useMew.setState({ lastActivityMs: WED(11, 0).getTime() })
+    at(WED(11, 0))
+    const wedBlock = useMew
+      .getState()
+      .blocks.find((b) => b.dayKey === addDaysKey(TUE_KEY, 1) && b.status === 'open' && !b.external)
+    if (wedBlock) useMew.getState().toggleComplete(wedBlock.id)
+    useMew.setState({ lastActivityMs: WED(18, 15).getTime() })
+    at(WED(18, 15))
+    useMew.setState({ lastActivityMs: WED(18, 16).getTime() })
+    at(WED(18, 16))
+    await settle()
+    for (const id of oldIds) expect(fakeDb.chat.has(id)).toBe(false) // condensed this time
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('brain off: the debrief still speaks, but nothing condenses and nothing prunes — ever', async () => {
+    await fresh(TUE(9, 40))
+    const oldIds = storyDay(-15)
+    liveDayStory()
+    await debriefMoment()
+    expect(nudges('debrief')).toHaveLength(1) // the story still lands in chat
+    expect(brainFake.ingests).toHaveLength(0)
+    for (const id of oldIds) expect(fakeDb.chat.has(id)).toBe(true) // brainless profiles prune nothing
+  })
+
+  it('a nudge-only old day prunes without a digest — engine chatter carries no story', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    const nudgeIds = plantDay(-20, (ts0) => [
+      { id: 'n-only', role: 'nudge', body: 'stretch break?', ts: ts0 },
+    ])
+    liveDayStory()
+    await debriefMoment()
+    expect(fakeDb.chat.has(nudgeIds[0])).toBe(false)
+    expect(brainFake.ingests.some((p) => p.slug === `week/${addDaysKey(TUE_KEY, -20)}-chat`)).toBe(
+      false
+    )
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('after condensation the export carries exactly what the table still holds — the digest replaced the raw rows', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    brainFake.reset()
+    const oldIds = storyDay(-15)
+    liveDayStory()
+    await debriefMoment()
+    const backup = JSON.parse(await useMew.getState().exportData()) as { chat: ChatMessage[] }
+    const exported = new Set(backup.chat.map((m) => m.id))
+    for (const id of oldIds) expect(exported.has(id)).toBe(false) // pruned rows are gone for real
+    expect(backup.chat.length).toBe(fakeDb.chat.size) // and nothing else went missing
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+})
+
+/* #153 — honest fallback copy per failure class. When a model adapter fails and
+   the rules floor answers, the note must say WHERE the fix lives: Settings for
+   a dead key or model id, "rejected" for a model that refused the request (a
+   tool-less local model does this every turn), "busy" only for real transients
+   — and a retry is claimed ONLY where one actually ran (the local adapter's
+   SDK backoff; remote fails fast to the chain, #156). */
+describe('honest fallback copy per failure class (#153)', () => {
+  /** an AI-SDK-shaped failure: APICallError carries `statusCode` */
+  const sdkErr = (statusCode: number) =>
+    Object.assign(new Error(`sdk ${statusCode}`), { statusCode })
+
+  async function remoteFail(err: unknown) {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'remote', anthropicKey: 'sk-ant-test' })
+    scriptedModel.remoteError = err
+    await say('hello pixie')
+  }
+  async function localFail(err: unknown) {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.localError = err
+    await say('hello pixie')
+  }
+  const note = () =>
+    chat()
+      .filter((m) => m.role === 'mew' && m.body.startsWith('('))
+      .pop()!
+
+  it('a rejected key (401) points at Settings — never "busy"', async () => {
+    await remoteFail(sdkErr(401))
+    expect(note().body).toMatch(/your API key was rejected — open Settings to check it/)
+    // the rules floor still answered — degradation stayed graceful
+    expect(chat().some((m) => /what should the week hold/i.test(m.body))).toBe(true)
+  })
+
+  it('an unknown model id (404) points at the model name in Settings', async () => {
+    await remoteFail(sdkErr(404))
+    expect(note().body).toMatch(/couldn't reach that model — check the model name in Settings/)
+  })
+
+  it('a refused request (400) says rejected — not busy, not unreachable', async () => {
+    await remoteFail(sdkErr(400))
+    expect(note().body).toMatch(/the model rejected that request/)
+  })
+
+  it('a remote 429 reads busy WITHOUT claiming a retry that never ran', async () => {
+    await remoteFail(sdkErr(429))
+    expect(note().body).toMatch(/the model was busy/)
+    expect(note().body).not.toMatch(/I retried/)
+  })
+
+  it('an unclassifiable failure stays honest: could not reach, no diagnosis invented', async () => {
+    await remoteFail(new Error('mystery'))
+    expect(note().body).toMatch(/couldn't reach the model just now/)
+  })
+
+  it('a local 503 claims its retry truthfully — the SDK backoff really ran (#116)', async () => {
+    await localFail(sdkErr(503))
+    expect(note().body).toMatch(/the local model was busy — I retried/)
+  })
+
+  it('a tool-less local model (400 every turn) reads rejected, not busy', async () => {
+    await localFail(sdkErr(400))
+    expect(note().body).toMatch(/the model rejected that request/)
+    expect(note().body).not.toMatch(/busy/)
+  })
+
+  it('a local unknown model tag (404) points at Settings too', async () => {
+    await localFail(sdkErr(404))
+    expect(note().body).toMatch(/check the model name in Settings/)
   })
 })

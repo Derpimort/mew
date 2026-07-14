@@ -28,9 +28,24 @@ export function stripSecrets(settings: Settings | null): Settings | null {
 export interface PersistedState {
   blocks: Block[]
   captures: Capture[]
+  /** The BOOT WINDOW, not the table: `load()` hydrates only the newest
+      `CHAT_BOOT_PAGE` messages so startup stays flat on a years-old profile
+      (#250 phase 2). Older pages arrive on demand via `loadChatBefore`;
+      `exportJson` reads the whole table and is never windowed. */
   chat: ChatMessage[]
   memory: MemoryEvent[]
   settings: Settings | null
+}
+
+/** How many chat messages `load()` hydrates at boot — the newest window.
+    One constant so every vehicle (Dexie, SQLite, fakes) pages identically. */
+export const CHAT_BOOT_PAGE = 200
+
+/** Chat is ordered by (ts, id): ts ascending, id as the tiebreak within one
+    millisecond — the exact order `load()` returns and `loadChatBefore` pages
+    by, so a cursor at the window's head never skips or doubles a tied row. */
+export function chatOrder(a: ChatMessage, b: ChatMessage): number {
+  return a.ts - b.ts || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
 }
 
 /** One thing that's wrong with loaded state — emitted by `validateSchema`, never
@@ -62,6 +77,8 @@ export interface AuditEntry {
 }
 
 export interface StoragePort {
+  /** Boot state. `chat` is the newest `CHAT_BOOT_PAGE` window (see
+      `PersistedState.chat`); every other table loads whole. */
   load(): Promise<PersistedState>
   putBlocks(blocks: Block[]): Promise<void>
   deleteBlocks(ids: string[]): Promise<void>
@@ -71,6 +88,21 @@ export interface StoragePort {
       updated in place, not deleted). */
   deleteCaptures(ids: string[]): Promise<void>
   putChat(msgs: ChatMessage[]): Promise<void>
+  /** How many chat messages the table holds — with the boot window's length
+      this answers "is there an earlier page?" without loading one. */
+  countChat(): Promise<number>
+  /** The page of chat strictly before the (ts, id) cursor in `chatOrder` —
+      the newest `limit` of what's older, ascending. The id tiebreak keeps a
+      cursor inside a burst of same-millisecond messages exact: no row is
+      skipped or returned twice across pages. */
+  loadChatBefore(ts: number, id: string, limit: number): Promise<ChatMessage[]>
+  /** Every chat message with ts strictly below the horizon, ascending — the
+      condensation pass reads the TABLE (the boot window can't see this far
+      back) to distill old chat into brain facts (#250 phase 2). */
+  loadChatOlderThan(ts: number): Promise<ChatMessage[]>
+  /** Prune chat by id — only the condensation pass removes messages, and only
+      after their day's digest provably landed in a connected brain. */
+  deleteChat(ids: string[]): Promise<void>
   putMemory(events: MemoryEvent[]): Promise<void>
   deleteMemory(ids: string[]): Promise<void>
   putSettings(s: Settings): Promise<void>

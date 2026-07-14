@@ -1,5 +1,5 @@
 /* Pre-tool reasoning snapshot (#166). The Vercel AI SDK surfaces Anthropic's
-   extended thinking as `reasoning-*` parts on `fullStream`; this proves the
+   extended thinking as `reasoning-*` parts on the full stream; this proves the
    adapter (a) only asks for thinking when opted in, (b) emits the model's plan
    as a single `{ reasoning }` chunk BEFORE the first tool runs and before the
    reply text, and (c) keeps it short. The SDK transport itself is covered by the
@@ -17,11 +17,12 @@ const ctx: WeekContext = {
   realisticBestH: 5.5,
   mewsToday: 2,
   recallLines: [],
+  brainOn: false,
   prefLines: [],
   insightLines: [],
 }
 
-/* A fullStream part is the SDK's streamed event; we only build the variants the
+/* A stream part is the SDK's streamed event; we only build the variants the
    adapter reads. `text` carries both text-delta and reasoning-delta payloads. */
 type Part =
   | { type: 'reasoning-start'; id: string }
@@ -30,9 +31,10 @@ type Part =
   | { type: 'text-delta'; id: string; text: string }
   | { type: 'tool-call'; toolName: string }
   | { type: 'error'; error: unknown }
+  | { type: 'finish'; finishReason: string }
 
 /* The programmable fake: each test sets `parts`, the next streamText returns them
-   as fullStream (and a text-only textStream for the reasoning-off path). The last
+   as `stream` (and a text-only textStream for the reasoning-off path). The last
    options handed to streamText are captured so we can assert request shape. */
 const scripted = { parts: [] as Part[], lastOptions: undefined as unknown }
 
@@ -44,24 +46,15 @@ vi.mock('ai', () => ({
   streamText: (options: unknown) => {
     scripted.lastOptions = options
     return {
-      get fullStream() {
+      get stream() {
         return gen(scripted.parts)
-      },
-      get textStream() {
-        // the real SDK textStream yields plain reply strings, not stream parts
-        const texts = scripted.parts
-          .filter((p): p is Extract<Part, { type: 'text-delta' }> => p.type === 'text-delta')
-          .map((p) => p.text)
-        return (async function* () {
-          for (const t of texts) yield t
-        })()
       },
     }
   },
   // the adapter calls these but their behavior is irrelevant to reasoning wiring
   tool: (def: unknown) => def,
   jsonSchema: (s: unknown) => s,
-  stepCountIs: (n: number) => n,
+  isStepCount: (n: number) => n,
 }))
 vi.mock('@ai-sdk/anthropic', () => ({
   createAnthropic: () => () => ({ id: 'mock-anthropic-model' }),
@@ -92,13 +85,22 @@ function optionsHasThinking(o: unknown): boolean {
   return po?.anthropic?.thinking?.type === 'enabled'
 }
 
+type SystemMsg = { role: string; content: string; providerOptions?: Record<string, unknown> }
+function instructionsOf(o: unknown): string | SystemMsg[] {
+  return (o as { instructions: string | SystemMsg[] }).instructions
+}
+
 describe('reasoning OFF (default) — no thinking requested, no reasoning chunk', () => {
   it('streams reply text only and never sets providerOptions.thinking', async () => {
     scripted.parts = [
       { type: 'text-delta', id: 't', text: 'done — ' },
       { type: 'text-delta', id: 't', text: 'thursday is held.' },
     ]
-    const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6') // reasoning defaults false
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+    }) // reasoning defaults off
     const chunks = await collect(
       adapter.converse([{ role: 'user', text: 'block thursday' }], ctx, exec)
     )
@@ -118,7 +120,12 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'reasoning-end', id: 'r' },
       { type: 'text-delta', id: 't', text: 'done — thursday 9 to 12 is held.' },
     ]
-    const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+      reasoning: true,
+    })
     const chunks = await collect(
       adapter.converse([{ role: 'user', text: 'block thursday morning' }], ctx, exec)
     )
@@ -143,7 +150,12 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'tool-call', toolName: 'plan_blocks' },
       { type: 'text-delta', id: 't', text: 'done.' },
     ]
-    const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+      reasoning: true,
+    })
     const chunks = await collect(
       adapter.converse([{ role: 'user', text: 'plan my day' }], ctx, exec)
     )
@@ -160,7 +172,12 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'reasoning-end', id: 'r' },
       { type: 'text-delta', id: 't', text: 'ok.' },
     ]
-    const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+      reasoning: true,
+    })
     const chunks = await collect(
       adapter.converse([{ role: 'user', text: 'plan a lot' }], ctx, exec)
     )
@@ -176,7 +193,12 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'reasoning-delta', id: 'r', text: 'nothing to change here.' },
       { type: 'reasoning-end', id: 'r' },
     ]
-    const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+      reasoning: true,
+    })
     const chunks = await collect(adapter.converse([{ role: 'user', text: 'hmm' }], ctx, exec))
     expect(chunks).toEqual([{ reasoning: 'nothing to change here.' }])
   })
@@ -187,7 +209,12 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       { type: 'reasoning-end', id: 'r' },
       { type: 'error', error: new Error('529 overloaded') },
     ]
-    const adapter = createAiAdapter('anthropic', 'sk-ant-x', 'claude-sonnet-4-6', true)
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+      reasoning: true,
+    })
     const it = adapter.converse([{ role: 'user', text: 'plan' }], ctx, exec)[Symbol.asyncIterator]()
     // first chunk is the reasoning snapshot
     await it.next()
@@ -203,10 +230,135 @@ describe('reasoning ON but provider has no reasoning budget (OpenAI) — no-op',
       { type: 'reasoning-delta', id: 'r', text: 'should be ignored' },
       { type: 'text-delta', id: 't', text: 'all set.' },
     ]
-    const adapter = createAiAdapter('openai', 'sk-x', 'gpt-5.4-mini', true) // asked on, but contract.reasoning is null
+    const adapter = createAiAdapter({
+      provider: 'openai',
+      apiKey: 'sk-x',
+      model: 'gpt-5.4-mini',
+      reasoning: true,
+    }) // asked on, but contract.reasoning is null
     const chunks = await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
 
     expect(optionsHasThinking(scripted.lastOptions)).toBe(false)
-    expect(chunks).toEqual(['all set.']) // textStream path, reasoning ignored
+    expect(chunks).toEqual(['all set.']) // reply-text path, reasoning ignored
+  })
+})
+
+/* ── #153: the cacheable prompt split + the graceful step-cap ─────────────── */
+
+describe('Anthropic prompt caching (#153) — the frozen prefix carries the breakpoint', () => {
+  it('splits instructions: MEW_VOICE marked ephemeral, per-turn context unmarked', async () => {
+    scripted.parts = [{ type: 'text-delta', id: 't', text: 'ok.' }]
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+    })
+    await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+
+    const instructions = instructionsOf(scripted.lastOptions)
+    expect(Array.isArray(instructions)).toBe(true)
+    const [voice, context] = instructions as SystemMsg[]
+    // the frozen voice block is the breakpoint: everything up to it (tools
+    // included, on Anthropic's wire) caches across the intra-turn loop
+    expect(voice.content.startsWith('You are MEW')).toBe(true)
+    expect(voice.providerOptions).toEqual({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    })
+    // the per-turn context (clock, week, insights) sits AFTER it, uncached
+    expect(context.content).toContain('<today>')
+    expect(context.providerOptions).toBeUndefined()
+    // and the call-level option auto-marks the last message for the loop
+    const po = (
+      scripted.lastOptions as {
+        providerOptions?: { anthropic?: { cacheControl?: { type?: string } } }
+      }
+    ).providerOptions
+    expect(po?.anthropic?.cacheControl).toEqual({ type: 'ephemeral' })
+  })
+
+  it('non-Anthropic providers keep the plain single-string prompt, no anthropic options', async () => {
+    scripted.parts = [{ type: 'text-delta', id: 't', text: 'ok.' }]
+    const adapter = createAiAdapter({ provider: 'openai', apiKey: 'sk-x', model: 'gpt-5.4-mini' })
+    await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+
+    const instructions = instructionsOf(scripted.lastOptions)
+    expect(typeof instructions).toBe('string')
+    expect(instructions as string).toContain('You are MEW')
+    expect((scripted.lastOptions as { providerOptions?: unknown }).providerOptions).toBeUndefined()
+  })
+})
+
+describe('graceful step-cap (#153) — a capped turn pauses kindly, never dead-stops', () => {
+  it("finishReason 'tool-calls' at stream end yields the pause message after the reply", async () => {
+    scripted.parts = [
+      { type: 'text-delta', id: 't', text: 'placing the last of it…' },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+    })
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'plan it all' }], ctx, exec)
+    )
+
+    const last = chunks[chunks.length - 1]
+    expect(typeof last).toBe('string')
+    expect(last as string).toContain('say "keep going"')
+    expect(last as string).toContain("nothing's half-done")
+  })
+
+  it('a normally finished turn adds nothing', async () => {
+    scripted.parts = [
+      { type: 'text-delta', id: 't', text: 'done — thursday is held.' },
+      { type: 'finish', finishReason: 'stop' },
+    ]
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+    })
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'block thursday' }], ctx, exec)
+    )
+    expect(chunks).toEqual(['done — thursday is held.'])
+  })
+
+  it('the pause also lands on the reasoning path, after the plan and the reply', async () => {
+    scripted.parts = [
+      { type: 'reasoning-delta', id: 'r', text: 'fourteen placements needed.' },
+      { type: 'reasoning-end', id: 'r' },
+      { type: 'text-delta', id: 't', text: 'working through it…' },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+      reasoning: true,
+    })
+    const chunks = await collect(
+      adapter.converse([{ role: 'user', text: 'plan everything' }], ctx, exec)
+    )
+
+    expect(chunks[0]).toEqual({ reasoning: 'fourteen placements needed.' })
+    expect(chunks[1]).toBe('working through it…')
+    expect(String(chunks[2])).toContain('keep going')
+  })
+
+  it('a captured stream error outranks the pause — failover stays honest', async () => {
+    scripted.parts = [
+      { type: 'error', error: new Error('529 overloaded') },
+      { type: 'finish', finishReason: 'tool-calls' },
+    ]
+    const adapter = createAiAdapter({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-4-6',
+    })
+    await expect(
+      collect(adapter.converse([{ role: 'user', text: 'plan' }], ctx, exec))
+    ).rejects.toThrow('529 overloaded')
   })
 })
