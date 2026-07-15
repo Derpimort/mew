@@ -89,6 +89,19 @@
 .tg.lock .kn {
   left: 21px;
 }
+/* locked toggles carry a tiny padlock in the knob so "you cannot change this"
+   reads at a glance, not just from the gold fill. Gold-on-white matches the pill. */
+.tg.lock .kn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.knlock {
+  width: 11px;
+  height: 11px;
+  color: var(--gold);
+  display: block;
+}
 /* the toggle is a keyboard switch (role=switch, tabbable, Space/Enter flips it
    in the Tgl primitive). A locked principle is inert — no field to change — so it
    is never tabbable and never shows a ring. The ring follows the pill radius. */
@@ -191,10 +204,16 @@
 /* visibility chips (routing matrix) */
 .vis-chip {
   font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
+  font-size: 11.5px;
   font-weight: 600;
-  padding: 4px 11px;
-  border-radius: 8px;
+  /* uniform, centred pills so every state (details/busy/hidden/all) reads as
+     the same control with even padding — not text crammed against the edge */
+  min-width: 66px;
+  padding: 6px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
   white-space: nowrap;
   transition: all 0.18s ease;
 }

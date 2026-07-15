@@ -32,9 +32,15 @@ permissions:
   contents: read
 
 jobs:
-  # JS/TS dependency audit for both pnpm workspaces. --prod scopes to what ships
-  # to users (devDependencies don't reach the bundle). high/critical fail the
-  # job via --audit-level high; a separate moderate sweep only warns.
+  # JS/TS dependency audit for both pnpm workspaces, via Google's OSV scanner
+  # against the committed lockfiles. npm retired the classic audit API pnpm
+  # speaks (410 as of 2026-07: "use the bulk advisory endpoint") and no pnpm
+  # release has migrated, so `pnpm audit` fails ecosystem-wide regardless of
+  # advisories. OSV mirrors the same GHSA/npm advisories and reads the
+  # lockfile directly — no install step, and it blocks on ANY known
+  # vulnerability (dev deps included), which is strictly stronger than the
+  # old prod-only high/critical tier. A finding that must ship anyway gets an
+  # explicit, justified ignore in an osv-scanner.toml — never a removed gate.
   npm:
     runs-on: ubuntu-latest
     strategy:
@@ -43,22 +49,11 @@ jobs:
         dir: [app, desktop]
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with: { version: 9 }
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: ${{ matrix.dir }}/pnpm-lock.yaml
-      - run: pnpm --dir ${{ matrix.dir }} install --frozen-lockfile
-      # warn-only sweep: surface moderate/low advisories without blocking. The
-      # registry being down must not fail the build for a non-blocking check.
-      - name: Moderate advisories (warn only)
-        run: pnpm --dir ${{ matrix.dir }} run audit --audit-level moderate --ignore-registry-errors || echo "::warning title=moderate advisories in ${{ matrix.dir }}::pnpm audit reported moderate/low advisories — review the GitHub Security tab."
-      # blocking gate: high/critical only. A real registry error here should fail
-      # the build (a missing audit is not a passing audit), so no ignore flag.
-      - name: High/critical advisories (block merge)
-        run: pnpm --dir ${{ matrix.dir }} run audit --audit-level high
+      - name: JS advisories via OSV (blocks merge)
+        run: |
+          curl -sSL -o /tmp/osv-scanner https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          chmod +x /tmp/osv-scanner
+          /tmp/osv-scanner scan source --lockfile ${{ matrix.dir }}/pnpm-lock.yaml
 
   # Rust crate audit for the Tauri shell against RustSec (https://rustsec.org).
   # We fail on real VULNERABILITIES (cargo audit's default exit-on-vuln), but NOT

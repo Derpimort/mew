@@ -103,7 +103,7 @@ import { choicesActive } from '../domain/choices'
 import { createNotifier } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
-import { mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
+import { adoptOrphanedExternals, mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
 import { icsToRemoteEvents } from '../adapters/calendar/ics'
 import type { RemoteCalendar } from '../adapters/calendar/types'
 import { seed } from './seed'
@@ -2038,17 +2038,22 @@ export const useMew = create<MewState>((set, get) => {
         /* loaded.chat is the newest window (#250 phase 2); counting after the
            load keeps the flag exact even if load's recovery cleared the table */
         const chatTotal = await storage.countChat().catch(() => loaded.chat.length)
+        // merge so settings keys added in newer versions (pet, themeMode, …) backfill
+        const settings = { ...DEFAULT_SETTINGS, ...(loaded.settings ?? {}) }
+        /* heal blocks whose source calendar is gone (restored backup, cleared
+           connections): adopt them as MEW's own so sync can place them again */
+        const swept = adoptOrphanedExternals(loaded.blocks, settings.calendars)
         set({
-          blocks: loaded.blocks,
+          blocks: swept.blocks,
           captures: loaded.captures,
           chat: loaded.chat,
           chatHasEarlier: chatTotal > loaded.chat.length,
           memory: loaded.memory,
-          // merge so settings keys added in newer versions (pet, themeMode, …) backfill
-          settings: { ...DEFAULT_SETTINGS, ...(loaded.settings ?? {}) },
+          settings,
           hydrated: true,
           nowMs: nowFn(),
         })
+        if (swept.adopted) persistBlocks(swept.blocks)
       }
       runTickEngine()
       /* an update announced during boot waits for chat to exist */
@@ -3271,7 +3276,10 @@ export const useMew = create<MewState>((set, get) => {
       const s = get()
       const entry = {
         id: cal.id,
-        name: cal.primary ? 'Google · Primary' : `Google · ${cal.summary}`,
+        /* label by the calendar's real name/email — for a primary that's the
+           account address (e.g. "you@acme.com"), so a work account reads as
+           work, not a generic "Primary" that hid which account it was (#cal). */
+        name: `Google · ${cal.summary}${cal.primary ? ' (primary)' : ''}`,
         who: cal.readOnly ? 'live · read-only' : 'live · two-way',
         provider: 'google' as const,
         kind: 'live' as const,

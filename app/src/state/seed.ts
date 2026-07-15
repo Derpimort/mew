@@ -207,17 +207,13 @@ export function seed(now: Date): SeedResult {
     }
   }
 
-  /* settings: the design's three connected calendars + routing matrix */
-  const calendars: ConnectedCalendar[] = [
-    { id: 'gwork', name: 'Google · Work', who: 'acme.com', provider: 'google' },
-    { id: 'gpersonal', name: 'Google · Personal', who: 'gmail.com', provider: 'google' },
-    { id: 'oteam', name: 'Outlook · Acme Team', who: 'shared', provider: 'outlook' },
-  ]
-  const matrix: RoutingMatrix = {
-    gwork: { work: 'details', private: 'busy', health: 'busy' },
-    gpersonal: { work: 'busy', private: 'details', health: 'details' },
-    oteam: { work: 'busy', private: 'busy', health: 'hidden' },
-  }
+  /* No seeded calendars: a fresh profile starts with an empty, honest list so
+     "connect a calendar" is the obvious first step. Placeholder connections
+     (they never sync — no `kind: 'live'`) only looked real and made a genuine
+     sign-in impossible to tell apart from the mockup. The demo week/memory
+     above stays — that's illustrative, not a false external connection. */
+  const calendars: ConnectedCalendar[] = []
+  const matrix: RoutingMatrix = {}
   const settings: Settings = { ...DEFAULT_SETTINGS, calendars, matrix }
 
   const chat: ChatMessage[] = [

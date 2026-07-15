@@ -58,9 +58,11 @@ export interface ProviderContract {
 }
 
 /* Anthropic — BYO key, browser-direct through the SDK provider. `max_tokens` is
-   required by the Messages API; 32000 sits inside claude-sonnet-4-6's 64K output
-   cap. It is intentionally unreachable for a 1–3 sentence MEW turn — it exists
-   as the runaway-cost guard on the user's own key, not a target. */
+   required by the Messages API; 32000 sits inside every current model's output
+   cap (128K on claude-sonnet-5, 64K on the smallest, Haiku 4.5 — and the model
+   field is freeform, so the ceiling must be safe whichever the user types). It
+   is intentionally unreachable for a 1–3 sentence MEW turn — it exists as the
+   runaway-cost guard on the user's own key, not a target. */
 const ANTHROPIC: ProviderContract = {
   tokenLimitParam: 'max_tokens',
   tokenCeiling: 32000,
@@ -68,12 +70,33 @@ const ANTHROPIC: ProviderContract = {
   // the one header MEW must add itself (key stays on-device, sent only to
   // api.anthropic.com — the privacy law this header exists to serve).
   requiredHeaders: { 'anthropic-dangerous-direct-browser-access': 'true' },
-  defaultModel: 'claude-sonnet-4-6',
-  /* extended thinking: claude-sonnet-4-x supports it; the AI SDK surfaces it as
-     a reasoning stream (#166). 1500 is just above Anthropic's 1024 minimum —
-     enough headroom to plan a multi-item placement without inviting a long,
-     costly deliberation; the visible slice is capped far tighter. */
+  defaultModel: 'claude-sonnet-5',
+  /* extended thinking (#166): the AI SDK surfaces it as a reasoning stream.
+     HOW to request it is model-dependent (see anthropicThinking below); the
+     budget here only reaches pre-4.6 models. 1500 is just above Anthropic's
+     1024 minimum — enough headroom to plan a multi-item placement without
+     inviting a long, costly deliberation; the visible slice is capped tighter. */
   reasoning: { budgetTokens: 1500, displayChars: 600 },
+}
+
+/** How to ask a given Anthropic model to think (#166). The wire changed under
+    us: 4.6+ models (and the whole 5 family) take `thinking: {type: 'adaptive'}`
+    and REJECT the old `budget_tokens` with a 400 — the deprecated shape on 4.6
+    became an error on Sonnet 5 / Opus 4.7+ / Fable 5. Pre-4.6 models are the
+    inverse: they still require the explicit budget. Parsed from the model id
+    (family-first, `claude-<family>-<major>[-<minor>]`) so the freeform Settings
+    field keeps working for either generation; legacy version-first ids
+    (`claude-3-5-sonnet-…`) don't match and correctly fall to the budget shape. */
+export function anthropicThinking(
+  model: string
+): { type: 'adaptive' } | { type: 'enabled'; budgetTokens: number } {
+  const m = /^claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d+))?/.exec(model)
+  const major = m ? parseInt(m[1], 10) : 0
+  const minor = m?.[2] ? parseInt(m[2], 10) : 0
+  const adaptive = major > 4 || (major === 4 && minor >= 6)
+  return adaptive
+    ? { type: 'adaptive' }
+    : { type: 'enabled', budgetTokens: ANTHROPIC.reasoning!.budgetTokens }
 }
 
 /* OpenAI — BYO key through the SDK provider, which speaks the Responses API

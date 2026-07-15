@@ -50,10 +50,14 @@ jobs:
       # a PR that breaks the compile (or the pin) fails here, not at release
       - run: node desktop/scripts/build-sidecar.mjs
       - run: pnpm --dir app install --frozen-lockfile
-      # supply-chain gate before we spend time building: a high/critical advisory
-      # in a shipped dependency fails here (audit.yml runs the same check standalone
-      # + on a schedule). moderate/low is warn-only — see audit.yml.
-      - run: pnpm --dir app run audit --audit-level high
+      # supply-chain gate before we spend time building: any known advisory in
+      # the lockfile fails here (audit.yml runs the same OSV check standalone +
+      # on a schedule; see there for why pnpm audit itself is retired).
+      - name: JS advisories via OSV (blocks merge)
+        run: |
+          curl -sSL -o /tmp/osv-scanner https://github.com/google/osv-scanner/releases/download/v2.4.0/osv-scanner_linux_amd64
+          chmod +x /tmp/osv-scanner
+          /tmp/osv-scanner scan source --lockfile app/pnpm-lock.yaml
       - run: pnpm --dir app build
       # bundle-size budget gate: read the manifest from the build above and fail
       # if the main chunk / any chunk / the total crosses its ceiling (budgets in

@@ -31,7 +31,7 @@ function asFailure(p: KeyProbe): Extract<KeyProbe, { ok: false }> {
   return p
 }
 
-const MODELS_OK = { data: [{ id: 'claude-sonnet-4-6' }, { id: 'gpt-5.4-mini' }] }
+const MODELS_OK = { data: [{ id: 'claude-sonnet-5' }, { id: 'gpt-5.4-mini' }] }
 
 describe('validateKey — a harmless listing probe, never a chat turn', () => {
   it('an empty key is rejected as auth without any network call', async () => {
@@ -101,7 +101,7 @@ describe('validateKey — a harmless listing probe, never a chat turn', () => {
 
   it('when a model is named and present, the probe stays ok', async () => {
     const fetchMock = fetchReturning(jsonResponse(MODELS_OK))
-    expect(await validateKey('anthropic', 'sk-ok', 'claude-sonnet-4-6', fetchMock)).toEqual({
+    expect(await validateKey('anthropic', 'sk-ok', 'claude-sonnet-5', fetchMock)).toEqual({
       ok: true,
     })
   })
@@ -128,7 +128,7 @@ describe('setup helpers', () => {
   })
 
   it('defaultModelFor matches the provider contract default', () => {
-    expect(defaultModelFor('anthropic')).toBe('claude-sonnet-4-6')
+    expect(defaultModelFor('anthropic')).toBe('claude-sonnet-5')
     expect(defaultModelFor('openai')).toBe('gpt-5.4-mini')
   })
 

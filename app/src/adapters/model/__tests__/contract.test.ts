@@ -9,7 +9,12 @@
    request is fully formed before any response is read. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PROVIDER_CONTRACT, DEFAULT_MODEL_SETTING, type ProviderKey } from '../contract'
+import {
+  PROVIDER_CONTRACT,
+  DEFAULT_MODEL_SETTING,
+  anthropicThinking,
+  type ProviderKey,
+} from '../contract'
 import { createAiAdapter, type AiAdapterSpec } from '../aiAdapter'
 import { classifyFailure } from '../retry'
 import { DEFAULT_SETTINGS } from '../../../domain/types'
@@ -42,12 +47,39 @@ describe('PROVIDER_CONTRACT — default models', () => {
   })
 })
 
+/* The thinking-shape fork (#166): 4.6+/5-family models 400 on the legacy
+   `budget_tokens`, pre-4.6 models require it — asking wrongly means every
+   reasoning-on turn dies to the fallback chain. Pin the parse across the
+   picker list, date-suffixed ids, and the legacy version-first format. */
+describe('anthropicThinking — the request shape follows the model generation', () => {
+  const budget = PROVIDER_CONTRACT.anthropic.reasoning!.budgetTokens
+  it.each(['claude-sonnet-5', 'claude-opus-4-8', 'claude-fable-5', 'claude-sonnet-4-6'])(
+    '%s (4.6+/5-family) asks adaptive — never a budget',
+    (m) => {
+      expect(anthropicThinking(m)).toEqual({ type: 'adaptive' })
+    }
+  )
+  it.each(['claude-haiku-4-5', 'claude-opus-4-1-20250805', 'claude-3-5-sonnet-20241022'])(
+    '%s (pre-4.6 or legacy id) asks the explicit budget',
+    (m) => {
+      expect(anthropicThinking(m)).toEqual({ type: 'enabled', budgetTokens: budget })
+    }
+  )
+  it('the shipping default model is on the adaptive path', () => {
+    expect(anthropicThinking(PROVIDER_CONTRACT.anthropic.defaultModel)).toEqual({
+      type: 'adaptive',
+    })
+  })
+})
+
 describe('PROVIDER_CONTRACT — token ceilings', () => {
   it('Anthropic max_tokens stays within the safe ceiling and is not over the model cap', () => {
     const c = PROVIDER_CONTRACT.anthropic
     expect(c.tokenLimitParam).toBe('max_tokens')
     expect(c.tokenCeiling).not.toBeNull()
-    // claude-sonnet-4-6 caps output at 64K; the ceiling must sit within it.
+    /* the model field is freeform, so the ceiling must sit within the SMALLEST
+       current-model output cap (Haiku 4.5's 64K; sonnet-5/opus allow 128K) —
+       whichever id the user types, the cap can never 400 as over-limit. */
     expect(c.tokenCeiling!).toBeGreaterThan(0)
     expect(c.tokenCeiling!).toBeLessThanOrEqual(64000)
   })
@@ -197,6 +229,45 @@ describe('outgoing request — Anthropic through the unified adapter', () => {
     // the top-level request option auto-marks the last message, so history +
     // the intra-turn tool loop reuse the whole prefix each round trip
     expect(body.cache_control).toEqual({ type: 'ephemeral' })
+  })
+
+  /* the thinking fork ON THE WIRE (#166): what actually leaves the browser per
+     model generation. A wrong shape is a 400 every reasoning turn — silent fall
+     to the fallback chain — exactly the drift class this file exists to stop. */
+  it('reasoning on a 4.6+/5-family model sends adaptive thinking — no budget_tokens', async () => {
+    const { captured } = captureFetch(reject400)
+    await drain({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-sonnet-5',
+      reasoning: true,
+    })
+
+    const thinking = captured[0].body.thinking as Record<string, unknown>
+    expect(thinking).toEqual({ type: 'adaptive' })
+    expect(thinking).not.toHaveProperty('budget_tokens')
+  })
+
+  it('reasoning on a pre-4.6 model still sends the explicit budget_tokens', async () => {
+    const { captured } = captureFetch(reject400)
+    await drain({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-x',
+      model: 'claude-haiku-4-5',
+      reasoning: true,
+    })
+
+    expect(captured[0].body.thinking).toEqual({
+      type: 'enabled',
+      budget_tokens: PROVIDER_CONTRACT.anthropic.reasoning!.budgetTokens,
+    })
+  })
+
+  it('reasoning off sends no thinking field at all — an un-opted turn adds no cost', async () => {
+    const { captured } = captureFetch(reject400)
+    await drain({ provider: 'anthropic', apiKey: 'sk-ant-x', model: 'claude-sonnet-5' })
+
+    expect(captured[0].body).not.toHaveProperty('thinking')
   })
 
   it('the cached prefix clears the minimum-cacheable floor — a short prefix silently no-ops (#153)', async () => {

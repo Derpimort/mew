@@ -14,7 +14,7 @@
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "typecheck": "tsc -b",
-    "audit": "pnpm audit --prod",
+    "audit": "osv-scanner scan source --lockfile pnpm-lock.yaml",
     "smoke:models": "MEW_SMOKE=1 vitest run src/adapters/model/__tests__/smoke.live.test.ts",
     "e2e": "playwright test",
     "shoot": "node scripts/shoot.mjs",

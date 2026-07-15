@@ -33,17 +33,19 @@ function SetRow({ t, s, children }: { t: string; s?: string; children: ReactNode
   )
 }
 
-/* Current models per provider (verified June 2026). Model ids change often, so
+/* Current models per provider (verified July 2026). Model ids change often, so
    the list is a convenience over a freeform field — never the only way in. */
 const ANTHROPIC_MODELS = [
-  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 · balanced' },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5 · cheap & capable' },
   { id: 'claude-opus-4-8', label: 'Claude Opus 4.8 · most capable' },
   { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5 · fast & cheap' },
   { id: 'claude-fable-5', label: 'Claude Fable 5 · frontier (less stable)' },
+  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 · previous gen' },
 ]
 const OPENAI_MODELS = [
-  { id: 'gpt-5.5', label: 'GPT-5.5 · most capable' },
-  { id: 'gpt-5.4', label: 'GPT-5.4 · balanced' },
+  { id: 'gpt-5.6', label: 'GPT-5.6 · most capable' },
+  { id: 'gpt-5.5', label: 'GPT-5.5 · balanced' },
+  { id: 'gpt-5.4', label: 'GPT-5.4 · previous gen' },
   { id: 'gpt-5.4-mini', label: 'GPT-5.4 mini · fast & cheap' },
 ]
 
@@ -327,10 +329,20 @@ function CompanionCard() {
         </div>
       </div>
       <SetRow t="Condition mirrors sustainability" s="Not how much you do — how sustainably.">
-        <Tgl on lock cap="always" />
+        <Tgl
+          on
+          lock
+          cap="always"
+          title="Always on. MEW watches how sustainably you move, not how hard you grind. An off switch would miss the point."
+        />
       </SetRow>
       <SetRow t="Care, not blame" s="Strain is met with help, never judgment.">
-        <Tgl on lock cap="absolute" />
+        <Tgl
+          on
+          lock
+          cap="absolute"
+          title="Always on. A rough week earns you help, never a lecture. This one is not up for debate."
+        />
       </SetRow>
     </div>
   )
@@ -364,11 +376,11 @@ function CalendarsCard() {
   const hasLive = settings.calendars.some((c) => c.kind === 'live')
   const editingCal = settings.calendars.find((c) => c.id === editing)
 
-  const mono9: React.CSSProperties = {
-    fontSize: 9,
-    color: 'var(--faint)',
+  const colLabel: React.CSSProperties = {
+    fontSize: 10,
+    color: 'var(--muted)',
     textTransform: 'uppercase',
-    letterSpacing: '.1em',
+    letterSpacing: '.12em',
   }
 
   return (
@@ -378,22 +390,28 @@ function CalendarsCard() {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '1.3fr repeat(3,auto) auto',
-          gap: '8px 10px',
+          gridTemplateColumns: 'minmax(0,1.7fr) repeat(3,minmax(74px,auto)) auto',
+          columnGap: 18,
+          rowGap: 14,
           alignItems: 'center',
         }}
       >
-        <span className="mono" style={mono9}>
+        <span className="mono" style={colLabel}>
           calendar
         </span>
         {TAGS.map((t) => (
-          <span key={t} className="mono" style={mono9}>
+          <span key={t} className="mono" style={colLabel}>
             {t}
           </span>
         ))}
         <span />
 
-        <span style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--gold)' }}>MEW</span>
+        {/* hairline under the header, full width */}
+        <span
+          style={{ gridColumn: '1 / -1', height: 1, background: 'var(--line2)', margin: '-4px 0' }}
+        />
+
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--gold)' }}>MEW</span>
         {TAGS.map((t) => (
           <span key={t} className="vis-chip all">
             all
@@ -407,15 +425,39 @@ function CalendarsCard() {
             <FragmentRow key={c.id}>
               <span
                 style={{
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  gridColumn: '1 / -1',
+                  height: 1,
+                  background: 'var(--line2)',
+                  opacity: 0.5,
                 }}
-                title={c.who}
-              >
-                {c.name}
+              />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+                <span
+                  style={{
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                  title={c.name}
+                >
+                  {c.name}
+                </span>
+                {c.who && (
+                  <span
+                    className="mono"
+                    style={{
+                      fontSize: 10,
+                      color: 'var(--faint)',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {c.who}
+                  </span>
+                )}
               </span>
               {TAGS.map((t) => {
                 const v = row?.[t] ?? 'busy'
@@ -443,6 +485,24 @@ function CalendarsCard() {
         })}
       </div>
 
+      {settings.calendars.length === 0 && (
+        <div
+          style={{
+            textAlign: 'center',
+            color: 'var(--muted)',
+            fontSize: 12.5,
+            lineHeight: 1.6,
+            padding: '16px 8px 4px',
+          }}
+        >
+          No calendars connected yet.
+          <br />
+          <span style={{ color: 'var(--faint)', fontSize: 11.5 }}>
+            Connect one below to sync your week both ways.
+          </span>
+        </div>
+      )}
+
       {editing && editingCal && (
         <div
           className="mono"
@@ -460,16 +520,33 @@ function CalendarsCard() {
           <span style={{ color: 'var(--ink)' }}>what {editingCal.name} sees today</span>
           <br />
           {(() => {
+            /* the preview IS the push plan: events that came IN from a calendar
+               are never pushed back out (sync skips them), so listing them here
+               read as "MEW will send this" when it never would — count them on
+               a separate honest line instead. */
+            const external = new Set(blocks.filter((b) => b.external).map((b) => b.id))
             const events = project(blocks, settings.matrix, editing).filter(
               (e) => e.dayKey === todayKey
             )
+            const pushed = events.filter((e) => !external.has(e.blockId))
+            const imported = events.length - pushed.length
             if (!events.length) return 'nothing — every tag is hidden or the day is clear'
-            return events.map((e) => (
-              <span key={e.blockId}>
-                {fmtTime(e.startMin)}–{fmtTime(e.endMin)} {e.title}
-                <br />
-              </span>
-            ))
+            return (
+              <>
+                {pushed.map((e) => (
+                  <span key={e.blockId}>
+                    {fmtTime(e.startMin)}–{fmtTime(e.endMin)} {e.title}
+                    <br />
+                  </span>
+                ))}
+                {imported > 0 && (
+                  <span style={{ color: 'var(--faint)' }}>
+                    + {imported} event{imported === 1 ? '' : 's'} from your calendars stay where
+                    they are — MEW never re-pushes what it pulled in
+                  </span>
+                )}
+              </>
+            )
           })()}
           {(editingCal.kind === 'live' || editingCal.kind === 'import') && (
             <div
@@ -606,7 +683,7 @@ function CalendarsCard() {
       >
         <Button
           variant="ghost"
-          size="sm"
+          size="md"
           disabled={connecting}
           onClick={() => {
             if (!settings.googleClientId) setAskClientId(true)
@@ -615,7 +692,7 @@ function CalendarsCard() {
         >
           {connecting ? 'opening google sign-in…' : '+ connect a calendar'}
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}>
+        <Button variant="ghost" size="md" onClick={() => fileRef.current?.click()}>
           + import .ics
         </Button>
         <input
@@ -739,7 +816,12 @@ function NudgesCard() {
       <h2>Nudges &amp; notifications</h2>
       <div className="sub">Everything arrives in chat. Browser only mirrors when you're away.</div>
       <SetRow t="Nudges in chat" s="The one channel — never a separate inbox.">
-        <Tgl on lock cap="chat-first" />
+        <Tgl
+          on
+          lock
+          cap="chat-first"
+          title="Always on. One channel, and it is chat. The last thing you need is another inbox."
+        />
       </SetRow>
       <SetRow t="Browser notifications" s="Mirror the chat nudge when the tab is unfocused.">
         <Tgl
@@ -782,7 +864,12 @@ function NudgesCard() {
         />
       </SetRow>
       <SetRow t="Positive only" s="Reward follow-through; never punish gaps.">
-        <Tgl on lock cap="principle" />
+        <Tgl
+          on
+          lock
+          cap="principle"
+          title="Always on. We cheer the follow-through and shrug at the gaps. This dial is welded down."
+        />
       </SetRow>
     </div>
   )
@@ -873,7 +960,12 @@ function PrivacyModelCard() {
       <h2>Privacy &amp; model</h2>
       <div className="sub">Local-first. Your week is yours.</div>
       <SetRow t="Local-first storage" s="Your data lives on your device.">
-        <Tgl on lock cap="by design" />
+        <Tgl
+          on
+          lock
+          cap="by design"
+          title="Always on. Your week stays on this device. Nothing to switch off, nothing to leak."
+        />
       </SetRow>
       <SetRow t="Where the model runs" s="Fully local keeps every word on your machine (Ollama).">
         <Segc

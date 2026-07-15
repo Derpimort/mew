@@ -14,12 +14,16 @@ const pkg = JSON.parse(
 ) as { scripts: Record<string, string>; dependencies: Record<string, string> }
 
 describe('dependency audit wiring', () => {
-  it('exposes a prod-scoped `audit` script (CI runs `pnpm audit --prod` before build)', () => {
+  it('exposes an `audit` script that scans the committed lockfile via OSV', () => {
     expect(pkg.scripts.audit).toBeDefined()
-    // --prod scopes the gate to what ships to users; the workflow appends
-    // --audit-level high to make high/critical the blocking threshold.
-    expect(pkg.scripts.audit).toContain('pnpm audit')
-    expect(pkg.scripts.audit).toContain('--prod')
+    /* npm retired the classic audit API pnpm speaks (410, 2026-07), so the
+       gate moved to Google's OSV scanner against the lockfile — same GHSA/npm
+       advisory feed, blocks on ANY known vuln (dev deps included; strictly
+       stronger than the old prod-only high tier). The workflow installs a
+       pinned osv-scanner and runs the same scan — this pin keeps the script
+       and CI speaking one contract. */
+    expect(pkg.scripts.audit).toContain('osv-scanner')
+    expect(pkg.scripts.audit).toContain('--lockfile pnpm-lock.yaml')
   })
 
   it('keeps the Dependabot security fast-track group anchored to real dependencies', () => {

@@ -20,7 +20,7 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
 import type { ChatTurn, ConverseChunk, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
 import { MEW_TOOLS, runTool } from './tools'
-import { PROVIDER_CONTRACT } from './contract'
+import { PROVIDER_CONTRACT, anthropicThinking } from './contract'
 
 export type RemoteProvider = 'anthropic' | 'openai'
 
@@ -147,16 +147,16 @@ export function createAiAdapter(spec: AiAdapterSpec): ModelPort {
              the intra-turn tool loop reuse the whole prefix on every round
              trip (#153, parity with the retired adapter's two breakpoints);
            · thinking — extended reasoning, only when opted in (#166); the SDK
-             surfaces the result as reasoning parts on the stream. Reasoning
-             off ⇒ no thinking field, so such a turn carries no extra cost. */
+             surfaces the result as reasoning parts on the stream. The SHAPE is
+             model-dependent (contract): 4.6+/5-family take {type:'adaptive'}
+             and 400 on a budget; pre-4.6 still require the explicit budget.
+             Reasoning off ⇒ no thinking field, so MEW adds no extra cost. */
         ...(spec.provider === 'anthropic'
           ? {
               providerOptions: {
                 anthropic: {
                   cacheControl: { type: 'ephemeral' },
-                  ...(reasoningCfg
-                    ? { thinking: { type: 'enabled', budgetTokens: reasoningCfg.budgetTokens } }
-                    : {}),
+                  ...(reasoningCfg ? { thinking: anthropicThinking(spec.model) } : {}),
                 },
               },
             }

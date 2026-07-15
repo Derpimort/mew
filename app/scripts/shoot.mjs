@@ -207,7 +207,11 @@ await page.screenshot({ path: `${outDir}/2-focus-reveal.png` })
       )
     },
     null,
-    { timeout: 5000 }
+    /* 15s, not 5: the pill's smooth-scroll ride down a long log is animation-
+       frame-paced, and a cold CI runner can spend >5s on it — seen live on the
+       v0.4.0 promotion PR. The invariant (bottom reached, pill unmounted) is
+       unchanged; only the patience grew. */
+    { timeout: 15000 }
   )
 }
 

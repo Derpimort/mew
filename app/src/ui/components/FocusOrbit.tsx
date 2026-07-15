@@ -18,6 +18,8 @@ import {
   crossDaySpan,
   dayFill,
   dialFocusOrder,
+  fitLabel,
+  labelBudget,
   LANE_STEP,
   OG,
   isRunning,
@@ -25,8 +27,10 @@ import {
   radiiFor,
   resolveLabels,
   rovingFocusId,
+  revealAnchorX,
   stepDialFocus,
   visibleOrbit,
+  wrapLabel,
 } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
 import { ThreadRail } from './ThreadRail'
@@ -475,21 +479,68 @@ export function FocusOrbit() {
                     fontFamily: "'Hanken Grotesk',sans-serif",
                     fontSize: isH ? 13 : 11.5,
                     fontWeight: isH ? 760 : 650,
+                    /* the reveal states halo in the stage colour so wrapped
+                       lines stay legible over numerals or a neighbour label */
+                    ...(isH || isF
+                      ? { paintOrder: 'stroke', stroke: 'var(--bg)', strokeWidth: 3.5 }
+                      : {}),
                   }}
                   {...handlers}
                 >
-                  {/* truncated at rest (a tidy preview); the full title shows on
-                      hover/focus so a long meeting name is always readable */}
-                  {isH || isF || title.length <= 20 ? title : title.slice(0, 18) + '…'}{' '}
-                  <tspan
-                    style={{
-                      fill: 'var(--muted)',
-                      fontFamily: "'JetBrains Mono',monospace",
-                      fontSize: 9,
-                    }}
-                  >
-                    {timeNote}
-                  </tspan>
+                  {/* at rest: a tidy one-line preview, ellipsized into the room
+                      left to the svg edge (labels near 3/9 o'clock used to run
+                      off the viewBox and clip mid-glyph). On hover/focus the
+                      FULL title wraps into stacked lines instead — the reveal
+                      exists to read the task, so no characters are eaten. */}
+                  {(() => {
+                    const font = isH ? 13 : 11.5
+                    if (isH || isF) {
+                      /* an edge-hugging anchor is nudged inward until a line
+                         can hold ~14 chars — wrapped words, not broken ones */
+                      const ax = revealAnchorX(lbl.x, lbl.right, font)
+                      const lines = wrapLabel(title, labelBudget(ax, lbl.right, font))
+                      const lineH = 15
+                      return (
+                        <>
+                          {lines.map((ln, i) => (
+                            <tspan
+                              key={i}
+                              x={ax}
+                              dy={i === 0 ? (-(lines.length - 1) * lineH) / 2 : lineH}
+                            >
+                              {ln}
+                            </tspan>
+                          ))}
+                          <tspan
+                            x={ax}
+                            dy={lineH}
+                            style={{
+                              fill: 'var(--muted)',
+                              fontFamily: "'JetBrains Mono',monospace",
+                              fontSize: 9,
+                            }}
+                          >
+                            {timeNote}
+                          </tspan>
+                        </>
+                      )
+                    }
+                    const budget = labelBudget(lbl.x, lbl.right, font, timeNote.length * 5.6 + 6)
+                    return (
+                      <>
+                        {fitLabel(title, Math.min(budget, 19))}{' '}
+                        <tspan
+                          style={{
+                            fill: 'var(--muted)',
+                            fontFamily: "'JetBrains Mono',monospace",
+                            fontSize: 9,
+                          }}
+                        >
+                          {timeNote}
+                        </tspan>
+                      </>
+                    )
+                  })()}
                 </text>
               )}
             </g>

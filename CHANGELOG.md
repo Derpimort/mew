@@ -12,6 +12,40 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-07-15
+
+### Added
+
+- Claude Sonnet 5 and GPT-5.6 join the model picker, and Sonnet 5 is the new default —
+  near-Opus quality at a fraction of the price.
+- Settings that are principles, not preferences, now wear a small padlock inside the toggle
+  knob — with a tooltip that says, in plain words, why each one is welded on.
+
+### Changed
+
+- The Calendars card breathes: calendars carry their real names (your account address, never a
+  generic "Primary"), the visibility chips and buttons grew into their labels, and the
+  "what this calendar sees" preview now shows exactly what sync will send — events that came
+  *in* from your calendars are counted on their own honest line instead.
+- A fresh profile starts with no demo calendars — the connections you make are the only ones
+  you see.
+
+### Fixed
+
+- Calendar sync heals itself. Blocks imported from a calendar you later removed are adopted
+  back as MEW's own and flow out to your connected calendar again; events you delete on the
+  calendar itself are noticed on the next sync and re-created from your week. Your plan in
+  MEW stays the source of truth — no more items that exist in MEW but silently never reach
+  Google.
+- A sync update racing a remote deletion recovers by re-creating the event instead of
+  stopping the whole run.
+- "Show the plan first" speaks each Claude generation's thinking dialect (adaptive on 4.6+
+  and the 5s, explicit budget before that) — reasoning turns no longer fail over silently on
+  current models.
+- Dial callouts never clip at the face's edge. At rest a long task trims tidily into the room
+  it has; on hover or keyboard focus the full title wraps into stacked lines — nudging inward
+  at 3 and 9 o'clock where the edge is tight — so the reveal actually reads.
+
 ## [0.3.0] — 2026-07-14
 
 ### Added

@@ -6,15 +6,20 @@ import {
   crossDaySpan,
   DAY_MIN,
   dayFill,
+  fitLabel,
   isCommitted,
   LABEL_GAP,
+  LABEL_R,
+  labelBudget,
   LANE_STEP,
   OG,
   isRunning,
   orbitColor,
   radiiFor,
   resolveLabels,
+  revealAnchorX,
   visibleOrbit,
+  wrapLabel,
 } from '../orbitGeometry'
 import { clockDeg } from '../dialGeometry'
 
@@ -344,5 +349,95 @@ describe('crossDaySpan — clip a multi-day block to today, mark the carry', () 
     expect(s.drawEnd).toBe(DAY_MIN)
     expect(s.continuesAfter).toBe(false)
     expect(s.endLabelMin).toBe(0) // 24:00 folds to 0:00
+  })
+})
+
+/* Labels are SVG <text> and the svg clips at its viewBox — so a callout's
+   character budget must shrink to the strip between its anchor and the edge.
+   The live bug: hover/focus rendered the FULL title unclamped, so a task near
+   3 or 9 o'clock clipped mid-glyph at the boundary (and even the at-rest
+   preview clipped once the inline time note was appended). */
+describe('labelBudget/fitLabel — callouts never run off the svg edge', () => {
+  const rightEdge = -OG.ox + OG.w // 680 with today's constants
+
+  it('a 3 o clock label has only the bezel strip: long titles ellipsize', () => {
+    const x = OG.cx + LABEL_R + 9 // the exact anchor resolveLabels emits at 3:00
+    const budget = labelBudget(x, true, 13)
+    expect(budget).toBeGreaterThan(0)
+    // whatever fits must END inside the viewBox at the 13px hover size
+    expect(x + budget * 13 * 0.58).toBeLessThanOrEqual(rightEdge)
+    const drawn = fitLabel('AISquare Technical Demo for Oak', budget)
+    expect(drawn.length).toBeLessThanOrEqual(budget)
+    expect(drawn.endsWith('…')).toBe(true)
+  })
+
+  it('a 9 o clock label mirrors the clamp on the left edge', () => {
+    const x = OG.cx - LABEL_R - 9
+    const budget = labelBudget(x, false, 13)
+    expect(x - budget * 13 * 0.58).toBeGreaterThanOrEqual(-OG.ox)
+    expect(fitLabel('Management Team Wednesday Sync', budget).endsWith('…')).toBe(true)
+  })
+
+  it('near 12 o clock the run is long — a real meeting name fits untouched', () => {
+    const budget = labelBudget(OG.cx + 40, true, 13)
+    expect(fitLabel('Hiring Candidates Reviews', budget)).toBe('Hiring Candidates Reviews')
+  })
+
+  it('the inline time-note reserve shrinks the budget, never below zero', () => {
+    const x = OG.cx + LABEL_R + 9
+    expect(labelBudget(x, true, 13, 40)).toBeLessThan(labelBudget(x, true, 13))
+    expect(labelBudget(rightEdge - 2, true, 13, 200)).toBe(0)
+  })
+
+  it('fitLabel is honest at the extremes', () => {
+    expect(fitLabel('standup', 7)).toBe('standup') // exactly fits — untouched
+    expect(fitLabel('standup', 0)).toBe('…')
+    expect(fitLabel('a very long title', 5)).toBe('a ve…')
+  })
+})
+
+/* Hover/focus must READ, not truncate (user feedback 2026-07-15: the ellipsis
+   "takes away clarity"). The reveal wraps whole words into edge-budget lines;
+   only past three lines does a tail ellipsize. */
+describe('wrapLabel — the reveal states stack lines instead of eating characters', () => {
+  it('wraps whole words and every line respects the budget', () => {
+    const lines = wrapLabel('AISquare Technical Demo for Oak', 12)
+    expect(lines).toEqual(['AISquare', 'Technical', 'Demo for Oak'])
+    for (const ln of lines) expect(ln.length).toBeLessThanOrEqual(12)
+  })
+
+  it('the 3 o clock reveal nudges inward and shows the FULL title across lines', () => {
+    const raw = OG.cx + LABEL_R + 9 // the tightest real anchor
+    const ax = revealAnchorX(raw, true, 13)
+    expect(ax).toBeLessThan(raw) // pulled toward the centre…
+    const budget = labelBudget(ax, true, 13)
+    expect(budget).toBeGreaterThanOrEqual(14) // …until a line holds real words
+    for (const title of ['Management Team Wednesday Sync', 'AISquare Technical Demo for Oak']) {
+      const lines = wrapLabel(title, budget)
+      expect(lines.join(' ')).toBe(title) // nothing lost — the reveal READS
+      for (const ln of lines) expect(ln.length).toBeLessThanOrEqual(budget)
+    }
+  })
+
+  it('a roomy anchor is not nudged — the reveal stays exactly where the callout is', () => {
+    expect(revealAnchorX(OG.cx + 40, true, 13)).toBe(OG.cx + 40)
+    expect(revealAnchorX(OG.cx - 40, false, 13)).toBe(OG.cx - 40)
+  })
+
+  it('short titles stay one line; a monster word hard-breaks instead of clipping', () => {
+    expect(wrapLabel('standup', 12)).toEqual(['standup'])
+    expect(wrapLabel('antidisestablishment', 8)).toEqual(['antidise', 'stablish', 'ment'])
+  })
+
+  it('past maxLines the tail ellipsizes — never a fourth line, never svg clip', () => {
+    const lines = wrapLabel('one two three four five six seven eight nine ten', 9, 3)
+    expect(lines).toHaveLength(3)
+    expect(lines[2].endsWith('…')).toBe(true)
+    for (const ln of lines) expect(ln.length).toBeLessThanOrEqual(9)
+  })
+
+  it('degenerate budgets stay honest', () => {
+    expect(wrapLabel('anything', 1)).toEqual(['…'])
+    expect(wrapLabel('   ', 10)).toEqual(['…'])
   })
 })

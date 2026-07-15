@@ -70,7 +70,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
     expect(createAiAdapter).toHaveBeenCalledWith({
       provider: 'anthropic',
       apiKey: 'sk-ant-x',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       reasoning: false,
     })
   })
@@ -105,7 +105,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
   })
 
   it('the stable default ships in DEFAULT_SETTINGS', () => {
-    expect(DEFAULT_SETTINGS.anthropicModel).toBe('claude-sonnet-4-6')
+    expect(DEFAULT_SETTINGS.anthropicModel).toBe('claude-sonnet-5')
   })
 
   it('showReasoning threads through to the factory as the reasoning flag (#166)', async () => {
@@ -117,7 +117,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
     expect(createAiAdapter).toHaveBeenCalledWith({
       provider: 'anthropic',
       apiKey: 'sk-ant-x',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       reasoning: true,
     })
   })

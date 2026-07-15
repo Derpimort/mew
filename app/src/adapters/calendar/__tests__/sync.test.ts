@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { mergePull, planPush, runSync, syncWindow } from '../sync'
+import {
+  adoptOrphanedExternals,
+  adoptRemoteLedger,
+  mergePull,
+  planPush,
+  runSync,
+  staleSyncEntries,
+  syncWindow,
+} from '../sync'
 import type { CalendarAccount, PushEventBody, RemoteEvent, SyncEntry } from '../types'
 import type { Block, ConnectedCalendar, RoutingMatrix } from '../../../domain/types'
 
@@ -105,6 +113,63 @@ describe('mergePull — inbound events', () => {
     const native = mk({ id: 'n1' })
     const r = mergePull([native], [], [CAL], W)
     expect(r.blocks).toEqual([native])
+  })
+})
+
+/* The trap this heals (found live, 2026-07-15): imported blocks whose source
+   calendar was removed without the disconnect cleanup kept a dangling
+   `external` — the Settings preview projected them ("the calendar sees X with
+   details") while planPush skipped them forever. Ownership follows the source:
+   source gone ⇒ MEW adopts the block and the next sync pushes it. */
+describe('adoptOrphanedExternals — dangling imports become MEW-native again', () => {
+  it('strips external (and stale refs) when the source calendar is gone', () => {
+    const orphan = mk({
+      id: 'b1',
+      title: 'dev work — PROD push',
+      external: { calId: 'ics-import-gone', eventId: 'ev9' },
+      calendarRefs: ['ics-import-gone'],
+    })
+    const { blocks, adopted } = adoptOrphanedExternals([orphan], [CAL])
+    expect(adopted).toBe(1)
+    expect(blocks[0].external).toBeUndefined()
+    expect(blocks[0].calendarRefs).toEqual([])
+    expect(blocks[0].title).toBe('dev work — PROD push') // everything else intact
+  })
+
+  it('leaves blocks from a still-connected calendar external — never re-pushed', () => {
+    const pulled = mk({
+      id: 'b2',
+      external: { calId: CAL.id, eventId: 'ev1' },
+      calendarRefs: [CAL.id],
+    })
+    const { blocks, adopted } = adoptOrphanedExternals([pulled], [CAL])
+    expect(adopted).toBe(0)
+    expect(blocks[0].external).toEqual({ calId: CAL.id, eventId: 'ev1' })
+  })
+
+  it('no orphans ⇒ the same array back (no phantom persistence churn)', () => {
+    const native = [mk({ id: 'b3' })]
+    const { blocks, adopted } = adoptOrphanedExternals(native, [CAL])
+    expect(adopted).toBe(0)
+    expect(blocks).toBe(native)
+  })
+
+  it('an adopted block reaches the push plan it was invisibly excluded from', () => {
+    const matrix: RoutingMatrix = { [CAL.id]: { work: 'details', private: 'busy', health: 'busy' } }
+    const orphan = mk({
+      id: 'b4',
+      title: 'team blockers',
+      dayKey: '2026-06-09',
+      external: { calId: 'gone', eventId: 'x' },
+    })
+    const before = planPush([orphan], matrix, [CAL], W, [])
+    expect(before.ops).toHaveLength(0) // the live bug: projected in preview, never pushed
+    const { blocks } = adoptOrphanedExternals([orphan], [CAL])
+    const after = planPush(blocks, matrix, [CAL], W, [])
+    expect(after.ops).toEqual([
+      expect.objectContaining({ kind: 'create', blockId: 'b4', calId: CAL.id }),
+    ])
+    expect((after.ops[0] as { body: PushEventBody }).body.title).toBe('team blockers')
   })
 })
 
@@ -225,7 +290,9 @@ describe('runSync — end to end against a fake account', () => {
       },
       loadSyncMap: async () => map,
       saveSyncMap: async (put, removeIds) => {
-        map = map.filter((e) => !removeIds.includes(e.id)).concat(put)
+        // bulkPut is an UPSERT (same-id rows replaced), then the removals
+        const putIds = new Set(put.map((x) => x.id))
+        map = map.filter((e) => !putIds.has(e.id) && !removeIds.includes(e.id)).concat(put)
       },
     })
 
@@ -241,5 +308,276 @@ describe('runSync — end to end against a fake account', () => {
   it('syncWindow spans Monday through +21 days', () => {
     const w = syncWindow(new Date(2026, 5, 9)) // Tue Jun 9
     expect(w).toEqual({ startKey: '2026-06-08', endKey: '2026-06-29' })
+  })
+
+  /* the second silent killer found live (2026-07-15): the user deleted MEW's
+     pushed event ON THE CALENDAR. The ledger still said "pushed, hash equal",
+     so planPush planned nothing — the block never returned, no error ever. */
+  it('re-creates a block whose pushed event the user deleted on the calendar', async () => {
+    const b = mk({ id: 'w1', title: 'dev work', dayKey: '2026-06-09' })
+    const body: PushEventBody = {
+      title: 'dev work',
+      dayKey: b.dayKey,
+      startMin: b.startMin,
+      endMin: b.endMin,
+      mewBlockId: 'w1',
+    }
+    const created: PushEventBody[] = []
+    const account: CalendarAccount = {
+      async authorize() {},
+      async listCalendars() {
+        return []
+      },
+      async listEvents() {
+        return [] // the pushed event is GONE remotely — user deleted it
+      },
+      async createEvent(_cal, bd) {
+        created.push(bd)
+        return 'g-fresh'
+      },
+      async updateEvent() {
+        throw new Error('must not PATCH a dead event')
+      },
+      async deleteEvent() {},
+    }
+    let map: SyncEntry[] = [
+      {
+        id: 'w1:work@acme',
+        blockId: 'w1',
+        calId: 'work@acme',
+        eventId: 'ev-dead',
+        // the CURRENT hash — the exact state where the old plan trusted the ghost
+        hash: `${body.title}|${body.dayKey}|${body.startMin}|${body.endMin}`,
+      },
+    ]
+    const report = await runSync({
+      account,
+      calendars: [CAL],
+      matrix: { 'work@acme': { work: 'details', private: 'busy', health: 'busy' } },
+      now: new Date(2026, 5, 9, 12, 0),
+      getBlocks: () => [b],
+      setBlocks: () => {},
+      loadSyncMap: async () => map,
+      saveSyncMap: async (put, removeIds) => {
+        // bulkPut is an UPSERT (same-id rows replaced), then the removals
+        const putIds = new Set(put.map((x) => x.id))
+        map = map.filter((e) => !putIds.has(e.id) && !removeIds.includes(e.id)).concat(put)
+      },
+    })
+    expect(created.map((c) => c.title)).toEqual(['dev work']) // back on the calendar
+    expect(report.pushed.created).toBe(1)
+    // the ledger holds exactly the fresh entry — re-put id survives the removals
+    expect(map).toEqual([expect.objectContaining({ blockId: 'w1', eventId: 'g-fresh' })])
+  })
+
+  it('an update racing a remote delete falls back to create instead of aborting the run', async () => {
+    const b = mk({ id: 'w1', title: 'renamed since push', dayKey: '2026-06-09' })
+    const account: CalendarAccount = {
+      async authorize() {},
+      async listCalendars() {
+        return []
+      },
+      async listEvents() {
+        // still listed (deleted between the listing and the PATCH below)
+        return [
+          {
+            eventId: 'ev-racing',
+            calId: 'work@acme',
+            title: 'old title',
+            dayKey: b.dayKey,
+            startMin: b.startMin,
+            endMin: b.endMin,
+            mewBlockId: 'w1',
+          },
+        ]
+      },
+      async createEvent() {
+        return 'g-recreated'
+      },
+      async updateEvent() {
+        throw new Error('google 410: Resource has been deleted')
+      },
+      async deleteEvent() {},
+    }
+    let map: SyncEntry[] = [
+      { id: 'w1:work@acme', blockId: 'w1', calId: 'work@acme', eventId: 'ev-racing', hash: 'old' },
+    ]
+    const report = await runSync({
+      account,
+      calendars: [CAL],
+      matrix: { 'work@acme': { work: 'details', private: 'busy', health: 'busy' } },
+      now: new Date(2026, 5, 9, 12, 0),
+      getBlocks: () => [b],
+      setBlocks: () => {},
+      loadSyncMap: async () => map,
+      saveSyncMap: async (put, removeIds) => {
+        // bulkPut is an UPSERT (same-id rows replaced), then the removals
+        const putIds = new Set(put.map((x) => x.id))
+        map = map.filter((e) => !putIds.has(e.id) && !removeIds.includes(e.id)).concat(put)
+      },
+    })
+    expect(report.pushed.created).toBe(1) // recovered, not aborted
+    expect(map[0].eventId).toBe('g-recreated')
+  })
+})
+
+describe('staleSyncEntries — the ledger vs the listing', () => {
+  const W2 = { startKey: '2026-06-08', endKey: '2026-06-29' }
+  const entry = (over: Partial<SyncEntry>): SyncEntry => ({
+    id: 'b:work@acme',
+    blockId: 'b',
+    calId: 'work@acme',
+    eventId: 'ev',
+    hash: 'h',
+    ...over,
+  })
+
+  it('flags an entry whose event vanished from the listing', () => {
+    const b = mk({ id: 'b' })
+    expect(staleSyncEntries([entry({})], [], [b], W2, [CAL])).toHaveLength(1)
+  })
+
+  it('trusts an entry whose event is still listed', () => {
+    const b = mk({ id: 'b' })
+    const listed = [remote({ eventId: 'ev', mewBlockId: 'b' })]
+    expect(staleSyncEntries([entry({})], listed, [b], W2, [CAL])).toHaveLength(0)
+  })
+
+  it('gives no verdict for calendars that were not listed', () => {
+    const b = mk({ id: 'b' })
+    expect(staleSyncEntries([entry({ calId: 'other@cal' })], [], [b], W2, [CAL])).toHaveLength(0)
+  })
+
+  it('leaves gone/external/out-of-window blocks to the delete sweep', () => {
+    const external = mk({ id: 'b', external: { calId: 'work@acme', eventId: 'z' } })
+    const outOfWindow = mk({ id: 'b', dayKey: '2026-07-20' })
+    expect(staleSyncEntries([entry({})], [], [], W2, [CAL])).toHaveLength(0) // block gone
+    expect(staleSyncEntries([entry({})], [], [external], W2, [CAL])).toHaveLength(0)
+    expect(staleSyncEntries([entry({})], [], [outOfWindow], W2, [CAL])).toHaveLength(0)
+  })
+})
+
+/* The third healer, for the journey "same calendar, new device" (fresh
+   install or restored backup): the ledger starts empty but MEW's events are
+   already on the calendar, each carrying its block id. Without claiming them
+   the plan would push every block AGAIN and the calendar doubles. */
+describe('adoptRemoteLedger — a fresh ledger claims events that are already ours', () => {
+  const mine = (over: Partial<RemoteEvent>): RemoteEvent =>
+    remote({
+      eventId: 'g-w1',
+      title: 'Q3 deck',
+      dayKey: '2026-06-09',
+      startMin: 540,
+      endMin: 690,
+      mewBlockId: 'w1',
+      ...over,
+    })
+
+  it('claims a listed event naming a native block; unchanged blocks then plan nothing', async () => {
+    const b = mk({ id: 'w1' }) // exactly the remote shape — nothing to update
+    const created: PushEventBody[] = []
+    const account: CalendarAccount = {
+      async authorize() {},
+      async listCalendars() {
+        return []
+      },
+      async listEvents() {
+        return [mine({})]
+      },
+      async createEvent(_c, bd) {
+        created.push(bd)
+        return 'dup!'
+      },
+      async updateEvent() {},
+      async deleteEvent() {},
+    }
+    let map: SyncEntry[] = []
+    const report = await runSync({
+      account,
+      calendars: [CAL],
+      matrix: { 'work@acme': { work: 'details', private: 'busy', health: 'busy' } },
+      now: new Date(2026, 5, 9, 12, 0),
+      getBlocks: () => [b],
+      setBlocks: () => {},
+      loadSyncMap: async () => map,
+      saveSyncMap: async (put, removeIds) => {
+        const putIds = new Set(put.map((x) => x.id))
+        map = map.filter((e) => !putIds.has(e.id) && !removeIds.includes(e.id)).concat(put)
+      },
+    })
+    expect(created).toHaveLength(0) // THE point: no duplicate push
+    expect(report.pushed.created).toBe(0)
+    expect(map).toEqual([
+      expect.objectContaining({ blockId: 'w1', calId: 'work@acme', eventId: 'g-w1' }),
+    ])
+  })
+
+  it('a block edited since the old device pushed converges by UPDATE, never create', () => {
+    const edited = mk({ id: 'w1', title: 'Q3 deck v2' })
+    const claimed = adoptRemoteLedger([], [mine({})], [edited])
+    expect(claimed).toHaveLength(1)
+    const { ops } = planPush(
+      [edited],
+      { 'work@acme': { work: 'details', private: 'busy', health: 'busy' } },
+      [CAL],
+      W,
+      claimed
+    )
+    expect(ops).toEqual([
+      expect.objectContaining({ kind: 'update', blockId: 'w1', eventId: 'g-w1' }),
+    ])
+  })
+
+  it('never claims for external blocks, unknown block ids, or already-claimed slots', () => {
+    const ext = mk({ id: 'w1', external: { calId: CAL.id, eventId: 'e' } })
+    expect(adoptRemoteLedger([], [mine({})], [ext])).toHaveLength(0)
+    expect(
+      adoptRemoteLedger([], [mine({ mewBlockId: 'nobody' })], [mk({ id: 'w1' })])
+    ).toHaveLength(0)
+    const existing: SyncEntry = {
+      id: 'w1:work@acme',
+      blockId: 'w1',
+      calId: CAL.id,
+      eventId: 'old',
+      hash: 'h',
+    }
+    expect(adoptRemoteLedger([existing], [mine({})], [mk({ id: 'w1' })])).toHaveLength(0)
+  })
+
+  it('a claim whose plan immediately deletes (tag went hidden) does not persist', async () => {
+    const b = mk({ id: 'w1', tag: 'health' }) // health is hidden on this calendar
+    const deleted: string[] = []
+    const account: CalendarAccount = {
+      async authorize() {},
+      async listCalendars() {
+        return []
+      },
+      async listEvents() {
+        return [mine({})]
+      },
+      async createEvent() {
+        return 'x'
+      },
+      async updateEvent() {},
+      async deleteEvent(_c, id) {
+        deleted.push(id)
+      },
+    }
+    let map: SyncEntry[] = []
+    await runSync({
+      account,
+      calendars: [CAL],
+      matrix: { 'work@acme': { work: 'details', private: 'busy', health: 'hidden' } },
+      now: new Date(2026, 5, 9, 12, 0),
+      getBlocks: () => [b],
+      setBlocks: () => {},
+      loadSyncMap: async () => map,
+      saveSyncMap: async (put, removeIds) => {
+        const putIds = new Set(put.map((x) => x.id))
+        map = map.filter((e) => !putIds.has(e.id) && !removeIds.includes(e.id)).concat(put)
+      },
+    })
+    expect(deleted).toEqual(['g-w1']) // the hidden event left the calendar…
+    expect(map).toEqual([]) // …and its claim left with it
   })
 })

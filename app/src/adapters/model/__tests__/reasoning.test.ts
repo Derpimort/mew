@@ -79,10 +79,12 @@ async function collect(it: AsyncIterable<ConverseChunk>): Promise<ConverseChunk[
   return out
 }
 
+/* "was thinking requested at all" — the exact per-generation shape (adaptive
+   vs budget_tokens) is pinned against the real wire in contract.test.ts. */
 function optionsHasThinking(o: unknown): boolean {
   const po = (o as { providerOptions?: { anthropic?: { thinking?: { type?: string } } } })
     .providerOptions
-  return po?.anthropic?.thinking?.type === 'enabled'
+  return typeof po?.anthropic?.thinking?.type === 'string'
 }
 
 type SystemMsg = { role: string; content: string; providerOptions?: Record<string, unknown> }

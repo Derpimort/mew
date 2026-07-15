@@ -325,7 +325,7 @@ export const DEFAULT_SETTINGS: Settings = {
   modelLocation: 'remote',
   remoteProvider: 'anthropic',
   anthropicKey: '',
-  anthropicModel: 'claude-sonnet-4-6',
+  anthropicModel: 'claude-sonnet-5',
   openaiKey: '',
   openaiModel: 'gpt-5.4-mini',
   ollamaUrl: 'http://localhost:11434',

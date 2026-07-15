@@ -251,6 +251,76 @@ export function resolveLabels(vis: Block[], radii: Map<string, number>): Map<str
   return out
 }
 
+/** How many title characters fit between a callout's anchor and the svg edge.
+    SVG clips at the viewBox, so a label near 3/9 o'clock only has the narrow
+    strip beside the bezel — a long title (especially the un-truncated
+    hover/focus state) ran off the boundary and was cut mid-glyph. The budget
+    is that remaining strip, minus `reservePx` (the inline time note that
+    follows the title), at an average Hanken Grotesk advance of ~0.58em. */
+export function labelBudget(x: number, right: boolean, fontPx: number, reservePx = 0): number {
+  const EDGE_PAD = 10 // breathing room inside the svg edge
+  const left = -OG.ox + EDGE_PAD
+  const rightEdge = -OG.ox + OG.w - EDGE_PAD
+  const room = (right ? rightEdge - x : x - left) - reservePx
+  return Math.max(0, Math.floor(room / (fontPx * 0.58)))
+}
+
+/** Ellipsize a callout title into its budget — never let the svg clip it. */
+export function fitLabel(title: string, budget: number): string {
+  if (title.length <= budget) return title
+  if (budget <= 1) return '…'
+  return title.slice(0, budget - 1).trimEnd() + '…'
+}
+
+/** Where the hover/focus reveal anchors: usually the callout's own x, but a
+    label hugging the 3/9 o'clock edge only affords a handful of characters per
+    line — too narrow even to wrap ("Managemen / t Team / Wednesda…"). The
+    reveal nudges such an anchor inward just far enough for `minChars` a line;
+    the halo keeps it legible over anything it now overlaps, and the resting
+    layout is untouched. */
+export function revealAnchorX(x: number, right: boolean, fontPx: number, minChars = 14): number {
+  const EDGE_PAD = 10
+  const need = Math.ceil(minChars * fontPx * 0.58) + 1 // +1px: floor-proof the char budget
+  return right
+    ? Math.min(x, -OG.ox + OG.w - EDGE_PAD - need)
+    : Math.max(x, -OG.ox + EDGE_PAD + need)
+}
+
+/** Wrap a callout title into whole-word lines of ≤ budget chars. Hover/focus
+    reads with THIS, not the ellipsis: the reveal states exist to make the task
+    legible in place, so a tight edge budget stacks lines instead of eating
+    characters. A word longer than a whole line hard-breaks; past maxLines the
+    tail ellipsizes (the click card always holds the untruncated title). */
+export function wrapLabel(title: string, budget: number, maxLines = 3): string[] {
+  if (budget <= 1) return ['…']
+  const lines: string[] = []
+  let cur = ''
+  for (const word of title.split(/\s+/).filter(Boolean)) {
+    let w = word
+    if (cur && cur.length + 1 + w.length <= budget) {
+      cur += ' ' + w
+      continue
+    }
+    if (cur) lines.push(cur)
+    while (w.length > budget) {
+      lines.push(w.slice(0, budget))
+      w = w.slice(budget)
+    }
+    cur = w
+  }
+  if (cur) lines.push(cur)
+  if (!lines.length) return ['…']
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines)
+    kept[maxLines - 1] = fitLabel(
+      `${kept[maxLines - 1]} ${lines.slice(maxLines).join(' ')}`,
+      budget
+    )
+    return kept
+  }
+  return lines
+}
+
 /** Arc color per §3: deadline-background gold, work ice, everything else teal. */
 export function orbitColor(b: Block, isFocus: boolean): string {
   if (isBackground(b) && b.due != null && !isFocus) return 'var(--gold)'
