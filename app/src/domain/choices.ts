@@ -32,3 +32,20 @@ export function choicesSuperseded(chat: ChatMessage[], msgId: string): boolean {
 export function choicesActive(chat: ChatMessage[], msg: ChatMessage): boolean {
   return (msg.choices?.length ?? 0) > 0 && !choicePicked(msg) && !choicesSuperseded(chat, msg.id)
 }
+
+/* Plan-mode scenario cards (#293) ride the exact same grammar: one pick, a
+   newer user message supersedes, liveness derived — never stored. Shared by
+   the store's pickScenario guard and the session log's inert rendering. */
+
+/** True once any scenario on the message was picked. */
+export function scenarioPicked(msg: ChatMessage): boolean {
+  return (msg.scenarios ?? []).some((s) => s.picked)
+}
+
+/** Scenario cards stay pickable only while the offer is live: scenarios exist,
+    none picked yet, and no newer user message has landed. */
+export function scenariosActive(chat: ChatMessage[], msg: ChatMessage): boolean {
+  return (
+    (msg.scenarios?.length ?? 0) > 0 && !scenarioPicked(msg) && !choicesSuperseded(chat, msg.id)
+  )
+}

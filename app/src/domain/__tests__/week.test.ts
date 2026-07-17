@@ -21,6 +21,7 @@ import {
   resolveRemoval,
   roll,
   rollup,
+  tightMeetingJunction,
 } from '../week'
 import type { Block, BlockStatus } from '../types'
 
@@ -381,6 +382,106 @@ describe('week model', () => {
       expect(freeWindows([tentative, maybe], D, 13 * 60, 15 * 60)).toEqual([
         { startMin: 14 * 60, endMin: 15 * 60 },
       ])
+    })
+  })
+
+  describe('freeWindows — the #302 meeting buffer (external blocks only)', () => {
+    const meeting = (over: Partial<Block>): Block =>
+      mk({ external: { calId: 'work', eventId: 'ev' }, ...over })
+
+    it('buffer 0 is byte-identical to no buffer — the default-off regression pin', () => {
+      const m = meeting({ startMin: 11 * 60, endMin: 12 * 60 })
+      expect(freeWindows([m], D, 8 * 60, 18 * 60, 0)).toEqual(freeWindows([m], D, 8 * 60, 18 * 60))
+    })
+
+    it('inflates an external meeting on BOTH sides, so a gap never abuts its edges', () => {
+      const m = meeting({ startMin: 11 * 60, endMin: 12 * 60 })
+      expect(freeWindows([m], D, 8 * 60, 18 * 60, 15)).toEqual([
+        { startMin: 8 * 60, endMin: 11 * 60 - 15 }, // 10:45 — a candidate ends 15m early
+        { startMin: 12 * 60 + 15, endMin: 18 * 60 }, // 12:15 — and starts 15m late
+      ])
+    })
+
+    it('leaves a FIXED non-external block exact — MEW schedules around it, no margin', () => {
+      const interview = mk({ title: 'Interview — Pooran', startMin: 11 * 60, endMin: 12 * 60 })
+      expect(isFixedTime(interview)).toBe(true) // fixed by the word heuristic, not calendar
+      expect(freeWindows([interview], D, 8 * 60, 18 * 60, 15)).toEqual([
+        { startMin: 8 * 60, endMin: 11 * 60 },
+        { startMin: 12 * 60, endMin: 18 * 60 },
+      ])
+    })
+
+    it('left-inflation past an earlier neighbor still closes the gap (inflate THEN sort)', () => {
+      const task = mk({ title: 'Deck notes', startMin: 10 * 60, endMin: 10 * 60 + 45 })
+      const m = meeting({ startMin: 11 * 60, endMin: 12 * 60 }) // buffer 30 reaches back to 10:30
+      expect(freeWindows([task, m], D, 8 * 60, 18 * 60, 30)).toEqual([
+        { startMin: 8 * 60, endMin: 10 * 60 }, // before the task
+        { startMin: 12 * 60 + 30, endMin: 18 * 60 }, // the buffer swallows the 10:45→10:30 sliver
+      ])
+    })
+  })
+
+  describe('tightMeetingJunction — #302 back-to-back detection (pure)', () => {
+    const meeting = (id: string, startMin: number, endMin: number): Block =>
+      mk({ id, external: { calId: 'work', eventId: id }, startMin, endMin })
+
+    it('off (buffer 0) never reports a junction', () => {
+      const pair = [meeting('a', 13 * 60, 14 * 60), meeting('b', 14 * 60, 15 * 60)]
+      expect(tightMeetingJunction(pair, D, 0)).toBeNull()
+    })
+
+    it('two abutting meetings report the later start as the pivot', () => {
+      const pair = [meeting('a', 13 * 60, 14 * 60), meeting('b', 14 * 60, 15 * 60)]
+      expect(tightMeetingJunction(pair, D, 10)).toBe(14 * 60)
+    })
+
+    it('a gap wider than the buffer is not back-to-back', () => {
+      const pair = [meeting('a', 13 * 60, 14 * 60), meeting('b', 14 * 60 + 20, 15 * 60)]
+      expect(tightMeetingJunction(pair, D, 10)).toBeNull()
+    })
+
+    it("only external gaps count — MEW's own block between two meetings never invents one", () => {
+      const a = meeting('a', 13 * 60, 14 * 60)
+      const own = mk({ id: 'own', startMin: 14 * 60, endMin: 14 * 60 + 30 }) // not external
+      const b = meeting('b', 15 * 60, 16 * 60) // the a→b external gap is 60m > 10
+      expect(tightMeetingJunction([a, own, b], D, 10)).toBeNull()
+    })
+  })
+
+  describe('findFreeSlot — the #302 buffer on the auto-slot fallback path', () => {
+    const meeting = (over: Partial<Block>): Block =>
+      mk({ external: { calId: 'work', eventId: 'ev' }, ...over })
+
+    it('buffer 0 is byte-identical to no buffer — the default-off regression pin', () => {
+      const m = meeting({ startMin: 11 * 60, endMin: 12 * 60 })
+      expect(findFreeSlot([m], D, 60, 8 * 60, 18 * 60, 0)).toEqual(
+        findFreeSlot([m], D, 60, 8 * 60, 18 * 60)
+      )
+    })
+
+    it('without a buffer the fit abuts the meeting; with buffer 15 it shifts shy', () => {
+      const m = meeting({ startMin: 9 * 60, endMin: 10 * 60 })
+      const wall = mk({ title: 'Wall', startMin: 11 * 60, endMin: 18 * 60 + 30 })
+      // the only room is [10:00, 11:00] after the meeting; a 45-min task fits at 10:00
+      expect(findFreeSlot([m, wall], D, 45, 10 * 60, 18 * 60 + 30)).toEqual({
+        startMin: 10 * 60,
+        endMin: 10 * 60 + 45,
+      })
+      // buffer 15 pushes the meeting's edge to 10:15, so the fit lands shy
+      expect(findFreeSlot([m, wall], D, 45, 10 * 60, 18 * 60 + 30, 15)).toEqual({
+        startMin: 10 * 60 + 15,
+        endMin: 11 * 60,
+      })
+    })
+
+    it('inflate THEN sort: a left-inflated meeting past an earlier neighbor blocks correctly', () => {
+      const own = mk({ id: 'own', startMin: 9 * 60, endMin: 9 * 60 + 30 })
+      const m = meeting({ id: 'm', startMin: 9 * 60 + 10, endMin: 9 * 60 + 40 }) // buffer 30 → [8:40,10:10]
+      // sorting by inflated start is what keeps the 60-min fit off the meeting's buffer
+      expect(findFreeSlot([own, m], D, 60, 8 * 60, 18 * 60, 30)).toEqual({
+        startMin: 10 * 60 + 10,
+        endMin: 11 * 60 + 10,
+      })
     })
   })
 

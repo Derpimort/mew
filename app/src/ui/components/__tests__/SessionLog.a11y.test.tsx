@@ -12,10 +12,15 @@
 
 import { describe, expect, it, beforeEach } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SessionLog, LogLine } from '../SessionLog'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import { dirname, resolve } from 'node:path'
+import { SessionLog, LogLine, QueuedRow, StopButton } from '../SessionLog'
 import { streamAnnouncement } from '../sessionAnnounce'
 import { useMew } from '../../../state/store'
 import type { ChatMessage } from '../../../domain/types'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 const at = (h: number, m: number) => new Date(2026, 5, 19, h, m).getTime()
 
@@ -118,6 +123,67 @@ describe('#173 — "↓ new" does not announce at rest', () => {
   })
 })
 
+describe('#280 — the composer never locks; the queued state reads politely', () => {
+  it('the queued row is a polite status region: queued ❯ text + a named cancel chip', () => {
+    const html = renderToStaticMarkup(
+      <QueuedRow text="also block friday pm for review" onCancel={() => {}} />
+    )
+    expect(html).toMatch(/class="prompt-queued" role="status"/)
+    expect(html).toContain('queued')
+    expect(html).toContain('❯')
+    expect(html).toContain('also block friday pm for review')
+    // the cancel chip's accessible name contains its visible label (WCAG 2.5.3)
+    expect(html).toContain('aria-label="cancel queued message"')
+    expect(html).toMatch(/<button[^>]*>cancel<\/button>/)
+  })
+
+  it('a long queued thought truncates in the middle — head and tail stay readable', () => {
+    const long = `start of the thought ${'x'.repeat(120)} end of the thought`
+    const html = renderToStaticMarkup(<QueuedRow text={long} onCancel={() => {}} />)
+    expect(html).toContain('start of the thought')
+    expect(html).toContain('end of the thought')
+    expect(html).toContain('…')
+    expect(html).not.toContain('x'.repeat(120)) // the middle is what gave way
+  })
+
+  it('the stop affordance and its accessible name flip together (stop ↔ stop & send)', () => {
+    const atRest = renderToStaticMarkup(<StopButton queued={false} onStop={() => {}} />)
+    expect(atRest).toContain('aria-label="stop"')
+    expect(atRest).toContain('■ stop')
+    expect(atRest).not.toContain('stop &amp; send')
+    const withQueue = renderToStaticMarkup(<StopButton queued onStop={() => {}} />)
+    expect(withQueue).toContain('aria-label="stop &amp; send"')
+    expect(withQueue).toContain('■ stop &amp; send')
+  })
+
+  it('Esc shares the stop affordance gate — the keyboard twin is never dead (#117)', () => {
+    // SSR can't fire keydown, so pin the structure: ONE derived gate
+    // (thinking OR a message still queued) drives both the Esc handler and
+    // the visible ■ stop affordance — they can never drift apart.
+    const src = readFileSync(resolve(here, '../SessionLog.tsx'), 'utf8')
+    expect(src).toMatch(/const turnLive = thinking \|\| queued != null/)
+    expect(src).toMatch(/e\.key === 'Escape' && turnLive/)
+    expect(src).toMatch(/\{turnLive \? \(/)
+    // and no stray thinking-only Esc gate survives
+    expect(src).not.toMatch(/Escape' && thinking/)
+  })
+
+  it('the composer textarea never carries disabled — typing lands at every phase', () => {
+    // markup: the rendered textarea has no disabled attribute…
+    const html = renderToStaticMarkup(<SessionLog />)
+    expect(html).toMatch(/<textarea[^>]*aria-label="compose message to MEW"/)
+    expect(html).not.toMatch(/<textarea[^>]*disabled/)
+    // …and the lock can't quietly return: no thinking-bound disable in the
+    // component source, no orphaned disabled-composer style (same readFileSync
+    // pin the focus suite uses for structure that SSR can't reach).
+    const src = readFileSync(resolve(here, '../SessionLog.tsx'), 'utf8')
+    expect(src).not.toContain('disabled={thinking}')
+    const css = readFileSync(resolve(here, '../../primitives/primitives.css'), 'utf8')
+    expect(css).not.toContain('.prompt-row textarea:disabled')
+    expect(css).toMatch(/\.prompt-queued\s*\{/)
+  })
+})
+
 describe('#173 — assertive announcement is one edge per turn', () => {
   it('rising edge of thinking announces the start', () => {
     expect(streamAnnouncement('', false, true)).toBe('mew is responding…')
@@ -128,5 +194,84 @@ describe('#173 — assertive announcement is one edge per turn', () => {
   it('a steady tick re-fires nothing (returns the prior message verbatim)', () => {
     expect(streamAnnouncement('mew is responding…', true, true)).toBe('mew is responding…')
     expect(streamAnnouncement('response complete', false, false)).toBe('response complete')
+  })
+})
+
+/* ── #282 — tool activity cards: labeled articles, one polite settle ── */
+
+import { TOOL_ERROR_NOTE, TOOL_INTERRUPTED_NOTE } from '../../../domain/toolCard'
+import type { ToolCardState } from '../../../domain/types'
+
+const count = (html: string, needle: string) => html.split(needle).length - 1
+
+const toolMsg = (state: ToolCardState, note?: string): ChatMessage => ({
+  id: `t-${state}`,
+  role: 'tool',
+  body: '',
+  ts: at(10, 15),
+  tool: {
+    name: 'plan',
+    verb: 'placing blocks',
+    target: 'thursday 9:00–12:00',
+    state,
+    ...(note ? { note } : {}),
+  },
+})
+
+describe('#282 — a card is an article labeled "mew action — <verb>, <state>"', () => {
+  it('running: labeled, data-msg kept, shimmer class on the text', () => {
+    const html = renderToStaticMarkup(<LogLine msg={toolMsg('running')} />)
+    expect(html).toMatch(/class="tool-card" data-msg="t-running" role="article"/)
+    expect(html).toContain('aria-label="mew action — placing blocks, running"')
+    expect(html).toContain('class="tool-run"')
+    expect(html).toContain('placing blocks — thursday 9:00–12:00…')
+  })
+
+  it('done: ✓ in the confirmation color class, no shimmer, label carries the settled state', () => {
+    const html = renderToStaticMarkup(<LogLine msg={toolMsg('done')} />)
+    expect(html).toContain('aria-label="mew action — placing blocks, done"')
+    expect(html).toContain('<span class="ok">✓ </span>')
+    expect(html).not.toContain('tool-run')
+  })
+
+  it('error: a quiet MEW-voiced line, never a raw error (the note the wrapper set)', () => {
+    const html = renderToStaticMarkup(<LogLine msg={toolMsg('error', TOOL_ERROR_NOTE)} />)
+    expect(html).toContain('aria-label="mew action — placing blocks, error"')
+    /* the note renders HTML-escaped; pin the class + an apostrophe-free slice */
+    expect(html).toContain('class="cm tool-note"')
+    expect(html).toContain('nothing changed')
+    expect(html).not.toContain('tool-run')
+    expect(html).not.toContain('✓')
+  })
+
+  it('interrupted (hydrated history): the quiet default line, no shimmer ever', () => {
+    const html = renderToStaticMarkup(<LogLine msg={toolMsg('interrupted')} />)
+    expect(html).toContain('aria-label="mew action — placing blocks, interrupted"')
+    expect(html).toContain(`# ${TOOL_INTERRUPTED_NOTE}`) // no apostrophe — renders verbatim
+    expect(html).not.toContain('tool-run')
+  })
+
+  it('degrades to verb-only when a card has no target', () => {
+    const bare: ChatMessage = {
+      id: 't-bare',
+      role: 'tool',
+      body: '',
+      ts: at(10, 16),
+      tool: { name: 'undoLast', verb: 'putting it back', state: 'done' },
+    }
+    const html = renderToStaticMarkup(<LogLine msg={bare} />)
+    expect(html).toContain('aria-label="mew action — putting it back, done"')
+    expect(html).toContain('<span>putting it back</span>') // no target joiner on the visible line
+  })
+
+  it('the settle transition is one content change: running and done markup differ only in glyph/shimmer/ellipsis', () => {
+    /* the shimmer itself is CSS animation on a stable text node — settling
+       swaps the text once, so the polite log announces once per settle and
+       never per shimmer frame */
+    const running = renderToStaticMarkup(<LogLine msg={toolMsg('running')} />)
+    const done = renderToStaticMarkup(<LogLine msg={toolMsg('done')} />)
+    expect(running).not.toBe(done)
+    expect(count(running, 'aria-live')).toBe(0) // the card adds no live region of its own
+    expect(count(done, 'aria-live')).toBe(0)
   })
 })

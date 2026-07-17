@@ -127,19 +127,36 @@ export function conflictsWith(
   )
 }
 
+/** #302: a block's busy span for candidate generation — EXTERNAL (calendar)
+    meetings inflate by bufferMin on both sides so MEW's own placements keep a
+    prep/decompress margin around them; everything else (fixed non-external,
+    tasks) stays exact. bufferMin 0 ⇒ the exact span, byte-identical. One home
+    for the inflation rule, shared by findFreeSlot and freeWindows. */
+function busySpan(b: Block, bufferMin: number): { startMin: number; endMin: number } {
+  return bufferMin > 0 && b.external
+    ? { startMin: b.startMin - bufferMin, endMin: b.endMin + bufferMin }
+    : { startMin: b.startMin, endMin: b.endMin }
+}
+
 export function findFreeSlot(
   blocks: Block[],
   dayKey: string,
   durationMin: number,
   windowStart = DAY_START,
-  windowEnd = DAY_END
+  windowEnd = DAY_END,
+  /* #302: EXTERNAL meetings inflate by bufferMin (via busySpan) so an
+     auto-slotted placement keeps clear of a meeting's edges; default 0 ⇒
+     byte-identical. Inflate THEN sort — a left-inflated meeting can precede an
+     earlier-starting neighbor, and the forward cursor needs true start order. */
+  bufferMin = 0
 ): { startMin: number; endMin: number } | null {
   /* optional events don't hold time — except fixed-time ones (a tentative
      interview is still an interview; auto-placement keeps clear of it).
      background blocks don't hold the slot either: place right over them */
-  const day = blocksForDay(blocks, dayKey).filter(
-    (b) => (!b.optional || isFixedTime(b)) && !isBackground(b)
-  )
+  const day = blocksForDay(blocks, dayKey)
+    .filter((b) => (!b.optional || isFixedTime(b)) && !isBackground(b))
+    .map((b) => busySpan(b, bufferMin))
+    .sort((a, b) => a.startMin - b.startMin)
   let cursor = windowStart
   for (const b of day) {
     if (b.endMin <= cursor) continue
@@ -198,15 +215,27 @@ export function overlappingFocus(blocks: Block[], target: Block): Block[] {
 
 /** Every clear window within [fromMin, toMin) on the day — air that holds
     nothing busy. Busy = open blocks that hold time (optional ones only when
-    fixed: a tentative interview is still an interview). */
+    fixed: a tentative interview is still an interview).
+
+    #302: `bufferMin` (default 0) is the prep/decompress margin MEW keeps around
+    EXTERNAL (calendar) meetings for its OWN placements — their busy spans
+    inflate by bufferMin on both sides so a candidate never abuts a meeting's
+    edge. Candidate generation ONLY: the events never move (their calendar copy,
+    conflicts, and rendering read the exact spans elsewhere). Fixed non-external
+    blocks keep exact spans — MEW still schedules around them, without a margin.
+    Default 0 ⇒ every span is exact, byte-identical to before the seam. Inflate
+    THEN sort: a left-inflated meeting can precede an earlier-starting neighbor,
+    and the merge below needs true start order to close the gap correctly. */
 export function freeWindows(
   blocks: Block[],
   dayKey: string,
   fromMin: number,
-  toMin: number
+  toMin: number,
+  bufferMin = 0
 ): { startMin: number; endMin: number }[] {
   const busy = blocksForDay(blocks, dayKey)
     .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b))
+    .map((b) => busySpan(b, bufferMin))
     .sort((a, b) => a.startMin - b.startMin)
   const out: { startMin: number; endMin: number }[] = []
   let cursor = fromMin
@@ -218,6 +247,26 @@ export function freeWindows(
   }
   if (cursor < toMin) out.push({ startMin: cursor, endMin: toMin })
   return out.filter((w) => w.endMin > w.startMin)
+}
+
+/** #302: the earliest junction on `dayKey` where two EXTERNAL (calendar)
+    meetings sit ≤ bufferMin apart — too tight for MEW's buffer to fit a block
+    between them. Returns the later meeting's start (the pivot the user goes
+    straight into), or null when the buffer is off (0) or no pair is that tight.
+    Pure observation only — external events never move. */
+export function tightMeetingJunction(
+  blocks: Block[],
+  dayKey: string,
+  bufferMin: number
+): number | null {
+  if (bufferMin <= 0) return null
+  const ext = blocksForDay(blocks, dayKey)
+    .filter((b) => b.status === 'open' && b.external)
+    .sort((a, b) => a.startMin - b.startMin)
+  for (let i = 1; i < ext.length; i++) {
+    if (ext[i].startMin - ext[i - 1].endMin <= bufferMin) return ext[i].startMin
+  }
+  return null
 }
 
 /** Where a block moves when it has to give way: the next free slot at or
@@ -326,10 +375,21 @@ export function roll(
   }
 }
 
-export function move(blocks: Block[], id: string, toDayKey: string, toStartMin: number): Block[] {
+export function move(
+  blocks: Block[],
+  id: string,
+  toDayKey: string,
+  toStartMin: number,
+  durationMin?: number // omitted → the move keeps the block's length
+): Block[] {
   return blocks.map((b) =>
     b.id === id
-      ? { ...b, dayKey: toDayKey, startMin: toStartMin, endMin: toStartMin + duration(b) }
+      ? {
+          ...b,
+          dayKey: toDayKey,
+          startMin: toStartMin,
+          endMin: toStartMin + (durationMin ?? duration(b)),
+        }
       : b
   )
 }

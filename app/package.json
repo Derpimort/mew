@@ -20,6 +20,7 @@
     "shoot": "node scripts/shoot.mjs",
     "shoot:overlap": "node scripts/shoot-overlap.mjs",
     "shoot:onboarding": "node scripts/shoot-onboarding.mjs",
+    "shoot:ritual": "node scripts/shoot-ritual.mjs",
     "prepare": "cd .. && husky || true"
   },
   "dependencies": {

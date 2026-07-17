@@ -90,3 +90,24 @@ describe('patterns framing — on-device history, never "the brain"', () => {
     expect(MEW_VOICE).toMatch(/never an empty history/)
   })
 })
+
+/* the weekly ritual recipe (#304) — a keyed model must run the same shape the
+   keyless route runs, inside the #102 budget: read-only sweep, chip questions
+   one per turn, ONE propose_scenarios, the pick is the one apply. */
+describe('the weekly ritual recipe (#304)', () => {
+  it('names the ritual and its trigger words', () => {
+    expect(MEW_VOICE).toContain('"plan my week"')
+    expect(MEW_VOICE).toMatch(/weekly shaping ritual/)
+  })
+
+  it('caps the questions and the per-round tool budget (#102)', () => {
+    expect(MEW_VOICE).toMatch(/at most three shaping questions/)
+    expect(MEW_VOICE).toMatch(/at most two tool calls in any question round/)
+  })
+
+  it('one propose call closes the ritual; generation stays read-only', () => {
+    expect(MEW_VOICE).toMatch(/ONE propose_scenarios call/)
+    expect(MEW_VOICE).toMatch(/Generation is read-only/)
+    expect(MEW_VOICE).toMatch(/the user's pick is the one apply/)
+  })
+})

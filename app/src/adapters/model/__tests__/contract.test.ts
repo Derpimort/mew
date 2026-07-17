@@ -9,6 +9,8 @@
    request is fully formed before any response is read. */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { streamText } from 'ai'
+import { createAnthropic } from '@ai-sdk/anthropic'
 import {
   PROVIDER_CONTRACT,
   DEFAULT_MODEL_SETTING,
@@ -268,6 +270,44 @@ describe('outgoing request — Anthropic through the unified adapter', () => {
     await drain({ provider: 'anthropic', apiKey: 'sk-ant-x', model: 'claude-sonnet-5' })
 
     expect(captured[0].body).not.toHaveProperty('thinking')
+  })
+
+  /* The 5-family effort knob (#281): @ai-sdk/anthropic@4.x DOES expose
+     `providerOptions.anthropic.effort` ('low'…'max'), riding the wire as
+     `output_config.effort`. MEW does NOT send it yet — adopting a lower effort
+     for conversational turns needs live first-token measurements plus the #102
+     planning pin (a day placed in ≤2 rounds) staying green, neither of which a
+     keyless lane can run; that measurement is RC work. These pins hold the
+     ground on both sides: the exact shape the RC flip-on will use, and the
+     shipping request staying knob-free until it's earned. */
+  it("the SDK's effort knob rides as output_config.effort next to adaptive thinking (not yet adopted)", async () => {
+    const { captured } = captureFetch(reject400)
+    const model = createAnthropic({
+      apiKey: 'sk-ant-x',
+      headers: { ...PROVIDER_CONTRACT.anthropic.requiredHeaders },
+    })('claude-sonnet-5')
+    const result = streamText({
+      model,
+      prompt: 'hi',
+      maxOutputTokens: 64,
+      maxRetries: 0,
+      providerOptions: {
+        anthropic: { thinking: anthropicThinking('claude-sonnet-5'), effort: 'low' },
+      },
+      onError: () => {}, // only the captured request matters — the 400 is the stub's answer
+    })
+    for await (const _ of result.stream) void _
+
+    expect(captured).toHaveLength(1)
+    expect(captured[0].body.thinking).toEqual({ type: 'adaptive' })
+    expect(captured[0].body.output_config).toEqual({ effort: 'low' })
+  })
+
+  it("MEW's own conversational request carries NO effort field — adoption waits on live RC measurement", async () => {
+    const { captured } = captureFetch(reject400)
+    await drain({ provider: 'anthropic', apiKey: 'sk-ant-x', model: 'claude-sonnet-5' })
+
+    expect(captured[0].body).not.toHaveProperty('output_config')
   })
 
   it('the cached prefix clears the minimum-cacheable floor — a short prefix silently no-ops (#153)', async () => {

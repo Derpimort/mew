@@ -4,6 +4,7 @@
 
 import type { ToolExecutor } from './types'
 import { normalizeRrule, type Rrule } from '../../domain/recurrence'
+import type { PlanMode } from '../../domain/types'
 import { clampInt, optInt } from './rules'
 
 /** A model's loose `recurrence` arg → a clean Rrule, or undefined. The byday
@@ -24,6 +25,66 @@ export interface NeutralTool {
 }
 
 const TAG_SCHEMA = { type: 'string', enum: ['work', 'private', 'health', 'rest'] } as const
+
+/** The plan-mode tool (#293), parameterized on the auto-offer floor: 'auto'
+    offers the picker at three or more items, 'always' already at two (the
+    Settings gear — mewTools() below swaps the wording; 'off' drops the tool).
+    One builder so the two modes can never drift in anything but the floor. */
+function proposeScenariosTool(threshold: 'three' | 'two'): NeutralTool {
+  return {
+    name: 'propose_scenarios',
+    description:
+      `Lay a multi-task ask out as named week-scenarios the user picks from — call it INSTEAD of plan_blocks when one message carries ${threshold} or more separate plannable items with no pinned days or clock times ("deck, budget review, gym, inbox sweep this week"). Classify the batch into tasks and call ONCE with all of them: MEW renders 2–3 named placements as mini-week cards and the human picks; the pick places exactly the previewed blocks. Items the user pinned to an explicit day or time stay plan_blocks (their stated time is their judgment), and so does a one- or two-item ask. ` +
+      `Chat-only — it changes nothing until the user picks. After calling it, END your turn: the pick (or their typed answer) arrives as the next user message.`,
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description:
+            'One short line to sit above the cards, in your own voice ("three ways this week could hold it — pick the one that feels right"). Omit to let MEW phrase it.',
+        },
+        tasks: {
+          type: 'array',
+          description: 'The classified braindump — one entry per plannable item.',
+          items: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                description: 'Short task title — no dates or times inside',
+              },
+              tag: {
+                ...TAG_SCHEMA,
+                description:
+                  'walks/meals/family → private; appointments → health; recovery → rest; else work',
+              },
+              durationMin: {
+                type: 'integer',
+                description:
+                  'Minutes needed, when the user said so. Omit otherwise — MEW sizes the task from their own history.',
+              },
+              dueMin: {
+                type: 'integer',
+                description:
+                  'Hard same-day deadline in minutes from midnight ("due by 1pm" = 780) — the task must END by then, today.',
+              },
+              window: {
+                type: 'string',
+                enum: ['morning', 'afternoon', 'evening'],
+                description: "The user's stated time of day, if any — every scenario honors it.",
+              },
+            },
+            required: ['title', 'tag'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['tasks'],
+      additionalProperties: false,
+    },
+  }
+}
 
 export const MEW_TOOLS: NeutralTool[] = [
   {
@@ -137,6 +198,7 @@ export const MEW_TOOLS: NeutralTool[] = [
       additionalProperties: false,
     },
   },
+  proposeScenariosTool('three'), // the 'auto' default; mewTools() below regears it
   {
     name: 'complete_task',
     description:
@@ -404,6 +466,17 @@ export const MEW_TOOLS: NeutralTool[] = [
   },
 ]
 
+/** The advertised registry under a planMode gear (#293): 'auto' is MEW_TOOLS
+    itself, 'always' lowers propose_scenarios' floor to two items, 'off' drops
+    the tool entirely — a model that can't see it can't call it, so 'off' IS
+    the pre-picker behavior with no executor-side refusal choreography. */
+export function mewTools(planMode: PlanMode = 'auto'): NeutralTool[] {
+  if (planMode === 'off') return MEW_TOOLS.filter((t) => t.name !== 'propose_scenarios')
+  if (planMode === 'always')
+    return MEW_TOOLS.map((t) => (t.name === 'propose_scenarios' ? proposeScenariosTool('two') : t))
+  return MEW_TOOLS
+}
+
 export async function runTool(name: string, input: unknown, exec: ToolExecutor): Promise<string> {
   const o = (input ?? {}) as Record<string, unknown>
   switch (name) {
@@ -510,6 +583,25 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const question = String(o.question ?? '').trim()
       if (!question) return 'nothing to look up — the call was empty'
       return exec.queryBrain(question)
+    }
+    case 'propose_scenarios': {
+      const prompt = String(o.prompt ?? '').trim()
+      const tasks = (Array.isArray(o.tasks) ? o.tasks : [])
+        .filter((t): t is Record<string, unknown> => !!t && typeof t === 'object')
+        .filter((t) => typeof t.title === 'string' && (t.title as string).trim())
+        .map((t) => ({
+          title: String(t.title).trim(),
+          tag: (['work', 'private', 'health', 'rest'] as const).includes(t.tag as never)
+            ? (t.tag as 'work')
+            : ('work' as const),
+          durationMin: optInt(t.durationMin, 15, 600),
+          due: optInt(t.dueMin ?? t.due, 0, 1439),
+          window: (['morning', 'afternoon', 'evening'] as const).includes(t.window as never)
+            ? (t.window as 'morning')
+            : undefined,
+        }))
+      if (!tasks.length) return 'nothing to propose — the call needs at least one task'
+      return exec.proposeScenarios(prompt, tasks)
     }
     case 'offer_choices': {
       const prompt = String(o.prompt ?? '').trim()

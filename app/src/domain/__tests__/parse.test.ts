@@ -249,3 +249,20 @@ describe('remember — the floor learns standing rules', () => {
     })
   })
 })
+
+describe('show insights — the read-only ask (#287)', () => {
+  it('recognized in its plain forms, carrying no fields', () => {
+    expect(parseCommand('show insights', NOW)).toEqual({ kind: 'insights' })
+    expect(parseCommand('insights', NOW)).toEqual({ kind: 'insights' })
+    expect(parseCommand('show me my insights?', NOW)).toEqual({ kind: 'insights' })
+    expect(parseCommand('Show the insights.', NOW)).toEqual({ kind: 'insights' })
+  })
+
+  it('never becomes a capture, and prose around the word stays what it was', () => {
+    expect(parseCommand('insights', NOW).kind).not.toBe('capture')
+    /* questions about the week keep their chat path (templated replies) */
+    expect(parseCommand("how's my week looking?", NOW).kind).toBe('chat')
+    /* a real task that merely contains the word still captures */
+    expect(parseCommand('write up the insights report', NOW).kind).toBe('capture')
+  })
+})

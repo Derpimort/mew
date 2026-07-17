@@ -13,20 +13,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '../primitives'
-import {
-  consoleUrl,
-  defaultModelFor,
-  probeMessage,
-  validateKey,
-  type KeyProbe,
-  type RemoteProvider,
-} from '../../adapters/model'
+import { KeyProbeField } from './KeyProbeField'
+import { consoleUrl, validateKey, type RemoteProvider } from '../../adapters/model'
 
 type Step = 0 | 1 | 2
 const STEPS = ['Why?', 'Get a key', 'Paste & test'] as const
-
-type TestState =
-  { phase: 'idle' } | { phase: 'testing' } | { phase: 'ok' } | { phase: 'error'; message: string }
 
 export interface ApiKeySetupFlowProps {
   provider: RemoteProvider
@@ -71,8 +62,6 @@ export function ApiKeySetupFlow({
   initialStep = 0,
 }: ApiKeySetupFlowProps) {
   const [step, setStep] = useState<Step>(initialStep)
-  const [key, setKey] = useState('')
-  const [test, setTest] = useState<TestState>({ phase: 'idle' })
   const [copied, setCopied] = useState(false)
   const dialogRef = useRef<HTMLDivElement>(null)
   const host = HOST_LABEL[provider]
@@ -94,29 +83,6 @@ export function ApiKeySetupFlow({
       prev?.focus?.()
     }
   }, [onClose])
-
-  const runTest = async () => {
-    const trimmed = key.trim()
-    if (!trimmed) {
-      setTest({ phase: 'error', message: `Paste your ${host} key first.` })
-      return
-    }
-    setTest({ phase: 'testing' })
-    let result: KeyProbe
-    try {
-      result = await validate(provider, trimmed, model ?? defaultModelFor(provider))
-    } catch {
-      // validateKey never throws, but never trust that from the UI.
-      result = { ok: false, reason: 'unknown' }
-    }
-    if (result.ok) {
-      setTest({ phase: 'ok' })
-      // brief beat so the "✓ connected" reads, then hand the key up to be saved
-      onDone(trimmed)
-    } else {
-      setTest({ phase: 'error', message: probeMessage(result.reason, provider) })
-    }
-  }
 
   const copyInstructions = async () => {
     try {
@@ -223,42 +189,12 @@ export function ApiKeySetupFlow({
                   Paste the key below and test it. The test only checks that {host} accepts it — it
                   doesn't touch your week.
                 </p>
-                <span className="keyfield aks-key">
-                  <input
-                    autoFocus
-                    type="password"
-                    aria-label={`${host} API key`}
-                    placeholder={provider === 'openai' ? 'sk-…' : 'sk-ant-…'}
-                    value={key}
-                    onChange={(e) => {
-                      setKey(e.target.value)
-                      if (test.phase !== 'idle') setTest({ phase: 'idle' })
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void runTest()
-                    }}
-                  />
-                </span>
-                <div className="aks-row">
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={() => void runTest()}
-                    disabled={test.phase === 'testing'}
-                  >
-                    {test.phase === 'testing'
-                      ? 'testing…'
-                      : test.phase === 'error'
-                        ? 'try again'
-                        : 'test key'}
-                  </Button>
-                  {test.phase === 'ok' && <span className="aks-ok">✓ connected — saving…</span>}
-                </div>
-                {test.phase === 'error' && (
-                  <p className="aks-err" role="alert">
-                    {test.message}
-                  </p>
-                )}
+                <KeyProbeField
+                  provider={provider}
+                  model={model}
+                  onValidated={onDone}
+                  validate={validate}
+                />
               </div>
             )}
           </div>

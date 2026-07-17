@@ -16,6 +16,7 @@ export type {
   PlaceSpec,
   FreeSpec,
   ChoiceOption,
+  ScenarioTaskSpec,
 } from './types'
 export { CHOICES_POSTED } from './types'
 export { classifyFailure, type FailureKind } from './retry'
@@ -54,6 +55,10 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
      for any provider whose contract has no reasoning budget, so this flag is
      safe to pass through unconditionally. */
   const reasoning = settings.showReasoning
+  /* plan mode's auto-offer gear (#293) rides into every adapter the same way:
+     models get a re-geared tool registry, the rules floor a routing floor —
+     one setting, identical meaning keyed or keyless. */
+  const planMode = settings.planMode
   if (settings.modelLocation === 'remote') {
     if (settings.remoteProvider === 'openai' && settings.openaiKey.trim()) {
       chain.push(
@@ -62,6 +67,7 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
           apiKey: settings.openaiKey.trim(),
           model: settings.openaiModel || PROVIDER_CONTRACT.openai.defaultModel,
           reasoning,
+          planMode,
         })
       )
     } else if (settings.remoteProvider !== 'openai' && settings.anthropicKey.trim()) {
@@ -71,6 +77,7 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
           apiKey: settings.anthropicKey.trim(),
           model: settings.anthropicModel || PROVIDER_CONTRACT.anthropic.defaultModel,
           reasoning,
+          planMode,
         })
       )
     }
@@ -85,9 +92,10 @@ export function selectAdapters(settings: Settings, now: () => Date): ModelPort[]
            server. */
         model: settings.ollamaModel || PROVIDER_CONTRACT.ollama.defaultModel,
         reasoning,
+        planMode,
       })
     )
   }
-  chain.push(createRulesAdapter(now))
+  chain.push(createRulesAdapter(now, planMode))
   return chain
 }

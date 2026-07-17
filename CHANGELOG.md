@@ -12,6 +12,64 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-07-17
+
+**The daily companion.** v0.3 made MEW smart; v0.4 made it trustworthy; v0.5 makes it the
+thing that actually runs your day — desktop-native presence, daily rituals, and an
+intelligence layer that earns its keep every morning.
+
+### Added
+
+- **Plan mode.** Braindump a big week and MEW lays out two or three named ways to hold it —
+  *protected mornings*, *spread even*, *front-loaded* — as compact mini-week cards you pick
+  from. What you pick is exactly what lands: a preview is a quote, never re-guessed.
+- **Morning brief & evening wrap.** A three-line brief opens the day (its shape, the first
+  block, the one thing to watch); a kind wrap closes it (what got done, what's waiting for
+  tomorrow, one thing worth noticing). Once a day, restart-proof, and it never keeps a guilt
+  list — rolled work is *waiting*, not failed.
+- **Weekly planning ritual.** Sunday evening (or "plan my week" anytime) MEW pulls your
+  calendar, asks two or three quick questions, and shapes the week around your meetings using
+  your own best hours — through the same picker, so you choose the shape.
+- **Rescue my afternoon.** When an inbound meeting lands on planned work, MEW says so and
+  offers one-tap chips — *shift*, *split around it*, *roll to tomorrow*. Your meeting never
+  moves; MEW's own block does.
+- **Fed and paced, without asking.** MEW now knows what a meal is: lunch lands at lunchtime,
+  dinner in the evening, a real stretch apart — and each morning it quietly places the meals
+  and breathers your day was missing, so you stop re-typing them.
+- **System-tray companion.** A state dot, a live tooltip showing your current block, quick
+  actions, and closing the window minimizes to the tray — the hourly calendar sync keeps
+  running while MEW is hidden.
+- **Global quick-capture hotkey.** ⌘/Ctrl+Shift+C from anywhere drops a thought into MEW
+  without switching windows; rebinds are shell-validated and a taken key stays kind.
+- **Notification actions.** Native nudges carry *Done* and *+15 min*; clicking a nudge lands
+  on its card where the same two actions live, so the loop closes on every platform.
+- **The insights card.** "What MEW's noticed" surfaces the science it already computes — your
+  best deep-work hours, your kindest day, one habit worth keeping — from local memory alone.
+- **Meeting buffers.** An optional prep/decompress margin keeps MEW's own blocks off your
+  meetings' edges (off by default; your calendar events never move).
+- **The day-load meter.** When a day runs past your demonstrated throughput, MEW says so
+  kindly at plan time and offers to keep it kind — a meter, never a red bar.
+- **Keyboard-first week.** Focus, move, day-hop, and resize blocks entirely from the
+  keyboard, through the same executor path as drag.
+- **Tool-call activity cards.** Every action MEW takes shows as a small live card in the
+  chat — a receipt of what actually changed, replayable on reload.
+- **Onboarding v2 — the first five minutes.** A guided first run: paste keys (with test
+  buttons), connect your calendar (loopback explained, redirect URIs copyable), then one
+  guided "plan today." Every step is skippable and everything works keyless.
+
+### Changed
+
+- **Streaming that's actually alive.** Replies paint word by word as they arrive, and MEW
+  shows an honest "thinking it through…" state instead of dead air before the first token.
+- **The composer never locks.** Type mid-turn any time — Enter queues your message to send
+  when the turn settles, and the stop button becomes *stop & send* when something's waiting.
+
+### Fixed
+
+- **The desktop sign-in page tells the truth.** After connecting your calendar, the loopback
+  page is MEW-voiced, closes itself, and brings MEW back — and it no longer claims success
+  when you decline consent.
+
 ## [0.4.0] — 2026-07-15
 
 ### Added

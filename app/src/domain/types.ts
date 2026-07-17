@@ -2,6 +2,7 @@
    or rolled — there is no failed/overdue/missed state anywhere in the system. */
 
 import type { Rrule } from './recurrence'
+import type { Scenario } from './scenarios'
 
 export type Tag = 'work' | 'private' | 'health' | 'rest'
 export type BlockStatus = 'open' | 'done' | 'rolled'
@@ -77,6 +78,26 @@ export type NudgeId =
   | 'delegate'
   | 'debrief'
   | 'heads-up'
+  | 'morning-brief'
+  | 'evening-wrap'
+  | 'weekly-ritual'
+
+/** What can occupy a lastFired slot: an engine nudge id, the sustenance
+    scaffold's daily pass (#299 — a store ritual, not an engine nudge), one
+    rescue landing (#286) — `rescue:<calId>:<eventId>:<dayKey>:<startMin>`,
+    one slot per landing so several live conflicts dedupe independently, one
+    day-load guard (#301) — `dayload:<dayKey>`, its `key` holding the todayKey
+    it fired on, so the same over-line day speaks at most once per calendar day
+    — or a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
+    day so a re-pull of the same tight pair never re-observes it. */
+export type FiredKey =
+  NudgeId | 'sustenance' | `rescue:${string}` | `dayload:${string}` | `buffer:${string}`
+
+/** Per-slot last-fired marker (ts + contextual key). The engine's dedupe
+    state, persisted through `Settings.nudgeLastFired` so once-per-day rituals
+    (morning brief, evening wrap) hold across a restart. Rescue slots ride the
+    same map (and thus the same mirror): small, TTL-swept by offerRescues. */
+export type NudgeFiredMap = Partial<Record<FiredKey, { ts: number; key?: string }>>
 
 export interface NudgeAction {
   id: string
@@ -94,11 +115,40 @@ export interface ChatChoice {
   picked?: boolean
 }
 
+/** A plan scenario as chat carries it (#293 · propose_scenarios): the engine's
+    Scenario (an exact placement quote — id, name, line, todayKey, places,
+    dayLoad) plus the pick state. `picked` persists with the message so the
+    picker rehydrates settled — chips-pattern (#254): render never re-validates;
+    staleness is checked at pick time against the live week. Type-only import
+    of the engine shape, so persistence and the engine can never drift. */
+export interface StoredScenario extends Scenario {
+  picked?: boolean
+}
+
+/** A tool card's lifecycle (#282). `running` is only ever live — hydration maps
+    any stored `running` to `interrupted`, so history can never wear a shimmer. */
+export type ToolCardState = 'running' | 'done' | 'error' | 'interrupted'
+
+/** The receipt of ONE executor tool invocation (#282), rendered as a compact
+    activity card in the session log. Born at the executor seam in store.ts —
+    the only place tools run — so a card always records real activity, never a
+    model stream event. `verb`/`target` come from domain/toolCard.ts; `note` is
+    the wrapper's short MEW-voiced settle line (error/interrupted). */
+export interface ToolCard {
+  name: string
+  verb: string
+  target?: string
+  state: ToolCardState
+  note?: string
+}
+
 export interface ChatMessage {
   id: string
-  role: 'user' | 'mew' | 'nudge'
+  role: 'user' | 'mew' | 'nudge' | 'tool'
   body: string
   ts: number
+  /* tool messages (#282): the executor receipt this row renders as a card */
+  tool?: ToolCard
   /* mew messages: optional muted observation line */
   observation?: string
   /* mew messages: the model's pre-action reasoning snapshot — what it planned
@@ -110,6 +160,10 @@ export interface ChatMessage {
      and offers, answerable with one tap. Chat-only by law: a pick posts the
      choice's reply as an ordinary user turn; the week changes only via tools. */
   choices?: ChatChoice[]
+  /* mew messages: plan-mode scenario cards (#293) — named week-placements the
+     user picks among. Chat-only data: proposing mutates nothing; the pick
+     applies the stored places byte-exactly through the plan executor. */
+  scenarios?: StoredScenario[]
   /* nudge messages */
   nudgeType?: NudgeId
   nudgeLabel?: string
@@ -184,7 +238,29 @@ export interface ConnectedCalendar {
 
 export type RoutingMatrix = Record<string, Record<VisibleTag, Visibility>>
 
+/** The meals the standing scaffold owns (#299, v0.5 16b). Breakfast and
+    snacks stay the user's own asks — the scaffold covers the two meals the
+    morning instruction kept repeating. */
+export type ScaffoldMealId = 'lunch' | 'dinner'
+/** Per-meal scaffold knobs: the window the meal may land in (minutes from
+    midnight) and how long it holds. A remembered pref recenters the window;
+    these govern otherwise. */
+export interface ScaffoldMealPlan {
+  startMin: number
+  endMin: number
+  durationMin: number
+}
+/** Window defaults mirror the circadian anchors (sustenance.MEAL_WINDOWS —
+    a test pins them equal); durations are kind defaults, not prescriptions. */
+export const DEFAULT_SUSTENANCE_MEALS: Record<ScaffoldMealId, ScaffoldMealPlan> = {
+  lunch: { startMin: 12 * 60, endMin: 14 * 60, durationMin: 45 },
+  dinner: { startMin: 18 * 60 + 30, endMin: 20 * 60 + 30, durationMin: 60 },
+}
+
 export type PetId = 'cat' | 'dog' | 'fox' | 'bunny' | 'bird'
+
+/** Plan mode's auto-offer gear (#293) — see Settings.planMode. */
+export type PlanMode = 'auto' | 'always' | 'off'
 
 export interface Settings {
   calendars: ConnectedCalendar[]
@@ -201,6 +277,30 @@ export interface Settings {
   uiFont: 'hanken' | 'open-sans' | 'system'
   browserMirror: boolean
   quietHours: { startMin: number; endMin: number } // 18:30–08:30 default, wraps midnight
+  /** Once-a-day ritual times, minutes from midnight (#285). The morning brief
+      posts at briefMin (default 8:30 — exactly where default quiet hours end,
+      so the boundary resolves to "posts at 8:30"); the evening wrap at wrapMin
+      (default 17:30). The engine owns the once-per-day key; the quiet-hours
+      queue owns delivery timing. */
+  briefMin: number
+  wrapMin: number
+  /** The weekly planning ritual's time (#304), minutes from midnight: Sunday
+      at this time MEW posts one shaping invite per ISO week (default 17:00 —
+      ahead of default quiet hours, so the boundary resolves to "posts at
+      17:00"). Once-per-week rides the persisted weekKey, same law as the
+      daily rituals' once-per-day. */
+  weeklyRitualMin: number
+  /** Engine dedupe state — machine state like dismissedEvents/brainBackfillAt,
+      not a preference. Persisting it is what makes "fired today" survive a
+      restart (the brief/wrap once-per-day law); hydrate seeds the engine from
+      it. Absent ⇒ nothing has fired yet. */
+  nudgeLastFired?: NudgeFiredMap
+  /** The standing day-scaffold (#299, v0.5 16b): each morning at the brief's
+      tick the day gains its missing meals + paced breathers, once, through
+      the executor. 'off' restores the un-scaffolded behavior byte-for-byte. */
+  sustenance: 'on' | 'off'
+  /** Per-meal window/duration the scaffold places with (see ScaffoldMealPlan). */
+  sustenanceMeals: Record<ScaffoldMealId, ScaffoldMealPlan>
   showScience: boolean
   /** Show the model's pre-tool reasoning snapshot in the session log (#166).
       Off by default: turning it on asks Anthropic models to think before acting
@@ -249,12 +349,30 @@ export interface Settings {
       30-min slot today, falling back to 'open' when the day is full. Default
       'open' — suggest, don't seize. */
   quickCaptureMode: 'open' | 'auto-place'
+  /** OS-global quick-capture hotkey (#284, desktop shell only): a Tauri
+      accelerator string the shell registers system-wide; null = disabled.
+      Only a binding the OS accepted persists — the Settings row validates by
+      attempting registration. The in-app ⌘/Ctrl+Shift+C handler is
+      independent and always on. */
+  globalCaptureHotkey: string | null
+  /** Plan mode's auto-offer gear (#293): when does a multi-task ask get the
+      scenario picker instead of a one-pass placement? 'auto' (default) offers
+      it at 3+ new un-pinned items, 'always' already at 2, 'off' never — the
+      pre-picker behavior. Steers both the model (tool advertising) and the
+      keyless rules floor, so the gear means the same thing with zero keys. */
+  planMode: PlanMode
   /** First-run state, not a preference: false until the guided concept tour
       (Focus/Week/Talk) is dismissed or completed, then true forever. There is
       deliberately no Settings control to re-show it — the three pillars are
       learned in context after the first pass (NN/g: onboarding shouldn't
       return). Clearing storage is the only reset. */
   hasSeenOnboarding: boolean
+  /** #302 (v0.5 item 13): a prep/decompress buffer MEW keeps around EXTERNAL
+      (calendar) meetings for its OWN placements — deep work lands shy of a
+      meeting's edges. Minutes; presets 0/5/10/15. 0 (default) = off, so the
+      placement paths reproduce today's behavior byte-for-byte. External events
+      never move; only MEW's candidate generation honors it. */
+  meetingBufferMin: number
 }
 
 /* The Rive "PixieMachine" input contract — PRD §6. The placeholder SVG and the
@@ -269,7 +387,18 @@ export interface PixieInputs {
 export type ClearScope = 'today' | 'tomorrow' | 'week' | 'upcoming'
 
 export interface ScheduleIntent {
-  kind: 'plan' | 'complete' | 'move' | 'capture' | 'clear' | 'remove' | 'edit' | 'remember' | 'chat'
+  /** insights: read-only — surface what local memory computed (#287); no fields */
+  kind:
+    | 'plan'
+    | 'complete'
+    | 'move'
+    | 'capture'
+    | 'clear'
+    | 'remove'
+    | 'edit'
+    | 'remember'
+    | 'chat'
+    | 'insights'
   /** clear: which open MEW-placed blocks to remove (mews + calendar events never) */
   scope?: ClearScope
   /** edit: changes to apply to the matched block */
@@ -320,6 +449,11 @@ export const DEFAULT_SETTINGS: Settings = {
   uiFont: 'hanken',
   browserMirror: true,
   quietHours: { startMin: 18 * 60 + 30, endMin: 8 * 60 + 30 },
+  briefMin: 8 * 60 + 30,
+  wrapMin: 17 * 60 + 30,
+  weeklyRitualMin: 17 * 60,
+  sustenance: 'on',
+  sustenanceMeals: DEFAULT_SUSTENANCE_MEALS,
   showScience: true,
   showReasoning: false,
   modelLocation: 'remote',
@@ -339,5 +473,8 @@ export const DEFAULT_SETTINGS: Settings = {
   brainMode: 'endpoint',
   brainScope: 'mew',
   quickCaptureMode: 'open',
+  globalCaptureHotkey: 'CmdOrCtrl+Shift+C',
+  planMode: 'auto',
   hasSeenOnboarding: false,
+  meetingBufferMin: 0,
 }

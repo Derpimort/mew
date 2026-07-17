@@ -118,6 +118,27 @@ describe('browser notifier', () => {
     expect(fake.made[0].closed).toBe(true)
   })
 
+  it('accepts block quick-actions but renders none — a plain Notification has no buttons (#305)', () => {
+    const fake = fakeNotification('granted')
+    vi.stubGlobal('Notification', fake.ctor)
+    vi.stubGlobal('document', { visibilityState: 'hidden' })
+    const onAction = vi.fn()
+    createBrowserNotifier().mirror({
+      ...NUDGE,
+      onClick: () => {},
+      actions: [
+        { id: 'done', label: 'Done' },
+        { id: 'snooze15', label: '+15 min' },
+      ],
+      onAction,
+    })
+    /* the toast still lands (the click routes to the card, which carries the
+       same two actions); no `actions` reach the API, and onAction never fires */
+    expect(fake.made).toHaveLength(1)
+    expect('actions' in fake.made[0].opts).toBe(false)
+    expect(onAction).not.toHaveBeenCalled()
+  })
+
   it('is inert when the Notification API is absent', () => {
     vi.stubGlobal('Notification', undefined)
     vi.stubGlobal('document', { visibilityState: 'hidden' })
@@ -127,7 +148,14 @@ describe('browser notifier', () => {
 
 /* ── native channel (Alternative B) ───────────────────────────────────── */
 
-type SentNative = { id?: number; title: string; body?: string; icon?: string }
+type SentNative = {
+  id?: number
+  title: string
+  body?: string
+  icon?: string
+  actionTypeId?: string
+}
+type ActionType = { id: string; actions: { id: string; title: string }[] }
 
 function fakeShellNotification(opts?: {
   granted?: boolean
@@ -136,18 +164,23 @@ function fakeShellNotification(opts?: {
   /** how the plugin treats onAction: capture the callback ('deliver'),
       reject registration (the pinned desktop plugin), or lack the API */
   clicks?: 'deliver' | 'reject' | 'absent'
+  /** how the plugin treats registerActionTypes: record the button set,
+      reject (desktop today, #305), or lack the API entirely */
+  actions?: 'record' | 'reject' | 'absent'
 }) {
   const sent: SentNative[] = []
+  const registered: ActionType[][] = []
   const requested = { count: 0 }
   const clicks = {
     registrations: 0,
-    fire: undefined as ((n?: { id?: number }) => void) | undefined,
+    fire: undefined as ((n?: { id?: number; actionId?: string }) => void) | undefined,
   }
   const notification: {
     isPermissionGranted(): Promise<boolean>
     requestPermission(): Promise<string>
     sendNotification(o: SentNative): void
-    onAction?(cb: (n?: { id?: number }) => void): Promise<unknown>
+    registerActionTypes?(types: ActionType[]): Promise<unknown>
+    onAction?(cb: (n?: { id?: number; actionId?: string }) => void): Promise<unknown>
   } = {
     isPermissionGranted: async () => opts?.granted ?? false,
     requestPermission: async () => {
@@ -159,6 +192,13 @@ function fakeShellNotification(opts?: {
       sent.push(o)
     },
   }
+  if ((opts?.actions ?? 'record') !== 'absent') {
+    notification.registerActionTypes = (types) => {
+      if (opts?.actions === 'reject') return Promise.reject(new Error('mobile-only on desktop'))
+      registered.push(types)
+      return Promise.resolve({})
+    }
+  }
   if (opts?.clicks !== 'absent') {
     notification.onAction = (cb) => {
       clicks.registrations++
@@ -167,7 +207,13 @@ function fakeShellNotification(opts?: {
       return Promise.resolve({})
     }
   }
-  return { sent, requested, clicks, win: { __TAURI_INTERNALS__: {}, __TAURI__: { notification } } }
+  return {
+    sent,
+    registered,
+    requested,
+    clicks,
+    win: { __TAURI_INTERNALS__: {}, __TAURI__: { notification } },
+  }
 }
 
 const settle = () => new Promise<void>((r) => setTimeout(r, 0))
@@ -290,6 +336,104 @@ describe('tauri notifier', () => {
     const shell = fakeShellNotification({ granted: true, clicks: 'absent' })
     vi.stubGlobal('window', shell.win)
     expect(() => createTauriNotifier().mirror({ ...NUDGE, onClick: () => {} })).not.toThrow()
+    await settle()
+    expect(shell.sent).toHaveLength(1)
+  })
+
+  /* ── block quick-actions (#305) ─────────────────────────────────────── */
+
+  const ACTIONS = [
+    { id: 'done', label: 'Done' },
+    { id: 'snooze15', label: '+15 min' },
+  ] as const
+
+  it('registers the button set once and posts with the action-type id', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    createTauriNotifier().mirror({
+      ...NUDGE,
+      onClick: () => {},
+      actions: [...ACTIONS],
+      onAction: () => {},
+    })
+    await settle()
+    expect(shell.registered).toEqual([
+      [
+        {
+          id: 'mew-block',
+          actions: [
+            { id: 'done', title: 'Done' },
+            { id: 'snooze15', title: '+15 min' },
+          ],
+        },
+      ],
+    ])
+    expect(shell.sent).toEqual([
+      {
+        id: 1,
+        title: NUDGE.title,
+        body: NUDGE.body,
+        icon: '/pixie-poly-face.svg',
+        actionTypeId: 'mew-block',
+      },
+    ])
+  })
+
+  it('a button tap routes to the named action, not the #216 focus/click route', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    const onClick = vi.fn()
+    const onAction = vi.fn()
+    createTauriNotifier().mirror({ ...NUDGE, onClick, actions: [...ACTIONS], onAction })
+    await settle()
+    shell.clicks.fire?.({ id: 1, actionId: 'snooze15' })
+    expect(focusMainWindowMock).toHaveBeenCalledOnce()
+    expect(onAction).toHaveBeenCalledOnce()
+    expect(onAction).toHaveBeenCalledWith('snooze15')
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('a plain toast click still runs onClick when the nudge also carries actions', async () => {
+    const shell = fakeShellNotification({ granted: true })
+    vi.stubGlobal('window', shell.win)
+    const onClick = vi.fn()
+    const onAction = vi.fn()
+    createTauriNotifier().mirror({ ...NUDGE, onClick, actions: [...ACTIONS], onAction })
+    await settle()
+    shell.clicks.fire?.({ id: 1 }) // no actionId → the body click, not a button
+    expect(onClick).toHaveBeenCalledOnce()
+    expect(onAction).not.toHaveBeenCalled()
+  })
+
+  it('still posts, button-less, when the plugin rejects registerActionTypes (desktop today)', async () => {
+    const shell = fakeShellNotification({ granted: true, actions: 'reject' })
+    vi.stubGlobal('window', shell.win)
+    expect(() =>
+      createTauriNotifier().mirror({
+        ...NUDGE,
+        onClick: () => {},
+        actions: [...ACTIONS],
+        onAction: () => {},
+      })
+    ).not.toThrow()
+    await settle()
+    /* the reject is swallowed — the toast still lands, so click-to-land parity
+       carries the feature until the plugin grows desktop delivery */
+    expect(shell.registered).toHaveLength(0)
+    expect(shell.sent).toHaveLength(1)
+  })
+
+  it('still posts when the plugin has no registerActionTypes API at all', async () => {
+    const shell = fakeShellNotification({ granted: true, actions: 'absent' })
+    vi.stubGlobal('window', shell.win)
+    expect(() =>
+      createTauriNotifier().mirror({
+        ...NUDGE,
+        onClick: () => {},
+        actions: [...ACTIONS],
+        onAction: () => {},
+      })
+    ).not.toThrow()
     await settle()
     expect(shell.sent).toHaveLength(1)
   })

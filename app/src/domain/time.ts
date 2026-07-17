@@ -45,6 +45,13 @@ export function weekKeys(d: Date, offsetWeeks = 0): string[] {
   })
 }
 
+/** The ISO-week identity of `d` — its Monday's dayKey. One string per Mon–Sun
+    week (weeks start Monday by PRD §2), so a once-per-week persisted key
+    survives month and year boundaries without a week-number ambiguity. */
+export function weekKey(d: Date): string {
+  return dayKey(mondayOf(d))
+}
+
 export function isoWeek(d: Date): number {
   const x = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
   const dow = x.getUTCDay() || 7
@@ -106,6 +113,22 @@ export function weekdayOffset(word: string, from: Date): number | null {
   const today = from.getDay()
   const diff = (idx - today + 7) % 7
   return diff
+}
+
+/** How the keyless floor names a day: today / tomorrow / a weekday word.
+    Weekday words only reach 6 days out (parse resolves them to the NEXT
+    occurrence), so beyond that there is no phrasing a keyless one-tap could
+    execute onto the right day — null means "don't offer", because a reply
+    that lands on the wrong day is worse than no chip. One authority, shared
+    by the rescue offers (#286) and the day-load trim chip (#301). */
+export function dayWord(dayKey: string, todayKey: string): string | null {
+  const diff = Math.round(
+    (fromDayKey(dayKey).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000
+  )
+  if (diff === 0) return 'today'
+  if (diff === 1) return 'tomorrow'
+  if (diff >= 2 && diff <= 6) return fmtDowLong(dayKey).toLowerCase()
+  return null
 }
 
 /* ── which week is a history question about? ──────────────────────────

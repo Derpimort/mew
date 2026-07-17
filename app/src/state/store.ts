@@ -6,14 +6,27 @@ import { create } from 'zustand'
 import {
   type Block,
   type Capture,
+  type ChatChoice,
   type ChatMessage,
+  type ConnectedCalendar,
   DEFAULT_SETTINGS,
   type MemoryEvent,
+  type NudgeAction,
   type NudgeId,
   type PrefPayload,
   type Settings,
+  type StoredScenario,
+  type ToolCardState,
   type VisibleTag,
 } from '../domain/types'
+import { TOOL_ERROR_NOTE, toolCardLabel } from '../domain/toolCard'
+import {
+  detectRescues,
+  rescueKey,
+  rescueLine,
+  rescueOptions,
+  withinDayWords,
+} from '../domain/rescue'
 import {
   addDaysKey,
   dayKey,
@@ -27,6 +40,7 @@ import {
   spell,
   stripWeekPhrase,
   uid,
+  weekKey,
   weekKeys,
   weekOffsetFromQuestion,
   weekOffsetLabel,
@@ -38,13 +52,18 @@ import { liveNow } from '../domain/liveNow'
 import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory'
 import {
   computeInsights,
+  dayLoadAssessment,
+  dayLoadFiredKey,
+  dayThroughputMin,
   proposeKinderPlan,
   taskDurations,
+  trimMove,
   type TaskDuration,
 } from '../domain/insights'
 import { pixieInputs } from '../domain/pixie'
 import { dayShape } from '../domain/dayShape'
 import { restInsertion, scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
+import { mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { coalesceNudges } from '../domain/nudges/queue'
@@ -83,11 +102,16 @@ import {
   latestBackupDate,
   onBrainEndpoint,
   onBrainStatus,
+  onShellTick,
+  onTrayAction,
   onUpdateReady,
   readBackup,
   registerCloseFlush,
+  setCaptureHotkey,
+  updateTray,
   writeBackup,
 } from '../adapters/desktop'
+import { trayShape, type TrayShape } from '../domain/tray'
 import {
   CHOICES_POSTED,
   classifyFailure,
@@ -96,11 +120,13 @@ import {
   type ChoiceOption,
   type FreeSpec,
   type PlaceSpec,
+  type ScenarioTaskSpec,
   type ToolExecutor,
   type WeekContext,
 } from '../adapters/model'
-import { choicesActive } from '../domain/choices'
-import { createNotifier } from '../adapters/notify'
+import { generateScenarios, validateScenario, type ScenarioTask } from '../domain/scenarios'
+import { choicesActive, scenariosActive } from '../domain/choices'
+import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
 import { adoptOrphanedExternals, mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
@@ -186,13 +212,19 @@ export function prefLinesFrom(memory: MemoryEvent[], fromBrain: PrefPayload[] | 
 }
 
 /* Dev/design affordance: `?t=HH:MM` shifts the app clock so any moment of the
-   day can be previewed deterministically (now-line, end-of-day, quiet hours). */
+   day can be previewed deterministically (now-line, end-of-day, quiet hours);
+   `?d=YYYY-MM-DD` shifts the DAY the same way (#304 — the Sunday ritual can be
+   previewed midweek). Calendar math via setFullYear/setDate so DST can't skew
+   the offset; both compose (`?d=…&t=17:05`). */
 function clockOffsetMs(): number {
   if (typeof location === 'undefined') return 0
-  const m = new URLSearchParams(location.search).get('t')?.match(/^(\d{1,2}):(\d{2})$/)
-  if (!m) return 0
+  const params = new URLSearchParams(location.search)
+  const t = params.get('t')?.match(/^(\d{1,2}):(\d{2})$/)
+  const d = params.get('d')?.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!t && !d) return 0
   const target = new Date()
-  target.setHours(Number(m[1]), Number(m[2]), 0, 0)
+  if (d) target.setFullYear(Number(d[1]), Number(d[2]) - 1, Number(d[3]))
+  if (t) target.setHours(Number(t[1]), Number(t[2]), 0, 0)
   return target.getTime() - Date.now()
 }
 const CLOCK_OFFSET = clockOffsetMs()
@@ -218,6 +250,12 @@ export interface MewState {
 
   page: 'week' | 'settings'
   view: 'focus' | 'week'
+  /** Non-persisted first-run cursor (#306). `hasSeenOnboarding` is the gate that
+      decides whether the modal shows at all; this says WHERE inside it we are:
+      the concept tour (#160), then the three guided steps. It is deliberately
+      not persisted — a refresh mid-onboarding restarts the tour, and completion
+      is carried by the persisted flag, never this. */
+  onboardingStep: 'tour' | 'keys' | 'calendar' | 'plan'
   /** Week view paging: 0 = this week, ±n weeks. */
   weekOffset: number
   focusedDayKey: string | null
@@ -232,6 +270,11 @@ export interface MewState {
   /** Draft prompt text — held in the store so it survives a screen switch
       (Focus/Week/Settings unmount the composer, which would drop local state). */
   promptDraft: string
+  /** Non-persisted: a message composed while a turn was in flight, parked to
+      send as its own next turn the moment this one settles (#280 — the
+      composer never locks). One slot, not a FIFO: a second Enter merges into
+      it, so the drain in speak's finally sends exactly one combined turn. */
+  queuedSpeak: string | null
   /** Non-persisted: the desktop sidecar brain's lifecycle, live from the
       shell's mew://brain-status beats ('off' on the web, or before the first
       beat). Settings renders it so a dead built-in brain is visibly dead —
@@ -257,8 +300,21 @@ export interface MewState {
      close (Esc / outside click / a chosen action) share one source of truth.
      Search and quick-capture are read/additive actions below — neither is a
      new mutation path: search is read-only, quick-capture reuses the capture
-     executor and the same slot proposer the rail already uses. */
+     executor and the same slot proposer the rail already uses. The pane the
+     next open lands on lives beside the flag for the same reason: hotkeys
+     and the tray's quick-capture route (#283) must agree on it. */
   commandPaletteOpen: boolean
+  commandPaletteMode: 'command' | 'search' | 'capture'
+
+  /** The OS refused the global capture hotkey (#284) — owned by another app.
+      Non-persisted, re-derived on every registration attempt; the Settings
+      row reads it for the kind collision note. */
+  hotkeyCollision: boolean
+  /** Rebind (accelerator string) or disable (null) the OS-global capture
+      hotkey. The shell is the validator: only a binding the OS accepted
+      persists — a refusal flips hotkeyCollision and keeps the old binding
+      working, in Settings and at the OS alike. Resolves with the outcome. */
+  applyCaptureHotkey(accel: string | null): Promise<boolean>
 
   hydrate(): Promise<void>
   /** Prepend the previous page of chat from storage onto the window (#250
@@ -270,10 +326,21 @@ export interface MewState {
   activity(): void
   interruption(): void
   speak(text: string): Promise<void>
+  /** The composer's one submit path (#280): consumes the draft and decides by
+      turn phase — idle, this is speak(); mid-turn, the message queues (a
+      second Enter merges: queued + newline + new, one combined turn). The
+      phase decision lives here, not in the composer, so typing and Enter work
+      at every phase. Whitespace-only text no-ops. */
+  send(text: string): void
+  /** Un-queue the parked message and put it back in the draft — a queued
+      thought is never lost (any newer draft typing is kept below it). */
+  cancelQueuedSpeak(): void
   /** Stop the in-flight turn (the composer's ■ / Esc). Aborts the live
       stream/fetch and clears the turn state; whatever already streamed or
       committed stays — an abort is the user's call, never a rollback, and
-      never replayed through a fallback. No-op when nothing is mewing. */
+      never replayed through a fallback. No-op when nothing is mewing. With a
+      message queued this IS stop-and-send: the settle drain in speak's
+      finally fires it — same action, no second path. */
   stopSpeaking(): void
   /** Read-only history answer: real sums from the asked week — this one, or
       a past one ("last week", "two weeks ago") — + brain recall color. Never
@@ -285,14 +352,30 @@ export interface MewState {
       ordinary user turn — the same speak() path as typing, so the model sees
       a normal message and the week still changes only via tools. Inert by
       law: a no-op once any option was picked, once a newer user message
-      landed, or while a turn is mewing (the composer is closed then too). */
+      landed, or while a turn is in flight (a pick would race the live
+      stream — the same phase gate send() queues on, #280). */
   pickChoice(msgId: string, choiceId: string): Promise<void>
+  /** Pick a plan scenario (#293): liveness exactly the chips grammar — inert
+      after any pick, after a newer user message, or while a turn is in flight.
+      A live pick re-validates the stored quote against the LIVE week; stale
+      refuses kindly and re-offers, fresh applies the stored places byte-
+      exactly through the plan executor (snapshot taken first, so "undo that"
+      as the very next turn reaches it). Synchronous end to end — the apply is
+      one deterministic executor call, never a model round-trip (#102). */
+  pickScenario(msgId: string, scenarioId: string): void
   focusDay(key: string | null): void
   setPage(page: 'week' | 'settings'): void
   setView(view: 'focus' | 'week'): void
-  /** Mark the first-run concept tour as seen and persist it — one-way, fired
-      when the user skips, completes, or closes the OnboardingModal. */
+  /** Mark first-run onboarding as seen and persist it — one-way, fired when the
+      user skips-all, completes the last guided step, or closes the modal. Resets
+      the (non-persisted) cursor so a re-show would start clean. */
   dismissOnboarding(): void
+  /** Advance the guided onboarding one step (#306): tour → keys → calendar →
+      plan, and from plan → done (which dismisses). Every step's "later" and
+      every step's success land here; nothing this walks through mutates a
+      setting, so skipping forward always leaves clean defaults (the keyless
+      floor, local-only calendar, an empty planned week). */
+  advanceOnboarding(): void
   setPromptDraft(text: string): void
   /** Set the live working label for the current turn (null clears it). The
       executors call this; the thinking row reads it. Non-persisted. */
@@ -305,17 +388,22 @@ export interface MewState {
   /** Re-place a block in the next free slot today (else tomorrow morning). */
   moveToNextFree(blockId: string): void
   /** Direct-manipulation move from a week-grid drag to an exact day/start. The
-      only mutation path for drag (the executor law). Self-validating, so the
+      only mutation path for drag (the executor law) — and for the keyboard
+      nudge/resize (#303), which commits through this same door: an optional
+      durationMin resizes as it lands (keyboard Alt+arrows pass it; drag never
+      does, so drag behavior is byte-unchanged). Self-validating, so the
       outcome is testable without the DOM: an external (calendar) block is never
       moved — it returns 'external' with a one-line chat note; a drop onto a
       time-holding block returns 'conflict' and leaves the week untouched (the
       view bounces it back); a clear drop commits via week.move and returns
-      'moved'. A drop onto the block's own slot is a 'noop'. */
+      'moved' ('resized' when the length changed). A drop onto the block's own
+      slot at its own length is a 'noop'. */
   dragMove(
     blockId: string,
     toDayKey: string,
-    toStartMin: number
-  ): 'moved' | 'external' | 'conflict' | 'noop'
+    toStartMin: number,
+    durationMin?: number
+  ): 'moved' | 'resized' | 'external' | 'conflict' | 'noop'
   toggleProtected(blockId: string): void
   /** Promotion/demotion from the Focus orbit — the click writes attention;
       the center swap falls out of liveNow. Quiet: the swap IS the feedback. */
@@ -338,11 +426,29 @@ export interface MewState {
   dismissPicker(): void
   disconnectCalendar(calId: string): void
   syncNow(): Promise<void>
+  /** Dev/scenario seam (#286): drive an inbound calendar listing through the
+      REAL pull path — mergePull diffs it against the week exactly as runSync
+      does, then the same rescue-offer pass runs — with no network and no
+      OAuth. Each call is one complete simulated listing for its calendar
+      (an event absent from a later call reads as deleted, same as a real
+      pull). RC verification is one paste: window.__mewSimulatePull. */
+  simulatePull(
+    events: {
+      eventId: string
+      title: string
+      startMin: number
+      endMin: number
+      dayKey?: string
+      calId?: string
+      optional?: boolean
+    }[]
+  ): void
 
   /* ── power-user surface (#169/#170/#171), all additive ─────────────── */
-  /** Open the command palette, remembering where focus was so Esc can return
-      it (the component restores the saved element). */
-  openCommandPalette(): void
+  /** Open the command palette on a pane ('command' unless asked otherwise),
+      remembering where focus was so Esc can return it (the component
+      restores the saved element). */
+  openCommandPalette(mode?: 'command' | 'search' | 'capture'): void
   /** Close the palette. Idempotent — closing a closed palette is a no-op. */
   closeCommandPalette(): void
   /** Read-only global search (#170): blocks, captures, chat scored by
@@ -371,6 +477,189 @@ export interface MewState {
 
 function mewMsg(body: string, observation?: string): ChatMessage {
   return { id: uid(), role: 'mew', body, ts: nowFn(), ...(observation ? { observation } : {}) }
+}
+
+/** The #254 chips message shape — one home, shared by the offer_choices
+    executor and the sync-side rescue offers (#286), so the two paths can
+    never drift. Chat-only by law: a pick posts the choice's reply as an
+    ordinary user turn; the week changes only through tools. */
+function choicesMsg(body: string, choices: ChatChoice[]): ChatMessage {
+  return { id: uid(), role: 'mew', body, ts: nowFn(), choices }
+}
+
+/** The #293 scenario-picker message shape — the chips pattern with cards:
+    ONE mew message carrying the engine's named placements. Chat-only data;
+    the week changes only when pickScenario routes the stored places through
+    the plan executor. */
+function scenariosMsg(body: string, scenarios: StoredScenario[]): ChatMessage {
+  return { id: uid(), role: 'mew', body, ts: nowFn(), scenarios }
+}
+
+/** The per-chunk paint path for ONE streaming mew reply (#281): the first delta
+    creates the message row and flips `thinking` off; every later delta rewrites
+    that same row immutably, so SessionRow's liveTail subscription repaints
+    exactly one row per chunk. speak() drives it with live adapter chunks and
+    the __mewSayStream dev hook drives it with scripted ones — one seam, so the
+    e2e paint pin observes the real flush mechanics, never a simulation. */
+function streamedReply() {
+  let msgId: string | null = null
+  let buffer = ''
+  let reasoning: string | undefined // the model's pre-tool plan (#166)
+  const flush = () => {
+    if (msgId == null) {
+      msgId = uid()
+      const msg: ChatMessage = {
+        id: msgId,
+        role: 'mew',
+        body: buffer,
+        ts: nowFn(),
+        ...(reasoning ? { reasoning } : {}),
+      }
+      useMew.setState((s) => ({ thinking: false, chat: [...s.chat, msg] }))
+    } else {
+      const id = msgId
+      useMew.setState((s) => ({
+        chat: s.chat.map((m) =>
+          m.id === id ? { ...m, body: buffer, ...(reasoning ? { reasoning } : {}) } : m
+        ),
+      }))
+    }
+  }
+  return {
+    /** null until the first delta lands — no message row exists yet */
+    get msgId() {
+      return msgId
+    },
+    /** everything appended so far — speak's catch reads it for honest copy */
+    get buffer() {
+      return buffer
+    },
+    append(delta: string) {
+      buffer += delta
+      flush()
+    },
+    /** pin the pre-action plan to the message; it renders as a collapsible
+        note. Before the row exists it parks here and rides the first flush. */
+    attachReasoning(note: string) {
+      reasoning = note
+      if (msgId) flush()
+    },
+    /** A tool card is about to land after reply text began (#282): detach the
+        live row where it stands so post-tool deltas open a NEW mew row and the
+        transcript stays strictly chronological (text → card → text). Returns
+        the closed row — final now, the caller owns persisting or dropping it —
+        or null when nothing has streamed yet (nothing to close). The parked
+        reasoning is spent with the row it flushed into, never re-pinned. */
+    closeRow(): ChatMessage | null {
+      if (msgId == null) return null
+      const closed = useMew.getState().chat.find((m) => m.id === msgId) ?? null
+      msgId = null
+      buffer = ''
+      reasoning = undefined
+      return closed
+    },
+  }
+}
+
+/* ── tool-call activity cards (#282) ─────────────────────────────────
+   Every executor invocation leaves one role:'tool' receipt row in the log:
+   appended as `running` BEFORE the tool touches anything, then settled
+   immutably (id-matched replace, the same pattern as flush()) — `done` on
+   return, `error` + a MEW-voiced note on throw. Cards OBSERVE the executor
+   seam; they are never a second mutation path. Module-level beside
+   streamedReply so the lifecycle is one tested unit: speak()'s wrappers feed
+   it live, tests feed it a scripted run (the SessionWindow precedent). */
+
+function openToolCard(name: string, args?: Record<string, unknown>): string {
+  const todayKey = dayKey(new Date(useMew.getState().nowMs))
+  const { verb, target } = toolCardLabel(name, { todayKey, ...(args ?? {}) })
+  const card: ChatMessage = {
+    id: uid(),
+    role: 'tool',
+    body: '',
+    ts: nowFn(),
+    tool: { name, verb, ...(target ? { target } : {}), state: 'running' },
+  }
+  useMew.setState((s) => ({ chat: [...s.chat, card] }))
+  /* the running row persists too (same delta putChat as settle): a crash
+     mid-tool must replay as `interrupted` on reload — an in-flight action
+     that simply vanished from the receipt would be a silent lie */
+  storage.putChat([card]).catch(() => {})
+  return card.id
+}
+
+function settleToolCard(id: string, state: 'done' | 'error', note?: string) {
+  useMew.setState((s) => ({
+    chat: s.chat.map((m) =>
+      m.id === id && m.tool ? { ...m, tool: { ...m.tool, state, ...(note ? { note } : {}) } } : m
+    ),
+  }))
+  const settled = useMew.getState().chat.find((m) => m.id === id)
+  if (settled) storage.putChat([settled]).catch(() => {})
+}
+
+/** Run one executor tool inside its card lifecycle. On throw the card settles
+    `error` (MEW-voiced note), the raw error goes to log.error, and the throw
+    travels on UNCHANGED — the SDK/model sees the failure exactly as before. */
+export function runToolWithCard(
+  name: string,
+  args: Record<string, unknown> | undefined,
+  run: () => string
+): string
+export function runToolWithCard(
+  name: string,
+  args: Record<string, unknown> | undefined,
+  run: () => Promise<string>
+): Promise<string>
+export function runToolWithCard(
+  name: string,
+  args: Record<string, unknown> | undefined,
+  run: () => string | Promise<string>
+): string | Promise<string> {
+  const id = openToolCard(name, args)
+  const fail = (err: unknown) => {
+    log.error(`tool/${name}`, { tool: name }, err)
+    settleToolCard(id, 'error', TOOL_ERROR_NOTE)
+  }
+  try {
+    const out = run()
+    if (out instanceof Promise) {
+      return out.then(
+        (line) => {
+          settleToolCard(id, 'done')
+          return line
+        },
+        (err) => {
+          fail(err)
+          throw err
+        }
+      )
+    }
+    settleToolCard(id, 'done')
+    return out
+  } catch (err) {
+    fail(err)
+    throw err
+  }
+}
+
+/** Honest replay (#282): a stored `running` card is a turn the app never got
+    to settle (closed/crashed mid-tool). Map it to `interrupted` AT HYDRATION —
+    never at render — so history can never wear a live shimmer. Returns the
+    flipped rows separately so callers converge storage with the same delta
+    putChat the live path uses. */
+function interruptStoredToolCards(msgs: ChatMessage[]): {
+  msgs: ChatMessage[]
+  flipped: ChatMessage[]
+} {
+  const flipped: ChatMessage[] = []
+  const mapped = msgs.map((m) => {
+    if (m.role !== 'tool' || m.tool?.state !== 'running') return m
+    const settled: ChatMessage = { ...m, tool: { ...m.tool, state: 'interrupted' } }
+    flipped.push(settled)
+    return settled
+  })
+  return { msgs: flipped.length ? mapped : msgs, flipped }
 }
 
 function nudgeMsg(n: NudgeInstance): ChatMessage {
@@ -420,6 +709,7 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
       .join(' · ')
     summary.push(`${i === 0 ? 'today' : fmtDowLong(key)} (${key}): ${items}`)
   }
+  const insights = computeInsights(s.memory, agg, now)
   return {
     todayKey,
     todayLabel: fmtLongDate(now),
@@ -427,11 +717,18 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
     weekSummary: summary,
     realisticBestH: agg.realisticBestH,
     mewsToday: live.mewsToday,
-    insightLines: computeInsights(s.memory, agg, now).lines,
+    insightLines: insights.lines,
+    /* the full set rides along so the rules floor's `show insights` renders
+       the same presenter rows as the Settings card (#287) */
+    insights,
     recallLines,
     recallDegraded,
     brainOn: brainOn(),
     prefLines: prefLinesFrom(s.memory, brainOn() ? brainPrefs : null),
+    /* the structured rulebook + open captures ride along un-rendered (#304):
+       the keyless ritual route derives its default tasks from them */
+    prefs: activePrefsFrom(s.memory, brainOn() ? brainPrefs : null),
+    openCaptures: s.captures.filter((c) => c.status === 'open').map((c) => c.title),
   }
 }
 
@@ -588,6 +885,69 @@ export const useMew = create<MewState>((set, get) => {
       }
       set({ brainSidecar: sidecarStatus() })
     })
+  }
+
+  /* ── system tray (#283): remote controls + the shell metronome ─────────
+     Every tray route lands on a door that already exists — toggleComplete
+     (the checkbox's path), startNow (the start-by nudge's accept), the
+     quick-capture overlay — never a second mutation path. The shell's 60s
+     mew://tick keeps tick() honest while the window hides to the tray:
+     webview timers throttle there, and the 5-min syncNow gate rides on
+     tick, so the hidden-window sync cadence hangs off the shell clock. */
+  const quietTrayToast = (body: string) =>
+    notifier.mirror({ title: 'MEW', body, tag: 'tray', onClick: () => {} })
+  let shellTraySubscribed = false
+  function connectShellTray() {
+    if (shellTraySubscribed || !isTauri()) return
+    shellTraySubscribed = true
+    onShellTick(() => get().tick())
+    onTrayAction((action) => {
+      const s = get()
+      const now = new Date(s.nowMs)
+      const live = liveNow(s.blocks, dayKey(now), minOfDay(now))
+      switch (action) {
+        case 'start-next':
+          if (live.next) get().startNow(live.next.id)
+          else quietTrayToast('nothing queued today — the day is yours')
+          break
+        case 'done':
+          /* liveNow.current is open by construction, so this can only ever
+             complete — the toggle's un-complete branch is unreachable here */
+          if (live.current) get().toggleComplete(live.current.id)
+          else quietTrayToast('nothing live right now — all yours')
+          break
+        case 'quick-capture':
+          get().openCommandPalette('capture')
+          break
+        case 'open':
+          break // the shell already raised the window — nothing to do here
+      }
+    })
+  }
+
+  /* OS-global capture hotkey (#284): the shell registers what the webview
+     pushes — on hydrate (the persisted binding) and on rebind. The shell is
+     the validator; false lands as the collision flag the Settings row reads.
+     The trigger needs no wiring of its own: the shell emits the tray's
+     quick-capture route, which onTrayAction above already owns. */
+  async function syncCaptureHotkey(accel: string | null): Promise<boolean> {
+    const ok = await setCaptureHotkey(accel)
+    set({ hotkeyCollision: !ok })
+    return ok
+  }
+
+  /* tray dot + tooltip (#283): recomputed per tick, pushed only on change —
+     the shell repaints on block transitions and countdown-minute flips,
+     never on the raw 5 s cadence. */
+  let lastTray: TrayShape | null = null
+  function pushTray() {
+    if (!isTauri()) return
+    const s = get()
+    const now = new Date(s.nowMs)
+    const shape = trayShape(liveNow(s.blocks, dayKey(now), minOfDay(now)))
+    if (lastTray && lastTray.state === shape.state && lastTray.tooltip === shape.tooltip) return
+    lastTray = shape
+    void updateTray(shape.state, shape.tooltip)
   }
 
   /* ── backfill-on-connect (#249 fix 4) ──────────────────────────────
@@ -771,23 +1131,68 @@ export const useMew = create<MewState>((set, get) => {
     }
   }
 
+  /* The two universal quick-actions (#305) a mirrored nudge grows, or null.
+     A nudge earns them when it points at a block that is still to come and
+     ours to touch: open, not external (never our meeting to move), not already
+     ended, and not the one you're in right now — the live block is drift's and
+     guard's moment, not a done/+15 moment. The pair is fixed for every nudge,
+     never tailored per type, so the toast and the card show the SAME two. */
+  function blockQuickActions(msg: ChatMessage): NudgeAction[] | null {
+    const id = msg.payload?.blockId
+    if (typeof id !== 'string') return null
+    const s = get()
+    const b = s.blocks.find((x) => x.id === id)
+    if (!b || b.status !== 'open' || b.external) return null
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const nowMin = minOfDay(now)
+    const ended = b.dayKey < todayKey || (b.dayKey === todayKey && b.endMin <= nowMin)
+    if (ended) return null
+    if (liveNow(s.blocks, todayKey, nowMin).current?.id === b.id) return null
+    return [
+      { id: 'done', label: 'Done', kind: 'secondary' },
+      { id: 'snooze15', label: '+15 min', kind: 'secondary' },
+    ]
+  }
+
   function post(msgs: ChatMessage[], opts?: { mirror?: boolean }) {
     if (!msgs.length) return
+    const last = msgs[msgs.length - 1]
+    /* a mirrored block reminder grows done/+15 (#305): the same pair feeds the
+       native toast and the card, so a platform that can't render buttons still
+       lands the click on a card that carries them — parity, never an error. */
+    const quick = opts?.mirror && last.role === 'nudge' ? blockQuickActions(last) : null
+    if (quick) last.actions = [...(last.actions ?? []), ...quick]
     set((s) => ({ chat: [...s.chat, ...msgs] }))
     persistChat(msgs)
     if (brainOn()) {
       const day = dayKey(new Date(get().nowMs))
       for (const m of msgs) if (m.role !== 'nudge') chatBatcher.add(m, day)
     }
-    const last = msgs[msgs.length - 1]
     if (opts?.mirror && last.role === 'nudge') {
+      /* the rituals announce themselves by name (#285); everything else keeps
+         the companion's own title */
+      const title =
+        last.nudgeType === 'morning-brief'
+          ? 'mew — morning brief'
+          : last.nudgeType === 'evening-wrap'
+            ? 'mew — evening wrap'
+            : last.nudgeType === 'weekly-ritual'
+              ? 'mew — weekly ritual'
+              : `${get().settings.mewName} · MEW`
       notifier.mirror({
-        title: `${get().settings.mewName} · MEW`,
+        title,
         body: last.body.split('\n')[0],
         tag: last.id,
         onClick: () => {
           useMew.setState({ page: 'week', scrollToMsgId: last.id })
         },
+        ...(quick
+          ? {
+              actions: quick.map((a) => ({ id: a.id as NotifyActionId, label: a.label })),
+              onAction: (aid: NotifyActionId) => get().nudgeAction(last.id, aid),
+            }
+          : {}),
       })
     }
   }
@@ -811,18 +1216,180 @@ export const useMew = create<MewState>((set, get) => {
   }
 
   function markFired(n: NudgeInstance, nowMs: number) {
-    set((s) => ({
-      engine: {
-        lastFired: { ...s.engine.lastFired, [n.type]: { ts: nowMs, key: n.key } },
-        lastDriftBlockId:
-          n.type === 'drift' ? String(n.payload.blockId) : s.engine.lastDriftBlockId,
-      },
-    }))
+    set((s) => {
+      const lastFired = { ...s.engine.lastFired, [n.type]: { ts: nowMs, key: n.key } }
+      return {
+        engine: {
+          lastFired,
+          lastDriftBlockId:
+            n.type === 'drift' ? String(n.payload.blockId) : s.engine.lastDriftBlockId,
+        },
+        /* dedupe keys ride Settings as machine state (like dismissedEvents),
+           so "fired today" survives a restart — the brief/wrap once-per-day
+           law depends on it. hydrate() seeds the engine back from it. */
+        settings: { ...s.settings, nudgeLastFired: lastFired },
+      }
+    })
+    persistSettings(get().settings)
     /* a drift check-in IS the drift signal — log it so insights can find where
        attention slips (driftBand reads these; weekly summaries count them) */
     if (n.type === 'drift') {
       logMemory({ kind: 'drift', dayKey: dayKey(new Date(nowMs)), ts: nowMs })
     }
+  }
+
+  /* Rescue offers (#286): after a pull that changed blocks, name each NEW
+     inbound-meeting landing in chat with one-tap re-plan chips. Chat-only —
+     nothing here mutates the week; a pick posts the choice's reply as a user
+     turn and the executor does the rest. Dedupe rides the engine.lastFired
+     key mechanism, one slot per landing: the same event re-pulled every 5
+     minutes never re-nudges, the same event moving again (new startMin) is a
+     fresh key and correctly re-fires. */
+  const RESCUE_KEY_TTL = 21 * 24 * 60 * 60 * 1000 // the sync window — older landings can't recur
+  function offerRescues(prevBlocks: Block[]) {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const conflicts = detectRescues(prevBlocks, s.blocks, todayKey)
+    if (!conflicts.length) return
+    const lastFired = { ...s.engine.lastFired }
+    const msgs: ChatMessage[] = []
+    for (const c of conflicts) {
+      const key = rescueKey(c)
+      if (lastFired[key]) continue // this landing was already offered
+      const options = rescueOptions(s.blocks, c, todayKey, minOfDay(now))
+      if (options.length) {
+        msgs.push(choicesMsg(rescueLine(c, todayKey), options))
+      } else if (!withinDayWords(c.block.dayKey, todayKey)) {
+        /* beyond the chip horizon the landing would otherwise go PERMANENTLY
+           silent — detection is diff-based, so a merged event never re-detects
+           as it drifts into range. Say it once, in prose, with no fake taps. */
+        msgs.push(mewMsg(rescueLine(c, todayKey)))
+      } else {
+        /* a near day with zero viable options stays quiet: the week view
+           already shows the overlap, and there is nothing honest to offer */
+        continue
+      }
+      lastFired[key] = { ts: s.nowMs }
+    }
+    if (!msgs.length) return
+    for (const k of Object.keys(lastFired) as (keyof typeof lastFired)[]) {
+      const fired = lastFired[k]
+      if (String(k).startsWith('rescue:') && fired && fired.ts < s.nowMs - RESCUE_KEY_TTL) {
+        delete lastFired[k]
+      }
+    }
+    set((st) => ({ engine: { ...st.engine, lastFired } }))
+    post(msgs)
+  }
+
+  /* Back-to-back observation (#302): after a pull, if the meeting buffer is on
+     and the pull LANDED external meetings sitting ≤ bufferMin apart on a day,
+     ONE positive line per day rides the arrival message's observation slot —
+     never a separate message, never blame. Dedupe through the persisted
+     nudgeLastFired map (`buffer:<dayKey>`), so re-pulling the same tight pair
+     never re-observes it; keys sweep on the same sync-window TTL as rescue
+     landings. Pure detection lives in week.tightMeetingJunction; the events
+     never move — this only notices. Returns the joined lines, or undefined. */
+  function meetingBufferObservation(prePull: Block[]): string | undefined {
+    const s = get()
+    const bufferMin = s.settings.meetingBufferMin ?? 0
+    if (bufferMin <= 0) return undefined
+    const had = new Set(prePull.filter((b) => b.external).map((b) => b.id))
+    const landedDays = [
+      ...new Set(
+        get()
+          .blocks.filter((b) => b.external && b.status === 'open' && !had.has(b.id))
+          .map((b) => b.dayKey)
+      ),
+    ].sort()
+    if (!landedDays.length) return undefined
+    const lastFired = { ...s.engine.lastFired }
+    const lines: string[] = []
+    for (const day of landedDays) {
+      const key = `buffer:${day}` as `buffer:${string}`
+      if (lastFired[key]) continue // this day was already observed
+      const pivot = week.tightMeetingJunction(get().blocks, day, bufferMin)
+      if (pivot == null) continue
+      lines.push(
+        `two meetings back-to-back at ${fmtTime(pivot)} — i kept your ${bufferMin} min after free`
+      )
+      lastFired[key] = { ts: s.nowMs, key: day }
+    }
+    if (!lines.length) return undefined
+    /* TTL sweep, mirroring rescue: buffer keys past the sync window can't recur */
+    for (const k of Object.keys(lastFired) as (keyof typeof lastFired)[]) {
+      const fired = lastFired[k]
+      if (String(k).startsWith('buffer:') && fired && fired.ts < s.nowMs - RESCUE_KEY_TTL) {
+        delete lastFired[k]
+      }
+    }
+    set((st) => ({
+      engine: { ...st.engine, lastFired },
+      settings: { ...st.settings, nudgeLastFired: lastFired },
+    }))
+    persistSettings(get().settings)
+    return lines.join('\n')
+  }
+
+  /* The honest day-load meter (#301, v0.5 item 12): after a plan-executor run
+     that placed work on a day now past the user's demonstrated line, ONE
+     choicesMsg (the #296 shape) — the kindness line plus keep/trim chips.
+     Chat-only by law: a pick posts the chip's reply as an ordinary user turn
+     and the executor does the rest; the keep chip's reply parses as plain
+     chat on the rules floor (deliberately — an acknowledgment, not an ask).
+     Dedupe per assessed day per calendar day rides the persisted
+     nudgeLastFired mechanism (#297), so it survives a restart. Mid-turn the
+     message parks (a guard is reflection, not an interrupt — #115) and
+     flushes after the reply; outside a turn it posts on the next microtask so
+     the plan's own line lands first. Under the line, and under the data
+     floor, this function says nothing — silence is pinned. */
+  let pendingDayLoadMsgs: ChatMessage[] = []
+  function offerDayLoadGuard(days: Set<string>, todayKey: string): Set<string> {
+    const spoke = new Set<string>()
+    if (!days.size) return spoke
+    const s = get()
+    const now = new Date(s.nowMs)
+    const throughput = dayThroughputMin(s.memory, aggregates(s.memory, now), todayKey)
+    if (throughput == null) return spoke // data floor: no meter, no claims
+    const lastFired = { ...s.engine.lastFired }
+    const msgs: ChatMessage[] = []
+    for (const k of [...days].sort()) {
+      if (k < todayKey) continue // only days still being planned
+      const a = dayLoadAssessment(s.blocks, k, throughput)
+      if (!a?.over) continue // zero nagging under the line
+      const slot = dayLoadFiredKey(k)
+      if (lastFired[slot]?.key === todayKey) continue // once per day per day-key
+      const trim = trimMove(s.blocks, k, todayKey, minOfDay(now), throughput)
+      /* no honest keyless trim → no chips faked; the density tint still
+         carries the truth (the rescue offers' zero-viable-options rule) */
+      if (!trim) continue
+      msgs.push(
+        choicesMsg(a.line, [
+          { id: 'keep', label: 'keep it as planned', reply: 'ok, keep it as planned' },
+          { id: 'trim', label: 'trim to my usual', reply: trim.reply },
+        ])
+      )
+      lastFired[slot] = { ts: s.nowMs, key: todayKey }
+      spoke.add(k)
+    }
+    if (!msgs.length) return spoke
+    /* sweep spent slots — a day already lived can't be re-planned */
+    for (const k of Object.keys(lastFired) as (keyof typeof lastFired)[]) {
+      if (String(k).startsWith('dayload:') && String(k).slice('dayload:'.length) < todayKey) {
+        delete lastFired[k]
+      }
+    }
+    set((st) => ({
+      engine: { ...st.engine, lastFired },
+      /* persisted like the rituals' keys (#297) — "spoke today" must hold
+         across a restart or the guard would nag again on reload */
+      settings: { ...st.settings, nudgeLastFired: lastFired },
+    }))
+    persistSettings(get().settings)
+    if (turnInFlight) pendingDayLoadMsgs.push(...msgs)
+    else queueMicrotask(() => post(msgs))
+    return spoke
   }
 
   /* task→person link snapshot for the delegate nudge — fetched once per
@@ -929,7 +1496,47 @@ export const useMew = create<MewState>((set, get) => {
     }
   }
 
+  /* ── the sustenance scaffold (#299, v0.5 16b) ──────────────────────
+     The standing day-scaffold: at/after the morning brief's tick, once per
+     day, the day gains its missing meals + paced breathers — placed by the
+     pure scaffoldDay and applied THROUGH THE EXECUTOR plan path (the only
+     mutation door), then one plain chat line. The 'sustenance' key rides the
+     same persisted map as the rituals (#297): it burns whether or not the
+     day needed anything (checked, not needed — once per day either way),
+     and hydrate heals it by chat/week truth. Runs BEFORE the engine builds
+     its ctx, so the brief's "today's shape" already includes the meals. */
+  function burnSustenanceKey(todayKey: string, nowMs: number) {
+    set((s) => {
+      const lastFired = { ...s.engine.lastFired, sustenance: { ts: nowMs, key: todayKey } }
+      return {
+        engine: { ...s.engine, lastFired },
+        settings: { ...s.settings, nudgeLastFired: lastFired },
+      }
+    })
+    persistSettings(get().settings)
+  }
+
+  function runSustenancePass() {
+    const s = get()
+    if (!s.hydrated || s.settings.sustenance === 'off') return
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const nowMin = minOfDay(now)
+    if (nowMin < s.settings.briefMin) return
+    if (s.engine.lastFired.sustenance?.key === todayKey) return
+    const specs = scaffoldDay(s.blocks, todayKey, {
+      prefs: activePrefsFrom(s.memory, brainOn() ? brainPrefs : null),
+      meals: s.settings.sustenanceMeals,
+      nowMin,
+    })
+    burnSustenanceKey(todayKey, s.nowMs)
+    if (!specs.length) return // fed (or wall-to-wall): nothing to add, nothing to say
+    runToolWithCard('plan', { places: specs, frees: [] }, () => execPlan(specs, []))
+    post([mewMsg(scaffoldLine(specs))])
+  }
+
   function runTickEngine() {
+    runSustenancePass()
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -952,6 +1559,9 @@ export const useMew = create<MewState>((set, get) => {
         interruptionsLastHour: interruptionsLastHour(s.memory, s.nowMs),
         guardUntilMin: guardActive,
         quietStartMin: s.settings.quietHours.startMin,
+        briefMin: s.settings.briefMin,
+        wrapMin: s.settings.wrapMin,
+        weeklyRitualMin: s.settings.weeklyRitualMin,
         prefs: activePrefsFrom(s.memory, brainOn() ? brainPrefs : null),
         brainLinks: brainOn() ? brainLinks?.pairs : undefined,
         brainWeekLines: weekColor?.day === todayKey ? weekColor.lines : undefined,
@@ -1030,10 +1640,20 @@ export const useMew = create<MewState>((set, get) => {
      multi-action plan that re-triggers the same nudge speaks it once, then post
      in order. Idempotent and safe on the error path — an empty queue is a no-op. */
   function flushPendingNudges() {
-    if (!pendingNudgeQueue.length) return
-    const drained = pendingNudgeQueue
-    pendingNudgeQueue = []
-    post(coalesceNudges(drained).map(eventNudgeMsg))
+    if (pendingNudgeQueue.length) {
+      const drained = pendingNudgeQueue
+      pendingNudgeQueue = []
+      post(coalesceNudges(drained).map(eventNudgeMsg))
+    }
+    /* the day-load guard's parked chips (#301) ride the same beat — after the
+       reply, after the nudges, so the meter reads as reflection on the turn.
+       Already deduped at build time (the burned key), so a multi-plan turn
+       parks each over day exactly once. */
+    if (pendingDayLoadMsgs.length) {
+      const msgs = pendingDayLoadMsgs
+      pendingDayLoadMsgs = []
+      post(msgs)
+    }
   }
 
   function setBlocks(blocks: Block[]) {
@@ -1069,6 +1689,7 @@ export const useMew = create<MewState>((set, get) => {
 
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const hist = histDurations(s)
+    const bufferMin = s.settings.meetingBufferMin ?? 0 // #302
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
       /* recurring block (#159): a rule expands into one block per occurrence,
@@ -1179,9 +1800,17 @@ export const useMew = create<MewState>((set, get) => {
           durationMin: prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
         }
-        const best = scoreSlots(occupied, q, todayKey, minOfDay(now), prefs).find(
-          (c) => c.dayKey === key
-        )
+        const best = scoreSlots(
+          occupied,
+          q,
+          todayKey,
+          minOfDay(now),
+          prefs,
+          undefined, // weights: the default profile
+          undefined, // horizonDays: the default week
+          undefined, // mealBase: the circadian default (#298)
+          bufferMin // #302: keep MEW's placements shy of external meetings
+        ).find((c) => c.dayKey === key)
         if (best) start = best.startMin
       }
       if (existing) {
@@ -1275,6 +1904,11 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(blocks)
 
+    /* the day-load meter (#301): every day this run placed work on gets one
+       look against the demonstrated line — the guard posts (or parks) its own
+       chips message and burns the per-day key */
+    const guarded = offerDayLoadGuard(touchedDays, todayKey)
+
     /* one contextual observation, from the user's own numbers */
     let observation = ''
     if (placedDeep) {
@@ -1288,7 +1922,9 @@ export const useMew = create<MewState>((set, get) => {
           b.status !== 'rolled'
       ).length
       observation = ` That's your ${ordinal(deepCount)} deep-work block this week.`
-      if (agg.realisticBestH != null) {
+      /* the meter speaking for this day makes the right-size aside a second
+         voice in the same turn — the chips carry the offer, the count stands */
+      if (agg.realisticBestH != null && !guarded.has(placedDeep.dayKey)) {
         const planned = week.plannedDeepMin(get().blocks, placedDeep.dayKey) / 60
         if (planned > agg.realisticBestH * 1.2) {
           observation = ` ${fmtDowLong(placedDeep.dayKey)} now holds ${Math.round(planned * 2) / 2}h of deep work — your best is ~${agg.realisticBestH}. I can right-size it if you want.`
@@ -1336,6 +1972,12 @@ export const useMew = create<MewState>((set, get) => {
     captures: Capture[]
     memory: MewState['memory']
   } | null = null
+  /* a scenario pick applies OUTSIDE any turn (#293) — the user's very next
+     message ("undo that") must still reach it, so this flag carries the pick's
+     snapshot across exactly one speak() entry instead of the usual fresh-
+     exchange reset. One turn only: the moment that next turn runs (mutating or
+     not), the ordinary #162 lifecycle owns the snapshot again. */
+  let pickSnapshotHolds = false
   function snapshotForUndo() {
     const s = get()
     preMutationSnapshot = { blocks: s.blocks, captures: s.captures, memory: s.memory }
@@ -1386,7 +2028,11 @@ export const useMew = create<MewState>((set, get) => {
     if (start == null) {
       /* the scoring oracle picks the destination — rest-aware and conflict-free
          — instead of the first open hole; fall back to first-fit if it finds
-         none (e.g. the asked day is past the scorer horizon) (#80) */
+         none (e.g. the asked day is past the scorer horizon) (#80). An
+         auto-slotted move IS a placement, so it honors the meeting buffer
+         (#302) the same as plan/findSlot/suggestSlots — an explicit toStartMin
+         above skips this branch entirely (explicit intent wins). */
+      const bufferMin = s.settings.meetingBufferMin ?? 0
       const q: SlotQuery = {
         title: target.title,
         tag: target.tag,
@@ -1397,7 +2043,11 @@ export const useMew = create<MewState>((set, get) => {
         q,
         todayKey,
         minOfDay(now),
-        prefs
+        prefs,
+        undefined, // weights: the default profile
+        undefined, // horizonDays: the default week
+        undefined, // mealBase: the circadian default (#298)
+        bufferMin // #302: keep the moved block shy of external meetings
       ).find((c) => c.dayKey === toKey)
       if (best) start = best.startMin
       else {
@@ -1405,7 +2055,9 @@ export const useMew = create<MewState>((set, get) => {
           blocks.filter((b) => b.id !== target.id),
           toKey,
           week.duration(target),
-          toKey === todayKey ? minOfDay(now) + 15 : undefined
+          toKey === todayKey ? minOfDay(now) + 15 : undefined,
+          undefined, // windowEnd: the working-day cap
+          bufferMin // #302: the first-fit fallback honors the buffer too
         )
         if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
         start = slot.startMin
@@ -1623,15 +2275,89 @@ export const useMew = create<MewState>((set, get) => {
       the keyless floor reads it as "stay quiet — the chips ARE the reply". */
   function execOfferChoices(prompt: string, options: ChoiceOption[]): string {
     post([
-      {
-        id: uid(),
-        role: 'mew',
-        body: prompt,
-        ts: nowFn(),
-        choices: options.map((o, i) => ({ id: `c${i + 1}`, label: o.label, reply: o.reply })),
-      },
+      choicesMsg(
+        prompt,
+        options.map((o, i) => ({ id: `c${i + 1}`, label: o.label, reply: o.reply }))
+      ),
     ])
     return `${CHOICES_POSTED}: ${options.map((o) => `"${o.label}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
+  }
+
+  /* insights' follow-through bands → the scenario engine's window vocabulary.
+     The 'late' band (15:00–21:00) sits mostly past windowOf's 17:00 afternoon
+     edge, so it reads as evening; the alignment is a soft profile weight, so
+     a rough edge steers taste, never gates a slot. */
+  const BAND_WINDOW: Record<'morning' | 'midday' | 'late', TimeWindow> = {
+    morning: 'morning',
+    midday: 'afternoon',
+    late: 'evening',
+  }
+
+  /** Plan mode's propose half (#293): classify → generate → post ONE picker
+      message. Mutates NOTHING (the #254 offer_choices precedent) — scenarios
+      are chat-only data until pickScenario applies one through the plan
+      executor. Durations fill exactly as execPlan would fill them (standing
+      rules, then the user's own medians, then the 60-min floor), so a preview
+      is sized the way the apply will be. Every scenario is validated against
+      the live week at post time — the engine is conflict-free by construction,
+      and the gate keeps that a checked fact rather than a hope. */
+  function execProposeScenarios(prompt: string, specs: ScenarioTaskSpec[]): string {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const hist = histDurations(s)
+    const tasks: ScenarioTask[] = specs
+      .filter((t) => t.title.trim())
+      .map((t) => ({
+        title: t.title.trim(),
+        tag: t.tag,
+        durationMin:
+          t.durationMin ??
+          applyPrefs({ title: t.title.trim(), durationMin: t.durationMin }, prefs, hist).spec
+            .durationMin ??
+          60,
+        ...(t.due != null ? { due: t.due } : {}),
+        ...(t.window ? { window: t.window } : {}),
+      }))
+    if (!tasks.length) return 'nothing to propose — name the tasks and I will lay out the week.'
+    const insights = computeInsights(s.memory, aggregates(s.memory, now), now)
+    const all = generateScenarios(s.blocks, tasks, {
+      nowMin: minOfDay(now),
+      todayKey,
+      horizonDays: 7,
+      ...(insights.bestBand ? { bestWindow: BAND_WINDOW[insights.bestBand.band] } : {}),
+      prefs,
+      bufferMin: s.settings.meetingBufferMin ?? 0, // #302: scenarios inherit the seam
+      ids: uid,
+    })
+    /* a scenario placing nothing is nothing to pick — it only ever narrates
+       what waits; its honesty is kept for the zero-fit line below */
+    const scenarios = all.filter((sc) => sc.places.length > 0 && validateScenario(s.blocks, sc))
+    if (!scenarios.length) {
+      return `The next seven days can't hold these as one plan — ${all[0]?.line ?? 'every gap is held by something fixed'}. Want to trim the list, or look further out?`
+    }
+    const label = (offset: number) =>
+      offset === 0 ? 'today' : offset === 1 ? 'tomorrow' : fmtDowLong(addDaysKey(todayKey, offset))
+    if (scenarios.length === 1) {
+      /* one honest shape, no picker theater — suggest it in plain prose */
+      const sc = scenarios[0]
+      const places = sc.places
+        .map(
+          (p) =>
+            `${p.title} ${label(p.dayOffset)} ${fmtTime(p.startMin)}–${fmtTime(p.startMin + p.durationMin)}`
+        )
+        .join(' · ')
+      return `One shape fits — ${sc.name}: ${sc.line}. ${places}. Say the word and I'll place exactly that.`
+    }
+    const body =
+      prompt.trim() ||
+      `${spell(scenarios.length)} ways this week could hold it — pick the one that feels right.`
+    post([scenariosMsg(body, scenarios)])
+    /* the CHOICES_POSTED token is deliberately shared with offer_choices: one
+       token means "the ask is on screen — end the turn", for every model and
+       for the keyless floor, so the two paths can never disagree. */
+    return `${CHOICES_POSTED}: ${scenarios.map((sc) => `"${sc.name}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
   }
 
   function execRemove(query: string, opts: { at?: string; all?: boolean } = {}): string {
@@ -1761,24 +2487,25 @@ export const useMew = create<MewState>((set, get) => {
     const todayKey = dayKey(new Date(s.nowMs))
     const key = addDaysKey(todayKey, dayOffset)
     const label = key === todayKey ? 'today' : fmtDowLong(key)
+    const bufferMin = s.settings.meetingBufferMin ?? 0 // #302: shy of meeting edges
     const floor = Math.max(
       notBeforeMin ?? week.DAY_START,
       key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0
     )
     const ceil = notAfterMin ?? 22 * 60 + 30
     const fit = week
-      .freeWindows(s.blocks, key, floor, ceil)
+      .freeWindows(s.blocks, key, floor, ceil, bufferMin)
       .find((w) => w.endMin - w.startMin >= durationMin)
     if (fit) {
       return `Clear window ${label}: ${fmtTime(fit.startMin)}–${fmtTime(fit.startMin + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
     }
     /* honest alternatives: same day without the ceiling, then tomorrow */
     const later = week
-      .freeWindows(s.blocks, key, floor, 22 * 60 + 30)
+      .freeWindows(s.blocks, key, floor, 22 * 60 + 30, bufferMin)
       .find((w) => w.endMin - w.startMin >= durationMin)
     const nextKey = addDaysKey(key, 1)
     const nextDay = week
-      .freeWindows(s.blocks, nextKey, 9 * 60, 22 * 60 + 30)
+      .freeWindows(s.blocks, nextKey, 9 * 60, 22 * 60 + 30, bufferMin)
       .find((w) => w.endMin - w.startMin >= durationMin)
     const alts = [
       later
@@ -1814,7 +2541,17 @@ export const useMew = create<MewState>((set, get) => {
       ...(dueMin != null ? { due: dueMin } : {}),
       ...(window ? { window } : {}),
     }
-    const ranked = scoreSlots(s.blocks, q, todayKey, minOfDay(now), prefs)
+    const ranked = scoreSlots(
+      s.blocks,
+      q,
+      todayKey,
+      minOfDay(now),
+      prefs,
+      undefined, // weights: the default profile
+      undefined, // horizonDays: the default week
+      undefined, // mealBase: the circadian default (#298)
+      s.settings.meetingBufferMin ?? 0 // #302: shy of external meetings
+    )
     if (!ranked.length) {
       return `No conflict-free ${durationMin}-min slot for "${clean}"${dueMin != null ? ' before its deadline today' : ' in the next week'} — every fit is held by something fixed. Shorten it or free some time.`
     }
@@ -1939,9 +2676,13 @@ export const useMew = create<MewState>((set, get) => {
     return `Undone — ${joinHuman(parts)}.`
   }
 
-  /** Chat history → model thread. Nudges ride along as labeled assistant turns. */
+  /** Chat history → model thread. Nudges ride along as labeled assistant turns.
+      Tool cards never do (#282): they're receipts for humans — the SDK's own
+      loop already carried the tool results within their turn, and replaying
+      them as prose would double the model's ground truth. */
   function buildThread(chat: ChatMessage[]): ChatTurn[] {
     return chat
+      .filter((m) => m.role !== 'tool')
       .filter((m) => m.body.trim())
       .slice(-16)
       .map((m) => ({
@@ -1961,6 +2702,7 @@ export const useMew = create<MewState>((set, get) => {
 
     page: 'week',
     view: 'focus',
+    onboardingStep: 'tour',
     weekOffset: 0,
     focusedDayKey: null,
     nowMs: nowFn(),
@@ -1969,6 +2711,7 @@ export const useMew = create<MewState>((set, get) => {
     thinking: false,
     workingStatus: null,
     promptDraft: '',
+    queuedSpeak: null,
     brainSidecar: 'off',
 
     engine: { lastFired: {}, lastDriftBlockId: null },
@@ -1985,6 +2728,8 @@ export const useMew = create<MewState>((set, get) => {
     syncError: null,
 
     commandPaletteOpen: false,
+    commandPaletteMode: 'command',
+    hotkeyCollision: false,
 
     queryBrain(question: string) {
       return execQueryBrain(question)
@@ -1993,6 +2738,7 @@ export const useMew = create<MewState>((set, get) => {
     async hydrate() {
       subscribeUpdateOffers()
       connectSidecarBrain()
+      connectShellTray()
       const loaded = await storage.load()
       if (loaded.blocks.length === 0 && loaded.memory.length === 0) {
         const s = seed(new Date(nowFn()))
@@ -2040,21 +2786,75 @@ export const useMew = create<MewState>((set, get) => {
         const chatTotal = await storage.countChat().catch(() => loaded.chat.length)
         // merge so settings keys added in newer versions (pet, themeMode, …) backfill
         const settings = { ...DEFAULT_SETTINGS, ...(loaded.settings ?? {}) }
+        /* the persisted dedupe keys come back before the first tick — a brief
+           that fired this morning must not fire again (#285). One heal: a
+           ritual that fired INTO the quiet-hours queue dies with the queue on
+           restart (queuedNudges is in-memory), leaving a burned key and no
+           delivery. Chat is the source of truth: today's key with no ritual
+           card in today's chat means the user never got it — drop the key so
+           it re-fires (late is honest; the re-fire writes a fresh key, so
+           once-per-day still holds). */
+        const bootDay = dayKey(new Date(nowFn()))
+        const lastFired = { ...(settings.nudgeLastFired ?? {}) }
+        for (const ritual of ['morning-brief', 'evening-wrap'] as const) {
+          const delivered = loaded.chat.some(
+            (m) => m.nudgeType === ritual && dayKey(new Date(m.ts)) === bootDay
+          )
+          if (lastFired[ritual]?.key === bootDay && !delivered) delete lastFired[ritual]
+        }
+        /* the weekly ritual (#304) heals by the same chat-as-truth rule at
+           week scope: this ISO week's key with no ritual card anywhere in
+           this week's chat means the invite never landed — drop the key so
+           it re-fires (the re-fire writes a fresh key; once-per-week holds) */
+        const bootWeek = weekKey(new Date(nowFn()))
+        const ritualDelivered = loaded.chat.some(
+          (m) => m.nudgeType === 'weekly-ritual' && weekKey(new Date(m.ts)) === bootWeek
+        )
+        if (lastFired['weekly-ritual']?.key === bootWeek && !ritualDelivered) {
+          delete lastFired['weekly-ritual']
+        }
         /* heal blocks whose source calendar is gone (restored backup, cleared
            connections): adopt them as MEW's own so sync can place them again */
         const swept = adoptOrphanedExternals(loaded.blocks, settings.calendars)
+        /* the scaffold key (#299) heals by the same chat-as-truth rule: today's
+           key with NO meal-class block on today AND no scaffold line in today's
+           chat means the pass never landed — drop the key so it re-runs (the
+           re-run writes a fresh key, so once-per-day still holds). Either
+           artifact standing keeps the key: meal blocks mean the day is fed,
+           the line means it already spoke. */
+        if (lastFired.sustenance?.key === bootDay) {
+          const fed = swept.blocks.some(
+            (b) => b.dayKey === bootDay && b.status !== 'rolled' && mealClassOf(b.title) != null
+          )
+          const said = loaded.chat.some(
+            (m) =>
+              m.role === 'mew' &&
+              m.body.startsWith('fed and paced') &&
+              dayKey(new Date(m.ts)) === bootDay
+          )
+          if (!fed && !said) delete lastFired.sustenance
+        }
+        /* a `running` tool card in storage means the app closed mid-tool —
+           replay it honestly as `interrupted`, never as a live shimmer (#282) */
+        const cards = interruptStoredToolCards(loaded.chat)
         set({
           blocks: swept.blocks,
           captures: loaded.captures,
-          chat: loaded.chat,
+          chat: cards.msgs,
           chatHasEarlier: chatTotal > loaded.chat.length,
           memory: loaded.memory,
           settings,
+          engine: { lastFired, lastDriftBlockId: null },
           hydrated: true,
           nowMs: nowFn(),
         })
         if (swept.adopted) persistBlocks(swept.blocks)
+        if (cards.flipped.length) persistChat(cards.flipped)
       }
+      /* the persisted binding registers on every desktop boot — and again
+         after a restore re-hydrates (#284); null keeps the OS untouched
+         beyond releasing whatever this session held */
+      if (isTauri()) void syncCaptureHotkey(get().settings.globalCaptureHotkey)
       runTickEngine()
       /* an update announced during boot waits for chat to exist */
       if (stagedUpdateVersion) {
@@ -2076,7 +2876,11 @@ export const useMew = create<MewState>((set, get) => {
       earlierChatPending = (async () => {
         try {
           const older = await storage.loadChatBefore(head.ts, head.id, EARLIER_CHAT_PAGE)
-          if (older.length) set((s) => ({ chat: [...older, ...s.chat] }))
+          /* stored pages hydrate too: a `running` card in an older page maps
+             to `interrupted` exactly as boot does — never a shimmer (#282) */
+          const cards = interruptStoredToolCards(older)
+          if (older.length) set((s) => ({ chat: [...cards.msgs, ...s.chat] }))
+          if (cards.flipped.length) persistChat(cards.flipped)
           /* a short page means the table's head is reached — the sentinel
              yields to the beginning-of-session endstop */
           if (older.length < EARLIER_CHAT_PAGE) set({ chatHasEarlier: false })
@@ -2135,6 +2939,7 @@ export const useMew = create<MewState>((set, get) => {
       }
 
       runTickEngine()
+      pushTray()
     },
 
     activity() {
@@ -2156,16 +2961,48 @@ export const useMew = create<MewState>((set, get) => {
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
-      preMutationSnapshot = null // a fresh exchange — "undo that" reaches only this turn's last action (#162)
+      /* a fresh exchange — "undo that" reaches only this turn's last action
+         (#162). The one exception: a scenario pick just applied outside any
+         turn (#293) — its snapshot survives THIS entry so the immediate
+         "undo that" can take the picked plan back. */
+      if (pickSnapshotHolds) pickSnapshotHolds = false
+      else preMutationSnapshot = null
       /* fresh cancel handle for this turn; .signal rides into the adapter so a
          user 'stop' aborts the live stream/fetch (#117) */
       const abort = new AbortController()
       turnAbort = abort
 
       let acted = false // once the week mutated, never re-run the message through a fallback
+      /* mew text already closed into the log this turn (#282): a tool card cut
+         the streamed row loose mid-reply, so `reply.buffer` no longer vouches
+         for it — this flag does, keeping the no-replay law exactly as strong */
+      let spoke = false
+      /* the live attempt's stream row — assigned per adapter in the loop below;
+         the tool wrappers reach it through here to keep the log chronological */
+      let reply: ReturnType<typeof streamedReply> | null = null
+      /* mid-turn ordering (#282): a card is about to land — when reply text has
+         already begun, close the live streamed row first, so post-tool deltas
+         open a NEW mew row (text → card → text). The closed row is final:
+         persist it and feed the brain sense exactly as stream-end would; a
+         whitespace-only row is dropped the same way stream-end drops one. */
+      const closeStreamRow = () => {
+        const closed = reply?.closeRow()
+        if (!closed) return
+        if (closed.body.trim()) {
+          spoke = true
+          persistChat([closed])
+          if (brainOn()) chatBatcher.add(closed, dayKey(new Date(get().nowMs)))
+        } else {
+          set((s) => ({ chat: s.chat.filter((m) => m.id !== closed.id) }))
+        }
+      }
       /* one short, positive label per tool — what MEW is doing right now. The
          thinking row shows it while `thinking`; speak's finally clears it. */
       const working = (label: string) => set({ workingStatus: label })
+      /* every tool below (offerChoices excepted — its chips message IS the
+         visible artifact) also leaves one activity card in the log (#282):
+         closeStreamRow keeps the chronology, runToolWithCard owns the card's
+         append→settle lifecycle and rethrows errors unchanged. */
       /* snapshot the mutable week just before a mutating tool runs, so
          undo_last_action can take back exactly that one change (#162). The
          read-only tools below never snapshot — there's nothing to reverse. */
@@ -2174,80 +3011,119 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           snapshotForUndo()
           working('placing blocks…')
-          return execPlan(places, frees)
+          closeStreamRow()
+          return runToolWithCard('plan', { places, frees }, () => execPlan(places, frees))
         },
         complete: (q) => {
           acted = true
           snapshotForUndo()
           working('marking it done…')
-          return execComplete(q)
+          closeStreamRow()
+          return runToolWithCard('complete', { query: q }, () => execComplete(q))
         },
         move: (q, d, t) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
-          return execMove(q, d, t)
+          closeStreamRow()
+          return runToolWithCard('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
+            execMove(q, d, t)
+          )
         },
         capture: (t) => {
           acted = true
           snapshotForUndo()
           working('jotting it down…')
-          return execCapture(t)
+          closeStreamRow()
+          return runToolWithCard('capture', { title: t }, () => execCapture(t))
         },
         clear: (scope) => {
           acted = true
           snapshotForUndo()
           working('clearing the time…')
-          return execClear(scope)
+          closeStreamRow()
+          return runToolWithCard('clear', { scope }, () => execClear(scope))
         },
         edit: (q, patch) => {
           acted = true
           snapshotForUndo()
           working('reshaping it…')
-          return execEdit(q, patch)
+          closeStreamRow()
+          return runToolWithCard('edit', { query: q }, () => execEdit(q, patch))
         },
         remove: (q, opts) => {
           acted = true
           snapshotForUndo()
           working('taking it off…')
-          return execRemove(q, opts)
+          closeStreamRow()
+          return runToolWithCard('remove', { query: q }, () => execRemove(q, opts))
         },
         analyze: (d) => {
           working('reading your week…')
-          return execAnalyze(d) // read-only: not an action
+          closeStreamRow()
+          return runToolWithCard('analyze', { dayOffset: d }, () => execAnalyze(d)) // read-only: not an action
         },
         findSlot: (dur, d, nb, na) => {
           working('finding a slot…')
-          return execFindSlot(dur, d, nb, na) // read-only
+          closeStreamRow()
+          return runToolWithCard(
+            'findSlot',
+            { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na },
+            () => execFindSlot(dur, d, nb, na) // read-only
+          )
         },
         suggestSlots: (t, tag, dur, due, win) => {
           working('finding a slot…')
-          return execSuggestSlots(t, tag, dur, due, win) // read-only
+          closeStreamRow()
+          return runToolWithCard(
+            'suggestSlots',
+            { title: t, durationMin: dur },
+            () => execSuggestSlots(t, tag, dur, due, win) // read-only
+          )
         },
         queryBrain: (q) => {
           working('checking what I know…')
-          return execQueryBrain(q) // read-only
+          closeStreamRow()
+          return runToolWithCard('queryBrain', { question: q }, () => execQueryBrain(q)) // read-only
         },
         remember: (pref) => {
           acted = true
           snapshotForUndo()
           working('remembering that…')
-          return execRemember(pref)
+          closeStreamRow()
+          return runToolWithCard('remember', { match: pref.match, value: pref.value }, () =>
+            execRemember(pref)
+          )
         },
         offerChoices: (prompt, options) => {
           /* chat-only, but the ask is now on screen — a fallback replay would
              double it, so the turn counts as acted. Never a snapshot: there is
-             nothing week-side to undo (#254 law: this tool mutates nothing). */
+             nothing week-side to undo (#254 law: this tool mutates nothing).
+             No card either — the chips message IS the visible artifact. */
           acted = true
           working('offering choices…')
+          closeStreamRow()
           return execOfferChoices(prompt, options)
+        },
+        proposeScenarios: (prompt, tasks) => {
+          /* the #254 discipline exactly (#293): chat-only, the picker message
+             is the visible artifact (no card), never a snapshot — proposing
+             mutates nothing; the PICK snapshots before it applies. acted stays
+             true even on the no-picker fall-throughs: a replay through a
+             fallback adapter could double a posted picker, and skipping the
+             replay on a read-only line is graceful, never a lie. */
+          acted = true
+          working('shaping the week…')
+          closeStreamRow()
+          return execProposeScenarios(prompt, tasks)
         },
         undoLast: () => {
           /* the reversal itself isn't a fresh action: it consumes the snapshot
              rather than taking one, so a misfired "undo that" can't be undone
              into a loop. acted stays as-is — the turn already mutated. */
           working('putting that back…')
-          return execUndo()
+          closeStreamRow()
+          return runToolWithCard('undoLast', undefined, () => execUndo())
         },
       }
 
@@ -2278,52 +3154,40 @@ export const useMew = create<MewState>((set, get) => {
         let lastModelErr: unknown = null // why a model adapter threw, for honest fallback copy
 
         for (const adapter of adapters) {
-          let msgId: string | null = null
-          let buffer = ''
-          let reasoning: string | undefined // the model's pre-tool plan (#166)
-          const flush = () => {
-            if (msgId == null) {
-              msgId = uid()
-              const msg: ChatMessage = {
-                id: msgId,
-                role: 'mew',
-                body: buffer,
-                ts: nowFn(),
-                ...(reasoning ? { reasoning } : {}),
-              }
-              set((s) => ({ thinking: false, chat: [...s.chat, msg] }))
-            } else {
-              const id = msgId
-              set((s) => ({
-                chat: s.chat.map((m) =>
-                  m.id === id ? { ...m, body: buffer, ...(reasoning ? { reasoning } : {}) } : m
-                ),
-              }))
-            }
-          }
+          /* the one per-chunk paint path (streamedReply, #281) — each text
+             delta repaints the same growing message row. Assigned to speak's
+             hoisted handle so the tool wrappers can close the live row (#282). */
+          const live = streamedReply()
+          reply = live
           try {
             for await (const chunk of adapter.converse(thread, ctx, exec, abort.signal)) {
               if (!chunk) continue
-              /* a reasoning chunk is the pre-action plan, not reply text — pin it
-                 to the message (it renders as a collapsible note) and keep going.
-                 It arrives BEFORE the first tool/text, so the snapshot is on the
-                 record ahead of any mutation (#166). */
               if (typeof chunk !== 'string') {
-                reasoning = chunk.reasoning
-                if (msgId) flush() // a message already exists — attach it now
+                /* an activity chunk is what the model is doing right now while
+                   nothing visible streams (#281) — show it on the status line
+                   beside the dots, exactly like a tool's working label; never a
+                   chat message. speak's finally clears it with the rest. */
+                if ('activity' in chunk) {
+                  working(chunk.activity)
+                  continue
+                }
+                /* a reasoning chunk is the pre-action plan, not reply text — pin
+                   it to the message (it renders as a collapsible note) and keep
+                   going. It arrives BEFORE the first tool/text, so the snapshot
+                   is on the record ahead of any mutation (#166). */
+                live.attachReasoning(chunk.reasoning)
                 continue
               }
-              buffer += chunk
-              flush()
+              live.append(chunk)
             }
-            if (msgId) {
-              const final = get().chat.find((m) => m.id === msgId)
+            if (live.msgId) {
+              const final = get().chat.find((m) => m.id === live.msgId)
               if (final?.body.trim()) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
                 if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
-              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
+              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
             }
             if (failed.length && adapter.id === 'rules') {
               /* an upstream adapter threw and we've landed on the rules floor.
@@ -2356,14 +3220,14 @@ export const useMew = create<MewState>((set, get) => {
             }
             return
           } catch (err) {
-            if (msgId) {
-              const final = get().chat.find((m) => m.id === msgId)
+            if (live.msgId) {
+              const final = get().chat.find((m) => m.id === live.msgId)
               if (final?.body.trim()) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
                 if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
-              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== msgId) }))
+              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
             }
             if (abort.signal.aborted) {
               /* the user pressed stop — a clean end, not a failure. Whatever
@@ -2373,8 +3237,9 @@ export const useMew = create<MewState>((set, get) => {
               post([mewMsg(`(stopped — what's above stands.)`)])
               return
             }
-            if (acted || buffer.trim()) {
-              /* the week already changed (or MEW already spoke) — finish honestly, don't replay */
+            if (acted || spoke || live.buffer.trim()) {
+              /* the week already changed (or MEW already spoke — including a
+                 row a tool card closed, #282) — finish honestly, don't replay */
               post([
                 mewMsg(`(The connection hiccuped mid-thought — everything above did go through.)`),
               ])
@@ -2400,7 +3265,46 @@ export const useMew = create<MewState>((set, get) => {
         turnInFlight = false
         if (turnAbort === abort) turnAbort = null
         flushPendingNudges()
+        /* #280 — a message queued mid-turn sends as its own next turn. Every
+           settle path (success, hiccup, stop) passes through this finally
+           exactly once, so exactly-once falls out — and plain stop with a
+           queued message IS stop-and-send, with the stop note already posted
+           above. Take the value and null the slot BEFORE invoking (the next
+           turn must start with an empty queue), then queueMicrotask so this
+           turn fully unwinds before the fresh speak begins. */
+        const queued = get().queuedSpeak
+        if (queued != null) {
+          set({ queuedSpeak: null })
+          queueMicrotask(() => void get().speak(queued))
+        }
       }
+    },
+
+    send(text: string) {
+      const trimmed = text.trim()
+      if (!trimmed) return // Enter on an empty draft stays a no-op
+      if (!turnInFlight) {
+        set({ promptDraft: '' })
+        void get().speak(trimmed)
+        return
+      }
+      /* mid-turn: park it (merging a second thought into the slot), one
+         atomic set so the draft never lingers a render behind the queue */
+      set((s) => ({
+        queuedSpeak: s.queuedSpeak != null ? `${s.queuedSpeak}\n${trimmed}` : trimmed,
+        promptDraft: '',
+      }))
+    },
+
+    cancelQueuedSpeak() {
+      const queued = get().queuedSpeak
+      if (queued == null) return
+      /* restore into the draft; anything typed since queueing stays, below it
+         (same order the merge rule would have sent) — never lose a thought */
+      set((s) => ({
+        queuedSpeak: null,
+        promptDraft: s.promptDraft.trim() ? `${queued}\n${s.promptDraft}` : queued,
+      }))
     },
 
     stopSpeaking() {
@@ -2451,7 +3355,12 @@ export const useMew = create<MewState>((set, get) => {
 
     async pickChoice(msgId: string, choiceId: string) {
       const s = get()
-      if (s.thinking) return // the composer is closed while mewing; chips match it
+      /* chips park while a turn is in flight — a pick mid-turn would start a
+         concurrent speak racing the live stream. turnInFlight is the phase
+         authority (same gate send() queues on, #280): `thinking` alone is too
+         narrow — it flips off at the first streamed token while the turn
+         keeps running. */
+      if (turnInFlight) return
       const msg = s.chat.find((m) => m.id === msgId)
       const choice = msg?.choices?.find((c) => c.id === choiceId)
       if (!msg || !choice) return
@@ -2472,6 +3381,80 @@ export const useMew = create<MewState>((set, get) => {
       await get().speak(choice.reply)
     },
 
+    pickScenario(msgId: string, scenarioId: string) {
+      const s = get()
+      /* the same phase gate as pickChoice (#254/#280): a pick mid-turn would
+         mutate the week under a live stream. turnInFlight is the authority —
+         `thinking` alone flips off at the first streamed token. */
+      if (turnInFlight) return
+      const msg = s.chat.find((m) => m.id === msgId)
+      const scenario = msg?.scenarios?.find((x) => x.id === scenarioId)
+      if (!msg || !scenario) return
+      if (!scenariosActive(s.chat, msg)) return // picked or superseded — inert by law
+
+      const now = new Date(s.nowMs)
+      const todayKey = dayKey(now)
+      /* the staleness gate — at pick time, never at render: the quote must be
+         appliable exactly as previewed. Same day zero (dayOffsets count from
+         the scenario's todayKey), no today-place already behind the clock, and
+         every place still conflict-free against the LIVE week. */
+      const fresh =
+        scenario.todayKey === todayKey &&
+        !scenario.places.some((p) => p.dayOffset === 0 && p.startMin < minOfDay(now)) &&
+        validateScenario(s.blocks, scenario)
+      if (!fresh) {
+        /* refuse kindly — never a lying apply — then offer the same shapes a
+           fresh look at the week as it stands. Proposing mutates nothing, so
+           the re-offer is safe outside a turn (the rescue-offer precedent);
+           a fall-through line (one shape, nothing fits) posts as prose. */
+        post([mewMsg('the week moved under this plan — want a fresh look?')])
+        const offer = execProposeScenarios(
+          '',
+          scenario.places.map((p) => ({
+            title: p.title,
+            tag: p.tag,
+            durationMin: p.durationMin,
+            ...(p.due != null ? { due: p.due } : {}),
+          }))
+        )
+        if (!offer.startsWith(CHOICES_POSTED)) post([mewMsg(offer)])
+        return
+      }
+
+      /* settle the cards first (picked persists with the message, so the
+         picker rehydrates settled), then apply the STORED places byte-exactly
+         through the plan executor — the same door plan_blocks uses, receipt
+         card included. Deterministic invocation of the stored quote; never a
+         second derivation (#102). */
+      set((st) => ({
+        chat: st.chat.map((m) =>
+          m.id === msgId
+            ? {
+                ...m,
+                scenarios: m.scenarios!.map((x) =>
+                  x.id === scenarioId ? { ...x, picked: true } : x
+                ),
+              }
+            : m
+        ),
+      }))
+      const updated = get().chat.find((m) => m.id === msgId)
+      if (updated) persistChat([updated]) // delta putChat, same as pickChoice
+      snapshotForUndo() // "undo that" must reach the applied plan (#162)
+      pickSnapshotHolds = true // …across the next turn's fresh-exchange reset (#293)
+      try {
+        const line = runToolWithCard('plan', { places: scenario.places, frees: [] }, () =>
+          execPlan(scenario.places, [])
+        )
+        post([mewMsg(line)])
+      } catch (err) {
+        /* runToolWithCard already settled the receipt card 'error' with its
+           kind note — the card speaks for the step; keep the raw cause
+           diagnosable and the pick handler quiet. */
+        log.error('pickScenario/plan', {}, err)
+      }
+    },
+
     nudgeAction(msgId: string, actionId: string) {
       const s = get()
       const msg = s.chat.find((m) => m.id === msgId)
@@ -2483,6 +3466,33 @@ export const useMew = create<MewState>((set, get) => {
 
       const accept = () => logOutcome(msg.nudgeType!, 'accepted')
       const decline = () => logOutcome(msg.nudgeType!, 'declined')
+
+      /* the two notification quick-actions (#305), routed through the doors the
+         checkbox and a move already use — never a second mutation path, so a
+         toast-done logs the completed event exactly like the card. Handled for
+         ANY nudge type: the pair is uniform, never per-type. A block that
+         completed or moved between mirror and tap resolves quietly, no error. */
+      if (actionId === 'done' || actionId === 'snooze15') {
+        const id = typeof payload.blockId === 'string' ? payload.blockId : ''
+        const target = s.blocks.find((b) => b.id === id)
+        if (target && target.status === 'open' && !target.external) {
+          if (actionId === 'done') {
+            get().toggleComplete(target.id) // the checkbox's path: a mew, event logged, celebrated
+          } else {
+            /* +15: the same week.move the other move-nudges use; it rides the
+               next sync run (tick's 5-min gate pushes the new time out) */
+            setBlocks(week.move(s.blocks, target.id, target.dayKey, target.startMin + 15))
+            post([
+              mewMsg(
+                `Moved — ${target.title.split('—')[0].trim()} now starts ${fmtTime(target.startMin + 15)}.`
+              ),
+            ])
+          }
+          accept()
+        }
+        resolveNudge(msgId, label)
+        return
+      }
 
       switch (`${msg.nudgeType}:${actionId}`) {
         case 'drift:still': {
@@ -2926,6 +3936,15 @@ export const useMew = create<MewState>((set, get) => {
         case 'heads-up:ack':
           accept()
           break
+        /* the weekly ritual (#304): the nudge INVITES, the turn does the work
+           (chat-first law) — the chip's words become an ordinary user turn
+           through the same speak() door typing them would use; the keyed
+           recipe or the keyless route takes it from there. */
+        case 'weekly-ritual:plan': {
+          accept()
+          void get().speak('plan my week')
+          break
+        }
         default:
           decline()
       }
@@ -2942,8 +3961,18 @@ export const useMew = create<MewState>((set, get) => {
       set({ view })
     },
     dismissOnboarding() {
+      set({ onboardingStep: 'tour' }) // non-persisted cursor back to the start
       if (get().settings.hasSeenOnboarding) return // idempotent — never re-persist
       get().updateSettings({ hasSeenOnboarding: true })
+    },
+    advanceOnboarding() {
+      const next = { tour: 'keys', keys: 'calendar', calendar: 'plan' } as const
+      const step = get().onboardingStep
+      if (step === 'plan') {
+        get().dismissOnboarding() // last step done → the modal closes for good
+        return
+      }
+      set({ onboardingStep: next[step] })
     },
     setPromptDraft(text) {
       set({ promptDraft: text })
@@ -3058,7 +4087,7 @@ export const useMew = create<MewState>((set, get) => {
         ),
       ])
     },
-    dragMove(blockId, toDayKey, toStartMin) {
+    dragMove(blockId, toDayKey, toStartMin, durationMin) {
       const s = get()
       const target = s.blocks.find((b) => b.id === blockId)
       if (!target) return 'noop'
@@ -3074,23 +4103,27 @@ export const useMew = create<MewState>((set, get) => {
         return 'external'
       }
       const todayKey = dayKey(new Date(s.nowMs))
-      /* dropped exactly where it already sits → a click, not a move */
-      if (toDayKey === target.dayKey && toStartMin === target.startMin) return 'noop'
+      const dur = durationMin ?? week.duration(target)
+      const resized = dur !== week.duration(target)
+      /* dropped exactly where it already sits, at its own length → a click */
+      if (toDayKey === target.dayKey && toStartMin === target.startMin && !resized) return 'noop'
       /* authoritative conflict gate (the view shows the same set live): a drop
          onto a time-holding open block is bounced, never silently stacked —
          MEW's "never silent" law. Optional/background blocks are transparent,
          exactly as conflictsWith treats them everywhere else. */
       const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
-      const endMin = toStartMin + week.duration(target)
+      const endMin = toStartMin + dur
       const clash = week.conflictsWith(s.blocks, toDayKey, toStartMin, endMin, target.id, prefs)
       if (clash.length) return 'conflict'
-      setBlocks(week.move(s.blocks, blockId, toDayKey, toStartMin))
+      setBlocks(week.move(s.blocks, blockId, toDayKey, toStartMin, dur))
       post([
         mewMsg(
-          `Moved — ${target.title.split('—')[0].trim()} now lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(toStartMin)}.`
+          resized
+            ? `Resized — ${target.title.split('—')[0].trim()} now runs ${fmtTime(toStartMin)}–${fmtTime(endMin)} (${dur} min).`
+            : `Moved — ${target.title.split('—')[0].trim()} now lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(toStartMin)}.`
         ),
       ])
-      return 'moved'
+      return resized ? 'resized' : 'moved'
     },
     setAttention(blockId, attention) {
       const s = get()
@@ -3142,6 +4175,15 @@ export const useMew = create<MewState>((set, get) => {
          URL/token edits alone don't trigger — a half-typed endpoint must not
          be sprayed with a replay; the next launch converges it. */
       if ('brainEnabled' in patch) maybeBackfillBrain()
+    },
+
+    async applyCaptureHotkey(accel) {
+      const ok = await syncCaptureHotkey(accel)
+      /* register-then-persist: a refusal leaves the setting (and the OS
+         binding the shell rolled back to) exactly where it was — the
+         collision flag carries the story to the Settings row */
+      if (ok) get().updateSettings({ globalCaptureHotkey: accel })
+      return ok
     },
 
     cycleVisibility(calId, tag) {
@@ -3339,6 +4381,11 @@ export const useMew = create<MewState>((set, get) => {
       const live = s.settings.calendars.filter((c) => c.kind === 'live' && c.provider === 'google')
       if (!live.length || s.syncing || !s.settings.googleClientId.trim()) return
       set({ syncing: true })
+      /* the pull's before-snapshot for rescue detection (#286) — captured the
+         moment the pull commits (runSync's one setBlocks), so a user turn that
+         lands mid-await can never smear the diff. Null ⇒ the pull changed
+         nothing and there is nothing to detect. */
+      let prePull: Block[] | null = null
       try {
         const report = await runSync({
           account: googleAccount(s.settings.googleClientId.trim()),
@@ -3348,6 +4395,7 @@ export const useMew = create<MewState>((set, get) => {
           dismissed: dismissedSet(),
           getBlocks: () => get().blocks,
           setBlocks: (blocks, removedIds) => {
+            prePull ??= get().blocks
             set({ blocks })
             persistBlocks(blocks)
             if (removedIds.length) storage.deleteBlocks(removedIds).catch(() => {})
@@ -3360,7 +4408,8 @@ export const useMew = create<MewState>((set, get) => {
         if (report.pulled.added > 0) {
           post([
             mewMsg(
-              `${report.pulled.added} event${report.pulled.added === 1 ? '' : 's'} arrived from your calendar${inbound > 1 ? 's' : ''} — they're in the week now.`
+              `${report.pulled.added} event${report.pulled.added === 1 ? '' : 's'} arrived from your calendar${inbound > 1 ? 's' : ''} — they're in the week now.`,
+              prePull ? meetingBufferObservation(prePull) : undefined
             ),
           ])
         }
@@ -3374,14 +4423,44 @@ export const useMew = create<MewState>((set, get) => {
           syncError: e instanceof Error ? e.message : 'sync failed',
         })
       } finally {
+        /* rescues ride even a failed push — a landed pull is a real landing
+           (#286); on success this posts right after the arrival line */
+        if (prePull) offerRescues(prePull)
         set({ syncing: false })
+      }
+    },
+
+    simulatePull(events) {
+      const s = get()
+      const todayKey = dayKey(new Date(s.nowMs))
+      const calId = events[0]?.calId ?? 'demo@sim'
+      /* a synthetic source calendar so mergePull tags/keys the events exactly
+         as a live pull would; it never enters Settings, so a later hydrate's
+         orphan sweep adopts anything left behind — self-healing by design */
+      const cal: ConnectedCalendar = {
+        id: calId,
+        name: 'Simulated',
+        who: 'dev seam',
+        provider: 'google',
+        kind: 'simulated',
+        defaultTag: 'work',
+      }
+      const listing = events.map((e) => ({ calId, dayKey: todayKey, ...e }))
+      const prev = s.blocks
+      const pulled = mergePull(prev, listing, [cal], syncWindow(new Date(s.nowMs)), dismissedSet())
+      if (pulled.added || pulled.updated || pulled.removed) {
+        const kept = new Set(pulled.blocks.map((b) => b.id))
+        const removedIds = prev.filter((b) => !kept.has(b.id)).map((b) => b.id)
+        setBlocks(pulled.blocks)
+        if (removedIds.length) storage.deleteBlocks(removedIds).catch(() => {})
+        offerRescues(prev)
       }
     },
 
     /* ── power-user surface (#169/#170/#171) — additive ──────────────── */
 
-    openCommandPalette() {
-      set({ commandPaletteOpen: true })
+    openCommandPalette(mode = 'command') {
+      set({ commandPaletteOpen: true, commandPaletteMode: mode })
     },
 
     closeCommandPalette() {
@@ -3535,9 +4614,31 @@ declare global {
     __mewConfigure?: (patch: Partial<Settings>) => void
     /** Dev/scenario helper: push a mew reply into the log (visual/markdown proofs). */
     __mewSay?: (body: string, role?: ChatMessage['role']) => void
+    /** Dev/scenario helper (E2E): stream a scripted mew reply chunk-by-chunk,
+        `gapMs` apart, through the SAME per-chunk flush path speak() uses
+        (streamedReply, #281) — so the paint pin observes the real repaint
+        mechanics of one growing message row, never a simulation. Resolves when
+        the last chunk has painted. */
+    __mewSayStream?: (chunks: string[], gapMs: number) => Promise<void>
+    /** Dev/scenario helper: append a scripted tool activity card (#282) so the
+        multi-tool-turn shot is deterministic and keyless. Renders through the
+        same role:'tool' LogLine path the live executor wrappers feed. */
+    __mewSayTool?: (verb: string, target?: string, state?: ToolCardState) => void
+    /** Dev/scenario helper (#293): post a scenario-picker message so the
+        plan-mode cards render deterministically and keyless (the shoot shot).
+        id / todayKey / dayLoad fill in when omitted; the message rides the
+        same LogLine → ScenarioCards path a live propose feeds. */
+    __mewSayScenarios?: (
+      scenarios: (Pick<StoredScenario, 'name' | 'line' | 'places'> & Partial<StoredScenario>)[],
+      body?: string
+    ) => void
     /** Dev/scenario helper: drive the turn-in-flight UI (typing-indicator /
         working-status visual proofs) without a live model. */
     __mewSetTurn?: (thinking: boolean, workingStatus?: string | null) => void
+    /** Dev/scenario helper (#280): park text as the queued composer message
+        (null clears it) — display state only, so a shot can capture the
+        queued row + stop & send without a live model turn. */
+    __mewSetQueued?: (text: string | null) => void
     /** Dev/scenario helper: drive the sidecar lifecycle DISPLAY state (#249) —
         the web build has no shell to emit real beats. Display-only: it never
         touches the effective-brain ranking, so recall stays honestly off. */
@@ -3549,6 +4650,22 @@ declare global {
     /** Dev/scenario helper (E2E): the append-only memory events, kind + day only
         (no payload), so a test can assert a flow logged what it should. */
     __mewMemoryKinds?: () => { kind: MemoryEvent['kind']; dayKey: string }[]
+    /** Dev/scenario helper (#286): feed a simulated inbound calendar listing
+        through the REAL pull + rescue path (mergePull diff → rescue chips) —
+        no OAuth, no network. dayKey defaults to today; calId to 'demo@sim'.
+        One paste verifies the rescue loop end-to-end:
+        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }]) */
+    __mewSimulatePull?: (
+      events: {
+        eventId: string
+        title: string
+        startMin: number
+        endMin: number
+        dayKey?: string
+        calId?: string
+        optional?: boolean
+      }[]
+    ) => void
   }
 }
 if (typeof window !== 'undefined') {
@@ -3562,8 +4679,63 @@ if (typeof window !== 'undefined') {
   window.__mewSay = (body, role = 'mew') => {
     useMew.setState((s) => ({ chat: [...s.chat, { id: uid(), role, body, ts: Date.now() }] }))
   }
+  window.__mewSayStream = async (chunks, gapMs) => {
+    const reply = streamedReply()
+    for (const c of chunks) {
+      reply.append(c)
+      await new Promise((r) => setTimeout(r, gapMs))
+    }
+  }
+  window.__mewSayTool = (verb, target, state = 'done') => {
+    useMew.setState((s) => ({
+      chat: [
+        ...s.chat,
+        {
+          id: uid(),
+          role: 'tool',
+          body: '',
+          ts: Date.now(),
+          tool: { name: 'scripted', verb, ...(target ? { target } : {}), state },
+        },
+      ],
+    }))
+  }
+  window.__mewSayScenarios = (scenarios, body) => {
+    const todayKey = dayKey(new Date(nowFn()))
+    const full: StoredScenario[] = scenarios.map((sc, i) => {
+      const t = sc.todayKey ?? todayKey
+      return {
+        id: sc.id ?? `scn-dev-${i + 1}`,
+        name: sc.name,
+        line: sc.line,
+        todayKey: t,
+        places: sc.places,
+        dayLoad:
+          sc.dayLoad ??
+          sc.places.reduce<Record<string, number>>((acc, p) => {
+            const key = addDaysKey(t, p.dayOffset)
+            acc[key] = (acc[key] ?? 0) + p.durationMin
+            return acc
+          }, {}),
+        ...(sc.picked ? { picked: true } : {}),
+      }
+    })
+    useMew.setState((s) => ({
+      chat: [
+        ...s.chat,
+        scenariosMsg(
+          body ??
+            `${spell(full.length)} ways this week could hold it — pick the one that feels right.`,
+          full
+        ),
+      ],
+    }))
+  }
   window.__mewSetTurn = (thinking, workingStatus = null) => {
     useMew.setState({ thinking, workingStatus })
+  }
+  window.__mewSetQueued = (text) => {
+    useMew.setState({ queuedSpeak: text })
   }
   window.__mewSetBrainSidecar = (status) => {
     useMew.setState({ brainSidecar: status })
@@ -3574,4 +4746,7 @@ if (typeof window !== 'undefined') {
   }
   window.__mewMemoryKinds = () =>
     useMew.getState().memory.map((e) => ({ kind: e.kind, dayKey: e.dayKey }))
+  window.__mewSimulatePull = (events) => {
+    useMew.getState().simulatePull(events)
+  }
 }

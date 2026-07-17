@@ -16,7 +16,7 @@ name: ci
 # app/ workflows so caching and versions stay consistent.
 on:
   pull_request:
-    branches: [develop, main]
+    branches: [develop, main, 'v*-rc']
     paths:
       - 'app/**'
       - '.github/workflows/ci.yml'

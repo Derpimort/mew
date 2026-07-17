@@ -64,6 +64,42 @@ describe('scheduler — candidateSlots (conflict-free enumeration)', () => {
   })
 })
 
+describe('scheduler — #302 meeting buffer flows through candidateSlots + scoreSlots', () => {
+  const meeting = mk({
+    title: 'Client sync',
+    startMin: 11 * 60,
+    endMin: 12 * 60,
+    external: { calId: 'work', eventId: 'ev1' },
+  })
+  const q = { title: 'deep work', tag: 'work' as const, durationMin: 60 }
+  const clearsMargin = (c: { startMin: number; endMin: number }) =>
+    c.endMin <= 11 * 60 - 15 || c.startMin >= 12 * 60 + 15 // outside the inflated [10:45,12:15]
+
+  it('candidateSlots buffer 0 reproduces the no-buffer candidates byte-for-byte', () => {
+    expect(candidateSlots([meeting], q, D, NOW, 0, undefined, 0)).toEqual(
+      candidateSlots([meeting], q, D, NOW, 0)
+    )
+  })
+
+  it('without a buffer a candidate abuts the meeting edge; with buffer 15 none does', () => {
+    const bare = candidateSlots([meeting], q, D, NOW, 0).filter((c) => c.dayKey === D)
+    expect(bare.some((c) => c.endMin === 11 * 60)).toBe(true) // 10:00–11:00 abuts the 11:00 start
+    const buffered = candidateSlots([meeting], q, D, NOW, 0, undefined, 15).filter(
+      (c) => c.dayKey === D
+    )
+    expect(buffered.length).toBeGreaterThan(0)
+    expect(buffered.every(clearsMargin)).toBe(true)
+  })
+
+  it('scoreSlots (the plan/suggest_slots path) inherits the buffer for every ranked slot', () => {
+    const ranked = scoreSlots([meeting], q, D, NOW, [], undefined, 0, undefined, 15).filter(
+      (c) => c.dayKey === D
+    )
+    expect(ranked.length).toBeGreaterThan(0)
+    expect(ranked.every(clearsMargin)).toBe(true)
+  })
+})
+
 describe('scheduler — scoreSlots (ranking)', () => {
   it('every ranked candidate is conflict-free (the hard gate holds through scoring)', () => {
     const blocks = [

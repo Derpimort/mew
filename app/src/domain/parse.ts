@@ -181,6 +181,14 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
     return { kind: 'remember', pref: parsePref(remM[1]) }
   }
 
+  /* "show insights" — a read-only ask: surface what the local memory already
+     computed (#287). The adapter renders the reply from the shared presenter;
+     the grammar only names the intent. Without this hook the bare word would
+     fall through to capture and become a task called "insights". */
+  if (/^(?:show\s+(?:me\s+)?(?:my\s+|the\s+)?)?insights[?.!\s]*$/.test(lower)) {
+    return { kind: 'insights' }
+  }
+
   /* clear / start over: "cleanup my calendar so I can restart and plan" */
   if (
     /\b(clear|clean\s*up|cleanup|wipe|reset|start (over|fresh|again)|restart)\b/.test(lower) &&
@@ -312,7 +320,11 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
       places.push({
         title,
         tag: inferTag(title),
-        dayOffset: day?.offset ?? 0,
+        /* unstated stays open (#293): a day the user never named must be
+           distinguishable from an explicit "today" — the plan-mode route only
+           fires on truly un-pinned items. Every consumer defaults absent to 0
+           (runIntent `?? 0`), so classic placement is byte-unchanged. */
+        dayOffset: day?.offset,
         startMin: time ?? part?.start,
         endMin: time != null || part == null ? undefined : part.end,
         durationMin: dur ?? (part && time == null ? part.end - part.start : undefined), // unstated stays open for duration prefs; place() still defaults 60

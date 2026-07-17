@@ -10,6 +10,7 @@
    slice 2 — see the ADR's impl plan. */
 import type { Block, PrefPayload, Tag } from './types'
 import { addDaysKey } from './time'
+import { mealAdjacencyPenalty, mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
 import { blocksForDay, DAY_END, DAY_START, freeWindows, isBackground } from './week'
 
 export type TimeWindow = 'morning' | 'afternoon' | 'evening'
@@ -47,7 +48,8 @@ const STEP = 30
 const MORNING_END = 12 * 60
 const AFTERNOON_END = 17 * 60
 
-function windowOf(startMin: number): TimeWindow {
+/** exported for the scenario engine's stated-window rule (#292) — one home for the band edges */
+export function windowOf(startMin: number): TimeWindow {
   if (startMin < MORNING_END) return 'morning'
   if (startMin < AFTERNOON_END) return 'afternoon'
   return 'evening'
@@ -69,14 +71,20 @@ export function candidateSlots(
   q: SlotQuery,
   todayKey: string,
   nowMin: number,
-  horizonDays = 7
+  horizonDays = 7,
+  /* #298: dinner's circadian window ends 20:30, past the working-day cap —
+     the meal seam widens the horizon; every other caller keeps DAY_END */
+  dayEndMin: number = DAY_END,
+  /* #302: forwarded to freeWindows so candidates keep MEW's meeting buffer;
+     default 0 ⇒ unchanged (the seam lives in freeWindows) */
+  bufferMin = 0
 ): { dayKey: string; startMin: number; endMin: number }[] {
   const out: { dayKey: string; startMin: number; endMin: number }[] = []
   const lastDay = q.due != null ? 0 : horizonDays // a same-day due confines to today
   for (let d = 0; d <= lastDay; d++) {
     const day = addDaysKey(todayKey, d)
     const from = d === 0 ? Math.max(DAY_START, nowMin) : DAY_START
-    for (const w of freeWindows(blocks, day, from, DAY_END)) {
+    for (const w of freeWindows(blocks, day, from, dayEndMin, bufferMin)) {
       const starts = new Set<number>()
       if (w.startMin + q.durationMin <= w.endMin) starts.add(w.startMin) // tight pack
       for (let s = Math.ceil(w.startMin / STEP) * STEP; s + q.durationMin <= w.endMin; s += STEP)
@@ -141,6 +149,33 @@ function timeOfDayScore(q: SlotQuery, startMin: number): number {
   return windowOf(startMin) === want ? 1 : 0.4
 }
 
+/* ── circadian meal anchors (#298) ────────────────────────────────────
+   A meal-titled query with no stated window anchors to its class windows
+   (domain/sustenance.ts) as a HARD preference: off-window candidates stay
+   listed — a packed day may force one, and the reply names the time — but
+   their total collapses to near-zero, so they are never silently preferred.
+   An explicit q.window means the user already said when: the seam stays out. */
+const MEAL_OFF_WINDOW = 0.05
+
+/** in-window = the whole meal fits inside one of its windows */
+function inMealWindow(
+  wins: readonly MealWindow[],
+  c: { startMin: number; endMin: number }
+): boolean {
+  return wins.some((w) => c.startMin >= w.startMin && c.endMin <= w.endMin)
+}
+
+/** off-window time-of-day fit fades with distance from the nearest window,
+    so a forced off-window pick still lands close to mealtime, not at 9:00 */
+function mealTimeScore(wins: readonly MealWindow[], startMin: number): number {
+  const dist = Math.min(
+    ...wins.map((w) =>
+      startMin < w.startMin ? w.startMin - startMin : Math.max(0, startMin - w.endMin)
+    )
+  )
+  return Math.max(0, 0.4 * (1 - dist / 240))
+}
+
 /** Rank the conflict-free candidate slots for an item. Pure, deterministic,
     keyless (`brainLines` is optional future enrichment, unused in the floor).
     Highest score first; ties broken by the earlier slot. */
@@ -151,16 +186,42 @@ export function scoreSlots(
   nowMin: number,
   prefs: PrefPayload[] = [],
   weights: ScoreWeights = DEFAULT_WEIGHTS,
-  horizonDays = 7
+  horizonDays = 7,
+  /* #299: the scaffold hands its Settings-tuned window as the meal seam's
+     base — a remembered pref still recenters it. Omitted (every other
+     caller) ⇒ the circadian defaults: byte-identical to before the param. */
+  mealBase?: readonly MealWindow[],
+  /* #302: forwarded through candidateSlots to freeWindows so ranked candidates
+     keep MEW's meeting buffer; default 0 ⇒ unchanged */
+  bufferMin = 0
 ): SlotCandidate[] {
-  return candidateSlots(blocks, q, todayKey, nowMin, horizonDays)
+  /* #298: meal anchoring engages only on a meal-classified title with the
+     `when` left open — a stated q.window outranks the class default, and a
+     non-meal query takes byte-identical scoring to before the seam. */
+  const meal = q.window == null ? mealClassOf(q.title) : null
+  const mealWins = meal ? mealWindowFor(meal, prefs, mealBase) : null
+  const dayEnd = mealWins ? Math.max(DAY_END, ...mealWins.map((w) => w.endMin)) : DAY_END
+  return candidateSlots(blocks, q, todayKey, nowMin, horizonDays, dayEnd, bufferMin)
     .map((c) => {
-      const tod = timeOfDayScore(q, c.startMin)
+      const inWin = mealWins ? inMealWindow(mealWins, c) : false
+      const tod = mealWins
+        ? inWin
+          ? 1
+          : mealTimeScore(mealWins, c.startMin)
+        : timeOfDayScore(q, c.startMin)
       const rest = restScore(blocks, c)
       const pref = prefScore(q, c.startMin, prefs)
-      const score = weights.timeOfDay * tod + weights.rest * rest + weights.preference * pref
+      let score = weights.timeOfDay * tod + weights.rest * rest + weights.preference * pref
       const reasons: string[] = []
-      if (tod >= 1) reasons.push(`${preferredWindow(q)} fit`)
+      if (meal && mealWins) {
+        const adj = mealAdjacencyPenalty(meal, c.startMin, blocksForDay(blocks, c.dayKey))
+        if (!inWin) score *= MEAL_OFF_WINDOW
+        score *= adj
+        reasons.push(inWin ? `${meal} window fit` : `outside the usual ${meal} window`)
+        if (adj < 1) reasons.push('close to another meal')
+      } else if (tod >= 1) {
+        reasons.push(`${preferredWindow(q)} fit`)
+      }
       if (pref >= 1) reasons.push('matches your rule')
       if (rest >= 1) reasons.push('breathing room')
       else if (rest < 0.6) reasons.push('back-to-back')

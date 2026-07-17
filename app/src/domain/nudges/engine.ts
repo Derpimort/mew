@@ -2,7 +2,7 @@
    Posting, quiet-hour queueing, and outcome logging live in the state layer;
    this file only decides *what is true right now*. */
 
-import type { Block, Capture, MemoryEvent, NudgeId, PrefPayload } from '../types'
+import type { Block, Capture, MemoryEvent, NudgeFiredMap, NudgeId, PrefPayload } from '../types'
 import type { MemoryAggregates } from '../memory'
 import { liveNow, type LiveNow } from '../liveNow'
 import {
@@ -25,11 +25,21 @@ import {
   overlaps,
   plannedDeepMin,
 } from '../week'
-import { addDaysKey, fromDayKey, weekKeys } from '../time'
+import { addDaysKey, fromDayKey, weekKey, weekKeys } from '../time'
+import { buildWrapDebrief, composeEveningWrap, composeMorningBrief } from './brief'
+import { composeWeeklyRitual } from './weekly'
 import { NUDGES, type NudgeCtx, type NudgeInstance } from './library'
 
+/* FiredKey (a NudgeId or a `rescue:` landing slot, #286) lives in types.ts
+   beside NudgeFiredMap so the persisted map and the engine agree on one key
+   domain; re-exported here where #286 first named it. */
+export type { FiredKey } from '../types'
+
 export interface EngineState {
-  lastFired: Partial<Record<NudgeId, { ts: number; key?: string }>>
+  /** Persisted through Settings.nudgeLastFired — a restart keeps the keys,
+      so once-per-day nudges (brief/wrap) cannot re-fire the same day.
+      Rescue slots (#286) ride the same map: deduped diff-side, TTL-swept. */
+  lastFired: NudgeFiredMap
   lastDriftBlockId: string | null
 }
 
@@ -48,6 +58,14 @@ export interface TickInputs {
   prefs?: PrefPayload[]
   /** Quiet hours, so close-the-loop can land in the wind-down before them. */
   quietStartMin?: number
+  /** Ritual times from Settings (#285), minutes from midnight. Absent ⇒ the
+      ritual stays silent — the same no-theater degradation captures/brainLinks
+      use. The store always passes both; only fixtures omit them. */
+  briefMin?: number
+  wrapMin?: number
+  /** The Sunday ritual's time (#304), minutes from midnight — same optional
+      no-theater degradation as briefMin/wrapMin. */
+  weeklyRitualMin?: number
   /** Unplaced intentions — next-up may offer one for a reclaimed gap. */
   captures?: Capture[]
   /** task→person edges from the brain (the store fetches; absent = brain off,
@@ -160,6 +178,7 @@ export function buildCtx(
   const tomorrow = addDaysKey(t.todayKey, 1)
   const events = t.events ?? []
   const insights = computeInsights(events, t.agg, new Date(t.nowMs))
+  const dowMon0 = (fromDayKey(t.todayKey).getDay() + 6) % 7
 
   /* drift candidates: a kept-but-still-contradicting rule sits in its
      stretched cooldown — it must not starve the drifted rules behind it.
@@ -285,18 +304,41 @@ export function buildCtx(
     captureProposal,
     justCleared: event?.justCleared ?? null,
     ...earlyFinish(t, event?.justCompleted ?? null),
+    /* the once-a-day rituals (#285): composed once the clock passes their
+       Settings time — late is honest, so a 14:00 launch still gets its brief.
+       The trigger's persisted-key check owns once-per-day; the quiet-hours
+       queue (state layer) owns delivery timing. */
+    morningBrief:
+      t.briefMin != null && t.nowMin >= t.briefMin
+        ? composeMorningBrief(t.blocks, t.todayKey, insights)
+        : null,
+    eveningWrap:
+      t.wrapMin != null && t.nowMin >= t.wrapMin
+        ? composeEveningWrap(buildWrapDebrief(t.blocks, events, t.todayKey), insights)
+        : null,
+    /* the weekly ritual (#304): Sunday only, once the clock passes its
+       Settings time — the coming Mon–Sun is what it invites shaping. The
+       trigger's persisted weekKey owns once-per-ISO-week; the quiet-hours
+       queue (state layer) owns delivery timing, exactly like the dailies. */
+    weeklyRitual:
+      t.weeklyRitualMin != null && dowMon0 === 6 && t.nowMin >= t.weeklyRitualMin
+        ? {
+            body: composeWeeklyRitual(t.blocks, t.todayKey, insights).body,
+            weekKey: weekKey(fromDayKey(t.todayKey)),
+          }
+        : null,
     insights,
     delegations: t.brainLinks?.length ? delegationCandidates(events, t.brainLinks, t.nowMs) : [],
     debriefLines: pastDayEnd ? dayDebrief(t.blocks, events, t.todayKey, t.agg, t.nowMin) : [],
     weekReview:
-      (fromDayKey(t.todayKey).getDay() + 6) % 7 === 0
+      dowMon0 === 0
         ? weekReview(
             events,
             weekKeys(fromDayKey(addDaysKey(t.todayKey, -7))),
             t.brainWeekLines ?? []
           )
         : null,
-    dowMon0: (fromDayKey(t.todayKey).getDay() + 6) % 7,
+    dowMon0,
     stalled,
     outcomeStats,
     lastFired: engine.lastFired,
@@ -377,7 +419,10 @@ const TICK_NUDGES: NudgeId[] = [
   'post-buffer',
   'close-loop',
   'debrief', // the open thread gets a plan first; the story follows next tick
+  'evening-wrap', // the wrap ritual closes the day, after the plan and the story
   'protect-rest',
+  'morning-brief', // the day's opener — ahead of the Monday shaping asks
+  'weekly-ritual', // Sunday's shaping invite — opens the coming week the way the brief opens the day
   'fresh-start',
   'delegate', // rides the same window, one tick behind the opener
   'right-size',

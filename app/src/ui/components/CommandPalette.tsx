@@ -149,9 +149,11 @@ export function CommandPalette() {
   const setPage = useMew((s) => s.setPage)
 
   /* which pane the next open lands on (Cmd+K → command, Cmd+Shift+F → search,
-     Cmd+Shift+C → capture). State, not a ref, so the render reads it safely;
-     the hotkey sets it just before opening, batched with the open flag. */
-  const [requestedMode, setRequestedMode] = useState<Mode>('command')
+     Cmd+Shift+C → capture) lives in the store: the tray's quick-capture route
+     (#283) opens the same overlay on the same flag, so hotkeys and remote
+     controls share one source of truth. Keying the surface by it below means
+     a NEW requested pane lands fresh even if the palette is already open. */
+  const requestedMode = useMew((s) => s.commandPaletteMode)
 
   /* ── global hotkeys (always listening, even while closed) ─────────── */
   useEffect(() => {
@@ -161,17 +163,14 @@ export function CommandPalette() {
       const k = e.key.toLowerCase()
       if (k === 'k' && !e.shiftKey) {
         e.preventDefault()
-        setRequestedMode('command')
         if (useMew.getState().commandPaletteOpen) closePalette()
-        else openPalette()
+        else openPalette('command')
       } else if (k === 'f' && e.shiftKey) {
         e.preventDefault()
-        setRequestedMode('search')
-        openPalette()
+        openPalette('search')
       } else if (k === 'c' && e.shiftKey) {
         e.preventDefault()
-        setRequestedMode('capture')
-        openPalette()
+        openPalette('capture')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -181,6 +180,7 @@ export function CommandPalette() {
   if (!open) return null
   return (
     <PaletteSurface
+      key={requestedMode}
       initialMode={requestedMode}
       onClose={closePalette}
       api={{ setPromptDraft, setView, setPage }}

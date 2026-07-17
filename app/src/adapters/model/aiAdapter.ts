@@ -13,14 +13,16 @@
    model, token ceiling, reasoning) read from the shared PROVIDER_CONTRACT
    (#149, #166). */
 
-import { streamText, tool, jsonSchema, isStepCount } from 'ai'
+import { streamText, smoothStream, tool, jsonSchema, isStepCount } from 'ai'
 import { createAnthropic } from '@ai-sdk/anthropic'
 import { createOpenAI } from '@ai-sdk/openai'
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
+import type { PlanMode } from '../../domain/types'
 import type { ChatTurn, ConverseChunk, ModelPort, ToolExecutor, WeekContext } from './types'
 import { contextBlock, MEW_VOICE } from './types'
-import { MEW_TOOLS, runTool } from './tools'
+import { mewTools, runTool } from './tools'
 import { PROVIDER_CONTRACT, anthropicThinking } from './contract'
+import { logger } from '../logger'
 
 export type RemoteProvider = 'anthropic' | 'openai'
 
@@ -28,7 +30,7 @@ export type RemoteProvider = 'anthropic' | 'openai'
     BYO key; Ollama is a keyless local server, so its credential IS the endpoint
     — the discriminated union keeps "which field authorizes this call" a
     compile-time fact instead of an overloaded string parameter. */
-export type AiAdapterSpec = { model: string; reasoning?: boolean } & (
+export type AiAdapterSpec = { model: string; reasoning?: boolean; planMode?: PlanMode } & (
   { provider: RemoteProvider; apiKey: string } | { provider: 'ollama'; baseUrl: string }
 )
 
@@ -41,6 +43,21 @@ const MAX_STEPS = 14
    Honest by construction: the SDK finishes the capped step's tool calls before
    stopping, so everything the message claims is saved really is. */
 const STEP_CAP_PAUSE = `\n(that's a full turn of changes — everything I placed is saved and your plan's intact, I just paused here so nothing's half-done. say "keep going" and I'll pick the plan up right where I left off.)`
+
+/* Anthropic's SSE deltas are chunky and network bursts drain the whole iterator
+   in one microtask sweep — React batches those paints into one, and a reply
+   reads as a paste (#281b). smoothStream re-chunks text word-by-word and yields
+   the event loop between words, so each delta gets its own paint. Pinned by
+   smoothing.test.ts against the installed SDK; the delay is smoothStream's own
+   default pacing, not a typewriter effect (that stays out of scope). */
+export const SMOOTHING = { delayInMs: 10, chunking: 'word' } as const
+
+/* The honest activity label for a silent thinking window (#281a): 5-family
+   models run adaptive thinking whether or not MEW requests it, so the stream
+   carries reasoning parts the fast path used to drop — the user watched bare
+   dots for the whole window. One MEW-voiced line, positive-only; it shows only
+   while reasoning parts are actually streaming (no fake shimmer — the law). */
+const THINKING_ACTIVITY: ConverseChunk = { activity: 'thinking it through…' }
 
 function buildModel(spec: AiAdapterSpec) {
   switch (spec.provider) {
@@ -96,9 +113,11 @@ export function createAiAdapter(spec: AiAdapterSpec): ModelPort {
       signal?: AbortSignal
     ): AsyncIterable<ConverseChunk> {
       /* MEW tools → SDK tools. `execute` runs in-browser and calls the store
-         executor (the ONLY mutation path); the SDK drives the multi-step loop. */
+         executor (the ONLY mutation path); the SDK drives the multi-step loop.
+         The registry is geared by Settings.planMode (#293): 'off' hides
+         propose_scenarios, 'always' lowers its offer floor to two items. */
       const tools = Object.fromEntries(
-        MEW_TOOLS.map((t) => [
+        mewTools(spec.planMode).map((t) => [
           t.name,
           tool({
             description: t.description,
@@ -114,6 +133,26 @@ export function createAiAdapter(spec: AiAdapterSpec): ModelPort {
       /* the last step's finish reason: 'tool-calls' at stream end means the
          step cap cut the loop while the model still wanted to act (#153). */
       let finishReason: string | null = null
+      /* dev-only latency attribution (#281): one debug line per turn — request
+         start → first stream part → first text delta — so pre-reply dead air
+         (the API side) and delta coalescing (the paint side) stay separable on
+         a live key, before and after any tuning. logger.debug is dev-gated, so
+         production consoles stay silent. */
+      const t0 = performance.now()
+      let firstPartMs: number | null = null
+      let firstTextSeen = false
+      const markPart = () => {
+        firstPartMs ??= Math.round(performance.now() - t0)
+      }
+      const markText = () => {
+        if (firstTextSeen) return
+        firstTextSeen = true
+        logger.debug('model/stream-timing', {
+          provider: spec.provider,
+          firstPartMs,
+          firstTextMs: Math.round(performance.now() - t0),
+        })
+      }
       const result = streamText({
         model: buildModel(spec),
         /* Anthropic prompt caching (#153): the frozen MEW_VOICE gets the cache
@@ -172,6 +211,10 @@ export function createAiAdapter(spec: AiAdapterSpec): ModelPort {
              a model 503s routinely: one blip should clear on a retry, not
              degrade the turn (#116 behavior, preserved). */
         maxRetries: spec.provider === 'ollama' ? 2 : 0,
+        /* word-granular deltas with the event loop yielded between words, so
+           every delta can paint (#281b). Applies to the one stream both loops
+           read; tool-loop parts pass through it untouched (smoothing.test.ts). */
+        experimental_transform: smoothStream(SMOOTHING),
         abortSignal: signal,
         onError: (e: { error: unknown }) => {
           streamErr = e.error
@@ -191,13 +234,44 @@ export function createAiAdapter(spec: AiAdapterSpec): ModelPort {
         if (finishReason === 'tool-calls') yield STEP_CAP_PAUSE
       }
 
+      /* A silent thinking window (#281a): a run of reasoning parts with nothing
+         visible streaming. The first part of a window yields ONE activity chunk
+         (deduped here — the store just shows the latest label); anything the
+         user can see or that acts (text, a tool call) closes the window, so a
+         later thinking stretch in the same turn may announce itself again. */
+      let inThinkingWindow = false
+      const thinkingWindowOpens = function* (): Generator<ConverseChunk> {
+        if (inThinkingWindow) return
+        inThinkingWindow = true
+        yield THINKING_ACTIVITY
+      }
+      const thinkingWindowCloses = () => {
+        inThinkingWindow = false
+      }
+
       if (!reasoningCfg) {
-        /* the reply-text path: yield deltas; reasoning parts can't occur here
-           (thinking was not requested), the rest is loop bookkeeping. */
+        /* the reply-text path: thinking was not REQUESTED, but adaptive models
+           (the 5-family default) think anyway and stream reasoning parts — the
+           switch used to drop them, leaving bare dots for the whole window
+           (#281a). Surface each window as one honest activity chunk; the reply
+           deltas and the loop bookkeeping are unchanged. */
         for await (const part of result.stream) {
+          markPart()
           switch (part.type) {
+            case 'reasoning-start':
+            case 'reasoning-delta':
+              yield* thinkingWindowOpens()
+              break
+            case 'reasoning-end':
+              thinkingWindowCloses()
+              break
             case 'text-delta':
+              thinkingWindowCloses()
+              markText()
               if (part.text) yield part.text
+              break
+            case 'tool-call':
+              thinkingWindowCloses()
               break
             case 'error':
               streamErr = part.error
@@ -227,20 +301,31 @@ export function createAiAdapter(spec: AiAdapterSpec): ModelPort {
       }
 
       for await (const part of result.stream) {
+        markPart()
         switch (part.type) {
+          case 'reasoning-start':
+            // the same honest activity as the fast path (#281a) — the note
+            // capture below is untouched, so the flush-once contract holds
+            yield* thinkingWindowOpens()
+            break
           case 'reasoning-delta':
+            yield* thinkingWindowOpens()
             reasoningBuf += part.text
             break
           case 'reasoning-end':
+            thinkingWindowCloses()
             yield* flushReasoning()
             break
           case 'text-delta':
             // first visible token: the plan is settled — emit it before the reply
+            thinkingWindowCloses()
+            markText()
             yield* flushReasoning()
             if (part.text) yield part.text
             break
           case 'tool-call':
             // a tool is about to run: the plan must be on the record first
+            thinkingWindowCloses()
             yield* flushReasoning()
             break
           case 'error':

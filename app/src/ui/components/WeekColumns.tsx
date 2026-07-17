@@ -17,11 +17,19 @@ import {
 } from '../../domain/time'
 import { blocksForDay, duration } from '../../domain/week'
 import { aggregates } from '../../domain/memory'
+import {
+  dayLoadAria,
+  dayLoadAssessment,
+  dayLoadLevel,
+  dayThroughputMin,
+} from '../../domain/insights'
 import { findHeavyDay } from '../../domain/nudges/engine'
 import { clockDeg, nxwY, rPolar, sector } from './dialGeometry'
 import { sidePlacement, type Rect } from './hoverPreview'
 import { layoutLanes } from './lanes'
 import { useGridDrag } from './useGridDrag'
+import { rovingFocusId } from './orbitGeometry'
+import { applyWeekKey, blockAriaLabel, weekFocusOrder, weekKeyIntent } from './weekKeys'
 import { BlockCard } from './BlockCard'
 
 const H = 560
@@ -64,6 +72,24 @@ export function WeekColumns() {
     () => findHeavyDay(blocks, todayKey, agg.realisticBestH),
     [blocks, todayKey, agg.realisticBestH]
   )
+
+  /* the day-load density tint (#301): each day still being planned, against
+     the user's demonstrated throughput — renders from local memory alone.
+     Under the data floor the map stays empty: no tint, no claims from noise.
+     The a11y label carries the hours the wash only hints at. */
+  const dayLoads = useMemo(() => {
+    const out = new Map<string, { level: 1 | 2 | 3; aria: string }>()
+    const throughput = dayThroughputMin(memory, agg, todayKey)
+    if (throughput == null) return out
+    for (const k of keys) {
+      if (k < todayKey) continue // lived days aren't being planned
+      const a = dayLoadAssessment(blocks, k, throughput)
+      if (!a) continue
+      const level = dayLoadLevel(a.plannedMin, a.throughputMin)
+      if (level) out.set(k, { level, aria: dayLoadAria(a) })
+    }
+    return out
+  }, [blocks, memory, agg, todayKey, keys])
 
   /* Clicking a block pins its interactive details in the footer dock — reserved
      space, so the pinned card never sits on top of other blocks. */
@@ -123,6 +149,39 @@ export function WeekColumns() {
      ghost + conflict glow — staying a thin skin. */
   const { drag, ghostBox, dragClash, bouncedId, gridRef, beginPress, consumeSuppressedClick } =
     useGridDrag(H, clearPreview)
+
+  /* keyboard-first week (#303 — the dial's #253 grammar on the grid): one
+     roving tab stop for all tiles, arrows walk them in visual order, Shift/Alt
+     chords nudge/resize through the SAME dragMove door the drop above uses.
+     All rules are pure (weekKeys.ts); this is just the wiring. */
+  const dragMove = useMew((s) => s.dragMove)
+  const [kbFocus, setKbFocus] = useState<string | null>(null)
+  /* what the polite live region reads after an attempt — a moved block says
+     where it landed; an immovable one says why it stays (never a silent no-op) */
+  const [announce, setAnnounce] = useState('')
+  const focusOrder = useMemo(() => weekFocusOrder(blocks, keys), [blocks, keys])
+  const rovingId = rovingFocusId(focusOrder, kbFocus, live.current?.id ?? null)
+  const blockRefs = useRef(new Map<string, HTMLDivElement>())
+  const focusBlock = (id: string | null) => {
+    if (!id) return
+    setKbFocus(id)
+    // next frame: a day-hopped tile remounts in its new column before rAF fires
+    requestAnimationFrame(() => {
+      const el = blockRefs.current.get(id)
+      if (el?.isConnected) el.focus()
+    })
+  }
+  const onBlockKeyDown = (b: Block) => (e: React.KeyboardEvent) => {
+    const intent = weekKeyIntent(e.key, { shift: e.shiftKey, alt: e.altKey })
+    if (!intent) return // unclaimed (Tab, characters, Alt+←/→…) — keep bubbling
+    e.preventDefault()
+    e.stopPropagation()
+    applyWeekKey(blocks, keys, b, intent, {
+      dragMove, // the store's drag door — keyboard commits get no second path
+      moveFocus: focusBlock,
+      announce: setAnnounce,
+    })
+  }
 
   const plannedH = useMemo(() => {
     const total = keys.reduce(
@@ -208,11 +267,15 @@ export function WeekColumns() {
         {keys.map((k) => {
           const isToday = k === todayKey
           const isSel = k === selectedKey
+          const load = dayLoads.get(k)
           return (
             <button
               type="button"
               key={k}
               className={'nxb-dl' + (isSel ? ' today' : '')}
+              /* the tint's meaning, spoken: day + the hours (#301). Absent
+                 when the column carries no tint — the visible text speaks. */
+              aria-label={load ? `${fmtDow(k)} ${fmtShortDate(k)} — ${load.aria}` : undefined}
               onClick={(e) => {
                 e.stopPropagation()
                 focusDay(isToday ? null : k)
@@ -231,6 +294,12 @@ export function WeekColumns() {
       <div
         ref={gridRef}
         className={drag ? 'wk-grid dragging' : 'wk-grid'}
+        /* role=application, like the dial (#253): a 2-D widget with its own
+           arrow-key model, so AT hands keystrokes to the grid instead of the
+           virtual cursor. The hint teaches the grammar once, on entry. */
+        role="application"
+        aria-label="week grid: the week's blocks, by day and hour"
+        aria-describedby="wk-hint"
         style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, position: 'relative' }}
         onMouseMove={(e) => {
           if (drag) return // a live drag owns the pointer; the scrubber steps aside
@@ -266,11 +335,17 @@ export function WeekColumns() {
             (b) => b.endMin,
             (b) => b.id
           )
+          const loadLevel = dayLoads.get(k)?.level
           return (
             <div
               key={k}
               data-daykey={k}
-              className={'nxb-col' + (isSel ? ' today' : '') + (isPast ? ' past' : '')}
+              className={
+                'nxb-col' +
+                (isSel ? ' today' : '') +
+                (isPast ? ' past' : '') +
+                (loadLevel ? ` wk-load${loadLevel}` : '')
+              }
               style={{ height: H }}
               onClick={(e) => {
                 if (!isSel) {
@@ -321,14 +396,23 @@ export function WeekColumns() {
                       width: `calc(${100 / lanes}% - ${lanes > 1 ? 6 : 8}px)`,
                       right: 'auto',
                     }}
-                    /* a keyboard-reachable block: Tab lands on it (DOM order is
-                       day-column then start-time, so the order reads left-to-right,
-                       top-to-bottom), Enter/Space opens its detail card — the same
-                       thing a click does. aria-label speaks the title + time so a
-                       screen reader gets what the visual block shows. */
+                    /* a keyboard-reachable block (#303): ONE roving tab stop for
+                       the whole grid — Tab lands on the live block (else the
+                       first in visual order), arrows walk the rest, Shift/Alt
+                       chords nudge/resize through the drag door. Enter/Space
+                       opens its detail card — the same thing a click does.
+                       aria-label speaks title, time, and nature (calendar/held)
+                       so a screen reader knows a fixed block before trying it. */
                     role="button"
-                    tabIndex={0}
-                    aria-label={`${b.title}, ${fmtTime(b.startMin)} to ${fmtTime(b.endMin)}${done ? ', done' : ''}`}
+                    tabIndex={rovingId === b.id ? 0 : -1}
+                    aria-label={blockAriaLabel(b)}
+                    ref={(el) => {
+                      // never let a day-hop's unmount(null) erase the remounted tile
+                      if (el) blockRefs.current.set(b.id, el)
+                      else if (!blockRefs.current.get(b.id)?.isConnected)
+                        blockRefs.current.delete(b.id)
+                    }}
+                    onFocus={() => setKbFocus(b.id)}
                     onMouseDown={(e) => {
                       if (e.button !== 0) return // left button only
                       beginPress(b, e)
@@ -346,7 +430,9 @@ export function WeekColumns() {
                         e.preventDefault()
                         e.stopPropagation()
                         openBlock()
+                        return
                       }
+                      onBlockKeyDown(b)(e)
                     }}
                   >
                     <div className={'t' + (isSel ? '' : ' small') + (tiny ? ' tiny' : '')}>
@@ -412,6 +498,17 @@ export function WeekColumns() {
             )
           })()}
       </div>
+
+      {/* the keyboard grammar, spoken once on grid entry (aria-describedby) */}
+      <span id="wk-hint" className="sr-only">
+        arrows move between blocks. shift with an arrow nudges a block 15 minutes, or a day left and
+        right. alt with up or down resizes it. enter opens its card.
+      </span>
+      {/* what a keyboard attempt did — where a block landed, or why it stays
+          (a calendar block announces itself; nothing is ever a silent no-op) */}
+      <span className="sr-only" role="status" aria-live="polite" data-wk-live>
+        {announce}
+      </span>
 
       {/* hover preview — read-only, beside the block, never over it. pointer-events
           none keeps every block underneath hoverable (preserves the dock's old

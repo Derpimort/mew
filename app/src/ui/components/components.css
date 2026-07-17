@@ -342,6 +342,156 @@
   line-height: 1.5;
 }
 
+/* Tool-call activity cards (#282): the receipt of one executor step — a quiet
+   machine line indented to the log's 34px text gutter, so it reads as MEW's
+   margin-talk between reply rows. Tokens only. */
+.tool-card {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-left: 34px;
+  color: var(--muted);
+}
+.tool-card .tool-glyph {
+  color: var(--faint);
+}
+/* the quiet MEW-voiced settle line under an error/interrupted card */
+.tool-card .tool-note {
+  display: block;
+  padding-left: 14px;
+}
+/* live shimmer, ONLY while running: a sheen of existing text tokens sweeping
+   the label. Decoration, never function — the running state is also carried
+   by the article label and the trailing ellipsis. */
+.tool-card .tool-run {
+  background: linear-gradient(90deg, var(--muted) 30%, var(--ink) 50%, var(--muted) 70%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: toolShimmer 1.8s linear infinite;
+}
+@keyframes toolShimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-card .tool-run {
+    animation: none;
+    background: none;
+    color: var(--muted);
+  }
+}
+/* >2 consecutive settled cards fold into "▸ n steps" — same machined details
+   pattern as the reasoning note, on the same gutter as the cards it holds. */
+.tool-steps {
+  margin-left: 34px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--faint);
+}
+.tool-steps > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.tool-steps > summary::-webkit-details-marker {
+  display: none;
+}
+.tool-steps > summary::before {
+  content: '▸ ';
+}
+.tool-steps[open] > summary::before {
+  content: '▾ ';
+}
+.tool-steps > summary:hover {
+  color: var(--muted);
+}
+.tool-steps > summary:focus-visible {
+  outline: 2px solid var(--ice);
+  outline-offset: 2px;
+}
+/* folded cards already sit on the fold's gutter — don't indent twice */
+.tool-steps .tool-card {
+  margin-left: 0;
+  padding-left: 14px;
+  border-left: 1px solid var(--line);
+}
+
+/* Plan mode's scenario picker (#293): compact mini-week cards on the log's
+   34px text gutter, tokens only. The strip is 7 day columns; each column's
+   density tint is a discrete class (l0–l3, item 12's cue) and the slivers
+   reuse the week grid's tag colors. Static by design — nothing here animates,
+   so reduced motion needs no override. */
+.scn-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 2px 34px;
+  max-width: 460px;
+}
+.scn-card {
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--bg);
+}
+.scn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.scn-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.scn-line {
+  font-size: 11px;
+  margin: 2px 0 7px;
+}
+.scn-strip {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 3px;
+  height: 44px;
+}
+.scn-day {
+  position: relative;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.scn-day.l0 {
+  box-shadow: inset 0 0 0 1px var(--line2);
+}
+.scn-day.l1 {
+  background: rgba(var(--acc-rgb), 0.07);
+}
+.scn-day.l2 {
+  background: rgba(var(--acc-rgb), 0.14);
+}
+.scn-day.l3 {
+  background: rgba(var(--acc-rgb), 0.22);
+}
+.scn-slv {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  border-radius: 2px;
+  background: var(--ice);
+}
+.scn-slv.private,
+.scn-slv.health {
+  background: var(--teal);
+}
+.scn-slv.rest {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--teal);
+}
+
 .session-compose {
   padding: 0 16px 16px;
   flex: none;
@@ -771,6 +921,22 @@
 }
 .nxb-col.past {
   opacity: 0.45;
+}
+/* the day-load density tint (#301): planned work vs the user's demonstrated
+   throughput, in the scenario strip's graded accent-wash grammar
+   (.scn-day.l1–l3) at half strength — these columns are 10× the surface, and
+   the meter is a kindness cue, never a red bar. Tokens only: the hue is the
+   pet accent (--acc-rgb). The selected column keeps its panel material (the
+   tint would fight the inset ring); its day header still speaks the hours.
+   Below the data floor no class lands, so a cold start claims nothing. */
+.nxb-col.wk-load1:not(.today) {
+  background: rgba(var(--acc-rgb), 0.05);
+}
+.nxb-col.wk-load2:not(.today) {
+  background: rgba(var(--acc-rgb), 0.09);
+}
+.nxb-col.wk-load3:not(.today) {
+  background: rgba(var(--acc-rgb), 0.14);
 }
 .nxb-dl {
   text-align: center;
@@ -1814,6 +1980,110 @@
   font-size: 10px;
   color: var(--faint);
 }
+
+/* ── onboarding v2 (#306) — the three guided steps after the tour ───── */
+/* Taller than the tour's art panel, so let the card scroll rather than the
+   page on short viewports. */
+.ob-card {
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.ob-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.ob-mini {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.ob-mini a {
+  color: var(--ice);
+  text-decoration: none;
+  border-bottom: 1px solid var(--ice-bd);
+}
+.ob-mini a:hover {
+  color: var(--gold);
+  border-bottom-color: var(--gold);
+}
+.ob-uris {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 1px 0 3px;
+}
+.ob-uri {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--panel2);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.ob-uri code {
+  font-size: 11px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ob-copy {
+  flex: none;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--faint);
+  padding: 2px 6px;
+  border-radius: 6px;
+  transition: color 0.16s ease;
+}
+.ob-copy:hover {
+  color: var(--gold);
+}
+.ob-clientid {
+  display: inline-flex;
+  margin-top: 1px;
+}
+.ob-clientid input {
+  width: 100%;
+}
+.ob-dump {
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 11px;
+  resize: vertical;
+  outline: none;
+}
+.ob-dump:focus {
+  border-color: var(--ice-bd);
+}
+.ob-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--line2);
+}
+.ob-later {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--faint);
+  text-align: left;
+  transition: color 0.16s ease;
+}
+.ob-later:hover {
+  color: var(--gold);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .aks-backdrop {
     backdrop-filter: none;

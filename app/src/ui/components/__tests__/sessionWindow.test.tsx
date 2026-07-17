@@ -240,3 +240,154 @@ describe('#250 phase 2 — the sentinel reaches past memory into storage', () =>
     expect(html).toContain('aria-label="show 20 earlier messages"')
   })
 })
+
+/* ── #282 — tool cards ride the window like any row, and settled runs fold ── */
+
+import { FOLD_OVER, collapseToolRuns, isSettledToolCard } from '../toolSteps'
+import type { ToolCardState } from '../../../domain/types'
+
+const toolMsg = (i: number, ts: number, state: ToolCardState): ChatMessage => ({
+  id: `t${String(i).padStart(4, '0')}`,
+  role: 'tool',
+  body: '',
+  ts,
+  tool: { name: 'plan', verb: 'placing blocks', target: `step ${i}`, state },
+})
+
+describe('#282 — the collapse rule (pure)', () => {
+  const at = (i: number) => MOUNT - 1000 + i // any ordered ts
+
+  it('settled means a terminal state; running never counts', () => {
+    expect(isSettledToolCard(toolMsg(1, at(1), 'done'))).toBe(true)
+    expect(isSettledToolCard(toolMsg(2, at(2), 'error'))).toBe(true)
+    expect(isSettledToolCard(toolMsg(3, at(3), 'interrupted'))).toBe(true)
+    expect(isSettledToolCard(toolMsg(4, at(4), 'running'))).toBe(false)
+    expect(isSettledToolCard(msg(5, at(5)))).toBe(false) // a plain row never folds
+  })
+
+  it(`runs of more than ${FOLD_OVER} consecutive settled cards fold; shorter runs pass through`, () => {
+    const two = [toolMsg(0, at(0), 'done'), toolMsg(1, at(1), 'done')]
+    expect(collapseToolRuns(two).every((x) => x.kind === 'msg')).toBe(true)
+
+    const three = [...two, toolMsg(2, at(2), 'error')]
+    const folded = collapseToolRuns(three)
+    expect(folded).toHaveLength(1)
+    expect(folded[0]).toMatchObject({ kind: 'steps', idx: 0 })
+    expect((folded[0] as { msgs: ChatMessage[] }).msgs).toHaveLength(3)
+  })
+
+  it('a running card breaks the run and stays its own row', () => {
+    const items = collapseToolRuns([
+      toolMsg(0, at(0), 'done'),
+      toolMsg(1, at(1), 'done'),
+      toolMsg(2, at(2), 'running'),
+      toolMsg(3, at(3), 'done'),
+    ])
+    // 2 settled ≤ FOLD_OVER pass through, running passes through, trailing settled passes through
+    expect(items.map((x) => x.kind)).toEqual(['msg', 'msg', 'msg', 'msg'])
+  })
+
+  it('keeps source indices so the window can address rows chat-globally', () => {
+    const items = collapseToolRuns([
+      msg(0, at(0)),
+      toolMsg(1, at(1), 'done'),
+      toolMsg(2, at(2), 'done'),
+      toolMsg(3, at(3), 'done'),
+      msg(4, at(4)),
+    ])
+    expect(items.map((x) => [x.kind, x.idx])).toEqual([
+      ['msg', 0],
+      ['steps', 1],
+      ['msg', 4],
+    ])
+  })
+
+  it('is pure: the input array is untouched', () => {
+    const input = [toolMsg(0, at(0), 'done'), toolMsg(1, at(1), 'done'), toolMsg(2, at(2), 'done')]
+    const before = [...input]
+    collapseToolRuns(input)
+    expect(input).toEqual(before)
+  })
+})
+
+describe('#282 — cards in the rendered window', () => {
+  it('cards page like any row: a long history with card runs still mounts exactly PAGE articles', () => {
+    /* windowing is role-blind (ts-ordered prefix math) and folding keeps every
+       card's article — inside the <details> — so the article count is stable */
+    const chat = Array.from({ length: 200 }, (_, i) =>
+      i % 10 < 3 ? toolMsg(i, MOUNT - (200 - i) * 1000, 'done') : msg(i, MOUNT - (200 - i) * 1000)
+    )
+    const html = renderToStaticMarkup(
+      <SessionWindow chat={chat} pages={1} mountedAt={MOUNT} thinking={false} />
+    )
+    expect(count(html, 'role="article"')).toBe(PAGE)
+    expect(html).toContain('· earlier ·')
+    expect(count(html, '<details class="tool-steps">')).toBeGreaterThan(0) // runs of 3 folded
+  })
+
+  it('>2 consecutive settled history cards render as ONE expandable "n steps" fold holding its articles', () => {
+    const chat = [
+      msg(0, MOUNT - 5000),
+      toolMsg(1, MOUNT - 4000, 'done'),
+      toolMsg(2, MOUNT - 3000, 'done'),
+      toolMsg(3, MOUNT - 2000, 'error'),
+      msg(4, MOUNT - 1000),
+    ]
+    const html = renderToStaticMarkup(
+      <SessionWindow chat={chat} pages={1} mountedAt={MOUNT} thinking={false} />
+    )
+    expect(count(html, '<details class="tool-steps">')).toBe(1)
+    expect(html).toContain('<summary>3 steps</summary>')
+    // the fold holds its three card articles (expandable in place)
+    expect(count(html, 'role="article"')).toBe(5)
+    expect(count(html, 'class="tool-card"')).toBe(3)
+  })
+
+  it('two settled + one running stay individual cards — no fold, the shimmer stays visible', () => {
+    const chat = [
+      toolMsg(1, MOUNT + 1000, 'done'),
+      toolMsg(2, MOUNT + 2000, 'done'),
+      toolMsg(3, MOUNT + 3000, 'running'),
+    ]
+    const html = renderToStaticMarkup(
+      <SessionWindow chat={chat} pages={1} mountedAt={MOUNT} thinking={false} />
+    )
+    expect(html).not.toContain('tool-steps')
+    expect(count(html, 'class="tool-card"')).toBe(3)
+    expect(count(html, 'tool-run')).toBe(1) // exactly the running card shimmers
+  })
+
+  it('history cards sit inside the aria-live=off group and never animate or shimmer', () => {
+    const chat = [toolMsg(1, MOUNT - 2000, 'interrupted')]
+    const html = renderToStaticMarkup(
+      <SessionWindow chat={chat} pages={1} mountedAt={MOUNT} thinking={false} />
+    )
+    const off = html.indexOf('aria-live="off"')
+    expect(off).toBeGreaterThan(-1)
+    expect(html.indexOf('tool-card')).toBeGreaterThan(off)
+    expect(html).not.toContain('tool-run') // interrupted replays quiet, no shimmer
+    expect(html).not.toContain('opacity:0') // no entrance for history (motion initial)
+  })
+
+  it('a fresh card is a direct child of the polite region — announced like any landed row', () => {
+    const chat = [toolMsg(1, MOUNT + 1000, 'running')]
+    const html = renderToStaticMarkup(
+      <SessionWindow chat={chat} pages={1} mountedAt={MOUNT} thinking={false} />
+    )
+    // it renders, and NOT inside the silent history group (which is empty here)
+    expect(html).toContain('class="tool-card"')
+    const off = html.indexOf('aria-live="off"')
+    const offEnd = html.indexOf('</div>', off)
+    expect(html.indexOf('tool-card')).toBeGreaterThan(offEnd)
+  })
+
+  it('a card settling at the tail is a chunk-shaped update: the window holds, liveTail hands the row its settled self', () => {
+    const running = toolMsg(9, MOUNT + 1000, 'running')
+    const settled = { ...running, tool: { ...running.tool!, state: 'done' as const } }
+    const head = msg(0, MOUNT + 500)
+    const before: ChatMessage[] = [head, running]
+    const after: ChatMessage[] = [head, settled]
+    expect(chatEqualExceptLiveTail(before, after)).toBe(true) // the list never re-renders
+    expect(liveTail(after, running.id)).toBe(settled) // the card row repaints itself
+  })
+})

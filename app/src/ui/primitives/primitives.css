@@ -578,11 +578,28 @@
   color: var(--faint);
   opacity: 1;
 }
-/* disabled while MEW is mewing: inert, but the draft stays legible */
-.prompt-row textarea:disabled {
+/* the parked message (#280) — the composer never locks: a thought sent
+   mid-turn queues here, above the hints, until the turn settles. Same
+   terminal grammar as the prompt row, quieter voice. */
+.prompt-queued {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 14px 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
   color: var(--muted);
-  cursor: default;
-  -webkit-text-fill-color: var(--muted);
+}
+.prompt-queued .q-label {
+  color: var(--ice);
+  font-weight: 600;
+}
+.prompt-queued .q-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .prompt-hints {
   display: flex;

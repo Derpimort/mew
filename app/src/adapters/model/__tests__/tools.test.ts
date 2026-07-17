@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { MEW_TOOLS, runTool } from '../tools'
+import { MEW_TOOLS, mewTools, runTool } from '../tools'
 import type { ToolExecutor } from '../types'
 
 /* The suggest_slots tool (#80, slice 2): schema registration + the runTool
@@ -117,5 +117,70 @@ describe('undo_last_action tool', () => {
     const out = await runTool('undo_last_action', { query: 'gym', count: 3 }, exec)
     expect(undoLast).toHaveBeenCalledWith()
     expect(out).toMatch(/nothing to undo/i)
+  })
+})
+
+/* propose_scenarios (#293): the plan-mode tool — schema registration, the
+   runTool sanitize pass, and the mewTools planMode gear that re-advertises
+   the registry per Settings without touching the executor. */
+describe('propose_scenarios tool (#293)', () => {
+  it('is registered chat-only with tasks required (title + tag per task)', () => {
+    const tool = MEW_TOOLS.find((t) => t.name === 'propose_scenarios')
+    expect(tool).toBeDefined()
+    expect(tool!.description).toMatch(/INSTEAD of plan_blocks/)
+    expect(tool!.description).toMatch(/END your turn/)
+    const params = tool!.parameters as {
+      required: string[]
+      properties: { tasks: { items: { required: string[] } } }
+    }
+    expect(params.required).toEqual(['tasks'])
+    expect(params.properties.tasks.items.required).toEqual(['title', 'tag'])
+  })
+
+  it('sanitizes loose args: trims, defaults tags, clamps durations, drops junk', async () => {
+    const proposeScenarios = vi.fn(() => 'ok')
+    const exec = { proposeScenarios } as unknown as ToolExecutor
+    await runTool(
+      'propose_scenarios',
+      {
+        prompt: '  three ways ',
+        tasks: [
+          { title: ' deck ', tag: 'work', durationMin: 9999, window: 'morning' },
+          { title: 'gym', tag: 'bogus', dueMin: 780 },
+          { title: '', tag: 'work' }, // dropped: empty title
+          null,
+        ],
+      },
+      exec
+    )
+    const [prompt, tasks] = proposeScenarios.mock.calls[0] as unknown as [
+      string,
+      { title: string }[],
+    ]
+    expect(prompt).toBe('three ways')
+    expect(tasks).toEqual([
+      { title: 'deck', tag: 'work', durationMin: 600, due: undefined, window: 'morning' },
+      { title: 'gym', tag: 'work', durationMin: undefined, due: 780, window: undefined },
+    ])
+  })
+
+  it('an empty call never reaches the executor', async () => {
+    const proposeScenarios = vi.fn(() => 'ok')
+    const exec = { proposeScenarios } as unknown as ToolExecutor
+    const out = await runTool('propose_scenarios', { tasks: [] }, exec)
+    expect(proposeScenarios).not.toHaveBeenCalled()
+    expect(out).toMatch(/nothing to propose/)
+  })
+
+  it("mewTools gears the registry: 'off' drops the tool, 'always' lowers the floor to two", () => {
+    expect(mewTools('off').some((t) => t.name === 'propose_scenarios')).toBe(false)
+    expect(mewTools('off').length).toBe(MEW_TOOLS.length - 1)
+    const always = mewTools('always').find((t) => t.name === 'propose_scenarios')!
+    expect(always.description).toMatch(/two or more separate plannable items/)
+    // 'auto' (the default) IS the registry, three-item floor
+    expect(mewTools()).toBe(MEW_TOOLS)
+    expect(mewTools('auto').find((t) => t.name === 'propose_scenarios')!.description).toMatch(
+      /three or more separate plannable items/
+    )
   })
 })

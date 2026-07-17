@@ -58,6 +58,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
       apiKey: 'sk-ant-x',
       model: 'claude-custom-9',
       reasoning: false,
+      planMode: 'auto',
     })
   })
 
@@ -72,6 +73,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
       apiKey: 'sk-ant-x',
       model: 'claude-sonnet-5',
       reasoning: false,
+      planMode: 'auto',
     })
   })
 
@@ -87,6 +89,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
       apiKey: 'sk-x',
       model: 'gpt-test-9',
       reasoning: false,
+      planMode: 'auto',
     })
   })
 
@@ -101,6 +104,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
       apiKey: 'sk-x',
       model: 'gpt-5.4-mini',
       reasoning: false,
+      planMode: 'auto',
     })
   })
 
@@ -119,6 +123,7 @@ describe('selectAdapters threads the chosen model to the unified adapter', () =>
       apiKey: 'sk-ant-x',
       model: 'claude-sonnet-5',
       reasoning: true,
+      planMode: 'auto',
     })
   })
 })
@@ -140,6 +145,7 @@ describe('Ollama routes through the same unified adapter (#152)', () => {
       baseUrl: 'http://box.local:11434',
       model: 'qwen3',
       reasoning: false,
+      planMode: 'auto',
     })
   })
 
@@ -151,6 +157,7 @@ describe('Ollama routes through the same unified adapter (#152)', () => {
       baseUrl: DEFAULT_SETTINGS.ollamaUrl,
       model: 'llama3.2',
       reasoning: false,
+      planMode: 'auto',
     })
   })
 })

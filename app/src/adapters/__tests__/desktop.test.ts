@@ -2,7 +2,7 @@
    tests; the Tauri runtime is faked at the window.__TAURI__ seam exactly as
    the shell (withGlobalTauri) provides it. */
 
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   OAUTH_PORTS,
   applyUpdate,
@@ -14,9 +14,13 @@ import {
   latestBackupDate,
   oauthLoopback,
   onBrainEndpoint,
+  onShellTick,
+  onTrayAction,
   onUpdateReady,
   readBackup,
   registerCloseFlush,
+  setCaptureHotkey,
+  updateTray,
   writeBackup,
 } from '../desktop'
 
@@ -161,7 +165,7 @@ describe('desktop adapter', () => {
     expect(await latestBackupDate()).toBe('2026-06-02')
   })
 
-  it('close flush: dirty close is intercepted, flushed once, then released', async () => {
+  it('close flush under hide-to-tray (#283): every close is claimed, a dirty backup flushes, nothing is destroyed', async () => {
     const shell = fakeShell()
     vi.stubGlobal('window', shell.win)
     let dirty = true
@@ -173,14 +177,18 @@ describe('desktop adapter', () => {
     expect(shell.closeHandlers).toHaveLength(1)
     let prevented = false
     await shell.closeHandlers[0]({ preventDefault: () => (prevented = true) })
+    await Promise.resolve() // the flush is fire-and-forget — let it land
     expect(prevented).toBe(true)
     expect(flush).toHaveBeenCalledOnce()
-    expect(shell.isDestroyed()).toBe(true)
-    /* clean close sails through */
+    /* the shell hid the window; destroying it here would undo hide-to-tray */
+    expect(shell.isDestroyed()).toBe(false)
+    /* a clean close is STILL claimed — an unclaimed close makes the guest
+       wrapper destroy the window the shell just hid — but flushes nothing */
     prevented = false
     await shell.closeHandlers[0]({ preventDefault: () => (prevented = true) })
-    expect(prevented).toBe(false)
+    expect(prevented).toBe(true)
     expect(flush).toHaveBeenCalledOnce()
+    expect(shell.isDestroyed()).toBe(false)
   })
 })
 
@@ -207,8 +215,36 @@ describe('oauthLoopback', () => {
     emit({ payload: `http://localhost:${OAUTH_PORTS[0]}/?access_token=tok123&expires_in=3599` })
     await expect(p).resolves.toContain('access_token=tok123')
     await settle()
-    expect(shell.invokes.map((i) => i.cmd)).toEqual(['plugin:oauth|start', 'plugin:oauth|cancel'])
+    expect(shell.invokes.map((i) => i.cmd)).toEqual([
+      'plugin:oauth|start',
+      'focus_main_window',
+      'plugin:oauth|cancel',
+    ])
     expect(shell.listeners.size).toBe(0) // unlistened after settling
+  })
+
+  it('raises MEW exactly once when the redirect lands, even on duplicate hits', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const p = oauthLoopback(() => 'https://accounts.google.com/x')
+    await settle()
+    const emit = shell.listeners.get('oauth://url')!
+    emit({ payload: `http://localhost:${OAUTH_PORTS[0]}/?access_token=tok` })
+    emit({ payload: `http://localhost:${OAUTH_PORTS[0]}/?access_token=tok` })
+    await p
+    await settle()
+    expect(shell.invokes.filter((i) => i.cmd === 'focus_main_window')).toHaveLength(1)
+  })
+
+  it('raises MEW on an error-carrying redirect too — the human is done either way', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const p = oauthLoopback(() => 'https://accounts.google.com/x')
+    await settle()
+    shell.listeners.get('oauth://url')!({ payload: 'http://localhost/?error=access_denied' })
+    await expect(p).resolves.toContain('error=access_denied')
+    await settle()
+    expect(shell.invokes.filter((i) => i.cmd === 'focus_main_window')).toHaveLength(1)
   })
 
   it('starts the listener on the fixed candidate ports (exact-match redirect URIs)', async () => {
@@ -232,9 +268,103 @@ describe('oauthLoopback', () => {
       await vi.advanceTimersByTimeAsync(121_000)
       await rejection
       expect(shell.invokes.map((i) => i.cmd)).toContain('plugin:oauth|cancel')
+      /* nobody came back — a timeout must not yank the window forward */
+      expect(shell.invokes.map((i) => i.cmd)).not.toContain('focus_main_window')
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('oauth landing page', () => {
+  const settle = () => new Promise<void>((r) => setTimeout(r, 0))
+
+  /* the page ships only as the response string inside plugin:oauth|start —
+     capture it through that seam instead of exporting the constant */
+  let html = ''
+  beforeAll(async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const p = oauthLoopback(() => 'https://accounts.google.com/x')
+    await settle()
+    const start = shell.invokes.find((i) => i.cmd === 'plugin:oauth|start')!
+    shell.listeners.get('oauth://url')!({ payload: 'http://localhost/?access_token=t' })
+    await p
+    html = (start.args!.config as { response: string }).response
+  })
+
+  /* drive the page's inline script with hand fakes (no jsdom in this suite);
+     the forward fetch settles only when the test says so */
+  function runPage(loc: { hash?: string; search?: string }) {
+    const els: Record<string, { textContent: string; style: Record<string, string> }> = {
+      m: { textContent: /id="m">([^<]*)</.exec(html)![1], style: {} },
+      p: { textContent: '', style: { display: 'none' } },
+    }
+    const fetched: string[] = []
+    let settleForward: (() => void) | undefined
+    const timers: { fn: () => void; ms: number }[] = []
+    let closes = 0
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)![1]
+    new Function('location', 'document', 'fetch', 'setTimeout', 'window', script)(
+      { hash: loc.hash ?? '', search: loc.search ?? '' },
+      { getElementById: (id: string) => els[id] },
+      (url: string) => {
+        fetched.push(url)
+        return { finally: (cb: () => void) => (settleForward = cb) }
+      },
+      (fn: () => void, ms: number) => timers.push({ fn, ms }),
+      { close: () => closes++ }
+    )
+    return { els, fetched, timers, forward: () => settleForward!(), closes: () => closes }
+  }
+
+  it('is MEW-voiced, fully inline: prompt grammar, both outcome lines, zero external URLs', () => {
+    expect(html).not.toMatch(/https?:\/\//)
+    expect(html).toMatch(/>mew<\/span> <span[^>]*>❯</)
+    expect(html).toContain('#060708')
+    expect(html).toContain('JetBrains Mono')
+    expect(html).toContain('finishing sign-in…')
+    expect(html).toContain('✓ connected — you can close this tab')
+    expect(html).toContain('the key went straight to MEW on this device — this tab holds nothing')
+    expect(html).toContain("that didn't go through — head back to MEW and try again")
+    expect(html).toContain('window.close()')
+  })
+
+  it('token fragment: forwards it, then shows ✓ + privacy line and schedules the close', () => {
+    const page = runPage({ hash: '#access_token=tok123&expires_in=3599' })
+    expect(page.fetched).toEqual(['/?access_token=tok123&expires_in=3599'])
+    expect(page.els.m.textContent).toBe('finishing sign-in…') // pending until the forward settles
+    page.forward()
+    expect(page.els.m.textContent).toBe('✓ connected — you can close this tab')
+    expect(page.els.p.style.display).toBe('block')
+    expect(page.timers.map((t) => t.ms)).toEqual([400])
+    expect(page.closes()).toBe(0)
+    page.timers[0].fn()
+    expect(page.closes()).toBe(1)
+  })
+
+  it('error fragment: still forwards (the app-side flow must settle) but never claims success', () => {
+    const page = runPage({ hash: '#error=access_denied' })
+    expect(page.fetched).toEqual(['/?error=access_denied'])
+    page.forward()
+    expect(page.els.m.textContent).toBe("that didn't go through — head back to MEW and try again")
+    expect(page.els.m.textContent).not.toContain('connected')
+    expect(page.els.p.style.display).toBe('none') // privacy line stays gated behind success
+    expect(page.timers).toHaveLength(0) // no auto-close on a failed run
+  })
+
+  it('error in the query (no fragment): error copy with nothing left to forward', () => {
+    const page = runPage({ search: '?error=access_denied' })
+    expect(page.fetched).toHaveLength(0)
+    expect(page.els.m.textContent).toBe("that didn't go through — head back to MEW and try again")
+    expect(page.timers).toHaveLength(0)
+  })
+
+  it('a bare hit claims nothing: no response arrived, so no success line', () => {
+    const page = runPage({})
+    expect(page.fetched).toHaveLength(0)
+    expect(page.els.m.textContent).toBe('finishing sign-in…')
+    expect(page.timers).toHaveLength(0)
   })
 })
 
@@ -312,6 +442,100 @@ describe('window focus bridge', () => {
     vi.stubGlobal('window', shell.win)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     await expect(focusMainWindow()).resolves.toBeUndefined()
+    warn.mockRestore()
+  })
+})
+
+describe('tray bridge (#283)', () => {
+  const settle = () => new Promise<void>((r) => setTimeout(r, 0))
+
+  it('is inert outside the shell: listeners no-op, updateTray resolves to nothing', async () => {
+    vi.stubGlobal('window', {})
+    expect(() => onShellTick(() => {})).not.toThrow()
+    expect(() => onTrayAction(() => {})).not.toThrow()
+    await expect(updateTray('focus', 'anything')).resolves.toBeUndefined()
+  })
+
+  it('onShellTick fires the callback once per metronome beat', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    let beats = 0
+    onShellTick(() => beats++)
+    await settle()
+    const emit = shell.listeners.get('mew://tick')!
+    emit({ payload: null })
+    emit({ payload: null })
+    expect(beats).toBe(2)
+  })
+
+  it('onTrayAction forwards the shell payload verbatim', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    const seen: string[] = []
+    onTrayAction((a) => seen.push(a))
+    await settle()
+    const emit = shell.listeners.get('mew://tray')!
+    emit({ payload: 'start-next' })
+    emit({ payload: 'done' })
+    emit({ payload: 'quick-capture' })
+    emit({ payload: 'open' })
+    expect(seen).toEqual(['start-next', 'done', 'quick-capture', 'open'])
+  })
+
+  it('updateTray hands the dot + tooltip to the shell command', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    await updateTray('rest', 'Rest — 12 min left')
+    expect(shell.invokes).toContainEqual({
+      cmd: 'update_tray',
+      args: { state: 'rest', tooltip: 'Rest — 12 min left' },
+    })
+  })
+
+  it('a refusing shell is swallowed — tray chrome must never break the week', async () => {
+    const shell = fakeShell()
+    shell.win.__TAURI__.core.invoke = async () => {
+      throw new Error('no tray on this session')
+    }
+    vi.stubGlobal('window', shell.win)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await expect(updateTray('idle', 'nothing scheduled — all yours')).resolves.toBeUndefined()
+    warn.mockRestore()
+  })
+})
+
+describe('global capture hotkey (#284)', () => {
+  it('is a cheerful no-op off the shell — the in-app hotkey carries capture there', async () => {
+    vi.stubGlobal('window', {})
+    await expect(setCaptureHotkey('CmdOrCtrl+Shift+C')).resolves.toBe(true)
+    await expect(setCaptureHotkey(null)).resolves.toBe(true)
+  })
+
+  it('hands the accelerator to the shell command and resolves true', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    await expect(setCaptureHotkey('CmdOrCtrl+Shift+C')).resolves.toBe(true)
+    expect(shell.invokes).toContainEqual({
+      cmd: 'set_capture_hotkey',
+      args: { accel: 'CmdOrCtrl+Shift+C' },
+    })
+  })
+
+  it('null rides the same command — disable is an explicit release, not an omission', async () => {
+    const shell = fakeShell()
+    vi.stubGlobal('window', shell.win)
+    await expect(setCaptureHotkey(null)).resolves.toBe(true)
+    expect(shell.invokes).toContainEqual({ cmd: 'set_capture_hotkey', args: { accel: null } })
+  })
+
+  it('a refusing shell resolves false, never throws — collision is a state, not an error', async () => {
+    const shell = fakeShell()
+    shell.win.__TAURI__.core.invoke = async () => {
+      throw new Error('HotKey already registered')
+    }
+    vi.stubGlobal('window', shell.win)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await expect(setCaptureHotkey('CmdOrCtrl+Shift+C')).resolves.toBe(false)
     warn.mockRestore()
   })
 })

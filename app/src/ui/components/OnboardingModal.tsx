@@ -1,8 +1,12 @@
-/* First-run concept tour (#160) — three skippable steps that teach MEW's
-   mental model before the week can frustrate: Focus shows the now, Week shows
-   the shape, Talk changes either. Rendered post-hydration by MainPage only
-   while Settings.hasSeenOnboarding is false; skip / complete / close all set
-   the flag and persist, and it never returns (learn-in-context after).
+/* First-run onboarding (#160 tour + #306 guided steps) — the shell every new
+   user meets. It opens on the concept tour: three skippable steps that teach
+   MEW's mental model before the week can frustrate (Focus shows the now, Week
+   shows the shape, Talk changes either). Then #306 adds three guided steps —
+   keys, calendar, plan today — that walk the release's own features. Rendered
+   post-hydration by MainPage only while Settings.hasSeenOnboarding is false;
+   skip-all / completing the last step / closing all set the flag and persist,
+   and it never returns (learn-in-context after). The store's onboardingStep
+   cursor says which panel shows; this component just routes.
 
    Illustrations are inline SVG in the live pet palette — no GIF, no remote
    asset, nothing for the CSP to block. Voice stays positive: this is an
@@ -12,6 +16,7 @@ import { useEffect, useId, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { useMew } from '../../state/store'
 import { Button } from '../primitives'
+import { OnboardingKeysStep, OnboardingCalendarStep, OnboardingPlanStep } from './OnboardingSteps'
 
 interface Step {
   key: string
@@ -215,11 +220,19 @@ const STEPS: Step[] = [
   },
 ]
 
-export function OnboardingModal() {
-  const dismiss = useMew((s) => s.dismissOnboarding)
+/* The #160 concept tour, as a self-contained carousel. On finishing the last
+   step it calls onFinish (the store's advanceOnboarding), which hands off to
+   the first guided step — "Start" no longer ends onboarding, it begins it. */
+function TourCarousel({
+  onFinish,
+  titleId,
+  bodyId,
+}: {
+  onFinish: () => void
+  titleId: string
+  bodyId: string
+}) {
   const [i, setI] = useState(0)
-  const titleId = useId()
-  const bodyId = useId()
   const primaryRef = useRef<HTMLButtonElement>(null)
 
   const step = STEPS[i]
@@ -227,12 +240,67 @@ export function OnboardingModal() {
   const last = i === STEPS.length - 1
 
   const back = () => setI((n) => Math.max(0, n - 1))
-  const next = () => (last ? dismiss() : setI((n) => Math.min(STEPS.length - 1, n + 1)))
+  const next = () => (last ? onFinish() : setI((n) => Math.min(STEPS.length - 1, n + 1)))
 
-  /* Esc skips the whole tour (it's always skippable). Focus lands on the
-     forward action so keyboard users can step or finish straight away. */
+  /* Focus lands on the forward action so keyboard users can step or finish
+     straight away. */
   useEffect(() => {
     primaryRef.current?.focus()
+  }, [i])
+
+  const Art = step.art
+
+  return (
+    <>
+      <div className="ob-art" key={step.key} aria-hidden="true">
+        <Art />
+      </div>
+
+      <div className="ob-eyebrow mono">{step.eyebrow}</div>
+      <h2 id={titleId} className="ob-title disp">
+        {step.title}
+      </h2>
+      <p id={bodyId} className="ob-body">
+        {step.body}
+      </p>
+
+      <div className="ob-dots" aria-hidden="true">
+        {STEPS.map((s, n) => (
+          <span key={s.key} className={'ob-dot' + (n === i ? ' on' : '')} />
+        ))}
+      </div>
+
+      <div className="ob-nav">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={back}
+          disabled={first}
+          aria-label="Previous step"
+        >
+          Back
+        </Button>
+        <span className="ob-count mono" aria-hidden="true">
+          {i + 1} / {STEPS.length}
+        </span>
+        <Button ref={primaryRef} variant="primary" size="sm" onClick={next}>
+          {last ? 'Start' : 'Next'}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+export function OnboardingModal() {
+  const step = useMew((s) => s.onboardingStep)
+  const dismiss = useMew((s) => s.dismissOnboarding)
+  const advance = useMew((s) => s.advanceOnboarding)
+  const titleId = useId()
+  const bodyId = useId()
+
+  /* Esc is the always-present escape hatch — it skips ALL of onboarding to the
+     clean keyless/local-only/empty-week defaults, from any step. */
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -242,8 +310,6 @@ export function OnboardingModal() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [dismiss])
-
-  const Art = step.art
 
   return (
     <div
@@ -258,41 +324,15 @@ export function OnboardingModal() {
           Skip all
         </button>
 
-        <div className="ob-art" key={step.key} aria-hidden="true">
-          <Art />
-        </div>
-
-        <div className="ob-eyebrow mono">{step.eyebrow}</div>
-        <h2 id={titleId} className="ob-title disp">
-          {step.title}
-        </h2>
-        <p id={bodyId} className="ob-body">
-          {step.body}
-        </p>
-
-        <div className="ob-dots" aria-hidden="true">
-          {STEPS.map((s, n) => (
-            <span key={s.key} className={'ob-dot' + (n === i ? ' on' : '')} />
-          ))}
-        </div>
-
-        <div className="ob-nav">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={back}
-            disabled={first}
-            aria-label="Previous step"
-          >
-            Back
-          </Button>
-          <span className="ob-count mono" aria-hidden="true">
-            {i + 1} / {STEPS.length}
-          </span>
-          <Button ref={primaryRef} variant="primary" size="sm" onClick={next}>
-            {last ? 'Start' : 'Next'}
-          </Button>
-        </div>
+        {step === 'tour' ? (
+          <TourCarousel onFinish={advance} titleId={titleId} bodyId={bodyId} />
+        ) : step === 'keys' ? (
+          <OnboardingKeysStep titleId={titleId} bodyId={bodyId} />
+        ) : step === 'calendar' ? (
+          <OnboardingCalendarStep titleId={titleId} bodyId={bodyId} />
+        ) : (
+          <OnboardingPlanStep titleId={titleId} bodyId={bodyId} />
+        )}
       </div>
     </div>
   )

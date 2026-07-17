@@ -749,3 +749,119 @@ describe('heads-up — pre-meeting recall with a shelf life', () => {
     expect(hu!.body.split('\n').slice(1)).toEqual(['one', 'two'])
   })
 })
+
+/* ── the daily rituals: morning brief & evening wrap (#285) ───────────── */
+
+describe('morning brief & evening wrap — the once-a-day predicates', () => {
+  const D_KEY = D // Tuesday 2026-06-09
+  const withRituals = (over: Partial<TickInputs>) =>
+    tick({ briefMin: 8.5 * 60, wrapMin: 17.5 * 60, blocks: [], idleMin: 0, ...over })
+
+  it('the brief fires at briefMin exactly — the boundary belongs to the day', () => {
+    const before = evaluateTick(buildCtx(withRituals({ nowMin: 8 * 60 + 29 }), fresh))
+    expect(before.some((n) => n.type === 'morning-brief')).toBe(false)
+    const at = evaluateTick(buildCtx(withRituals({ nowMin: 8 * 60 + 30 }), fresh))
+    expect(at[0]?.type).toBe('morning-brief')
+    expect(at[0].key).toBe(D_KEY)
+    expect(at[0].actions).toHaveLength(0) // pure information — the day is the call to action
+  })
+
+  it("fires once per day: today's persisted key silences it, yesterday's does not", () => {
+    const firedToday = {
+      lastFired: { 'morning-brief': { ts: Date.UTC(2026, 5, 9, 8, 30), key: D_KEY } },
+      lastDriftBlockId: null,
+    }
+    expect(
+      evaluateTick(buildCtx(withRituals({ nowMin: 14 * 60 }), firedToday)).some(
+        (n) => n.type === 'morning-brief'
+      )
+    ).toBe(false)
+    const firedYesterday = {
+      lastFired: { 'morning-brief': { ts: Date.UTC(2026, 5, 8, 8, 30), key: '2026-06-08' } },
+      lastDriftBlockId: null,
+    }
+    expect(evaluateTick(buildCtx(withRituals({ nowMin: 14 * 60 }), firedYesterday))[0]?.type).toBe(
+      'morning-brief'
+    )
+  })
+
+  it('a 14:00 launch is late and honest: the brief fires on the first tick, the wrap holds for wrapMin', () => {
+    const midday = evaluateTick(buildCtx(withRituals({ nowMin: 14 * 60 }), fresh))
+    expect(midday[0]?.type).toBe('morning-brief')
+    /* one nudge per tick: with the brief fired, the next tick past wrapMin is the wrap's */
+    const briefDone = {
+      lastFired: { 'morning-brief': { ts: Date.UTC(2026, 5, 9, 14, 0), key: D_KEY } },
+      lastDriftBlockId: null,
+    }
+    const evening = evaluateTick(buildCtx(withRituals({ nowMin: 17.5 * 60 }), briefDone))
+    expect(evening[0]?.type).toBe('evening-wrap')
+    expect(evening[0].key).toBe(D_KEY)
+  })
+
+  it('moving briefMin later the same day re-arms only while today has not fired', () => {
+    /* not fired yet: the new, later time governs */
+    const later = { briefMin: 11 * 60 }
+    expect(
+      evaluateTick(buildCtx(withRituals({ nowMin: 10 * 60, ...later }), fresh)).some(
+        (n) => n.type === 'morning-brief'
+      )
+    ).toBe(false)
+    expect(evaluateTick(buildCtx(withRituals({ nowMin: 11 * 60, ...later }), fresh))[0]?.type).toBe(
+      'morning-brief'
+    )
+    /* already fired today: no later time can re-fire it */
+    const firedToday = {
+      lastFired: { 'morning-brief': { ts: Date.UTC(2026, 5, 9, 8, 30), key: D_KEY } },
+      lastDriftBlockId: null,
+    }
+    expect(
+      evaluateTick(buildCtx(withRituals({ nowMin: 11 * 60, ...later }), firedToday)).some(
+        (n) => n.type === 'morning-brief'
+      )
+    ).toBe(false)
+  })
+
+  it('no briefMin/wrapMin inputs ⇒ both rituals stay silent (no degradation theater)', () => {
+    /* the plain tick() fixture carries neither — the store always passes both */
+    const out = evaluateTick(buildCtx(tick({ nowMin: 14 * 60, blocks: [] }), fresh))
+    expect(out.some((n) => n.type === 'morning-brief' || n.type === 'evening-wrap')).toBe(false)
+  })
+
+  it('the wrap composes the day it closes: done, waiting, one kind line', () => {
+    const open: Block = mk({ title: 'Budget pass', startMin: 13 * 60, endMin: 14 * 60 })
+    const doneEv: MemoryEvent = {
+      id: 'e1',
+      ts: Date.UTC(2026, 5, 9, 11, 30),
+      kind: 'completed',
+      dayKey: D_KEY,
+      title: 'Q3 deck',
+      plannedMin: 120,
+    }
+    const out = evaluateTick(
+      buildCtx(withRituals({ nowMin: 18 * 60, blocks: [open], events: [doneEv] }), fresh)
+    )
+    /* 18:00 is past wrapMin but before this fixture's day end (18:30 floor) —
+       the tick belongs to the wrap, not close-the-loop */
+    expect(out[0]?.type).toBe('evening-wrap')
+    const lines = out[0].body.split('\n')
+    expect(lines[0]).toBe('done: 1 block · 2h')
+    expect(lines[1]).toBe('waiting for tomorrow: Budget pass')
+    expect(lines[2]).toMatch(/^noticed: /)
+    expect(out[0].body).not.toMatch(/\b(missed|failed|behind|overdue)\b/i)
+  })
+
+  it('the brief opens the day ahead of the Monday shaping asks; urgency still outranks it', () => {
+    /* Monday 9:00, empty week: the ritual leads, fresh-start takes the next tick */
+    const monday = withRituals({ todayKey: '2026-06-08', nowMin: 9 * 60 })
+    const first = evaluateTick(buildCtx(monday, fresh))
+    expect(first[0]?.type).toBe('morning-brief')
+    const briefDone = {
+      lastFired: { 'morning-brief': { ts: Date.UTC(2026, 5, 8, 9, 0), key: '2026-06-08' } },
+      lastDriftBlockId: null,
+    }
+    expect(evaluateTick(buildCtx(monday, briefDone))[0]?.type).toBe('fresh-start')
+    /* a drift check-in (attention leaking NOW) outranks the ritual */
+    const drifting = withRituals({ nowMin: 9 * 60 + 52, blocks: [mk({})], idleMin: 15 })
+    expect(evaluateTick(buildCtx(drifting, fresh))[0]?.type).toBe('drift')
+  })
+})

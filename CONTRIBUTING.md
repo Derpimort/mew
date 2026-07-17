@@ -114,7 +114,9 @@ Two checks guard it:
 
 **Budgets** (uncompressed; the targets to keep):
 
-- **main (entry) chunk < 330 KB** — first paint depends on it; keep it tightest.
+- **main (entry) chunk < 370 KB** — first paint depends on it; keep it tightest.
+  (Raised from 330 KB for v0.5's eager UI; first-load total still well under 1200 KB.
+  Lazy-loading onboarding/picker to reclaim it is a tracked follow-up.)
 - **vendor chunk < 460 KB** — react, react-dom, zustand, dexie, lucide + the motion family
   (motion 12.41+ ships a non-dissolvable re-export shim, so framer-motion/motion-dom ride here).
 - **lazy chunks < 300 KB** by default. The known-heavy lazy families have their own

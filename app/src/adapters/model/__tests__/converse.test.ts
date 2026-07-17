@@ -71,6 +71,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('offerChoices')
       return `${CHOICES_POSTED}: ${options.map((o) => `"${o.label}"`).join(' · ')}. (asked: ${prompt})`
     }),
+    proposeScenarios: vi.fn((_prompt: string, tasks: { title: string }[]) => {
+      calls.push('proposeScenarios')
+      return `${CHOICES_POSTED}: ${tasks.length} tasks laid out. Say nothing more and END your turn.`
+    }),
     clear: vi.fn((scope) => {
       calls.push('clear')
       return `Cleared ${scope}.`
@@ -134,6 +138,165 @@ describe('rules adapter — converse', () => {
     )
     expect(exec.clear).toHaveBeenCalledWith('upcoming')
     expect(reply).toBe('Cleared upcoming.')
+  })
+})
+
+describe('rules adapter — the rescue split ask (#286)', () => {
+  it('composes the two existing tools: shrink to the gap, place the kept tail', async () => {
+    const exec = mockExec()
+    const reply = await collect(
+      createRulesAdapter(NOW).converse(
+        [{ role: 'user', text: 'split the deck around 13:00-13:45, keep 45m after' }],
+        ctx,
+        exec
+      )
+    )
+    expect(exec.calls).toEqual(['edit', 'plan'])
+    expect(exec.edit).toHaveBeenCalledWith('deck', { endMin: 13 * 60 })
+    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(places[0]).toMatchObject({
+      title: 'deck (part 2)',
+      tag: 'work',
+      dayOffset: 0,
+      startMin: 13 * 60 + 45,
+      durationMin: 45,
+    })
+    expect(reply).toBe('Updated deck. Done — placed 1, freed 0.')
+  })
+
+  it('a future-day split carries its day into the placement', async () => {
+    const exec = mockExec()
+    await collect(
+      createRulesAdapter(NOW).converse(
+        [{ role: 'user', text: 'split the deck around 13:00-13:45 on friday, keep 45m after' }],
+        ctx,
+        exec
+      )
+    )
+    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(places[0]).toMatchObject({ dayOffset: 3, startMin: 825 }) // Tue → Friday
+  })
+
+  it('a missed block stops the split — no stray tail is ever placed', async () => {
+    const exec = mockExec()
+    ;(exec.edit as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      `I couldn't find "deck" to change — say it another way?`
+    )
+    const reply = await collect(
+      createRulesAdapter(NOW).converse(
+        [{ role: 'user', text: 'split the deck around 13:00-13:45, keep 45m after' }],
+        ctx,
+        exec
+      )
+    )
+    expect(exec.plan).not.toHaveBeenCalled()
+    expect(reply).toMatch(/couldn't find/)
+  })
+})
+
+describe('rules adapter — plan mode route (#293)', () => {
+  const braindump = 'block the deck, block budget review, block a gym session, block inbox sweep'
+
+  it('a ≥3-item un-pinned braindump routes to proposeScenarios and stays quiet (the picker IS the reply)', async () => {
+    const exec = mockExec()
+    const reply = await collect(
+      createRulesAdapter(NOW).converse([{ role: 'user', text: braindump }], ctx, exec)
+    )
+    expect(exec.calls).toEqual(['proposeScenarios'])
+    const [prompt, tasks] = (exec.proposeScenarios as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(prompt).toBe('')
+    expect(tasks.map((t: { title: string }) => t.title)).toEqual([
+      'deck',
+      'budget review',
+      'gym session',
+      'inbox sweep',
+    ])
+    // inferTag rode along from the parse — a braindump still classifies
+    expect(tasks.find((t: { title: string }) => t.title === 'gym session')!.tag).toBe('private')
+    expect(reply).toBe('') // CHOICES_POSTED result → the floor yields nothing
+  })
+
+  it('a fall-through result (one shape / nothing fits) speaks as the reply', async () => {
+    const exec = mockExec()
+    ;(exec.proposeScenarios as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+      `One shape fits — spread even: all 3 fit. Say the word and I'll place exactly that.`
+    )
+    const reply = await collect(
+      createRulesAdapter(NOW).converse([{ role: 'user', text: braindump }], ctx, exec)
+    )
+    expect(reply).toMatch(/^One shape fits/)
+    expect(exec.plan).not.toHaveBeenCalled()
+  })
+
+  it('an explicitly timed item keeps the WHOLE ask on the one-pass path — a stated time is never re-derived', async () => {
+    const exec = mockExec()
+    await collect(
+      createRulesAdapter(NOW).converse(
+        [
+          {
+            role: 'user',
+            text: 'block the deck at 9, block budget review, block a gym session, block inbox sweep',
+          },
+        ],
+        ctx,
+        exec
+      )
+    )
+    expect(exec.calls).toEqual(['plan'])
+    expect(exec.proposeScenarios).not.toHaveBeenCalled()
+  })
+
+  it('a stated day pins the same way ("tomorrow" is the user deciding)', async () => {
+    const exec = mockExec()
+    await collect(
+      createRulesAdapter(NOW).converse(
+        [
+          {
+            role: 'user',
+            text: 'block the deck tomorrow, block budget review, block a gym session',
+          },
+        ],
+        ctx,
+        exec
+      )
+    )
+    expect(exec.calls).toEqual(['plan'])
+  })
+
+  it('two items stay one-pass on auto, propose on always, and never propose on off', async () => {
+    const two = 'block the deck, block budget review'
+    const auto = mockExec()
+    await collect(createRulesAdapter(NOW).converse([{ role: 'user', text: two }], ctx, auto))
+    expect(auto.calls).toEqual(['plan'])
+
+    const always = mockExec()
+    await collect(
+      createRulesAdapter(NOW, 'always').converse([{ role: 'user', text: two }], ctx, always)
+    )
+    expect(always.calls).toEqual(['proposeScenarios'])
+
+    const off = mockExec()
+    await collect(
+      createRulesAdapter(NOW, 'off').converse([{ role: 'user', text: braindump }], ctx, off)
+    )
+    expect(off.calls).toEqual(['plan']) // four items, and still the one-pass place
+  })
+
+  it('a kept-free window rides only the classic path', async () => {
+    const exec = mockExec()
+    await collect(
+      createRulesAdapter(NOW).converse(
+        [
+          {
+            role: 'user',
+            text: 'block the deck, block budget review, block inbox sweep and keep friday afternoon free',
+          },
+        ],
+        ctx,
+        exec
+      )
+    )
+    expect(exec.calls).toEqual(['plan'])
   })
 })
 

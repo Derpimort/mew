@@ -4,13 +4,15 @@
    keyless rules floor, so every scenario is deterministic and offline. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFAULT_SETTINGS } from '../../domain/types'
 import type { ChatMessage, MemoryEvent, PrefPayload, Settings } from '../../domain/types'
-import { addDaysKey, dayKey, uid } from '../../domain/time'
+import { addDaysKey, dayKey, uid, weekKey, weekKeys as domainWeekKeys } from '../../domain/time'
 import { CHAT_BOOT_PAGE, chatOrder, stripSecrets } from '../../adapters/storage-port'
+import { applyWeekKey } from '../../ui/components/weekKeys'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
 
-const mirrors: { title: string; body: string }[] = []
+const mirrors: { title: string; body: string; tag?: string; onClick?: () => void }[] = []
 
 const fakeDb = {
   blocks: new Map<string, unknown>(),
@@ -45,17 +47,25 @@ const desktopFake = {
   brainLastBeat: null as string | null,
   brainReady: null as ((e: { url: string; token: string }) => void) | null,
   brainBeat: null as ((s: string) => void) | null,
+  shellTick: null as (() => void) | null,
+  trayAction: null as ((a: string) => void) | null,
+  trayPushes: [] as { state: string; tooltip: string }[],
+  hotkeyCalls: [] as (string | null)[],
+  hotkeyRefuse: false, // models the OS holding the binding for another app
   reset() {
     this.tauri = false
     this.backup = null
     this.backupDate = null
     this.written = []
-    /* updateReady/brainReady/brainBeat survive reset: the real listeners
-       register once per app process and outlive any data wipe — the fake
-       models that lifetime */
+    /* updateReady/brainReady/brainBeat/shellTick/trayAction survive reset:
+       the real listeners register once per app process and outlive any data
+       wipe — the fake models that lifetime */
     this.applied = 0
     this.brain = null
     this.brainLastBeat = null
+    this.trayPushes = []
+    this.hotkeyCalls = []
+    this.hotkeyRefuse = false
   },
 }
 
@@ -124,7 +134,12 @@ vi.mock('../../adapters/desktop', () => ({
   writeBackup: async (json: string) => {
     desktopFake.written.push(json)
   },
-  registerCloseFlush: () => {},
+  /* the store registers this once during its module init (before this file's
+     consts exist — hence the hoisted ref, same as brainCfg); afterEach invokes
+     it to model the shell's on-close backup flush */
+  registerCloseFlush: (_dirty: () => boolean, flush: () => Promise<void>) => {
+    closeFlushRef.current = flush
+  },
   backupPath: () => 'Documents/MEW/mew-backup.json',
   openBackupFolder: async () => {},
   onUpdateReady: (cb: (v: string) => void) => {
@@ -140,6 +155,19 @@ vi.mock('../../adapters/desktop', () => ({
   },
   onBrainStatus: (cb: (s: string) => void) => {
     desktopFake.brainBeat = cb
+  },
+  onShellTick: (cb: () => void) => {
+    desktopFake.shellTick = cb
+  },
+  onTrayAction: (cb: (a: string) => void) => {
+    desktopFake.trayAction = cb
+  },
+  updateTray: async (state: string, tooltip: string) => {
+    desktopFake.trayPushes.push({ state, tooltip })
+  },
+  setCaptureHotkey: async (accel: string | null) => {
+    desktopFake.hotkeyCalls.push(accel)
+    return !desktopFake.hotkeyRefuse
   },
 }))
 
@@ -164,6 +192,8 @@ vi.mock('../../adapters/calendar/google', () => ({
 const brainCfg = vi.hoisted(() => ({
   current: null as { url(): string; token(): string; enabled(): boolean } | null,
 }))
+/* the store's on-close backup flush — captured at store module init */
+const closeFlushRef = vi.hoisted(() => ({ current: null as (() => Promise<void>) | null }))
 const brainFake = {
   ingests: [] as { slug: string; links?: string[] }[],
   /* replaces the default push when set — a backfill test scripts a hang
@@ -236,6 +266,9 @@ const scriptedModel = {
   /** the WeekContext the turn handed the model — the recall-honesty scenarios
       read the degraded flag off it (#249) */
   lastCtx: null as import('../../adapters/model').WeekContext | null,
+  /** the ChatTurn[] the store built for the turn — the buildThread exclusion
+      pin reads it (#282: tool receipts never ride the model thread) */
+  lastThread: null as import('../../adapters/model').ChatTurn[] | null,
   /** runs between the first and last chunk — fire executors, snapshot state.
       Gets the turn's abort signal too, so a test can press stop mid-stream. */
   midTurn: null as
@@ -250,6 +283,7 @@ const scriptedModel = {
     this.chunks = []
     this.reasoning = null
     this.lastCtx = null
+    this.lastThread = null
     this.midTurn = null
     this.throwAfter = false
     this.remoteError = null
@@ -264,12 +298,13 @@ vi.mock('../../adapters/model/aiAdapter', () => ({
   createAiAdapter: (spec: { provider: string }) => ({
     id: spec.provider,
     async *converse(
-      _thread: unknown,
+      thread: unknown,
       ctx: unknown,
       exec: import('../../adapters/model').ToolExecutor,
       signal?: AbortSignal
     ) {
       scriptedModel.lastCtx = ctx as import('../../adapters/model').WeekContext
+      scriptedModel.lastThread = thread as import('../../adapters/model').ChatTurn[]
       /* remote providers stay unreachable in scenarios — no scenario ever
          scripts them, and no test may touch the network. Throwing a transient
          (as the real SDK would offline) lands the chain on the rules floor,
@@ -298,7 +333,11 @@ vi.mock('../../adapters/model/aiAdapter', () => ({
 
 import { setSidecarBrain } from '../../adapters/brain/sidecar'
 import { setLoggerSink } from '../../adapters/logger'
-import { useMew } from '../store'
+import { mealClassOf } from '../../domain/sustenance'
+import { TOOL_ERROR_NOTE } from '../../domain/toolCard'
+import { scenariosActive } from '../../domain/choices'
+import { validateScenario } from '../../domain/scenarios'
+import { runToolWithCard, useMew } from '../store'
 
 /* ── harness ──────────────────────────────────────────────────────── */
 
@@ -351,7 +390,12 @@ function act(msg: ChatMessage, actionId: string) {
 beforeEach(() => {
   vi.useFakeTimers()
 })
-afterEach(() => {
+afterEach(async () => {
+  /* the desktop shell flushes the pending backup on close (registerCloseFlush)
+     — model that lifecycle, so a backup timer armed in one scenario (e.g. the
+     boot brief's settings write, #285) can't leak a stale handle into the
+     next: useFakeTimers() discards pending timers but not the store's token */
+  await closeFlushRef.current?.()
   vi.useRealTimers()
   brainFake.reset()
   desktopFake.reset()
@@ -364,6 +408,10 @@ afterEach(() => {
 describe('a seeded Tuesday morning', () => {
   it('greets, sees tomorrow honestly, and the right-size nudge is in chat (not queued)', async () => {
     await fresh(TUE(9, 40))
+    /* the boot tick belongs to the morning brief (#285) — the ritual opener;
+       right-sizing follows on the next minute, exactly one nudge per tick */
+    expect(lastNudge('morning-brief')).toBeDefined()
+    at(TUE(9, 41))
     const rs = lastNudge('right-size')
     expect(rs).toBeDefined()
     expect(rs.body).toMatch(/8 hours of deep work/i)
@@ -383,7 +431,9 @@ describe('a seeded Tuesday morning', () => {
     expect(
       blocks.some((b) => b.dayKey === fri && b.title === 'Kept free' && b.tag === 'rest')
     ).toBe(true)
-    expect(lastMsg().body).toMatch(/^Done — /)
+    /* the reply speaks; the day-load meter (#301) may follow it on this
+       fixture's marginally-over thursday — find the reply, don't pin "last" */
+    expect(chat().some((m) => m.role === 'mew' && /^Done — /.test(m.body))).toBe(true)
   })
 
   it('a mew celebrates, remembers — and an early finish offers the next task', async () => {
@@ -743,6 +793,168 @@ describe('a seeded Tuesday morning', () => {
   })
 })
 
+/* keyboard-first week (#303) — Shift/Alt arrows commit through the SAME
+   dragMove door the drag gesture uses (spied real action, no second path);
+   the optional durationMin arm of that door (keyboard resize) is asserted
+   here store-side, exactly like the drag outcomes above. */
+describe('#303 — keyboard week commits through the drag door', () => {
+  const week = () => domainWeekKeys(TUE(0))
+  const find = (re: RegExp, key: string) =>
+    useMew.getState().blocks.find((b) => re.test(b.title) && b.dayKey === key)!
+  const reply = () => find(/Reply to Sam/, dayKey(TUE(0)))
+  const silentDeps = { moveFocus: () => {}, announce: () => {} }
+
+  it('a keyboard nudge IS a dragMove — same action, same commit, persisted', async () => {
+    await fresh(TUE(9, 40))
+    const r = reply()
+    const real = useMew.getState().dragMove
+    const calls: unknown[][] = []
+    const spy: typeof real = (...a) => {
+      calls.push([...a])
+      return real(...a)
+    }
+    const spoken: string[] = []
+    applyWeekKey(
+      useMew.getState().blocks,
+      week(),
+      r,
+      { kind: 'nudge', deltaMin: 15, deltaDay: 0 },
+      { dragMove: spy, moveFocus: () => {}, announce: (l) => spoken.push(l) }
+    )
+    expect(calls).toEqual([[r.id, r.dayKey, r.startMin + 15]]) // the one door, once
+    const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+    expect(after.startMin).toBe(14 * 60 + 45)
+    expect(fakeDb.blocks.get(r.id)).toMatchObject({ startMin: 14 * 60 + 45 }) // synced
+    expect(lastMsg().body).toMatch(/^Moved — Reply to Sam/) // the door's own voice
+    expect(spoken).toEqual(['Reply to Sam, 14:30 to 15:00, moved to 14:45'])
+  })
+
+  it('a keyboard day hop rides the same door to the neighbouring day', async () => {
+    await fresh(TUE(9, 40))
+    const rest = find(/Rest — earned/, dayKey(TUE(0)))
+    const spoken: string[] = []
+    applyWeekKey(
+      useMew.getState().blocks,
+      week(),
+      rest,
+      { kind: 'nudge', deltaMin: 0, deltaDay: 1 },
+      { dragMove: useMew.getState().dragMove, moveFocus: () => {}, announce: (l) => spoken.push(l) }
+    )
+    const after = useMew.getState().blocks.find((b) => b.id === rest.id)!
+    expect(after.dayKey).toBe(addDaysKey(dayKey(TUE(0)), 1))
+    expect(after.startMin).toBe(18 * 60) // start held through the hop
+    expect(spoken).toEqual(['Rest, 18:00 to 19:00, moved to wednesday at 18:00'])
+  })
+
+  it('a keyboard resize commits through the door (durationMin arm) and persists', async () => {
+    await fresh(TUE(9, 40))
+    const r = reply()
+    const spoken: string[] = []
+    applyWeekKey(
+      useMew.getState().blocks,
+      week(),
+      r,
+      { kind: 'resize', deltaMin: 15 },
+      { dragMove: useMew.getState().dragMove, moveFocus: () => {}, announce: (l) => spoken.push(l) }
+    )
+    const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+    expect(after.startMin).toBe(14 * 60 + 30) // start untouched
+    expect(after.endMin).toBe(15 * 60 + 15) // end grew one step
+    expect(fakeDb.blocks.get(r.id)).toMatchObject({ endMin: 15 * 60 + 15 })
+    expect(lastMsg().body).toMatch(/^Resized — Reply to Sam now runs 14:30–15:15 \(45 min\)/)
+    expect(spoken).toEqual(['Reply to Sam, now 14:30 to 15:15'])
+  })
+
+  it('a resize into a held slot is bounced — conflict, week untouched', async () => {
+    await fresh(TUE(9, 40))
+    const r = reply()
+    // growing 14:30–15:00 to 105 min would cross Walk at 16:00
+    const out = useMew.getState().dragMove(r.id, r.dayKey, r.startMin, 105)
+    expect(out).toBe('conflict')
+    const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+    expect(after.endMin).toBe(15 * 60) // untouched
+  })
+
+  it('a calendar event refuses a resize the same way it refuses a move', async () => {
+    await fresh(TUE(9, 40))
+    const tue = dayKey(TUE(0))
+    const ext = {
+      id: 'ext-2',
+      title: 'Synced review',
+      tag: 'work' as const,
+      dayKey: tue,
+      startMin: 20 * 60,
+      endMin: 20 * 60 + 30,
+      protected: true,
+      status: 'open' as const,
+      calendarRefs: [],
+      estimateSource: 'user' as const,
+      external: { calId: 'cal-a', eventId: 'evt-2' },
+    }
+    useMew.setState({ blocks: [...useMew.getState().blocks, ext] })
+    const out = useMew.getState().dragMove('ext-2', tue, 20 * 60, 60)
+    expect(out).toBe('external')
+    const after = useMew.getState().blocks.find((b) => b.id === 'ext-2')!
+    expect(after.endMin).toBe(20 * 60 + 30) // never resized
+    expect(lastMsg().body).toMatch(/from your calendar/i)
+  })
+
+  it('same slot at the same length is a noop even with durationMin passed', async () => {
+    await fresh(TUE(9, 40))
+    const r = reply()
+    const chatLen = chat().length
+    const out = useMew.getState().dragMove(r.id, r.dayKey, r.startMin, r.endMin - r.startMin)
+    expect(out).toBe('noop')
+    expect(chat().length).toBe(chatLen)
+  })
+
+  it('an edge press never reaches the executor — spoken, not silent, no mutation', async () => {
+    await fresh(TUE(9, 40))
+    const walk = find(/Walk/, dayKey(TUE(0)))
+    const calls: unknown[][] = []
+    const spoken: string[] = []
+    // Walk sits mid-week on the seeded Tuesday; hop it left past Monday's edge
+    applyWeekKey(
+      useMew.getState().blocks,
+      week(),
+      walk,
+      { kind: 'nudge', deltaMin: 0, deltaDay: -1 },
+      {
+        dragMove: (...a) => {
+          calls.push(a)
+          return useMew.getState().dragMove(...a)
+        },
+        moveFocus: silentDeps.moveFocus,
+        announce: (l) => spoken.push(l),
+      }
+    )
+    expect(calls.length).toBe(1) // Monday is a real day — this one commits
+    // …but from Monday, one more hop left is the week's edge: announced, no door call
+    const moved = useMew.getState().blocks.find((b) => b.id === walk.id)!
+    const calls2: unknown[][] = []
+    const spoken2: string[] = []
+    applyWeekKey(
+      useMew.getState().blocks,
+      week(),
+      moved,
+      { kind: 'nudge', deltaMin: 0, deltaDay: -1 },
+      {
+        dragMove: (...a) => {
+          calls2.push(a)
+          return useMew.getState().dragMove(...a)
+        },
+        moveFocus: silentDeps.moveFocus,
+        announce: (l) => spoken2.push(l),
+      }
+    )
+    expect(calls2).toEqual([]) // the edge stopped it before the executor
+    expect(spoken2).toEqual(["that's the start of this week — Walk stays on monday"])
+    expect(useMew.getState().blocks.find((b) => b.id === walk.id)!.dayKey).toBe(
+      addDaysKey(dayKey(TUE(0)), -1)
+    )
+  })
+})
+
 describe('drift and the guard', () => {
   it('catches 12 idle minutes, guards on request, and stays quiet behind the guard', async () => {
     await fresh(TUE(9, 40))
@@ -835,6 +1047,7 @@ describe('clear → fresh start → replan (the restart journey)', () => {
 
   it('Monday morning opens the fresh-start window on its own', async () => {
     await fresh(new Date(2026, 5, 8, 9, 0)) // Monday 9:00
+    at(new Date(2026, 5, 8, 9, 1)) // the boot tick carried the morning brief (#285)
     const fs = lastNudge('fresh-start')
     expect(fs).toBeDefined()
     /* with seeded history the opener now leads with last week's story (#36);
@@ -849,7 +1062,8 @@ describe('the brain at work', () => {
     await fresh(TUE(9, 40))
     /* the seed itself contains the pattern: "Inbox sweep" rolled 6× over 3 weeks,
        with an open Inbox sweep block on Thursday — the brain should notice */
-    at(TUE(9, 45)) // right-size took the first tick; this one belongs to the roller
+    at(TUE(9, 44)) // the boot tick carried the morning brief (#285) …
+    at(TUE(9, 45)) // … right-size took the next; this one belongs to the roller
     const bs = lastNudge('break-smaller')
     expect(bs).toBeDefined()
     expect(bs.body).toMatch(/"inbox sweep" has rolled forward six times/i)
@@ -866,6 +1080,7 @@ describe('the brain at work', () => {
 
   it('kinder plan: four heavy weeks → a concrete, applicable shape', async () => {
     await fresh(TUE(9, 40))
+    at(TUE(9, 41)) // boot tick = morning brief (#285); right-size fires here instead
     const todayKey = dayKey(TUE(0))
     /* four trailing weeks at >30% carry */
     const heavy: MemoryEvent[] = []
@@ -886,7 +1101,7 @@ describe('the brain at work', () => {
       memory: [...s.memory, ...heavy],
       /* keep this scenario about the kinder plan: silence the seeded roller
          (drop its open block) and stay active so drift doesn't take the slot.
-         right-size stays suppressed by its own 9:40 cooldown. */
+         right-size stays suppressed by its own 9:41 cooldown. */
       blocks: s.blocks.filter((b) => !/inbox sweep/i.test(b.title) || b.status !== 'open'),
       lastActivityMs: TUE(10, 29).getTime(),
     }))
@@ -946,7 +1161,294 @@ describe('the mirror', () => {
   it('nudges mirror to notifications only through the notifier port', async () => {
     await fresh(TUE(9, 40))
     expect(mirrors.length).toBeGreaterThanOrEqual(1)
-    expect(mirrors[0].title).toContain('Pixie')
+    /* the boot tick is the morning brief — it announces itself by name, and
+       the notification body is the brief's first line (#285) */
+    expect(mirrors[0].title).toBe('mew — morning brief')
+    expect(mirrors[0].body).toMatch(/^today: /)
+    /* every other nudge keeps the companion's own title */
+    at(TUE(9, 41)) // right-size
+    expect(mirrors.length).toBeGreaterThanOrEqual(2)
+    expect(mirrors[mirrors.length - 1].title).toContain('Pixie')
+  })
+})
+
+/* ── the daily rituals: morning brief & evening wrap (#285) ──────────── */
+
+describe('the daily rituals (#285)', () => {
+  const queuedBriefs = () =>
+    useMew.getState().queuedNudges.filter((m) => m.nudgeType === 'morning-brief')
+  /** same storage, fresh webview — the mid-day relaunch */
+  const restartAt = async (d: Date) => {
+    vi.setSystemTime(d)
+    useMew.setState(
+      { ...pristine, lastTickDay: dayKey(d), nowMs: d.getTime(), lastActivityMs: d.getTime() },
+      true
+    )
+    await useMew.getState().hydrate()
+  }
+
+  it('the brief fires exactly once per day across an app restart — the key is persisted', async () => {
+    await fresh(TUE(9, 40))
+    expect(nudges('morning-brief')).toHaveLength(1)
+    expect(nudges('morning-brief')[0].body).toMatch(/^today: /)
+    /* the dedupe key rides Settings as machine state — already on disk */
+    expect(fakeDb.settings?.nudgeLastFired?.['morning-brief']?.key).toBe(dayKey(TUE(0)))
+
+    await restartAt(TUE(10, 30))
+    at(TUE(10, 31))
+    expect(nudges('morning-brief')).toHaveLength(1) // the persisted key held
+  })
+
+  it('default quiet hours end at 8:30 = default briefMin — the boundary posts at 8:30', async () => {
+    await fresh(TUE(8, 29)) // one minute inside quiet hours: the brief is not yet due
+    expect(nudges('morning-brief')).toHaveLength(0)
+    expect(queuedBriefs()).toHaveLength(0) // not fired at all — nothing parked
+    at(TUE(8, 30)) // the boundary: quiet is over AND the brief is due — straight to chat
+    expect(nudges('morning-brief')).toHaveLength(1)
+    expect(queuedBriefs()).toHaveLength(0)
+  })
+
+  it('a brief due inside quiet hours parks and posts once at the morning flush — never twice', async () => {
+    await fresh(TUE(6, 0))
+    useMew.getState().updateSettings({ briefMin: 7 * 60 })
+    at(TUE(7, 0)) // due, but 7:00 is quiet: fired into the queue, chat untouched
+    expect(nudges('morning-brief')).toHaveLength(0)
+    expect(queuedBriefs()).toHaveLength(1)
+    at(TUE(7, 30)) // still quiet — the once-per-day key holds the queue to one
+    expect(queuedBriefs()).toHaveLength(1)
+    at(TUE(8, 30)) // quiet ends: the flush delivers exactly one card
+    expect(nudges('morning-brief')).toHaveLength(1)
+    at(TUE(8, 31))
+    at(TUE(9, 0))
+    expect(nudges('morning-brief')).toHaveLength(1) // engine key + queue never double-post
+    expect(queuedBriefs()).toHaveLength(0)
+  })
+
+  it('restart while parked: a burned key with no delivered card heals — one brief, never zero, never two', async () => {
+    await fresh(TUE(6, 0))
+    useMew.getState().updateSettings({ briefMin: 7 * 60 })
+    at(TUE(7, 0)) // parks: key burned, queue holds 1, chat 0
+    expect(queuedBriefs()).toHaveLength(1)
+    expect(nudges('morning-brief')).toHaveLength(0)
+    expect(fakeDb.settings?.nudgeLastFired?.['morning-brief']?.key).toBe(dayKey(TUE(0)))
+
+    /* the queue dies with the app — restart before the morning flush. Chat is
+       the source of truth: hydrate sees today's key with no delivered card
+       and drops it, so the ritual can fire again (still into the queue). */
+    await restartAt(TUE(7, 40))
+    at(TUE(7, 45)) // still quiet — re-fired into the queue, chat untouched
+    expect(nudges('morning-brief')).toHaveLength(0)
+    expect(queuedBriefs()).toHaveLength(1)
+    at(TUE(8, 30)) // quiet ends: the flush delivers exactly one card
+    expect(nudges('morning-brief')).toHaveLength(1)
+    at(TUE(9, 0))
+    expect(nudges('morning-brief')).toHaveLength(1) // once — never twice
+
+    /* and the heal never over-corrects: a DELIVERED brief keeps its key
+       across yet another restart */
+    await restartAt(TUE(9, 30))
+    at(TUE(9, 31))
+    expect(nudges('morning-brief')).toHaveLength(1)
+  })
+
+  it('a 14:00 launch: the brief lands on the first tick (late is honest); the wrap waits for wrapMin', async () => {
+    await fresh(TUE(14, 0))
+    expect(nudges('morning-brief')).toHaveLength(1)
+    expect(nudges('evening-wrap')).toHaveLength(0)
+    useMew.setState({ lastActivityMs: TUE(17, 30).getTime() })
+    at(TUE(17, 30))
+    expect(nudges('evening-wrap')).toHaveLength(1)
+    expect(lastNudge('evening-wrap').body.split('\n')).toHaveLength(3)
+    at(TUE(17, 45))
+    expect(nudges('evening-wrap')).toHaveLength(1) // once a day, the wrap too
+  })
+
+  it('the brief mirrors once — named title, first line as body, click lands on the card', async () => {
+    await fresh(TUE(9, 40))
+    const briefMirrors = mirrors.filter((m) => m.title === 'mew — morning brief')
+    expect(briefMirrors).toHaveLength(1)
+    expect(briefMirrors[0].body).toMatch(/^today: /)
+    expect(briefMirrors[0].body).not.toContain('\n')
+    briefMirrors[0].onClick?.()
+    expect(useMew.getState().page).toBe('week')
+    expect(useMew.getState().scrollToMsgId).toBe(nudges('morning-brief')[0].id)
+  })
+
+  it('the wrap mirrors under its own name too', async () => {
+    await fresh(TUE(17, 45)) // evening boot: the wrap outranks the (late) brief this tick
+    expect(mirrors.filter((m) => m.title === 'mew — evening wrap')).toHaveLength(1)
+    expect(mirrors[0].body).toBe(lastNudge('evening-wrap').body.split('\n')[0])
+    at(TUE(17, 46)) // the day never got its brief — late is honest, next tick is its
+    expect(nudges('morning-brief')).toHaveLength(1)
+  })
+
+  it('settings rows persist and re-schedule: a later briefMin cannot re-fire a fired day', async () => {
+    await fresh(TUE(9, 40)) // the boot tick fired the brief
+    useMew.getState().updateSettings({ briefMin: 11 * 60 })
+    expect(fakeDb.settings?.briefMin).toBe(11 * 60) // persisted
+    useMew.setState({ lastActivityMs: TUE(11, 0).getTime() })
+    at(TUE(11, 0))
+    at(TUE(11, 1))
+    expect(nudges('morning-brief')).toHaveLength(1)
+  })
+
+  it('not yet fired: a same-day move to a later time governs the fire', async () => {
+    await fresh(TUE(8, 0)) // inside quiet hours, before briefMin — nothing fired
+    expect(queuedBriefs()).toHaveLength(0)
+    useMew.getState().updateSettings({ briefMin: 10 * 60 })
+    /* stay active through the morning so a drift check-in (higher priority,
+       one nudge per tick) never takes the brief's tick */
+    useMew.setState({ lastActivityMs: TUE(9, 0).getTime() })
+    at(TUE(9, 0)) // past the old default, before the new time — silent
+    expect(nudges('morning-brief')).toHaveLength(0)
+    expect(queuedBriefs()).toHaveLength(0)
+    useMew.setState({ lastActivityMs: TUE(10, 0).getTime() })
+    at(TUE(10, 0))
+    expect(nudges('morning-brief')).toHaveLength(1)
+  })
+})
+
+/* ── the sustenance scaffold (#299, v0.5 16b): fed and paced by default ──
+   The whole suite runs the keyless rules floor, so every pin here doubles as
+   the keyless-identical proof: the scaffold is pure domain + executor and
+   never consults a model. */
+
+describe('the sustenance scaffold (#299)', () => {
+  const TODAY = () => dayKey(TUE(0))
+  const scaffoldLines = () =>
+    chat().filter((m) => m.role === 'mew' && m.body.startsWith('fed and paced'))
+  const planCards = () => chat().filter((m) => m.role === 'tool' && m.tool?.name === 'plan')
+  const titled = (title: string) =>
+    useMew.getState().blocks.filter((b) => b.dayKey === TODAY() && b.title === title)
+  /** same storage, fresh webview — the mid-day relaunch (the rituals' helper) */
+  const restartAt = async (d: Date) => {
+    vi.setSystemTime(d)
+    useMew.setState(
+      { ...pristine, lastTickDay: dayKey(d), nowMs: d.getTime(), lastActivityMs: d.getTime() },
+      true
+    )
+    await useMew.getState().hydrate()
+  }
+
+  it('the seeded morning gains only what it lacks — dinner + a breather, through the executor, one line', async () => {
+    await fresh(TUE(9, 40))
+    /* the seeded Tuesday already holds a lunch: no second lunch, ever */
+    const day = useMew.getState().blocks.filter((b) => b.dayKey === TODAY())
+    expect(day.filter((b) => mealClassOf(b.title) === 'lunch')).toHaveLength(1)
+    expect(titled('Dinner')).toHaveLength(1)
+    expect(titled('Dinner')[0]).toMatchObject({
+      tag: 'private',
+      protected: false,
+      status: 'open',
+      startMin: 19 * 60,
+      endMin: 20 * 60,
+    })
+    expect(titled('Breather')).toHaveLength(1)
+    expect(titled('Breather')[0]).toMatchObject({
+      tag: 'rest',
+      protected: false,
+      startMin: 12 * 60,
+      endMin: 12 * 60 + 15,
+    })
+    /* one plain line, exact voice — and the executor's receipt precedes it
+       (#282/#294: the card IS the proof the apply went through the plan door) */
+    expect(scaffoldLines()).toHaveLength(1)
+    expect(scaffoldLines()[0].body).toBe(
+      'fed and paced: dinner 19:00, a breather at 12:00 — say the word to reshape'
+    )
+    expect(planCards()).toHaveLength(1)
+    expect(planCards()[0].tool).toMatchObject({
+      name: 'plan',
+      verb: 'placing blocks',
+      state: 'done',
+    })
+    expect(chat().indexOf(planCards()[0])).toBeLessThan(chat().indexOf(scaffoldLines()[0]))
+    /* the shared tick, ordered: the brief composed AFTER the scaffold, so its
+       shape line already counts the meals (8 blocks, day ends at dinner) */
+    expect(lastNudge('morning-brief').body).toMatch(/^today: 8 blocks, 9:00–20:00/)
+    /* the key burned and persisted; nothing celebrated — a mew is a completion */
+    expect(fakeDb.settings?.nudgeLastFired?.sustenance?.key).toBe(TODAY())
+    expect(nudges('celebrate')).toHaveLength(0)
+  })
+
+  it('once per day across a restart: the persisted key holds, the one line stays one', async () => {
+    await fresh(TUE(9, 40))
+    await restartAt(TUE(10, 30))
+    at(TUE(10, 31))
+    expect(titled('Dinner')).toHaveLength(1)
+    expect(titled('Breather')).toHaveLength(1)
+    expect(scaffoldLines()).toHaveLength(1) // the stored line, not a fresh one
+  })
+
+  it('heal, direction one: a burned key with no blocks and no line re-arms — one pass, never zero', async () => {
+    await fresh(TUE(8, 0)) // pre-brief boot: nothing fired yet
+    await say('clear today') // the day empties — no meal-class block remains
+    at(TUE(8, 31))
+    expect(scaffoldLines()).toHaveLength(1)
+    expect(titled('Lunch')).toHaveLength(1)
+    expect(titled('Dinner')).toHaveLength(1)
+    /* the crash window the heal exists for: the key persisted, the delivery
+       (blocks + line) never made it to disk */
+    for (const [id, b] of [...fakeDb.blocks]) {
+      const t = (b as { title: string }).title
+      if (t === 'Lunch' || t === 'Dinner') fakeDb.blocks.delete(id)
+    }
+    for (const [id, m] of [...fakeDb.chat]) {
+      if ((m as ChatMessage).body?.startsWith('fed and paced')) fakeDb.chat.delete(id)
+    }
+    await restartAt(TUE(9, 0))
+    expect(scaffoldLines()).toHaveLength(1) // re-ran once — late is honest, never twice
+    expect(titled('Lunch')).toHaveLength(1)
+    expect(titled('Dinner')).toHaveLength(1)
+    expect(fakeDb.settings?.nudgeLastFired?.sustenance?.key).toBe(TODAY())
+  })
+
+  it('heal, direction two: the spoken line alone keeps the key — a cleared day never re-scaffolds', async () => {
+    await fresh(TUE(9, 40)) // scaffold delivered: blocks + line
+    await say('clear today') // the user unwinds the day; the line stays in chat
+    expect(titled('Dinner')).toHaveLength(0)
+    await restartAt(TUE(11, 0))
+    at(TUE(11, 1))
+    expect(scaffoldLines()).toHaveLength(1) // chat as truth: it already spoke today
+    expect(titled('Dinner')).toHaveLength(0)
+  })
+
+  it('off: byte-identical week, no line, no card, no key — the rituals themselves untouched', async () => {
+    await fresh(TUE(8, 0))
+    useMew.getState().updateSettings({ sustenance: 'off' })
+    const weekBefore = JSON.stringify(useMew.getState().blocks)
+    const chatBefore = chat().length
+    at(TUE(8, 31))
+    expect(JSON.stringify(useMew.getState().blocks)).toBe(weekBefore)
+    expect(scaffoldLines()).toHaveLength(0)
+    expect(planCards()).toHaveLength(0)
+    expect(useMew.getState().settings.nudgeLastFired?.sustenance).toBeUndefined()
+    expect(nudges('morning-brief')).toHaveLength(1)
+    /* the tick adds only the engine's own nudge cards (brief; the seeded
+       heavy tomorrow earns right-size) — never a mew or tool row */
+    for (const m of chat().slice(chatBefore)) expect(m.role).toBe('nudge')
+  })
+
+  it('a fully-fed morning stays silent — the key still burns (checked, not needed)', async () => {
+    await fresh(TUE(8, 0))
+    await say('block 1h for dinner today at 7pm') // lunch is seeded; dinner is yours now
+    const cardsBefore = planCards().length // the turn's own receipt
+    const blocksBefore = useMew.getState().blocks.length
+    at(TUE(8, 31))
+    expect(useMew.getState().blocks.length).toBe(blocksBefore) // no meals, no breathers
+    expect(scaffoldLines()).toHaveLength(0)
+    expect(planCards()).toHaveLength(cardsBefore) // the pass never opened the door
+    expect(fakeDb.settings?.nudgeLastFired?.sustenance?.key).toBe(TODAY())
+  })
+
+  it('a remembered "lunch is always at 1pm" personalizes the scaffold end-to-end', async () => {
+    await fresh(TUE(8, 0))
+    await say('remember that lunch is always at 1pm')
+    await say('clear today')
+    at(TUE(8, 31))
+    expect(titled('Lunch')).toHaveLength(1)
+    expect(titled('Lunch')[0].startMin).toBe(13 * 60)
+    expect(scaffoldLines()[0].body).toContain('lunch 13:00')
   })
 })
 
@@ -1498,6 +2000,7 @@ describe('week-in-review (fresh-start upgraded)', () => {
 
   it('seeded Monday: the opener leads with last week and keeps its actions', async () => {
     await fresh(MON(9, 0))
+    at(MON(9, 1)) // the boot tick carried the morning brief (#285)
     const fs = lastNudge('fresh-start')
     expect(fs).toBeDefined()
     /* the seed's three prior weeks put 7 completions and 3 rolls in last week */
@@ -1511,11 +2014,15 @@ describe('week-in-review (fresh-start upgraded)', () => {
 
   it('week one (empty history): the original Monday copy, no invented claims', async () => {
     await fresh(MON(9, 0))
-    /* wipe history and let the engine re-open the day fresh */
+    /* wipe history and let the engine re-open the day fresh — the morning
+       brief keeps its once-a-day key (#285) so the tick belongs to the opener */
     useMew.setState((st) => ({
       memory: [],
       chat: st.chat.filter((m) => m.nudgeType !== 'fresh-start'),
-      engine: { lastFired: {}, lastDriftBlockId: null },
+      engine: {
+        lastFired: { 'morning-brief': st.engine.lastFired['morning-brief'] },
+        lastDriftBlockId: null,
+      },
       lastActivityMs: MON(9, 5).getTime(),
     }))
     at(MON(9, 5))
@@ -1880,7 +2387,10 @@ describe('entity-aware durations', () => {
       .blocks.find((b) => /interview prep/i.test(b.title) && b.status === 'open')
     expect(placed).toBeDefined()
     expect(placed!.endMin - placed!.startMin).toBe(40)
-    expect(lastMsg().body).toContain('(your usual)')
+    /* the credit rides the plan reply; the day-load meter (#301) follows it
+       on the seeded-heavy tomorrow — find the reply, don't pin "last" */
+    const reply = chat().find((m) => m.role === 'mew' && /^Done — /.test(m.body))
+    expect(reply?.body).toContain('(your usual)')
   })
 
   it('an explicit duration always wins over the usual', async () => {
@@ -2333,6 +2843,57 @@ describe('onboarding tour first-run flag', () => {
   })
 })
 
+/* ── onboarding v2 guided cursor (#306) ──────────────────────────────── */
+
+describe('onboarding v2 guided steps (#306)', () => {
+  it('advance walks tour → keys → calendar → plan, gate still closed', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().onboardingStep).toBe('tour')
+    useMew.getState().advanceOnboarding()
+    expect(useMew.getState().onboardingStep).toBe('keys')
+    useMew.getState().advanceOnboarding()
+    expect(useMew.getState().onboardingStep).toBe('calendar')
+    useMew.getState().advanceOnboarding()
+    expect(useMew.getState().onboardingStep).toBe('plan')
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(false) // nothing completed yet
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('advancing past plan completes onboarding and resets the (non-persisted) cursor', async () => {
+    await fresh(TUE(9, 40))
+    for (let i = 0; i < 3; i++) useMew.getState().advanceOnboarding() // → plan
+    expect(useMew.getState().onboardingStep).toBe('plan')
+    useMew.getState().advanceOnboarding() // plan → done
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(true)
+    expect(fakeDb.settings?.hasSeenOnboarding).toBe(true)
+    expect(useMew.getState().onboardingStep).toBe('tour')
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('every step’s "later" leaves clean defaults — no key, no client ID written', async () => {
+    await fresh(TUE(9, 40))
+    const before = useMew.getState().settings
+    for (let i = 0; i < 4; i++) useMew.getState().advanceOnboarding() // walk all the way through
+    const after = useMew.getState().settings
+    expect(after.anthropicKey).toBe(before.anthropicKey) // keyless floor intact
+    expect(after.openaiKey).toBe(before.openaiKey)
+    expect(after.googleClientId).toBe(before.googleClientId) // local-only intact
+    expect(after.planMode).toBe(before.planMode)
+    expect(after.hasSeenOnboarding).toBe(true) // the only thing that flips is the gate
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+
+  it('skip-all mid-flow resets the cursor and closes for good', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().advanceOnboarding() // → keys
+    useMew.getState().advanceOnboarding() // → calendar
+    useMew.getState().dismissOnboarding() // "Skip all"
+    expect(useMew.getState().onboardingStep).toBe('tour')
+    expect(useMew.getState().settings.hasSeenOnboarding).toBe(true)
+    await vi.advanceTimersByTimeAsync(60_000)
+  })
+})
+
 /* ── preferences change mechanics, not just prose ────────────────────── */
 
 describe('prefs applied at placement', () => {
@@ -2406,11 +2967,14 @@ describe('pref-drift validation', () => {
       }))
     }
     /* stay "active" so drift never outranks the rulebook check (one nudge
-       per tick, priority order) */
+       per tick, priority order). The boot tick carried the morning brief
+       (#285), so right-size, the roller, then the rulebook each take one. */
     useMew.setState({ lastActivityMs: TUE(10, 29).getTime() })
-    at(TUE(10, 30)) // a later tick, past the seeded morning's right-size
+    at(TUE(10, 30)) // right-size
     useMew.setState({ lastActivityMs: TUE(10, 59).getTime() })
-    at(TUE(11, 0))
+    at(TUE(11, 0)) // break-smaller (the seeded roller)
+    useMew.setState({ lastActivityMs: TUE(11, 29).getTime() })
+    at(TUE(11, 30)) // pref-drift
   }
 
   it('three contradictions → exactly one nudge with live update/keep actions', async () => {
@@ -2603,8 +3167,13 @@ describe('nudges defer until the turn completes', () => {
     }
     await say('finish the deck')
 
-    const reply = chat().find((m) => m.role === 'mew' && m.body.includes('marked done'))!
+    /* the tool call closes the streamed row (#282: text → card → text), so the
+       plan stays pinned to the row it streamed into — the one on the record
+       BEFORE the mutation — and is never re-pinned to the post-tool row */
+    const reply = chat().find((m) => m.role === 'mew' && m.body.includes('On it'))!
     expect(reply.reasoning).toBe('the deck is the one open block today — completing it.')
+    const tail = chat().find((m) => m.role === 'mew' && m.body.includes('marked done'))!
+    expect(tail.reasoning).toBeUndefined()
     // it was on the record BEFORE the executor mutated the week
     expect(plannedBeforeAction).toBe('the deck is the one open block today — completing it.')
   })
@@ -2634,8 +3203,11 @@ describe('nudges defer until the turn completes', () => {
   })
 
   it('an idle tick nudge (no turn in flight) still posts immediately', async () => {
-    // the seeded Tuesday-morning right-size nudge fires from a tick, not a turn
+    // tick nudges post straight to chat: the boot tick's morning brief (#285),
+    // then the seeded Tuesday-morning right-size on the next minute
     await fresh(TUE(9, 40))
+    expect(lastNudge('morning-brief')).toBeDefined()
+    at(TUE(9, 41))
     expect(lastNudge('right-size')).toBeDefined()
     expect(useMew.getState().queuedNudges).toHaveLength(0)
   })
@@ -2784,6 +3356,178 @@ describe('a turn can be stopped mid-stream', () => {
     await say('now finish it')
     expect(lastMsg().body).toContain('all done')
     expect(useMew.getState().thinking).toBe(false)
+  })
+})
+
+/* #280 — type while MEW works: the composer never locks. send() decides by
+   turn phase (idle speaks; mid-turn queues), a second Enter merges into ONE
+   combined turn, and every settle path — success, hiccup, stop — drains the
+   slot exactly once via speak's finally. Stop with a queued message IS
+   stop-and-send: same stopSpeaking(), the settle drain does the send. */
+
+describe('a message typed while MEW works queues, then sends exactly once', () => {
+  const userBodies = () =>
+    chat()
+      .filter((m) => m.role === 'user')
+      .map((m) => m.body)
+  const queued = () => useMew.getState().queuedSpeak
+  const draft = () => useMew.getState().promptDraft
+
+  it('send while idle speaks immediately: no queue, draft consumed', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['hey — the morning looks clear.']
+    useMew.getState().setPromptDraft('hello mew')
+    useMew.getState().send('hello mew')
+    await settle()
+    expect(userBodies().filter((b) => b === 'hello mew')).toHaveLength(1)
+    expect(queued()).toBe(null)
+    expect(draft()).toBe('') // send() consumed the draft
+    expect(lastMsg().body).toContain('the morning looks clear')
+  })
+
+  it('send mid-turn queues, then sends as its own next turn — exactly once', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['on the first thing — ', 'done.']
+    let queuedDuring: string | null = null
+    scriptedModel.midTurn = () => {
+      scriptedModel.midTurn = null // one-shot: the drained turn runs clean
+      useMew.getState().send('a thought that arrived mid-turn')
+      queuedDuring = queued()
+      scriptedModel.chunks = ['and the queued thought — handled.']
+    }
+    await say('first ask')
+    expect(queuedDuring).toBe('a thought that arrived mid-turn')
+    await settle() // the drain rides a microtask, then runs a whole turn
+    expect(userBodies().filter((b) => b === 'a thought that arrived mid-turn')).toHaveLength(1)
+    expect(queued()).toBe(null)
+    expect(lastMsg().body).toContain('queued thought — handled')
+  })
+
+  it('two Enters mid-turn merge into one combined queued turn', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['working — ', 'done.']
+    scriptedModel.midTurn = () => {
+      scriptedModel.midTurn = null
+      useMew.getState().send('first thought')
+      useMew.getState().send('second thought')
+    }
+    await say('start')
+    await settle()
+    const merged = 'first thought\nsecond thought'
+    expect(userBodies().filter((b) => b === merged)).toHaveLength(1) // ONE combined turn
+    expect(userBodies()).not.toContain('first thought') // never sent alone
+    expect(userBodies()).not.toContain('second thought')
+    expect(queued()).toBe(null)
+  })
+
+  it('a model hiccup still drains the queue — exactly once', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['partial — ']
+    scriptedModel.throwAfter = true // the connection dies after the queue lands
+    scriptedModel.midTurn = () => {
+      scriptedModel.midTurn = null
+      useMew.getState().send('queued past the hiccup')
+    }
+    await say('start')
+    await settle()
+    expect(userBodies().filter((b) => b === 'queued past the hiccup')).toHaveLength(1)
+    expect(queued()).toBe(null)
+    // the failure stayed honest (#116) — and still drained
+    expect(chat().some((m) => /connection hiccuped/i.test(m.body))).toBe(true)
+  })
+
+  it('stop with a queued message IS stop-and-send: partial stays, stop note first', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['partial answer — ', 'never arrives.']
+    scriptedModel.midTurn = () => {
+      scriptedModel.midTurn = null
+      useMew.getState().send('the parked follow-up')
+      useMew.getState().stopSpeaking() // plain stop — no second code path
+      scriptedModel.chunks = ['fresh answer to the parked follow-up.']
+    }
+    await say('start something')
+    await settle()
+    // the partial that streamed before the stop is kept, unfinished tail and all
+    const partial = chat().find((m) => m.role === 'mew' && m.body.includes('partial answer'))
+    expect(partial).toBeDefined()
+    expect(partial!.body).not.toContain('never arrives')
+    // the stop contract, word-for-word, BEFORE the queued send fires
+    const stopIdx = chat().findIndex((m) => m.body === `(stopped — what's above stands.)`)
+    const queuedIdx = chat().findIndex(
+      (m) => m.role === 'user' && m.body === 'the parked follow-up'
+    )
+    expect(stopIdx).toBeGreaterThan(-1)
+    expect(queuedIdx).toBeGreaterThan(stopIdx)
+    // exactly once, and the drained turn ran to completion un-aborted
+    expect(userBodies().filter((b) => b === 'the parked follow-up')).toHaveLength(1)
+    expect(lastMsg().body).toContain('fresh answer')
+    expect(queued()).toBe(null)
+  })
+
+  it('cancel returns the queued text to the draft intact — nothing sends', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['working — ', 'done.']
+    scriptedModel.midTurn = () => {
+      scriptedModel.midTurn = null
+      useMew.getState().send('a reconsidered thought')
+      useMew.getState().cancelQueuedSpeak()
+    }
+    await say('start')
+    await settle()
+    expect(draft()).toBe('a reconsidered thought') // back in the composer, whole
+    expect(queued()).toBe(null)
+    expect(userBodies()).not.toContain('a reconsidered thought') // the drain had nothing to send
+  })
+
+  it('cancel keeps newer typing too: queued text lands above the draft-in-progress', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['working — ', 'done.']
+    scriptedModel.midTurn = () => {
+      scriptedModel.midTurn = null
+      useMew.getState().send('queued first')
+      useMew.getState().setPromptDraft('typed after')
+      useMew.getState().cancelQueuedSpeak()
+    }
+    await say('start')
+    await settle()
+    expect(draft()).toBe('queued first\ntyped after') // both thoughts kept, send order
+    expect(queued()).toBe(null)
+  })
+
+  it('a chip pick mid-turn no-ops — same phase gate as send, no concurrent turn (#254)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['pick one — ', 'your call.']
+    let thinkingAtPick: boolean | null = null
+    scriptedModel.midTurn = (exec) => {
+      scriptedModel.midTurn = null
+      /* the chips land mid-turn (fresh, unsuperseded — only the phase gate
+         can park them), and the pick fires while the SAME turn still runs:
+         `thinking` is already false (a token streamed) but turnInFlight holds */
+      exec.offerChoices('where should the deck live?', [
+        { label: '15:00', reply: 'place the deck at 15:00' },
+      ])
+      const offer = chat().find((m) => m.choices?.length === 1)!
+      thinkingAtPick = useMew.getState().thinking
+      void useMew.getState().pickChoice(offer.id, offer.choices![0].id)
+    }
+    await say('find a slot for the deck')
+    expect(thinkingAtPick).toBe(false) // a thinking-only gate would have let the pick through
+    await settle()
+    // the mid-turn pick never became a user turn and never marked the chip
+    expect(userBodies()).not.toContain('place the deck at 15:00')
+    const offer = chat().find((m) => m.choices?.length === 1)!
+    expect(offer.choices![0].picked).toBeUndefined()
+    // …and once the turn settles, the same pick acts normally
+    await useMew.getState().pickChoice(offer.id, offer.choices![0].id)
+    expect(userBodies()).toContain('place the deck at 15:00')
   })
 })
 
@@ -3367,10 +4111,28 @@ describe('paged boot hydration (#250 phase 2)', () => {
     fakeDb.reset()
     mirrors.length = 0
     vi.setSystemTime(start)
+    /* a lived-in profile at 9:40 already had its morning brief AND its
+       sustenance pass (#299): each persisted key travels with the artifact
+       its hydrate heal checks — the brief with its delivered card in chat
+       (#285), the scaffold with a meal block on today — so the boot tick
+       stays silent and the window arithmetic below stays exact (re-fire
+       honesty is pinned in the ritual/scaffold suites; here it must hold) */
+    fakeDb.settings = {
+      ...DEFAULT_SETTINGS,
+      nudgeLastFired: {
+        'morning-brief': { ts: start.getTime() - 70 * 60_000, key: dayKey(start) },
+        sustenance: { ts: start.getTime() - 70 * 60_000, key: dayKey(start) },
+      },
+    }
     const base = start.getTime() - total * 60_000
     for (let i = 0; i < total; i++) {
       const m = oldMsg(i, base + i * 60_000)
-      fakeDb.chat.set(m.id, m)
+      /* the newest row is that delivered brief card — same id/ts, so every
+         window and cursor assertion below is untouched */
+      fakeDb.chat.set(
+        m.id,
+        i === total - 1 ? { ...m, role: 'nudge' as const, nudgeType: 'morning-brief' as const } : m
+      )
     }
     fakeDb.blocks.set('b-anchor', {
       id: 'b-anchor',
@@ -3379,6 +4141,20 @@ describe('paged boot hydration (#250 phase 2)', () => {
       dayKey: TUE_KEY,
       startMin: 9 * 60,
       endMin: 10 * 60,
+      protected: false,
+      status: 'open',
+      calendarRefs: [],
+      estimateSource: 'user',
+    })
+    /* the meal block the burned sustenance key answers to — without it the
+       #299 heal reads the key as an undelivered pass and re-arms it */
+    fakeDb.blocks.set('b-lunch', {
+      id: 'b-lunch',
+      title: 'Lunch',
+      tag: 'private',
+      dayKey: TUE_KEY,
+      startMin: 13 * 60,
+      endMin: 13 * 60 + 45,
       protected: false,
       status: 'open',
       calendarRefs: [],
@@ -3446,8 +4222,10 @@ describe('paged boot hydration (#250 phase 2)', () => {
     await freshBigProfile(TUE(9, 40), 260)
     await say('block thursday morning for the deck')
     const s = useMew.getState()
+    /* the turn appends user → tool receipt (#282) → reply, all past the window */
     expect(s.chat[s.chat.length - 1].body).toMatch(/^Done — /)
-    expect(s.chat[s.chat.length - 2].body).toBe('block thursday morning for the deck')
+    expect(s.chat[s.chat.length - 2].role).toBe('tool')
+    expect(s.chat[s.chat.length - 3].body).toBe('block thursday morning for the deck')
     await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
   })
 
@@ -3686,5 +4464,917 @@ describe('honest fallback copy per failure class (#153)', () => {
   it('a local unknown model tag (404) points at Settings too', async () => {
     await localFail(sdkErr(404))
     expect(note().body).toMatch(/check the model name in Settings/)
+  })
+})
+
+/* ── #282 — tool-call activity cards: every executor invocation leaves one
+   receipt row in the log, born at the seam where tools actually run. The
+   scenarios pin the whole lifecycle: append-as-running before the work,
+   immutable settle after it, mid-turn chronology (text → card → text),
+   persistence + the running→interrupted hydration mapping, the keyless floor,
+   and the model-thread exclusion. */
+describe('tool-call activity cards (#282)', () => {
+  const toolCards = () => chat().filter((m) => m.role === 'tool')
+  const deckToday = () =>
+    useMew.getState().blocks.find((b) => /Q3 deck/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+
+  it('a keyless rules-floor turn leaves one settled card through the same wrappers', async () => {
+    /* pre-ritual boot: the cards counted here are the TURN's own — a 9:40
+       boot adds the sustenance scaffold's plan receipt (#299, pinned there) */
+    await fresh(TUE(8, 0))
+    await say('block thursday morning for the deck')
+
+    const cards = toolCards()
+    expect(cards).toHaveLength(1)
+    expect(cards[0].tool).toMatchObject({ name: 'plan', verb: 'placing blocks', state: 'done' })
+    expect(cards[0].tool!.target).toContain('thursday')
+    /* the receipt precedes the confirmation — strictly chronological */
+    const c = chat()
+    const replyIdx = c.findIndex((m) => m.role === 'mew' && /^Done — /.test(m.body))
+    expect(c.indexOf(cards[0])).toBeGreaterThanOrEqual(0)
+    expect(c.indexOf(cards[0])).toBeLessThan(replyIdx)
+    /* persisted settled via the existing chat path */
+    expect((fakeDb.chat.get(cards[0].id) as ChatMessage).tool!.state).toBe('done')
+  })
+
+  it('mid-turn ordering: a tool call closes the streamed row, so text → card → text lands as two mew rows', async () => {
+    await fresh(TUE(8, 0)) // pre-ritual: the first role:'tool' row must be this turn's (#299)
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const target = deckToday()
+    scriptedModel.chunks = ['first — ', 'second.']
+    scriptedModel.midTurn = (exec) => exec.complete(target.title)
+    await say('finish the deck')
+
+    const c = chat()
+    const first = c.findIndex((m) => m.role === 'mew' && m.body === 'first — ')
+    const card = c.findIndex((m) => m.role === 'tool')
+    const second = c.findIndex((m) => m.role === 'mew' && m.body === 'second.')
+    expect(first).toBeGreaterThanOrEqual(0)
+    expect(second).toBeGreaterThanOrEqual(0)
+    expect(first).toBeLessThan(card)
+    expect(card).toBeLessThan(second)
+    expect(c[first].id).not.toBe(c[second].id) // a NEW mew row after the tool
+    /* the closed row persisted at close, the tail at stream end, the card settled */
+    expect(fakeDb.chat.get(c[first].id)).toBeDefined()
+    expect(fakeDb.chat.get(c[second].id)).toBeDefined()
+    expect(c[card].tool).toMatchObject({ name: 'complete', state: 'done' })
+    expect(useMew.getState().blocks.find((b) => b.id === target.id)!.status).toBe('done')
+  })
+
+  it('the card is on screen as running BEFORE the tool settles (append precedes the work)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    let midState: string | undefined
+    scriptedModel.chunks = ['looking.']
+    scriptedModel.midTurn = (exec) => {
+      /* async tool: the receipt row exists (running) the moment the executor
+         is invoked; it settles when the promise does */
+      void exec.queryBrain('how much time has the deck taken this week')
+      midState = toolCards().at(-1)?.tool?.state
+    }
+    await say('how much has the deck eaten')
+
+    expect(midState).toBe('running')
+    expect(toolCards().at(-1)!.tool).toMatchObject({
+      name: 'queryBrain',
+      verb: 'checking what I know',
+      state: 'done',
+    })
+  })
+
+  it('repeat calls in one turn leave distinct cards (one per invocation)', async () => {
+    await fresh(TUE(8, 0)) // pre-ritual: card count is this turn's alone (#299)
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['two reads.']
+    scriptedModel.midTurn = (exec) => {
+      exec.analyze(0)
+      exec.analyze(1)
+    }
+    await say('read today and tomorrow')
+
+    const cards = toolCards()
+    expect(cards).toHaveLength(2)
+    expect(cards[0].id).not.toBe(cards[1].id)
+    expect(cards.map((m) => m.tool!.state)).toEqual(['done', 'done'])
+    expect(cards.map((m) => m.tool!.target)).toEqual(['today', 'tomorrow'])
+  })
+
+  it('offerChoices leaves no card (its chips ARE the artifact); undo_last_action leaves one', async () => {
+    await fresh(TUE(8, 0)) // pre-ritual: card names are this turn's alone (#299)
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    scriptedModel.chunks = ['on it.']
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [{ title: 'deep work', tag: 'work', dayOffset: 1, startMin: 540, durationMin: 60 }],
+        []
+      )
+      exec.offerChoices('keep it?', [
+        { label: 'yes', reply: 'keep it' },
+        { label: 'no', reply: 'undo that' },
+      ])
+      exec.undoLast()
+    }
+    await say('plan tomorrow morning')
+
+    expect(toolCards().map((m) => m.tool!.name)).toEqual(['plan', 'undoLast'])
+    expect(toolCards()[1].tool).toMatchObject({ verb: 'putting it back', state: 'done' })
+    expect(chat().some((m) => m.choices?.length === 2)).toBe(true) // the chips message itself
+  })
+
+  it('a tool that throws settles error with a MEW-voiced note, logs the raw error, and rethrows unchanged', async () => {
+    await fresh(TUE(9, 40))
+    const captured: { args: unknown[] }[] = []
+    setLoggerSink({
+      error: (...args: unknown[]) => captured.push({ args }),
+      warn: () => {},
+      info: () => {},
+      debug: () => {},
+    })
+    try {
+      const boom = new Error('ECONNRESET raw provider junk')
+      let thrown: unknown = null
+      try {
+        runToolWithCard('plan', undefined, () => {
+          throw boom
+        })
+      } catch (e) {
+        thrown = e
+      }
+      expect(thrown).toBe(boom) // identity preserved — the model sees the failure exactly as before
+
+      const card = toolCards().at(-1)!
+      expect(card.tool).toMatchObject({ name: 'plan', state: 'error', note: TOOL_ERROR_NOTE })
+      expect(card.tool!.note).not.toMatch(/ECONNRESET/) // never a raw error in the transcript
+      /* the raw error went to the devtools log, labeled by tool */
+      const logged = captured.find((c) => String(c.args[0]).endsWith('tool/plan'))
+      expect(logged).toBeDefined()
+      expect(logged!.args[2]).toMatchObject({ message: 'ECONNRESET raw provider junk' })
+      /* the error settle persisted */
+      expect((fakeDb.chat.get(card.id) as ChatMessage).tool!.state).toBe('error')
+    } finally {
+      setLoggerSink(null)
+    }
+  })
+
+  it('an async tool that rejects settles error and rethrows the same rejection', async () => {
+    await fresh(TUE(9, 40))
+    const boom = new Error('brain fell over')
+    await expect(runToolWithCard('queryBrain', undefined, () => Promise.reject(boom))).rejects.toBe(
+      boom
+    )
+    expect(toolCards().at(-1)!.tool).toMatchObject({ name: 'queryBrain', state: 'error' })
+  })
+
+  it('a crash mid-tool replays as interrupted — never a live shimmer from history', async () => {
+    await fresh(TUE(9, 40))
+    /* what openToolCard persists at append, never settled — the app "died" */
+    const crashed: ChatMessage = {
+      id: 'crash-1',
+      role: 'tool',
+      body: '',
+      ts: TUE(9, 41).getTime(),
+      tool: { name: 'plan', verb: 'placing blocks', target: 'thursday', state: 'running' },
+    }
+    fakeDb.chat.set(crashed.id, crashed)
+    /* reboot over the SAME storage (fresh() would wipe it) */
+    useMew.setState(
+      {
+        ...pristine,
+        lastTickDay: dayKey(TUE(9, 42)),
+        nowMs: TUE(9, 42).getTime(),
+        lastActivityMs: TUE(9, 42).getTime(),
+      },
+      true
+    )
+    await useMew.getState().hydrate()
+
+    const card = chat().find((m) => m.id === 'crash-1')!
+    expect(card.tool!.state).toBe('interrupted')
+    /* storage converged through the same delta putChat the live path uses */
+    expect((fakeDb.chat.get('crash-1') as ChatMessage).tool!.state).toBe('interrupted')
+  })
+
+  it('buildThread keeps role:tool rows out of the model thread (receipts are for humans)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    /* even a card that (defensively) carries a body must never ride along */
+    useMew.setState((s) => ({
+      chat: [
+        ...s.chat,
+        {
+          id: 'card-x',
+          role: 'tool' as const,
+          body: 'receipt text a model must never see',
+          ts: TUE(9, 41).getTime(),
+          tool: { name: 'plan', verb: 'placing blocks', state: 'done' as const },
+        },
+      ],
+    }))
+    scriptedModel.chunks = ['ok.']
+    await say('hello again')
+
+    const thread = scriptedModel.lastThread!
+    expect(thread.length).toBeGreaterThan(0)
+    expect(thread.some((t) => t.text.includes('receipt text'))).toBe(false)
+  })
+})
+
+/* ── the tray companion (#283): remote controls, metronome, diff-gate ── */
+
+describe('the tray companion (#283)', () => {
+  const lastPush = () => desktopFake.trayPushes[desktopFake.trayPushes.length - 1]
+
+  it('the shell metronome IS a store tick: the clock advances with no webview timer', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    expect(desktopFake.shellTick).toBeTypeOf('function')
+    vi.setSystemTime(TUE(9, 47))
+    desktopFake.shellTick!()
+    expect(useMew.getState().nowMs).toBe(TUE(9, 47).getTime())
+  })
+
+  it('tray pushes are diff-gated: countdown-minute flips repaint, raw ticks do not', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    at(TUE(9, 43)) // deck live 9:00–11:30 → 107 min left
+    expect(lastPush()).toEqual({ state: 'focus', tooltip: 'Q3 deck — 107 min left' })
+
+    /* two more ticks inside the same minute — same shape, zero repaints */
+    const n = desktopFake.trayPushes.length
+    at(new Date(2026, 5, 9, 9, 43, 5))
+    at(new Date(2026, 5, 9, 9, 43, 20))
+    expect(desktopFake.trayPushes.length).toBe(n)
+
+    /* the countdown flips a minute → exactly one repaint */
+    at(TUE(9, 44))
+    expect(desktopFake.trayPushes.length).toBe(n + 1)
+    expect(lastPush().tooltip).toBe('Q3 deck — 106 min left')
+  })
+
+  it('the dot walks the day: focus while a block holds you, idle-with-next between, rest in rest', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(12, 10)) // standup ended 12:00; lunch at 13:00
+    at(TUE(12, 10))
+    expect(lastPush()).toEqual({
+      state: 'idle',
+      tooltip: 'next: Lunch, away from screen at 13:00',
+    })
+    at(TUE(18, 5)) // Rest — earned, 18:00–19:00
+    expect(lastPush()).toEqual({ state: 'rest', tooltip: 'Rest — 55 min left' })
+  })
+
+  it("tray 'done' completes the LIVE block through the checkbox door: memory event + celebration", async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.trayAction!('done')
+    const s = useMew.getState()
+    const today = dayKey(TUE(9, 40))
+    const deck = s.blocks.find((b) => b.title === 'Q3 deck — deep work' && b.dayKey === today)!
+    expect(deck.status).toBe('done')
+    expect(
+      s.memory.some(
+        (e) => e.kind === 'completed' && e.dayKey === today && e.title === 'Q3 deck — deep work'
+      )
+    ).toBe(true)
+    expect(s.celebratePulse).toBeGreaterThan(0)
+  })
+
+  it("tray 'done' with nothing live degrades to a quiet toast — no error, no mutation", async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(21, 0)) // every block of the day has ended
+    const statuses = useMew.getState().blocks.map((b) => `${b.id}:${b.status}`)
+    desktopFake.trayAction!('done')
+    expect(mirrors.some((m) => m.body === 'nothing live right now — all yours')).toBe(true)
+    expect(useMew.getState().blocks.map((b) => `${b.id}:${b.status}`)).toEqual(statuses)
+  })
+
+  it("tray 'start next' pulls the next block to now through startNow — the start-by nudge's own door", async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(12, 10))
+    desktopFake.trayAction!('start-next')
+    const s = useMew.getState()
+    const lunch = s.blocks.find(
+      (b) => b.title === 'Lunch, away from screen' && b.dayKey === dayKey(TUE(12, 10))
+    )!
+    expect(lunch.startMin).toBe(12 * 60 + 10)
+    expect(lunch.startedAt).toBe(TUE(12, 10).getTime())
+    expect(chat().some((m) => m.role === 'mew' && /^Started — /.test(m.body))).toBe(true)
+  })
+
+  it("tray 'start next' with nothing queued stays quiet and positive", async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(21, 0))
+    desktopFake.trayAction!('start-next')
+    expect(mirrors.some((m) => m.body === 'nothing queued today — the day is yours')).toBe(true)
+  })
+
+  it("tray 'quick-capture' opens the palette on the capture pane; 'open' mutates nothing", async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    const blocksBefore = useMew.getState().blocks
+    const capturesBefore = useMew.getState().captures
+    desktopFake.trayAction!('quick-capture')
+    expect(useMew.getState().commandPaletteOpen).toBe(true)
+    expect(useMew.getState().commandPaletteMode).toBe('capture')
+    desktopFake.trayAction!('open')
+    /* neither route mutates anything itself — the overlay (a human) does */
+    expect(useMew.getState().blocks).toBe(blocksBefore)
+    expect(useMew.getState().captures).toBe(capturesBefore)
+  })
+
+  it('a web run (no shell) never registers tray listeners through the store wire-up', async () => {
+    /* the once-guard subscribes on the first tauri=true hydrate of this file;
+       what stays pinned here is the observable web contract: with tauri=false
+       every push is gated off — ticks repaint nothing */
+    desktopFake.tauri = false
+    await fresh(TUE(9, 40))
+    const n = desktopFake.trayPushes.length
+    at(TUE(9, 41))
+    at(TUE(9, 42))
+    expect(desktopFake.trayPushes.length).toBe(n)
+  })
+})
+
+/* ── the OS-global capture hotkey (#284): hydrate registers, the shell
+   validates rebinds, refusals stay kind ──────────────────────────────── */
+
+describe('the global capture hotkey (#284)', () => {
+  const store = () => useMew.getState()
+
+  it('ships enabled by default; hydrate pushes the persisted binding to the shell', async () => {
+    expect(DEFAULT_SETTINGS.globalCaptureHotkey).toBe('CmdOrCtrl+Shift+C')
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    expect(desktopFake.hotkeyCalls).toEqual(['CmdOrCtrl+Shift+C'])
+    expect(store().hotkeyCollision).toBe(false)
+    /* the default persists — the next boot reads it back, not the constant */
+    expect((fakeDb.settings as Settings).globalCaptureHotkey).toBe('CmdOrCtrl+Shift+C')
+  })
+
+  it('a web run pushes nothing — the shell seam stays untouched', async () => {
+    desktopFake.tauri = false
+    await fresh(TUE(9, 40))
+    expect(desktopFake.hotkeyCalls).toEqual([])
+  })
+
+  it('a rebind re-registers through the shell and persists only what the OS accepted', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    const ok = await store().applyCaptureHotkey('Alt+Space')
+    expect(ok).toBe(true)
+    expect(desktopFake.hotkeyCalls).toEqual(['CmdOrCtrl+Shift+C', 'Alt+Space'])
+    expect(store().settings.globalCaptureHotkey).toBe('Alt+Space')
+    await settle()
+    expect((fakeDb.settings as Settings).globalCaptureHotkey).toBe('Alt+Space')
+  })
+
+  it('a refused binding flips the collision flag and keeps the old binding, in Settings and storage', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.hotkeyRefuse = true
+    const ok = await store().applyCaptureHotkey('Ctrl+Alt+P')
+    expect(ok).toBe(false)
+    expect(store().hotkeyCollision).toBe(true)
+    expect(store().settings.globalCaptureHotkey).toBe('CmdOrCtrl+Shift+C')
+    await settle()
+    expect((fakeDb.settings as Settings).globalCaptureHotkey).toBe('CmdOrCtrl+Shift+C')
+    /* picking a free key clears the note in the same session — no restart */
+    desktopFake.hotkeyRefuse = false
+    await store().applyCaptureHotkey('Ctrl+Alt+M')
+    expect(store().hotkeyCollision).toBe(false)
+    expect(store().settings.globalCaptureHotkey).toBe('Ctrl+Alt+M')
+  })
+
+  it('disable releases immediately, persists null, and the next boot re-pushes the release', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    await store().applyCaptureHotkey(null)
+    expect(desktopFake.hotkeyCalls).toEqual(['CmdOrCtrl+Shift+C', null])
+    expect(store().settings.globalCaptureHotkey).toBeNull()
+    await settle()
+    /* a re-hydrate (relaunch, or a restore) reads the persisted null — the
+       release is pushed again, never a resurrected binding */
+    await store().hydrate()
+    expect(desktopFake.hotkeyCalls).toEqual(['CmdOrCtrl+Shift+C', null, null])
+    expect(store().settings.globalCaptureHotkey).toBeNull()
+  })
+
+  it('the trigger rides the tray route: a second fire while already open re-lands, never toggles', async () => {
+    desktopFake.tauri = true
+    await fresh(TUE(9, 40))
+    desktopFake.trayAction!('quick-capture')
+    desktopFake.trayAction!('quick-capture')
+    expect(store().commandPaletteOpen).toBe(true)
+    expect(store().commandPaletteMode).toBe('capture')
+  })
+})
+
+/* ── #293 · plan mode: propose → pick → byte-exact apply ─────────────────
+   Proposing is chat-only data (one picker message, week untouched); the pick
+   is the one mutation, routed through the SAME plan executor plan_blocks
+   uses. Keyless throughout: the braindump rides the rules floor. */
+
+describe('#293 — plan mode scenario picker', () => {
+  const BRAINDUMP =
+    'block the deck, block budget review, block a gym session, block inbox sweep, block errands, block reading time'
+
+  /** The keyless propose: braindump in, ONE picker message out. */
+  const propose = async () => {
+    await fresh(TUE(9, 40))
+    await say(BRAINDUMP)
+    return lastMsg()
+  }
+
+  it('a keyless 6-task braindump posts ONE picker message — ≥2 named, zero-overlap scenarios, week untouched', async () => {
+    await fresh(TUE(9, 40))
+    const blocksBefore = useMew.getState().blocks
+    await say(BRAINDUMP)
+
+    const pickers = chat().filter((m) => (m.scenarios?.length ?? 0) > 0)
+    expect(pickers).toHaveLength(1)
+    const msg = pickers[0]
+    expect(msg.role).toBe('mew')
+    expect(msg.body).toMatch(/ways this week could hold it — pick the one that feels right/)
+    expect(msg.scenarios!.length).toBeGreaterThanOrEqual(2)
+    for (const sc of msg.scenarios!) {
+      expect(sc.name).toBeTruthy()
+      expect(sc.line).toBeTruthy()
+      expect(sc.places.length).toBeGreaterThan(0)
+      /* zero-overlap preview: every stored place still lands conflict-free
+         against the live week (the post-time validation, re-checked here) */
+      expect(validateScenario(useMew.getState().blocks, sc)).toBe(true)
+    }
+    /* proposing mutated NOTHING — same blocks, and the floor stayed quiet
+       (the picker IS the reply; no prose echo behind it) */
+    expect(useMew.getState().blocks).toBe(blocksBefore)
+    expect(lastMsg().id).toBe(msg.id)
+    /* the picker persisted with its scenarios (replay fuel) */
+    expect((fakeDb.chat.get(msg.id) as ChatMessage).scenarios!.length).toBe(msg.scenarios!.length)
+  })
+
+  it('the pick applies the STORED places byte-exactly through the plan executor', async () => {
+    const msg = await propose()
+    const sc = msg.scenarios![0]
+    const before = useMew.getState().blocks
+    const todayKey = dayKey(TUE(9, 40))
+
+    useMew.getState().pickScenario(msg.id, sc.id)
+
+    const after = useMew.getState().blocks
+    const added = after.filter((b) => !before.some((p) => p.id === b.id))
+    /* the quote landed verbatim: every stored place is a block at exactly the
+       previewed day, start, length, title, and tag (outcome deep-equal — the
+       executor received the stored places, nothing re-derived) */
+    for (const p of sc.places) {
+      const landed = added.filter(
+        (b) =>
+          b.title === p.title &&
+          b.tag === p.tag &&
+          b.dayKey === addDaysKey(todayKey, p.dayOffset) &&
+          b.startMin === p.startMin &&
+          b.endMin === p.startMin + p.durationMin
+      )
+      expect(landed).toHaveLength(1)
+    }
+    /* nothing else landed except the plan path's own pacing breathers —
+       exactly what a plan_blocks call with these places would leave */
+    const extras = added.filter((b) => !sc.places.some((p) => p.title === b.title))
+    expect(extras.every((b) => b.title === 'Breather' && b.tag === 'rest')).toBe(true)
+
+    /* the receipt card (one executor invocation) + the plan-voice confirmation */
+    const card = chat().findLast((m) => m.role === 'tool')!
+    expect(card.tool).toMatchObject({ name: 'plan', verb: 'placing blocks', state: 'done' })
+    expect(lastMsg().body).toMatch(/^Done — /)
+
+    /* picked persists with the message — the picker rehydrates settled */
+    const settled = chat().find((m) => m.id === msg.id)!
+    expect(settled.scenarios!.find((x) => x.id === sc.id)!.picked).toBe(true)
+    expect(
+      (fakeDb.chat.get(msg.id) as ChatMessage).scenarios!.find((x) => x.id === sc.id)!.picked
+    ).toBe(true)
+  })
+
+  it('liveness is the chips grammar: picked → inert, newer user message → inert', async () => {
+    const msg = await propose()
+    useMew.getState().pickScenario(msg.id, msg.scenarios![0].id)
+    const turns = chat().length
+    const blocks = useMew.getState().blocks.length
+    /* a second pick — same or sibling scenario — is a no-op */
+    useMew.getState().pickScenario(msg.id, msg.scenarios![1].id)
+    expect(chat()).toHaveLength(turns)
+    expect(useMew.getState().blocks).toHaveLength(blocks)
+
+    /* a fresh picker superseded by a newer user message goes inert unpicked */
+    const msg2 = await propose()
+    await say('hello')
+    const turns2 = chat().length
+    const blocks2 = useMew.getState().blocks.length
+    useMew.getState().pickScenario(msg2.id, msg2.scenarios![0].id)
+    expect(chat()).toHaveLength(turns2)
+    expect(useMew.getState().blocks).toHaveLength(blocks2)
+    expect(
+      scenariosActive(
+        chat(),
+        chat().find((m) => m.id === msg2.id)!
+      )
+    ).toBe(false)
+  })
+
+  it('a pick mid-turn parks — turnInFlight gates it exactly like pickChoice', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' }) // the scripted model
+    const blocksBefore = useMew.getState().blocks.length
+    scriptedModel.chunks = ['on it.']
+    scriptedModel.midTurn = (exec) => {
+      /* the model posts the picker mid-turn, then a click lands while the
+         turn is still mewing — the phase gate must swallow it */
+      exec.proposeScenarios('', [
+        { title: 'deck', tag: 'work' },
+        { title: 'budget review', tag: 'work' },
+        { title: 'inbox sweep', tag: 'work' },
+      ])
+      const m = chat().find((x) => (x.scenarios?.length ?? 0) > 0)!
+      useMew.getState().pickScenario(m.id, m.scenarios![0].id)
+    }
+    await say('plan my week for me')
+    expect(useMew.getState().blocks).toHaveLength(blocksBefore) // the mid-turn pick parked
+
+    /* the same pick works once the turn settled — the cards were never dead,
+       only parked (what looks pickable is pickable again) */
+    const m = chat().find((x) => (x.scenarios?.length ?? 0) > 0)!
+    useMew.getState().pickScenario(m.id, m.scenarios![0].id)
+    expect(useMew.getState().blocks.length).toBeGreaterThan(blocksBefore)
+  })
+
+  it('a stale scenario refuses kindly and re-offers — never a lying apply', async () => {
+    const msg = await propose()
+    const sc = msg.scenarios![0]
+    const todayKey = dayKey(TUE(9, 40))
+    /* the week moves under the plan without any user message (a drag, a sync):
+       land a fixture block exactly on the first previewed slot */
+    const p = sc.places[0]
+    useMew.setState((s) => ({
+      blocks: [
+        ...s.blocks,
+        {
+          id: 'stale-squatter',
+          title: 'Landed meeting',
+          tag: 'work' as const,
+          dayKey: addDaysKey(todayKey, p.dayOffset),
+          startMin: p.startMin,
+          endMin: p.startMin + 30,
+          protected: true,
+          status: 'open' as const,
+          calendarRefs: [],
+          estimateSource: 'user' as const,
+        },
+      ],
+    }))
+    const blocksBefore = useMew.getState().blocks.length
+
+    useMew.getState().pickScenario(msg.id, sc.id)
+
+    /* nothing applied — no previewed title landed, no picked flag */
+    expect(useMew.getState().blocks.filter((b) => b.title === p.title)).toHaveLength(0)
+    expect(
+      chat()
+        .find((m) => m.id === msg.id)!
+        .scenarios!.some((x) => x.picked)
+    ).toBe(false)
+    /* the kind refusal + a fresh look (a new live picker or an honest line) */
+    const refusal = chat().find((m) =>
+      /the week moved under this plan — want a fresh look\?/.test(m.body)
+    )
+    expect(refusal).toBeDefined()
+    const pickers = chat().filter((m) => (m.scenarios?.length ?? 0) > 0)
+    expect(pickers.length).toBeGreaterThanOrEqual(2) // the stale one + the fresh offer
+    const freshOffer = pickers[pickers.length - 1]
+    expect(freshOffer.id).not.toBe(msg.id)
+    for (const s2 of freshOffer.scenarios!) {
+      expect(validateScenario(useMew.getState().blocks, s2)).toBe(true)
+    }
+    /* and the squatter's week stands untouched beyond the fixture itself */
+    expect(useMew.getState().blocks).toHaveLength(blocksBefore)
+  })
+
+  it('"undo that" as the very next turn takes the picked plan back (#162 reach)', async () => {
+    const msg = await propose()
+    const sc = msg.scenarios![0]
+    const before = useMew.getState().blocks
+    useMew.getState().pickScenario(msg.id, sc.id)
+    expect(useMew.getState().blocks.length).toBeGreaterThan(before.length)
+
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    let undoReply = ''
+    scriptedModel.chunks = ['undoing — ', 'done.']
+    scriptedModel.midTurn = (exec) => {
+      undoReply = exec.undoLast()
+    }
+    await say('undo that — wrong shape')
+    expect(undoReply).toMatch(/^Undone — /)
+    expect(useMew.getState().blocks).toHaveLength(before.length)
+    expect(useMew.getState().blocks.filter((b) => b.title === sc.places[0].title)).toHaveLength(0)
+  })
+
+  it("planMode 'off' keeps the one-pass place; 'always' proposes already at two", async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ planMode: 'off' })
+    await say(BRAINDUMP)
+    expect(chat().some((m) => (m.scenarios?.length ?? 0) > 0)).toBe(false)
+    expect(lastMsg().body).toMatch(/^Done — /) // placed in one pass, today's behavior
+    expect(useMew.getState().blocks.some((b) => b.title === 'deck')).toBe(true)
+
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ planMode: 'always' })
+    await say('block the deck, block budget review')
+    const msg = lastMsg()
+    expect(msg.scenarios!.length).toBeGreaterThanOrEqual(2)
+    expect(useMew.getState().blocks.some((b) => b.title === 'deck')).toBe(false) // still a proposal
+  })
+
+  it('the picker replays from persisted chat — settled flags intact, no re-validation at render', async () => {
+    const msg = await propose()
+    useMew.getState().pickScenario(msg.id, msg.scenarios![0].id)
+
+    /* reload: same storage, fresh store — scenarios and the picked flag came
+       back; liveness derives settled without ever touching the week */
+    useMew.setState(
+      { ...pristine, lastTickDay: dayKey(TUE(9, 41)), nowMs: TUE(9, 41).getTime() },
+      true
+    )
+    await useMew.getState().hydrate()
+    const back = chat().find((m) => m.id === msg.id)!
+    expect(back.scenarios!.length).toBeGreaterThanOrEqual(2)
+    expect(back.scenarios![0].picked).toBe(true)
+    expect(scenariosActive(chat(), back)).toBe(false)
+  })
+
+  it('one honest shape falls through to prose — no picker theater', async () => {
+    await fresh(TUE(9, 40))
+    await say('cleanup my calendar so that i could restart and plan')
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    let result = ''
+    scriptedModel.chunks = ['looking.']
+    scriptedModel.midTurn = (exec) => {
+      /* one huge task on an empty week: every profile collapses to the same
+         earliest fit, the engine dedupes to ONE scenario, and the executor
+         suggests it in prose instead of a one-card picker */
+      result = exec.proposeScenarios('', [{ title: 'mega build', tag: 'work', durationMin: 600 }])
+    }
+    await say('plan the mega build')
+    expect(result).toMatch(/^One shape fits — /)
+    expect(result).toMatch(/mega build/)
+    expect(chat().some((m) => (m.scenarios?.length ?? 0) > 0)).toBe(false)
+    expect(useMew.getState().blocks.some((b) => b.title === 'mega build')).toBe(false)
+  })
+})
+
+/* ── #304 — the weekly planning ritual ──────────────────────────────────
+   Sunday's shaping invite (once per ISO week, persisted weekKey, heal-safe)
+   and the "plan my week" turn: a pure composition of EXISTING tools —
+   read-only generation through the #293 picker, one apply on the pick. The
+   suite runs the keyless rules floor, so every flow pin here doubles as the
+   zero-key proof; the scripted-model scenario pins the keyed shape. */
+
+describe('#304 — the weekly planning ritual', () => {
+  /** Sunday, June 14 2026 — its ISO week's Monday is June 8. */
+  const SUN = (h: number, m = 0) => new Date(2026, 5, 14, h, m)
+  const RITUAL_WEEK = weekKey(SUN(0))
+  const restartAt = async (d: Date) => {
+    vi.setSystemTime(d)
+    useMew.setState(
+      { ...pristine, lastTickDay: dayKey(d), nowMs: d.getTime(), lastActivityMs: d.getTime() },
+      true
+    )
+    await useMew.getState().hydrate()
+  }
+  const queuedRituals = () =>
+    useMew.getState().queuedNudges.filter((m) => m.nudgeType === 'weekly-ritual')
+
+  it('fires once on Sunday at the set time — key persisted, restarts held, next ticks silent', async () => {
+    await fresh(SUN(17, 5)) // boot tick belongs to the (late) morning brief
+    at(SUN(17, 6))
+    expect(nudges('weekly-ritual')).toHaveLength(1)
+    const card = lastNudge('weekly-ritual')
+    expect(card.body).toMatch(/shape the coming week/)
+    expect(card.actions).toEqual([{ id: 'plan', label: 'plan my week', kind: 'primary' }])
+    /* the dedupe key rides Settings as machine state — one per ISO week */
+    expect(fakeDb.settings?.nudgeLastFired?.['weekly-ritual']?.key).toBe(RITUAL_WEEK)
+    /* it announces itself by name in the mirror, like the daily rituals */
+    expect(mirrors.some((m) => m.title === 'mew — weekly ritual')).toBe(true)
+
+    at(SUN(17, 7))
+    at(SUN(17, 20))
+    expect(nudges('weekly-ritual')).toHaveLength(1) // once — the key holds
+
+    /* a mid-evening relaunch: the delivered card keeps its key */
+    await restartAt(SUN(17, 40))
+    at(SUN(17, 41))
+    expect(nudges('weekly-ritual')).toHaveLength(1)
+  })
+
+  it('restart while parked in quiet hours: the heal re-arms it — one invite, never zero, never two', async () => {
+    await fresh(SUN(18, 0))
+    useMew.getState().updateSettings({ weeklyRitualMin: 19 * 60 }) // inside default quiet
+    /* one nudge per tick: the wind-down cards (debrief, wrap) own the first
+       quiet ticks; the ritual takes its own a couple of minutes in — exactly
+       the minute-ticker cadence production runs on */
+    for (let m = 0; m <= 3 && !queuedRituals().length; m++) {
+      useMew.setState({ lastActivityMs: SUN(19, m).getTime() })
+      at(SUN(19, m)) // due, but quiet: fired into the queue, chat untouched
+    }
+    expect(nudges('weekly-ritual')).toHaveLength(0)
+    expect(queuedRituals()).toHaveLength(1)
+    expect(fakeDb.settings?.nudgeLastFired?.['weekly-ritual']?.key).toBe(RITUAL_WEEK)
+
+    /* the queue dies with the app — chat is the source of truth: this week's
+       key with no delivered card drops, so the invite can fire again */
+    await restartAt(SUN(19, 30))
+    for (let m = 31; m <= 34 && !queuedRituals().length; m++) {
+      useMew.setState({ lastActivityMs: SUN(19, m).getTime() })
+      at(SUN(19, m))
+    }
+    expect(nudges('weekly-ritual')).toHaveLength(0)
+    expect(queuedRituals()).toHaveLength(1)
+
+    /* Monday morning: quiet ends, the flush delivers exactly one card — and
+       Monday itself can never re-fire a Sunday ritual */
+    useMew.setState({ lastActivityMs: new Date(2026, 5, 15, 8, 30).getTime() })
+    at(new Date(2026, 5, 15, 8, 30))
+    expect(nudges('weekly-ritual')).toHaveLength(1)
+    at(new Date(2026, 5, 15, 8, 31))
+    expect(nudges('weekly-ritual')).toHaveLength(1)
+    expect(queuedRituals()).toHaveLength(0)
+  })
+
+  it("the chip's words become an ordinary user turn — the nudge invites, the turn works", async () => {
+    await fresh(SUN(17, 5))
+    at(SUN(17, 6))
+    const card = lastNudge('weekly-ritual')
+    const blocksBefore = useMew.getState().blocks
+
+    act(card, 'plan')
+    await settle()
+
+    /* the chip posted its words through the same speak() door typing uses */
+    const userTurns = chat().filter((m) => m.role === 'user')
+    expect(userTurns[userTurns.length - 1].body).toBe('plan my week')
+    expect(chat().find((m) => m.id === card.id)?.resolved).toBe('plan my week')
+    /* the keyless route answered with ONE picker — zero shaping questions
+       (the floor has none to ask: fewer questions, same picker) */
+    const pickers = chat().filter((m) => (m.scenarios?.length ?? 0) > 0)
+    expect(pickers).toHaveLength(1)
+    expect(pickers[0].scenarios!.length).toBeGreaterThanOrEqual(2)
+    expect(chat().filter((m) => (m.choices?.length ?? 0) > 0)).toHaveLength(0)
+    /* generation is read-only — the week is untouched until the pick */
+    expect(useMew.getState().blocks).toBe(blocksBefore)
+    /* the invite accepted into outcome learning */
+    expect(
+      useMew
+        .getState()
+        .memory.some(
+          (e: MemoryEvent) =>
+            e.kind === 'nudge_outcome' &&
+            e.nudgeType === 'weekly-ritual' &&
+            e.outcome === 'accepted'
+        )
+    ).toBe(true)
+  })
+
+  it('a seeded 12-meeting week: picker honors the meetings and best hours; the pick lands byte-exact (#102: one apply)', async () => {
+    await fresh(SUN(17, 5))
+    /* twelve fixed inbound meetings across Mon–Thu afternoons — external by
+       source, so "never moved" is the law being exercised, not a courtesy */
+    const meetings: typeof pristine.blocks = []
+    for (let d = 0; d < 4; d++) {
+      for (const [i, startMin] of [13 * 60, 14.5 * 60, 16 * 60].entries()) {
+        meetings.push({
+          id: `mtg-${d}-${i}`,
+          title: `Sync ${d + 1}.${i + 1}`,
+          tag: 'work',
+          dayKey: addDaysKey(dayKey(SUN(0)), d + 1),
+          startMin,
+          endMin: startMin + 45,
+          protected: true,
+          status: 'open',
+          calendarRefs: [],
+          estimateSource: 'user',
+          external: { calId: 'cal-a', eventId: `evt-${d}-${i}` },
+        })
+      }
+    }
+    useMew.setState((s) => ({ blocks: [...s.blocks, ...meetings] }))
+    const before = useMew.getState().blocks
+
+    await say('plan my week')
+
+    /* ≤3 questions (keyless: zero) → ONE picker, ≥2 scenarios, all valid
+       against the live week including all twelve meetings (zero overlaps) */
+    expect(chat().filter((m) => (m.choices?.length ?? 0) > 0)).toHaveLength(0)
+    const pickers = chat().filter((m) => (m.scenarios?.length ?? 0) > 0)
+    expect(pickers).toHaveLength(1)
+    const msg = pickers[0]
+    expect(msg.scenarios!.length).toBeGreaterThanOrEqual(2)
+    for (const sc of msg.scenarios!) {
+      expect(sc.places.length).toBeGreaterThan(0)
+      expect(validateScenario(useMew.getState().blocks, sc)).toBe(true)
+    }
+    /* best hours honored: the seeded history wins mornings, so one shape
+       lays every deep-work anchor before noon */
+    expect(
+      msg.scenarios!.some((sc) => {
+        const deeps = sc.places.filter((p) => /^Deep work/.test(p.title))
+        return deeps.length > 0 && deeps.every((p) => p.startMin < 12 * 60)
+      })
+    ).toBe(true)
+    expect(useMew.getState().blocks).toBe(before) // generation read-only
+
+    /* the pick: stored places land byte-exact through ONE plan invocation */
+    const cardsBefore = chat().filter((m) => m.role === 'tool').length
+    const sc = msg.scenarios![0]
+    useMew.getState().pickScenario(msg.id, sc.id)
+    const after = useMew.getState().blocks
+    const added = after.filter((b) => !before.some((p) => p.id === b.id))
+    for (const p of sc.places) {
+      const landed = added.filter(
+        (b) =>
+          b.title === p.title &&
+          b.tag === p.tag &&
+          b.dayKey === addDaysKey(sc.todayKey, p.dayOffset) &&
+          b.startMin === p.startMin &&
+          b.endMin === p.startMin + p.durationMin
+      )
+      expect(landed).toHaveLength(1)
+    }
+    const extras = added.filter((b) => !sc.places.some((p) => p.title === b.title))
+    expect(extras.every((b) => b.title === 'Breather' && b.tag === 'rest')).toBe(true)
+    /* #102 pinned: exactly one executor invocation applied the whole plan */
+    const planCards = chat()
+      .filter((m) => m.role === 'tool')
+      .slice(cardsBefore)
+    expect(planCards).toHaveLength(1)
+    expect(planCards[0].tool).toMatchObject({ name: 'plan', state: 'done' })
+    /* every meeting stands exactly where the calendar put it */
+    for (const m of meetings) {
+      expect(after.find((b) => b.id === m.id)).toMatchObject({
+        dayKey: m.dayKey,
+        startMin: m.startMin,
+        endMin: m.endMin,
+      })
+    }
+  })
+
+  it('keyed shape: chip questions one per turn, then ONE propose — read-only until the pick', async () => {
+    await fresh(SUN(17, 5))
+    useMew.getState().updateSettings({ modelLocation: 'local' }) // the scripted model
+    const blocksBefore = useMew.getState().blocks
+
+    /* round 1 — the recipe's shaping question rides offer_choices and ends the turn */
+    let asked = ''
+    scriptedModel.chunks = ['reading the week.']
+    scriptedModel.midTurn = (exec) => {
+      asked = exec.offerChoices('what matters most this week?', [
+        { label: 'the deck', reply: 'the deck matters most — plan the week around it' },
+        { label: 'the roadmap', reply: 'the roadmap matters most — plan the week around it' },
+      ])
+    }
+    await say('plan my week')
+    expect(asked).toMatch(/^The options are on screen as clickable chips/)
+    const question = chat().find((m) => (m.choices?.length ?? 0) > 0)!
+    expect(useMew.getState().blocks).toBe(blocksBefore)
+
+    /* the answer arrives as the next user turn; the model closes with ONE propose */
+    scriptedModel.chunks = ['here are the shapes.']
+    scriptedModel.midTurn = (exec) => {
+      exec.proposeScenarios('', [
+        { title: 'The deck', tag: 'work', durationMin: 120 },
+        { title: 'Deep work I', tag: 'work', durationMin: 90 },
+        { title: 'Deep work II', tag: 'work', durationMin: 90 },
+      ])
+    }
+    await useMew.getState().pickChoice(question.id, question.choices![0].id)
+    scriptedModel.midTurn = null
+
+    /* one question round (≤3 by recipe), one picker, nothing placed yet */
+    expect(chat().filter((m) => (m.choices?.length ?? 0) > 0)).toHaveLength(1)
+    const picker = chat().find((m) => (m.scenarios?.length ?? 0) > 0)!
+    expect(picker.scenarios!.length).toBeGreaterThanOrEqual(2)
+    expect(useMew.getState().blocks).toBe(blocksBefore)
+
+    /* the pick is the one apply */
+    useMew.getState().pickScenario(picker.id, picker.scenarios![0].id)
+    expect(
+      useMew.getState().blocks.filter((b) => b.title === 'The deck' && b.status === 'open')
+    ).toHaveLength(1)
+  })
+
+  it('the ritual invite survives outside the ritual: "plan my week" typed cold still opens the picker', async () => {
+    await fresh(SUN(17, 5)) // no chip involved — the words alone route
+    const pickersBefore = chat().filter((m) => (m.scenarios?.length ?? 0) > 0).length
+    await say('plan the week')
+    const pickers = chat().filter((m) => (m.scenarios?.length ?? 0) > 0)
+    expect(pickers.length).toBe(pickersBefore + 1)
+    /* and the block grammar never saw it — no "my week"/"the week" block */
+    expect(useMew.getState().blocks.some((b) => /^(my|the) week$/i.test(b.title))).toBe(false)
   })
 })

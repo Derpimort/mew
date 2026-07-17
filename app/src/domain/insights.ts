@@ -6,8 +6,16 @@
    thing (#249). */
 
 import type { Block, MemoryEvent, PrefPayload } from './types'
-import { addDaysKey, dayKey, fmtDowLong, fmtTime, spell } from './time'
-import { blocksForDay, duration, isDeep, plannedDeepMin } from './week'
+import { addDaysKey, dayKey, dayWord, fmtDowLong, fmtTime, fromDayKey, spell } from './time'
+import {
+  blocksForDay,
+  duration,
+  findFreeSlot,
+  isBackground,
+  isDeep,
+  isFixedTime,
+  plannedDeepMin,
+} from './week'
 import { matchesPref, parseDurationValue, parseTimeValue } from './prefs'
 import type { MemoryAggregates } from './memory'
 
@@ -226,6 +234,68 @@ export function computeInsights(
     driftBand,
     lines: lines.slice(0, 4),
   }
+}
+
+/* ── the insights card: surfacing, not computing (#287) ────────────────
+   One pure presenter, two skins: the Settings card and the rules floor's
+   `show insights` reply both render exactly these rows, so the numbers can
+   never drift apart. Every row names the Insights field it stands on —
+   `claim` IS the traceability pin. Under the data floor the presenter
+   returns null and the UI stays kind: no science claimed from noise. */
+
+export const INSIGHTS_CARD_TITLE = "what mew's noticed"
+
+export interface InsightsCardRow {
+  label: string
+  value: string
+  /** the computed field this row is a claim about — rendered as data-claim */
+  claim: keyof Insights
+}
+
+export interface InsightsCardData {
+  title: string
+  rows: InsightsCardRow[]
+}
+
+export function insightsCard(insights: Insights): InsightsCardData | null {
+  /* the floor, read from the insights' own coverage: ~10 banded outcomes
+     spread over ≥3 distinct weekdays ≈ two honest weeks of history. The
+     conservative direction is the safe one — showing late beats guessing. */
+  const attempted = insights.bands.reduce((s, b) => s + b.attempted, 0)
+  if (attempted < 10 || insights.weekdayLoad.length < 3) return null
+
+  const rows: InsightsCardRow[] = []
+  if (insights.bestBand) {
+    rows.push({
+      label: 'best deep-work hours',
+      value: `${insights.bestBand.label} — ${insights.bestBand.completed}/${insights.bestBand.attempted} finished there`,
+      claim: 'bestBand',
+    })
+  }
+  /* heaviestDow inverted: the LIGHTEST recorded day, framed as room to
+     breathe — the kind reading of the same weekdayLoad numbers */
+  const lightest = [...insights.weekdayLoad].sort((a, b) => a.avgPlannedH - b.avgPlannedH)[0]
+  if (lightest) {
+    rows.push({
+      label: 'kindest day',
+      value: `${lightest.name} run lightest — about ${lightest.avgPlannedH}h planned, room to breathe`,
+      claim: 'weekdayLoad',
+    })
+  }
+  if (insights.lines.length) {
+    rows.push({ label: 'one thing noticed', value: insights.lines[0], claim: 'lines' })
+  }
+  /* estimateFactor is 1 when estimates run honest and >1 when blocks run past
+     their end (never <1 by construction) — only a meaningful stretch is a row */
+  if (insights.estimateFactor != null && insights.estimateFactor - 1 >= 0.05) {
+    rows.push({
+      label: 'booking honesty',
+      value: `booking ~${Math.round((insights.estimateFactor - 1) * 100)}% longer would make the plan honest`,
+      claim: 'estimateFactor',
+    })
+  }
+  /* at most 4 rows by construction, fewer when data is thin — never padded */
+  return rows.length ? { title: INSIGHTS_CARD_TITLE, rows } : null
 }
 
 /* ── the kinder plan, made concrete (nudge #8's Apply) ─────────────────
@@ -534,6 +604,203 @@ export function proposeKinderPlan(
     ? moves.map((m) => `${m.title} → ${fmtDowLong(m.toDayKey).toLowerCase()}`).join(', ')
     : ''
   return { moves, summary }
+}
+
+/* ── the honest day-load meter (#301, v0.5 item 12) ─────────────────────
+   People don't fail their plans, they overbook them. The meter compares a
+   day's planned work against the throughput the user has DEMONSTRATED —
+   surfaced at plan time as a kindness line, never a red bar. History informs
+   (the throughput median); the live week decides (the day's blocks). */
+
+/** A touch of give above the demonstrated line, so the meter never pedants a
+    ten-minute overage — the same allowance proposeKinderPlan grants a target
+    day. The "line" everywhere below means throughput × this. */
+export const DAY_LOAD_GIVE = 1.15
+
+/** "6h" / "4½" — the meter's halves voice (the plan is honest to ±30 min;
+    finer digits would claim precision the median doesn't have). */
+function halfHours(min: number): string {
+  const h = Math.round(min / 30) / 2
+  const whole = Math.trunc(h)
+  return h % 1 ? (whole ? `${whole}½` : '½') : `${whole}`
+}
+
+/** A day's planned work minutes — deep and shallow alike, meetings included
+    (they eat the day too). Optional blocks hold no time and background holds
+    the clock, not the user: both stay out, same as the load math. */
+function plannedWorkMin(blocks: Block[], forDayKey: string): number {
+  return blocksForDay(blocks, forDayKey)
+    .filter((b) => b.tag === 'work' && !b.optional && !isBackground(b))
+    .reduce((s, b) => s + duration(b), 0)
+}
+
+/** Trailing demonstrated daily throughput: the median of per-day COMPLETED
+    work minutes over the most recent ~14 lived days (a lived day = a day
+    with at least one completed work block, trailing 28 calendar days, today
+    excluded — today is still being lived). Null under the same conservative
+    floor the insights card reads (#287: ~10 outcomes over ≥3 distinct days ≈
+    two honest weeks), and null while `agg.realisticBestH` is — the meter
+    says "your usual"; it must never know your usual before the realistic
+    best does, or the two capacity claims could contradict. */
+export function dayThroughputMin(
+  events: MemoryEvent[],
+  agg: MemoryAggregates,
+  todayKey: string
+): number | null {
+  const floor28 = addDaysKey(todayKey, -28)
+  const byDay = new Map<string, number>()
+  let outcomes = 0
+  for (const e of events) {
+    if (e.kind !== 'completed' || e.tag !== 'work' || !e.plannedMin) continue
+    if (e.dayKey < floor28 || e.dayKey >= todayKey) continue
+    byDay.set(e.dayKey, (byDay.get(e.dayKey) ?? 0) + e.plannedMin)
+    outcomes++
+  }
+  if (outcomes < 10 || byDay.size < 3 || agg.realisticBestH == null) return null
+  const lived = [...byDay.entries()]
+    .sort(([a], [b]) => b.localeCompare(a))
+    .slice(0, 14)
+    .map(([, min]) => min)
+    .sort((a, b) => a - b)
+  const mid = lived.length >> 1
+  return lived.length % 2 ? lived[mid] : Math.round((lived[mid - 1] + lived[mid]) / 2)
+}
+
+export interface DayLoadAssessment {
+  plannedMin: number
+  throughputMin: number
+  /** past the line (throughput × DAY_LOAD_GIVE) — under it, silence is law */
+  over: boolean
+  /** the kindness line, spoken only when `over` */
+  line: string
+}
+
+/** One day against the demonstrated line. Null when throughput is unknowable
+    (the data floor) — no meter, no tint, no claims from noise. */
+export function dayLoadAssessment(
+  blocks: Block[],
+  forDayKey: string,
+  throughputMin: number | null
+): DayLoadAssessment | null {
+  if (throughputMin == null || throughputMin <= 0) return null
+  const plannedMin = plannedWorkMin(blocks, forDayKey)
+  return {
+    plannedMin,
+    throughputMin,
+    over: plannedMin > throughputMin * DAY_LOAD_GIVE,
+    line: `that's ${halfHours(plannedMin)}h of work against your usual ${halfHours(throughputMin)} — want me to keep it kind?`,
+  }
+}
+
+/** The week view's quiet density steps, relative to the user's OWN line —
+    a pinnable class, not a float: 0 quiet · 1 filling · 2 near the usual ·
+    3 past the line. 0 whenever throughput is unknowable (floor → no tint). */
+export function dayLoadLevel(plannedMin: number, throughputMin: number | null): 0 | 1 | 2 | 3 {
+  if (throughputMin == null || throughputMin <= 0 || plannedMin <= 0) return 0
+  const r = plannedMin / throughputMin
+  if (r > DAY_LOAD_GIVE) return 3
+  if (r >= 0.85) return 2
+  if (r >= 0.55) return 1
+  return 0
+}
+
+/** The tint, spoken — the a11y label carries the hours the wash only hints:
+    "holds 6h of work — your usual is 4½h". Positive voice by law. */
+export function dayLoadAria(a: DayLoadAssessment): string {
+  return `holds ${halfHours(a.plannedMin)}h of work — your usual is ${halfHours(a.throughputMin)}h`
+}
+
+/** The guard's dedupe slot for one day (#297 mechanism): the slot names the
+    assessed day; its stored `key` holds the todayKey it fired on. One home
+    for the grammar — the store writes it, the right-size nudge reads it. */
+export function dayLoadFiredKey(forDayKey: string): `dayload:${string}` {
+  return `dayload:${forDayKey}`
+}
+
+export interface TrimMove {
+  blockId: string
+  /** base title, exactly as the reply speaks it */
+  title: string
+  toDayKey: string
+  /** a plain ask ruleParse executes verbatim (parse.ts `move` intent) —
+      phrased against the floor's REAL grammar, so the tap works keylessly */
+  reply: string
+}
+
+/** The one honest keyless trim for an over-line day: move ONE work block to
+    a lighter weekday the floor can name. Preference order: the smallest
+    block that covers the whole excess (least disruption, lands the day at
+    its usual), else the largest that fits anywhere (closest to it). A
+    candidate must be MEW's to move (open, not external/fixed/background,
+    still ahead of the clock today) and addressable by words alone — a base
+    title that repeats on another non-rolled block, or one carrying " to "
+    (the move grammar's own separator), can't be targeted unambiguously and
+    is skipped. Targets keep the kinder-plan rules: weekdays only (weekend
+    moves are louder, not kinder), lightest first, never pushed over their
+    own line, with real clear air from 9:00. Null = nothing honest to offer
+    — the tint still tells the density; no fake taps. */
+export function trimMove(
+  blocks: Block[],
+  overDayKey: string,
+  todayKey: string,
+  nowMin: number,
+  throughputMin: number
+): TrimMove | null {
+  const base = (b: Block) => b.title.split('—')[0].trim()
+  const excess = plannedWorkMin(blocks, overDayKey) - throughputMin
+
+  const movable = blocksForDay(blocks, overDayKey).filter(
+    (b) =>
+      b.tag === 'work' &&
+      b.status === 'open' &&
+      !b.external &&
+      !b.optional &&
+      !isBackground(b) &&
+      !isFixedTime(b) &&
+      (overDayKey !== todayKey || b.startMin >= nowMin) &&
+      base(b).length > 0 &&
+      !/\bto\b/i.test(base(b)) &&
+      !blocks.some(
+        (o) =>
+          o.id !== b.id && o.status !== 'rolled' && base(o).toLowerCase() === base(b).toLowerCase()
+      )
+  )
+  const covering = movable
+    .filter((b) => duration(b) >= excess)
+    .sort((a, z) => duration(a) - duration(z))
+  const partial = movable
+    .filter((b) => duration(b) < excess)
+    .sort((a, z) => duration(z) - duration(a))
+
+  const isWeekday = (k: string) => (fromDayKey(k).getDay() + 6) % 7 < 5
+  const targets = Array.from({ length: 6 }, (_, i) => addDaysKey(todayKey, i + 1))
+    .filter((k) => k !== overDayKey && isWeekday(k))
+    .map((k) => ({ k, load: plannedWorkMin(blocks, k) }))
+    .sort((a, z) => a.load - z.load)
+
+  for (const cand of [...covering, ...partial]) {
+    for (const t of targets) {
+      if (t.load + duration(cand) > throughputMin * DAY_LOAD_GIVE) continue
+      if (
+        !findFreeSlot(
+          blocks.filter((b) => b.id !== cand.id),
+          t.k,
+          duration(cand),
+          9 * 60
+        )
+      )
+        continue
+      const word = dayWord(t.k, todayKey)
+      if (!word || word === 'today') continue
+      return {
+        blockId: cand.id,
+        title: base(cand),
+        toDayKey: t.k,
+        reply: `move the ${base(cand)} to ${word}`,
+      }
+    }
+  }
+  return null
 }
 
 /* ── preference validation: rules that reality has outgrown ──────────── */

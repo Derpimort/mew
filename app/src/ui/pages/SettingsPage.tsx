@@ -4,15 +4,22 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { brainIsOn, mewBrain, useMew, type SidecarStatus } from '../../state/store'
-import type { PetId, Settings, VisibleTag } from '../../domain/types'
+import {
+  DEFAULT_SETTINGS,
+  type PetId,
+  type ScaffoldMealId,
+  type Settings,
+  type VisibleTag,
+} from '../../domain/types'
 import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
-import { computeInsights } from '../../domain/insights'
+import { computeInsights, insightsCard } from '../../domain/insights'
 import { Button, Segc, Tgl } from '../primitives'
 import { PETS, petById } from '../primitives/pets'
 import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
 import { usePetPalette } from '../components/petPalette'
+import { NoticedCard } from '../components/NoticedCard'
 import { ApiKeySetupFlow } from '../components/ApiKeySetupFlow'
 import { keySetupView } from '../components/apiKeySetup'
 import SimpleGraph from '../react-bits/simple-graph'
@@ -148,6 +155,7 @@ export function SettingsPage() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
           <AppearanceCard />
           <NudgesCard />
+          <NoticedFromStore />
           <PrivacyModelCard />
         </div>
       </div>
@@ -198,6 +206,19 @@ function PatternsCard() {
       ))}
     </div>
   )
+}
+
+/* store → presenter wiring for the read-only "what mew's noticed" card
+   (#287), placed by the memory/brain section. The skin itself (NoticedCard)
+   is pure and headless-testable; this only feeds it the presenter output. */
+function NoticedFromStore() {
+  const memory = useMew((s) => s.memory)
+  const nowMs = useMew((s) => s.nowMs)
+  const card = useMemo(() => {
+    const now = new Date(nowMs)
+    return insightsCard(computeInsights(memory, aggregates(memory, now), now))
+  }, [memory, nowMs])
+  return <NoticedCard card={card} />
 }
 
 function CompanionCard() {
@@ -804,6 +825,138 @@ const QUIET_PRESETS = [
   { startMin: 22 * 60, endMin: 6 * 60, label: '22:00 – 06:00' },
 ]
 
+/* The daily rituals (#285) share quiet hours' time primitive: one preset-
+   cycling button. Defaults sit in each list (08:30 / 17:30); a brief inside
+   quiet hours simply parks and rides the morning flush — the once-per-day
+   key never double-posts it. */
+const BRIEF_PRESETS = [7.5 * 60, 8 * 60, 8.5 * 60, 9 * 60, 9.5 * 60]
+const WRAP_PRESETS = [16.5 * 60, 17 * 60, 17.5 * 60, 18 * 60]
+/* the weekly ritual (#304) shares the same primitive — Sunday, default 17:00 */
+const RITUAL_PRESETS = [15 * 60, 16 * 60, 17 * 60, 18 * 60, 19 * 60]
+
+function fmtPreset(min: number): string {
+  return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
+}
+
+/** The quiet-hours time control, reused: a segc button cycling fixed times. */
+function TimeCycle({
+  value,
+  presets,
+  onChange,
+}: {
+  value: number
+  presets: number[]
+  onChange: (min: number) => void
+}) {
+  const idx = presets.indexOf(value)
+  return (
+    <span className="segc">
+      <button
+        type="button"
+        className="on"
+        title="click to cycle times"
+        onClick={() => onChange(presets[(idx + 1) % presets.length])}
+      >
+        {fmtPreset(value)}
+      </button>
+    </span>
+  )
+}
+
+/* The sustenance scaffold's per-meal knobs (#299) ride the same preset-
+   cycling grammar: a window pair (quiet-hours' pattern) + a duration. The
+   defaults sit in each list — lunch 12:00–14:00/45m, dinner 18:30–20:30/60m,
+   the circadian anchors. A remembered pref ("lunch at 13:00") recenters the
+   window at placement time; these govern otherwise. */
+const MEAL_WINDOW_PRESETS: Record<ScaffoldMealId, { startMin: number; endMin: number }[]> = {
+  lunch: [
+    { startMin: 11.5 * 60, endMin: 13.5 * 60 },
+    { startMin: 12 * 60, endMin: 14 * 60 },
+    { startMin: 12.5 * 60, endMin: 14.5 * 60 },
+    { startMin: 13 * 60, endMin: 15 * 60 },
+  ],
+  dinner: [
+    { startMin: 18 * 60, endMin: 20 * 60 },
+    { startMin: 18.5 * 60, endMin: 20.5 * 60 },
+    { startMin: 19 * 60, endMin: 21 * 60 },
+  ],
+}
+const MEAL_DURATION_PRESETS: Record<ScaffoldMealId, number[]> = {
+  lunch: [30, 45, 60],
+  dinner: [45, 60, 90],
+}
+
+/** One meal's scaffold row: window cycles its preset pairs, duration its
+    minutes. Unlisted stored values (a future migration, a hand-edited
+    backup) cycle back into the list at the first click — index -1 + 1 = 0. */
+function MealCycle({ meal }: { meal: ScaffoldMealId }) {
+  const settings = useMew((s) => s.settings)
+  const updateSettings = useMew((s) => s.updateSettings)
+  const plan = settings.sustenanceMeals[meal]
+  const wins = MEAL_WINDOW_PRESETS[meal]
+  const durs = MEAL_DURATION_PRESETS[meal]
+  const wIdx = wins.findIndex((w) => w.startMin === plan.startMin && w.endMin === plan.endMin)
+  const dIdx = durs.indexOf(plan.durationMin)
+  const patch = (next: Partial<typeof plan>) =>
+    updateSettings({
+      sustenanceMeals: { ...settings.sustenanceMeals, [meal]: { ...plan, ...next } },
+    })
+  return (
+    <>
+      <span className="segc">
+        <button
+          type="button"
+          className="on"
+          title="click to cycle the window"
+          onClick={() => {
+            const next = wins[(wIdx + 1) % wins.length]
+            patch({ startMin: next.startMin, endMin: next.endMin })
+          }}
+        >
+          {fmtPreset(plan.startMin)} – {fmtPreset(plan.endMin)}
+        </button>
+      </span>
+      <span className="segc">
+        <button
+          type="button"
+          className="on"
+          title="click to cycle the duration"
+          onClick={() => patch({ durationMin: durs[(dIdx + 1) % durs.length] })}
+        >
+          {plan.durationMin} min
+        </button>
+      </span>
+    </>
+  )
+}
+
+/* #302 (v0.5 item 13): the meeting buffer's preset-cycle button — quiet hours'
+   segc grammar over minute presets. 0 reads "Off" (today's placements, byte for
+   byte); the rest name the margin MEW keeps around synced meetings. Unlisted
+   stored values cycle back in on the first click (index -1 + 1 = 0). */
+const BUFFER_PRESETS = [0, 5, 10, 15]
+
+function BufferCycle() {
+  const settings = useMew((s) => s.settings)
+  const updateSettings = useMew((s) => s.updateSettings)
+  const value = settings.meetingBufferMin ?? 0
+  const idx = BUFFER_PRESETS.indexOf(value)
+  return (
+    <span className="segc">
+      <button
+        type="button"
+        className="on"
+        title="click to cycle the buffer"
+        onClick={() =>
+          updateSettings({ meetingBufferMin: BUFFER_PRESETS[(idx + 1) % BUFFER_PRESETS.length] })
+        }
+      >
+        {value === 0 ? 'Off' : `${value} min`}
+      </button>
+    </span>
+  )
+}
+
 function NudgesCard() {
   const settings = useMew((s) => s.settings)
   const updateSettings = useMew((s) => s.updateSettings)
@@ -844,6 +997,63 @@ function NudgesCard() {
           </button>
         </span>
       </SetRow>
+      <SetRow
+        t="Morning brief"
+        s="Three lines to open the day — its shape, the first block, the one thing."
+      >
+        <TimeCycle
+          value={settings.briefMin}
+          presets={BRIEF_PRESETS}
+          onChange={(min) => updateSettings({ briefMin: min })}
+        />
+      </SetRow>
+      <SetRow t="Evening wrap" s="What landed, what waits for tomorrow — kindly, once a day.">
+        <TimeCycle
+          value={settings.wrapMin}
+          presets={WRAP_PRESETS}
+          onChange={(min) => updateSettings({ wrapMin: min })}
+        />
+      </SetRow>
+      <SetRow
+        t="Weekly ritual"
+        s="Sunday's invite to plan the coming week — you pick the shape, once per week."
+      >
+        <TimeCycle
+          value={settings.weeklyRitualMin}
+          presets={RITUAL_PRESETS}
+          onChange={(min) => updateSettings({ weeklyRitualMin: min })}
+        />
+      </SetRow>
+      <SetRow
+        t="Fed and paced"
+        s="Each morning the day gains its missing meals and a breather, placed around what's there."
+      >
+        <Tgl
+          on={settings.sustenance !== 'off'}
+          onToggle={() =>
+            updateSettings({ sustenance: settings.sustenance === 'off' ? 'on' : 'off' })
+          }
+        />
+      </SetRow>
+      {settings.sustenance !== 'off' && (
+        <>
+          <SetRow t="Lunch" s="The window it may land in, and how long it holds.">
+            <MealCycle meal="lunch" />
+          </SetRow>
+          <SetRow
+            t="Dinner"
+            s="Same knobs — a time you say once (“dinner at 19:00”) outranks them."
+          >
+            <MealCycle meal="dinner" />
+          </SetRow>
+        </>
+      )}
+      <SetRow
+        t="Meeting buffers"
+        s="Breathing room around synced meetings — your own blocks land shy of a meeting's edges. Meetings never move; Off keeps today's placements."
+      >
+        <BufferCycle />
+      </SetRow>
       <SetRow t="Show the science" s="Each nudge cites the research behind it.">
         <Tgl
           on={settings.showScience}
@@ -863,6 +1073,21 @@ function NudgesCard() {
           onChange={(id) => updateSettings({ quickCaptureMode: id as 'open' | 'auto-place' })}
         />
       </SetRow>
+      <HotkeyRow />
+      <SetRow
+        t="Plan mode"
+        s="Big asks get named scenario cards to pick from — you choose the shape that lands. Auto offers them at 3+ items; Always at 2; Off keeps the one-pass place."
+      >
+        <Segc
+          options={[
+            { id: 'auto', label: 'Auto' },
+            { id: 'always', label: 'Always' },
+            { id: 'off', label: 'Off' },
+          ]}
+          value={settings.planMode}
+          onChange={(id) => updateSettings({ planMode: id as Settings['planMode'] })}
+        />
+      </SetRow>
       <SetRow t="Positive only" s="Reward follow-through; never punish gaps.">
         <Tgl
           on
@@ -872,6 +1097,59 @@ function NudgesCard() {
         />
       </SetRow>
     </div>
+  )
+}
+
+/* OS-global capture hotkey (#284) — desktop shell only (null off it). The
+   shell is the validator: a rebind persists only once the OS accepted it; a
+   refusal keeps the old binding working and swaps the subtitle for the kind
+   collision note (positive-only). The field is keyed by the persisted
+   binding, so a successful rebind remounts to the new value while a refusal
+   keeps the attempt on screen to edit. */
+function HotkeyRow() {
+  const accel = useMew((s) => s.settings.globalCaptureHotkey)
+  const collision = useMew((s) => s.hotkeyCollision)
+  const applyCaptureHotkey = useMew((s) => s.applyCaptureHotkey)
+  if (!isTauri()) return null
+  return (
+    <SetRow
+      t="Global quick-capture"
+      s={
+        collision
+          ? "that key's taken elsewhere — pick another and it's yours"
+          : 'The same key, system-wide — even while MEW rests in the tray. In-app it always works.'
+      }
+    >
+      <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        {accel !== null && (
+          <span className="keyfield">
+            <input
+              key={accel}
+              defaultValue={accel}
+              aria-label="Global quick-capture hotkey"
+              onBlur={(e) => {
+                const next = e.target.value.trim()
+                if (!next || next === accel) {
+                  e.target.value = accel // nothing to bind — show what holds
+                  return
+                }
+                void applyCaptureHotkey(next)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+              }}
+            />
+          </span>
+        )}
+        <Tgl
+          on={accel !== null}
+          title={accel !== null ? 'Release the OS-wide key' : 'Bind the OS-wide key'}
+          onToggle={() =>
+            void applyCaptureHotkey(accel !== null ? null : DEFAULT_SETTINGS.globalCaptureHotkey)
+          }
+        />
+      </span>
+    </SetRow>
   )
 }
 

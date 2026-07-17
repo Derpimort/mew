@@ -3,10 +3,10 @@
    New research findings land here as new entries, not new code.
    Content source of truth: design_handoff_mew_mvp/mew-v4-research.jsx → NUDGES. */
 
-import type { Block, Capture, NudgeAction, NudgeId, PrefPayload } from '../types'
+import type { Block, Capture, NudgeAction, NudgeFiredMap, NudgeId, PrefPayload } from '../types'
 import type { LiveNow } from '../liveNow'
 import { type MemoryAggregates, heavyCarryWeeks } from '../memory'
-import { prefKey, type DelegationCandidate, type Insights } from '../insights'
+import { dayLoadFiredKey, prefKey, type DelegationCandidate, type Insights } from '../insights'
 import { addDaysKey, fmtDowLong, fmtTime, spell } from '../time'
 
 export interface NudgeCtx {
@@ -54,6 +54,16 @@ export interface NudgeCtx {
   /** The evening story, composed by the engine when the day is past its end.
       Empty = nothing worth narrating (the nudge stays silent). */
   debriefLines: string[]
+  /** The once-a-day rituals (#285), composed by the engine once the clock
+      passes Settings.briefMin / wrapMin — null before then (or when the
+      inputs never arrived). Once-per-day rides the persisted lastFired key. */
+  morningBrief: { body: string } | null
+  eveningWrap: { body: string } | null
+  /** The Sunday shaping invite (#304), composed once the clock passes
+      Settings.weeklyRitualMin on a Sunday — null elsewhere. Once-per-ISO-week
+      rides the persisted key (`key = weekKey`), the daily rituals' law at
+      week scale. */
+  weeklyRitual: { body: string; weekKey: string } | null
   /** Last week's story, computed only in the Monday window — null elsewhere
       and on week one (no events = no lines = the original copy stands). */
   weekReview: { lines: string[]; kinder: boolean } | null
@@ -68,9 +78,16 @@ export interface NudgeCtx {
   } | null
   /* outcome learning: trailing accept/decline per type → cooldown stretching */
   outcomeStats: Partial<Record<NudgeId, { accepted: number; declined: number }>>
-  /* dedupe state */
-  lastFired: Partial<Record<NudgeId, { ts: number; key?: string }>>
+  /* dedupe state — the full fired map (#297): nudge slots plus the store
+     rituals' (`sustenance`, `dayload:*`) so a trigger can defer to them */
+  lastFired: NudgeFiredMap
   lastDriftBlockId: string | null
+}
+
+/** The day-load meter (#301) already spoke about the heavy day today —
+    read from the same persisted slot the store burns when it posts. */
+function dayLoadSpokeToday(c: NudgeCtx): boolean {
+  return c.heavyDay != null && c.lastFired[dayLoadFiredKey(c.heavyDay.dayKey)]?.key === c.todayKey
 }
 
 export interface NudgeInstance {
@@ -100,7 +117,11 @@ export const NUDGES: NudgeDef[] = [
     label: 'right-size',
     tone: 'honest, warm',
     cooldownMs: 6 * H,
-    trigger: (c) => c.heavyDay != null,
+    /* one guard voice per day per day: when the plan-time day-load meter
+       (#301) already spoke about this day today, the tick nudge yields —
+       asking "want me to right-size it?" an hour after "want me to keep it
+       kind?" would be the nagging both exist to prevent */
+    trigger: (c) => c.heavyDay != null && !dayLoadSpokeToday(c),
     build: (c) => {
       const d = c.heavyDay!
       const day = d.dayKey === c.todayKey ? 'today' : fmtDowLong(d.dayKey)
@@ -521,6 +542,57 @@ export const NUDGES: NudgeDef[] = [
         key: s.title,
       }
     },
+  },
+  {
+    id: 'morning-brief',
+    label: 'morning brief',
+    tone: 'opening ritual, factual',
+    cooldownMs: 0, // once-per-day is the persisted key's law, not a clock cooldown
+    /* fires the first tick at/after briefMin that hasn't fired TODAY — the
+       persisted key survives restarts, and moving briefMin later in the day
+       re-arms only while today's key is still unwritten (#285) */
+    trigger: (c) => c.morningBrief != null && c.lastFired['morning-brief']?.key !== c.todayKey,
+    build: (c) => ({
+      body: c.morningBrief!.body,
+      footnote: `A plan with a when and a where follows through about twice as often — the brief names both before the day starts. (Gollwitzer & Sheeran, 2006)`,
+      actions: [], // pure information: the day itself is the call to action
+      payload: {},
+      key: c.todayKey,
+    }),
+  },
+  {
+    id: 'evening-wrap',
+    label: 'evening wrap',
+    tone: 'closing ritual, kind',
+    cooldownMs: 0, // once-per-day is the persisted key's law, not a clock cooldown
+    trigger: (c) => c.eveningWrap != null && c.lastFired['evening-wrap']?.key !== c.todayKey,
+    build: (c) => ({
+      body: c.eveningWrap!.body,
+      footnote: `The day's story, told kindly — what landed, what waits, one thing worth noticing. Open work is waiting, never a verdict.`,
+      actions: [],
+      payload: {},
+      key: c.todayKey,
+    }),
+  },
+  {
+    id: 'weekly-ritual',
+    label: 'weekly ritual',
+    tone: 'opening ritual, inviting',
+    cooldownMs: 0, // once-per-ISO-week is the persisted key's law, not a clock cooldown
+    /* fires the first Sunday tick at/after weeklyRitualMin that hasn't fired
+       THIS ISO WEEK — the persisted weekKey survives restarts (#297 pattern).
+       The nudge INVITES; the chip's words become an ordinary user turn and
+       the turn does the work (chat-first law): read-only sweep → shaping
+       questions → the plan-mode picker → one apply on the user's pick. */
+    trigger: (c) =>
+      c.weeklyRitual != null && c.lastFired['weekly-ritual']?.key !== c.weeklyRitual.weekKey,
+    build: (c) => ({
+      body: c.weeklyRitual!.body,
+      footnote: `An if-then plan with a when and a where raises follow-through, d = .65 across 94 studies — the ritual names both for the whole week. (Gollwitzer & Sheeran, 2006)`,
+      actions: [{ id: 'plan', label: 'plan my week', kind: 'primary' }],
+      payload: {},
+      key: c.weeklyRitual!.weekKey,
+    }),
   },
   {
     id: 'kinder-plan',

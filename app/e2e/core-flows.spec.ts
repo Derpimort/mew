@@ -23,28 +23,7 @@
    clock. */
 
 import { test, expect, type Page } from '@playwright/test'
-
-/** Pin the clock so the seeded "now" block is identical every run. */
-const AT = '?t=09:40'
-
-/** Boot the app at the fixed clock and wait until it is actually interactive:
-    the live dial has rendered (the countdown only paints once hydrate() +
-    liveNow have a current block) AND the boot preloader's slide-wipe overlay
-    has fully left the DOM — until then its fixed, inset-0 panel swallows the
-    first click. */
-async function boot(page: Page) {
-  await page.goto(`/${AT}`)
-  await expect(page.locator('.nx-count')).toBeVisible({ timeout: 15_000 })
-  await expect(page.locator('[aria-label="MEW loading"]')).toHaveCount(0, { timeout: 15_000 })
-  // First-run concept tour (#160) renders over the app on a fresh context
-  // (Settings.hasSeenOnboarding defaults to false) and its modal scrim
-  // intercepts pointer events. Dismiss it the way a first-time user does —
-  // "Skip all" — so the week underneath is interactive. dismiss() persists
-  // hasSeenOnboarding for the context, so it never returns mid-test.
-  await expect(page.locator('.ob-scrim')).toBeVisible({ timeout: 15_000 })
-  await page.getByRole('button', { name: 'Skip all' }).click()
-  await expect(page.locator('.ob-scrim')).toHaveCount(0, { timeout: 5_000 })
-}
+import { boot } from './helpers'
 
 /** The composer is a <textarea aria-label="compose message to MEW"> (its
     placeholder reads "talk to MEW…"). One send = type + Enter; we then wait for

@@ -7,6 +7,7 @@
    deterministic and key-free. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { setLoggerSink } from '../../logger'
 import type { ConverseChunk, ToolExecutor, WeekContext } from '../types'
 
 const ctx: WeekContext = {
@@ -51,6 +52,10 @@ vi.mock('ai', () => ({
       },
     }
   },
+  // the adapter builds the word-smoothing transform and hands it to streamText;
+  // the fake above ignores options, so a callable stub is all the wiring needs
+  // (the real smoothStream is pinned against the installed SDK in smoothing.test.ts)
+  smoothStream: () => () => undefined,
   // the adapter calls these but their behavior is irrelevant to reasoning wiring
   tool: (def: unknown) => def,
   jsonSchema: (s: unknown) => s,
@@ -134,14 +139,16 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
 
     // the request asked Claude to think first
     expect(optionsHasThinking(scripted.lastOptions)).toBe(true)
-    // exactly one reasoning chunk, and it leads
-    const reasoningChunks = chunks.filter((c) => typeof c !== 'string')
+    /* the silent window announces itself the instant thinking starts (#281),
+       then exactly one reasoning note follows — ahead of the reply text */
+    expect(chunks[0]).toEqual({ activity: 'thinking it through…' })
+    const reasoningChunks = chunks.filter((c) => typeof c !== 'string' && 'reasoning' in c)
     expect(reasoningChunks).toHaveLength(1)
-    expect(chunks[0]).toEqual({
+    expect(chunks[1]).toEqual({
       reasoning: 'the user wants thursday morning. no fixed blocks clash, so 9–12 is clear.',
     })
     // the reply text follows
-    expect(chunks.slice(1)).toEqual(['done — thursday 9 to 12 is held.'])
+    expect(chunks.slice(2)).toEqual(['done — thursday 9 to 12 is held.'])
   })
 
   it('emits the plan BEFORE the first tool-call, even with no preceding text', async () => {
@@ -162,9 +169,10 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       adapter.converse([{ role: 'user', text: 'plan my day' }], ctx, exec)
     )
 
-    expect(chunks[0]).toEqual({ reasoning: 'place the deck, then free friday.' })
+    expect(chunks[0]).toEqual({ activity: 'thinking it through…' })
+    expect(chunks[1]).toEqual({ reasoning: 'place the deck, then free friday.' })
     // only one reasoning chunk despite reasoning-end never arriving before the tool
-    expect(chunks.filter((c) => typeof c !== 'string')).toHaveLength(1)
+    expect(chunks.filter((c) => typeof c !== 'string' && 'reasoning' in c)).toHaveLength(1)
   })
 
   it('caps a long plan to the contract displayChars with an ellipsis', async () => {
@@ -184,10 +192,10 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       adapter.converse([{ role: 'user', text: 'plan a lot' }], ctx, exec)
     )
 
-    const first = chunks[0] as { reasoning: string }
-    expect(typeof first.reasoning).toBe('string')
-    expect(first.reasoning.length).toBeLessThanOrEqual(601) // 600 cap + ellipsis
-    expect(first.reasoning.endsWith('…')).toBe(true)
+    const note = chunks[1] as { reasoning: string } // chunks[0] is the activity label
+    expect(typeof note.reasoning).toBe('string')
+    expect(note.reasoning.length).toBeLessThanOrEqual(601) // 600 cap + ellipsis
+    expect(note.reasoning.endsWith('…')).toBe(true)
   })
 
   it('a thinking-only turn (no text, no tool) still surfaces its plan', async () => {
@@ -202,7 +210,10 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       reasoning: true,
     })
     const chunks = await collect(adapter.converse([{ role: 'user', text: 'hmm' }], ctx, exec))
-    expect(chunks).toEqual([{ reasoning: 'nothing to change here.' }])
+    expect(chunks).toEqual([
+      { activity: 'thinking it through…' },
+      { reasoning: 'nothing to change here.' },
+    ])
   })
 
   it('a stream error after reasoning still rethrows (honest failover preserved)', async () => {
@@ -218,7 +229,8 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
       reasoning: true,
     })
     const it = adapter.converse([{ role: 'user', text: 'plan' }], ctx, exec)[Symbol.asyncIterator]()
-    // first chunk is the reasoning snapshot
+    // first the activity label, then the reasoning snapshot
+    await it.next()
     await it.next()
     // the captured error surfaces as a throw so the store's chain can fail over
     await expect(it.next()).rejects.toThrow('529 overloaded')
@@ -226,10 +238,12 @@ describe('reasoning ON (Anthropic) — plan captured before the reply', () => {
 })
 
 describe('reasoning ON but provider has no reasoning budget (OpenAI) — no-op', () => {
-  it('does not request thinking and never emits a reasoning chunk', async () => {
+  it('does not request thinking and never emits a reasoning note', async () => {
     scripted.parts = [
-      // even if a provider somehow streamed reasoning, the off-path ignores it
-      { type: 'reasoning-delta', id: 'r', text: 'should be ignored' },
+      /* a provider may stream reasoning parts UNREQUESTED — the fast path no
+         longer drops the window silently (#281): it surfaces one honest
+         activity label, but the note capture stays reasoning-cfg-only */
+      { type: 'reasoning-delta', id: 'r', text: 'never captured as a note' },
       { type: 'text-delta', id: 't', text: 'all set.' },
     ]
     const adapter = createAiAdapter({
@@ -241,7 +255,122 @@ describe('reasoning ON but provider has no reasoning budget (OpenAI) — no-op',
     const chunks = await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
 
     expect(optionsHasThinking(scripted.lastOptions)).toBe(false)
-    expect(chunks).toEqual(['all set.']) // reply-text path, reasoning ignored
+    expect(chunks).toEqual([{ activity: 'thinking it through…' }, 'all set.'])
+    expect(chunks.some((c) => typeof c !== 'string' && 'reasoning' in c)).toBe(false)
+  })
+})
+
+/* ── #281: honest activity for UNREQUESTED thinking + the paint pipeline ────
+   5-family models run adaptive thinking whether or not MEW asks; the fast
+   (no-reasoning-config) loop used to drop those parts, so the user watched
+   bare dots for the whole window. These pin the new contract: one activity
+   chunk per silent window, deduped in the adapter, before any text. */
+
+describe('adaptive thinking on the no-reasoning path (#281) — honest activity, no note', () => {
+  const spec = { provider: 'anthropic', apiKey: 'sk-ant-x', model: 'claude-sonnet-5' } as const
+
+  it('a silent thinking window yields exactly one { activity } before the first text chunk', async () => {
+    scripted.parts = [
+      { type: 'reasoning-start', id: 'r' },
+      { type: 'reasoning-delta', id: 'r', text: 'weighing the morning…' },
+      { type: 'reasoning-delta', id: 'r', text: 'thursday is clear.' },
+      { type: 'reasoning-end', id: 'r' },
+      { type: 'text-delta', id: 't', text: 'on ' },
+      { type: 'text-delta', id: 't', text: 'it.' },
+    ]
+    const adapter = createAiAdapter(spec) // reasoning defaults off — the fast path
+    const chunks = await collect(adapter.converse([{ role: 'user', text: 'hold thu' }], ctx, exec))
+
+    // no thinking was requested — the parts arrived on the API's own initiative
+    expect(optionsHasThinking(scripted.lastOptions)).toBe(false)
+    // one honest label for the whole window (deduped across its deltas), text streams through
+    expect(chunks).toEqual([{ activity: 'thinking it through…' }, 'on ', 'it.'])
+    // never a captured note on this path — the #166 opt-in alone carries those
+    expect(chunks.some((c) => typeof c !== 'string' && 'reasoning' in c)).toBe(false)
+  })
+
+  it('a second silent window (the next tool round) announces itself again', async () => {
+    scripted.parts = [
+      { type: 'reasoning-delta', id: 'r1', text: 'plan first.' },
+      { type: 'tool-call', toolName: 'plan_blocks' },
+      { type: 'reasoning-delta', id: 'r2', text: 'now confirm.' },
+      { type: 'text-delta', id: 't', text: 'done.' },
+    ]
+    const adapter = createAiAdapter(spec)
+    const chunks = await collect(adapter.converse([{ role: 'user', text: 'plan' }], ctx, exec))
+
+    expect(chunks).toEqual([
+      { activity: 'thinking it through…' },
+      { activity: 'thinking it through…' },
+      'done.',
+    ])
+  })
+
+  it('a text-only stream yields no activity at all — no fake shimmer', async () => {
+    scripted.parts = [
+      { type: 'text-delta', id: 't', text: 'right ' },
+      { type: 'text-delta', id: 't', text: 'away.' },
+    ]
+    const adapter = createAiAdapter(spec)
+    const chunks = await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
+    expect(chunks).toEqual(['right ', 'away.'])
+  })
+})
+
+describe('the paint pipeline request shape (#281)', () => {
+  it('both stream paths hand streamText the word-smoothing transform', async () => {
+    scripted.parts = [{ type: 'text-delta', id: 't', text: 'ok.' }]
+    const transformOf = (o: unknown) =>
+      (o as { experimental_transform?: unknown }).experimental_transform
+
+    await collect(
+      createAiAdapter({ provider: 'anthropic', apiKey: 'sk-ant-x', model: 'claude-sonnet-5' }) // fast path
+        .converse([{ role: 'user', text: 'hi' }], ctx, exec)
+    )
+    expect(typeof transformOf(scripted.lastOptions)).toBe('function')
+
+    await collect(
+      createAiAdapter({
+        provider: 'anthropic',
+        apiKey: 'sk-ant-x',
+        model: 'claude-sonnet-5',
+        reasoning: true, // the #166 path rides the same call site
+      }).converse([{ role: 'user', text: 'hi' }], ctx, exec)
+    )
+    expect(typeof transformOf(scripted.lastOptions)).toBe('function')
+  })
+
+  it('one dev timing line per turn: request start → first part → first text delta', async () => {
+    const debugLines: unknown[][] = []
+    setLoggerSink({
+      error: () => {},
+      warn: () => {},
+      info: () => {},
+      debug: (...args: unknown[]) => debugLines.push(args),
+    })
+    try {
+      scripted.parts = [
+        { type: 'reasoning-delta', id: 'r', text: 'hm.' },
+        { type: 'text-delta', id: 't', text: 'done ' },
+        { type: 'text-delta', id: 't', text: '— held.' },
+      ]
+      const adapter = createAiAdapter({
+        provider: 'anthropic',
+        apiKey: 'sk-ant-x',
+        model: 'claude-sonnet-5',
+      })
+      await collect(adapter.converse([{ role: 'user', text: 'hold thu' }], ctx, exec))
+
+      const timing = debugLines.filter((args) => String(args[0]).includes('model/stream-timing'))
+      expect(timing).toHaveLength(1) // once per turn, on the FIRST text delta
+      const ctx2 = timing[0][1] as { provider: string; firstPartMs: number; firstTextMs: number }
+      expect(ctx2.provider).toBe('anthropic')
+      // both marks are on the record and ordered — (a) vs (b) stays attributable
+      expect(ctx2.firstPartMs).toBeGreaterThanOrEqual(0)
+      expect(ctx2.firstTextMs).toBeGreaterThanOrEqual(ctx2.firstPartMs)
+    } finally {
+      setLoggerSink(null)
+    }
   })
 })
 
@@ -344,9 +473,10 @@ describe('graceful step-cap (#153) — a capped turn pauses kindly, never dead-s
       adapter.converse([{ role: 'user', text: 'plan everything' }], ctx, exec)
     )
 
-    expect(chunks[0]).toEqual({ reasoning: 'fourteen placements needed.' })
-    expect(chunks[1]).toBe('working through it…')
-    expect(String(chunks[2])).toContain('keep going')
+    expect(chunks[0]).toEqual({ activity: 'thinking it through…' })
+    expect(chunks[1]).toEqual({ reasoning: 'fourteen placements needed.' })
+    expect(chunks[2]).toBe('working through it…')
+    expect(String(chunks[3])).toContain('keep going')
   })
 
   it('a captured stream error outranks the pause — failover stays honest', async () => {

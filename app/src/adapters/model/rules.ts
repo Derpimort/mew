@@ -2,9 +2,13 @@
    still works through the grammar in domain/parse.ts; replies are templated.
    Ollama shares runIntent() so a weak local model gets the same composer. */
 
-import { parseCommand as ruleParse } from '../../domain/parse'
+import { insightsCard } from '../../domain/insights'
+import { ritualTasks } from '../../domain/nudges/weekly'
+import { inferTag, parseCommand as ruleParse } from '../../domain/parse'
 import { normalizeRrule } from '../../domain/recurrence'
-import type { ScheduleIntent } from '../../domain/types'
+import { parseSplitAsk, type SplitAsk } from '../../domain/rescue'
+import { weekdayOffset } from '../../domain/time'
+import type { PlanMode, ScheduleIntent } from '../../domain/types'
 import {
   CHOICES_POSTED,
   type ChatTurn,
@@ -36,12 +40,41 @@ export function runIntent(
   intent: ScheduleIntent,
   exec: ToolExecutor,
   ctx: WeekContext,
-  rawText: string
+  rawText: string,
+  planMode: PlanMode = 'auto'
 ): string {
   switch (intent.kind) {
-    case 'plan':
+    case 'plan': {
+      const places = intent.places ?? []
+      const frees = intent.frees ?? []
+      /* plan mode's keyless gear (#293): a braindump of separate, un-pinned
+         items goes through the scenario picker instead of the one-pass place.
+         Un-pinned means the USER decided nothing the picker would discard —
+         no stated time, day, recurrence, or background hold; a single pinned
+         item (or any kept-free window) keeps the whole ask on today's path,
+         so an explicit time is never quietly re-derived. The floor is the
+         same the model reads from its tool description: three items on
+         'auto', two on 'always', never on 'off'. */
+      const unpinned = (p: (typeof places)[number]) =>
+        p.startMin == null && p.dayOffset == null && !p.rrule && p.attention !== 'background'
+      const floor = planMode === 'always' ? 2 : 3
+      if (planMode !== 'off' && !frees.length && places.length >= floor && places.every(unpinned)) {
+        const out = exec.proposeScenarios(
+          '',
+          places.map((p) => ({
+            title: p.title,
+            tag: p.tag,
+            durationMin: p.durationMin,
+            due: p.due,
+          }))
+        )
+        /* the executor may have posted the picker (#254 pattern): its result
+           then addresses a model — the floor stays quiet, the cards ARE the
+           reply. A fall-through line (single shape, nothing fits) speaks. */
+        return out.startsWith(CHOICES_POSTED) ? '' : out
+      }
       return exec.plan(
-        (intent.places ?? []).map((p) => ({
+        places.map((p) => ({
           title: p.title,
           tag: p.tag,
           dayOffset: p.dayOffset ?? 0,
@@ -52,12 +85,13 @@ export function runIntent(
           due: p.due,
           rrule: p.rrule,
         })),
-        (intent.frees ?? []).map((f) => ({
+        frees.map((f) => ({
           dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
           startMin: f.startMin,
           endMin: f.endMin,
         }))
       )
+    }
     case 'complete':
       return exec.complete(intent.query ?? '')
     case 'move':
@@ -92,16 +126,100 @@ export function runIntent(
         ? hit[1](ctx)
         : `I can place that for you — try "block thursday morning for the deck", "move the deck to friday", or "done with the walk". (Connect a key in Settings and I'll understand more.)`
     }
+    case 'insights': {
+      /* read-only, keyless by construction: the same presenter the Settings
+         card renders (#287) — one source, two skins, identical numbers. The
+         executor is never touched; showing the science changes nothing. */
+      const card = ctx.insights ? insightsCard(ctx.insights) : null
+      return card
+        ? [card.title, ...card.rows.map((r) => `${r.label}: ${r.value}`)].join('\n')
+        : `still learning your week — check back friday`
+    }
   }
 }
 
-export function createRulesAdapter(now: () => Date): ModelPort {
+/** Execute a rescue split ask (#286) by composing the two EXISTING tools —
+    shrink the block to end where the gap opens (edit), then place the kept
+    tail after it (plan) — the same two calls a keyed model makes from the
+    same words. No new mutation path: the executor's tools stay the only way
+    the week changes. The tail gets a distinct base title because execPlan
+    de-dups on exact base (#89) and would otherwise MOVE the piece just
+    shrunk instead of placing a second one. */
+export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
+  const dayOffset =
+    ask.dayWord == null
+      ? 0
+      : ask.dayWord === 'tomorrow'
+        ? 1
+        : (weekdayOffset(ask.dayWord, now) ?? 0)
+  const shrunk = exec.edit(ask.query, { endMin: ask.gapStartMin })
+  /* execEdit's miss shape is stable ("I couldn't find …") and pinned in tests:
+     with no block to shrink, placing a stray tail would double time — stop. */
+  if (shrunk.startsWith(`I couldn't find`)) return shrunk
+  const placed = exec.plan(
+    [
+      {
+        title: `${ask.query} (part 2)`,
+        tag: inferTag(ask.query),
+        dayOffset,
+        startMin: ask.gapEndMin,
+        durationMin: ask.tailMin,
+        protected: true,
+      },
+    ],
+    []
+  )
+  return `${shrunk} ${placed}`
+}
+
+/* "plan my week" / "plan the week" — the weekly ritual's ask (#304), typed or
+   via the Sunday chip. Deliberately narrow: "plan my day" and every phrase
+   carrying its own items stay with the grammar. */
+const RITUAL_ASK = /^\s*plan\s+(?:my|the)\s+week\b/i
+
+/** The keyless ritual route (#304): skip the shaping questions (a floor has
+    none to ask) and go straight to the picker with the standing defaults —
+    open captures as the top-priority answers, time-default rules as the
+    habits, deep-work anchors from the realistic best. Pure composition of the
+    EXISTING propose tool: generation is read-only, the pick is the one apply,
+    and best-hours alignment rides execProposeScenarios' own insights. The
+    route ignores the planMode gear on purpose — that gear governs the
+    braindump auto-offer; an explicit "plan my week" is the user choosing the
+    picker. */
+function runRitual(ctx: WeekContext, exec: ToolExecutor): string {
+  const out = exec.proposeScenarios(
+    '',
+    ritualTasks({
+      realisticBestH: ctx.realisticBestH,
+      captures: ctx.openCaptures ?? [],
+      prefs: ctx.prefs ?? [],
+    })
+  )
+  /* the picker posted (#254 pattern): the cards ARE the reply — stay quiet.
+     A fall-through line (one shape, nothing fits) speaks. */
+  return out.startsWith(CHOICES_POSTED) ? '' : out
+}
+
+export function createRulesAdapter(now: () => Date, planMode: PlanMode = 'auto'): ModelPort {
   return {
     id: 'rules',
     async *converse(thread: ChatTurn[], ctx: WeekContext, exec: ToolExecutor) {
       const last = [...thread].reverse().find((t) => t.role === 'user')?.text ?? ''
+      /* the rescue split ask (#286) carries every concrete number and rides
+         ahead of the grammar — parse.ts has no single intent for shrink+place */
+      const split = parseSplitAsk(last)
+      if (split) {
+        yield runSplit(split, exec, now())
+        return
+      }
+      /* the weekly ritual (#304) rides ahead of the grammar the same way —
+         to the block clause, "plan my week" reads as placing "my week" */
+      if (RITUAL_ASK.test(last)) {
+        yield runRitual(ctx, exec)
+        return
+      }
       const intent = ruleParse(last, now())
-      yield runIntent(intent, exec, ctx, last)
+      yield runIntent(intent, exec, ctx, last, planMode)
     },
   }
 }
@@ -195,6 +313,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
     }
   }
   if (kind === 'chat') return { kind, reply: typeof o.reply === 'string' ? o.reply : undefined }
+  if (kind === 'insights') return { kind } // read-only; carries no fields
   return null
 }
 

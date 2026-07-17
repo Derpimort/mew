@@ -3,6 +3,7 @@ import {
   computeInsights,
   dayDebrief,
   delegationCandidates,
+  insightsCard,
   prefContradictions,
   proposeKinderPlan,
   taskDurations,
@@ -99,6 +100,101 @@ describe('GBrain insights — patterns from the user’s own history', () => {
     const tIns = computeInsights(thin, aggregates(thin, TODAY), TODAY)
     expect(tIns.bestBand).toBeNull()
     expect(tIns.latenessMin).toBeNull()
+  })
+})
+
+describe('insightsCard — show the science, one presenter for two skins (#287)', () => {
+  const events = richHistory()
+  const ins = computeInsights(events, aggregates(events, TODAY), TODAY)
+
+  it('presents at most 4 rows, in spec order, never padded', () => {
+    const card = insightsCard(ins)!
+    expect(card).not.toBeNull()
+    expect(card.title).toBe("what mew's noticed")
+    expect(card.rows.length).toBeLessThanOrEqual(4)
+    /* rich history earns all four: best band, kindest day, habit, booking */
+    expect(card.rows.map((r) => r.claim)).toEqual([
+      'bestBand',
+      'weekdayLoad',
+      'lines',
+      'estimateFactor',
+    ])
+  })
+
+  it('every rendered claim maps to a populated computed field (traceability pin)', () => {
+    const card = insightsCard(ins)!
+    for (const r of card.rows) {
+      const field = ins[r.claim]
+      expect(field, `claim "${r.claim}" points at an empty field`).not.toBeNull()
+      if (Array.isArray(field)) expect(field.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('rows carry the exact computed numbers, not paraphrases', () => {
+    const card = insightsCard(ins)!
+    const byClaim = Object.fromEntries(card.rows.map((r) => [r.claim, r]))
+    expect(byClaim.bestBand.value).toContain(
+      `${ins.bestBand!.completed}/${ins.bestBand!.attempted}`
+    )
+    expect(byClaim.bestBand.value).toContain(ins.bestBand!.label)
+    const lightest = [...ins.weekdayLoad].sort((a, b) => a.avgPlannedH - b.avgPlannedH)[0]
+    expect(byClaim.weekdayLoad.value).toContain(lightest.name)
+    expect(byClaim.weekdayLoad.value).toContain(`${lightest.avgPlannedH}h`)
+    expect(byClaim.lines.value).toBe(ins.lines[0])
+    expect(byClaim.estimateFactor.value).toContain(
+      `${Math.round((ins.estimateFactor! - 1) * 100)}%`
+    )
+  })
+
+  it('data floor: thin history is null — the kind empty state, never noisy science', () => {
+    /* cold start */
+    expect(insightsCard(computeInsights([], aggregates([], TODAY), TODAY))).toBeNull()
+    /* a few days in: under ~10 banded outcomes */
+    const thin = events.slice(0, 6)
+    expect(insightsCard(computeInsights(thin, aggregates(thin, TODAY), TODAY))).toBeNull()
+    /* plenty of events crammed into 2 weekdays is coverage, not two weeks */
+    const cramped: MemoryEvent[] = []
+    for (let i = 0; i < 6; i++) {
+      for (const day of [addDaysKey(todayKey, -7), addDaysKey(todayKey, -8)]) {
+        cramped.push(
+          ev({ dayKey: day, kind: 'completed', plannedMin: 60, startMin: 9 * 60 + i, title: 'X' })
+        )
+      }
+    }
+    expect(insightsCard(computeInsights(cramped, aggregates(cramped, TODAY), TODAY))).toBeNull()
+  })
+
+  it('booking honesty appears only when meaningfully ≠ 1.0', () => {
+    /* on-time completions: factor lands exactly 1 → no booking row */
+    const onTime: MemoryEvent[] = []
+    for (let i = 1; i <= 14; i++) {
+      const day = addDaysKey(todayKey, -i)
+      const dow = (new Date(day + 'T12:00:00').getDay() + 6) % 7
+      if (dow >= 5) continue
+      const doneAt = new Date(day + 'T00:00:00')
+      doneAt.setMinutes(11 * 60) // exactly at the planned end
+      onTime.push(
+        ev({
+          dayKey: day,
+          ts: doneAt.getTime(),
+          kind: 'completed',
+          plannedMin: 120,
+          title: 'Deep work',
+          startMin: 9 * 60,
+          endMin: 11 * 60,
+        })
+      )
+      onTime.push(
+        ev({ dayKey: day, kind: 'completed', plannedMin: 45, title: 'Sweep', startMin: 13 * 60 })
+      )
+    }
+    const card = insightsCard(computeInsights(onTime, aggregates(onTime, TODAY), TODAY))!
+    expect(card).not.toBeNull()
+    expect(card.rows.map((r) => r.claim)).not.toContain('estimateFactor')
+  })
+
+  it('voice pin: {missed, failed, behind, overdue} never appear in presenter output', () => {
+    expect(JSON.stringify(insightsCard(ins))).not.toMatch(/missed|failed|behind|overdue/i)
   })
 })
 

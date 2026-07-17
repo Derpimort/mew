@@ -17,7 +17,9 @@ import { Markdown } from './Markdown'
 import type { ChatMessage } from '../../domain/types'
 import { choicePicked, lastUserIndex } from '../../domain/choices'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
+import { TOOL_ERROR_NOTE, TOOL_INTERRUPTED_NOTE } from '../../domain/toolCard'
 import { blocksForDay } from '../../domain/week'
+import { ScenarioCards } from './ScenarioPicker'
 import { streamAnnouncement } from './sessionAnnounce'
 import {
   PAGE,
@@ -27,6 +29,7 @@ import {
   makeWindowSourceSelector,
   windowStart,
 } from './sessionWindow'
+import { collapseToolRuns } from './toolSteps'
 
 /** How close to the bottom (px) still counts as "stuck to the bottom" — within
     this band new output auto-scrolls; scroll up past it and MEW stops yanking. */
@@ -352,11 +355,13 @@ export function SessionWindow({
      a chips row is superseded once any newer user message exists — even one
      the window hasn't paged in / has scrolled past. One O(n) pass per render;
      rows are addressed by their chat-global index (start+j / boundary+j).
-     Only choice-carrying rows receive the flags (plain rows get constant
-     false), so a user turn moving lastUser — or the per-turn thinking flip —
-     never busts the memo of the thousand rows that don't care. */
+     Only rows carrying a pick surface — chips or scenario cards (#293), the
+     same grammar — receive the flags (plain rows get constant false), so a
+     user turn moving lastUser — or the per-turn thinking flip — never busts
+     the memo of the thousand rows that don't care. */
   const lastUser = lastUserIndex(chat)
-  const hasChoices = (m: ChatMessage) => (m.choices?.length ?? 0) > 0
+  const hasChoices = (m: ChatMessage) =>
+    (m.choices?.length ?? 0) > 0 || (m.scenarios?.length ?? 0) > 0
   const supersededAt = (m: ChatMessage, globalIdx: number) => hasChoices(m) && globalIdx < lastUser
   /* the chat thread as a live log: new lines are announced politely and
      one at a time (aria-atomic=false), each row is its own article so a
@@ -394,30 +399,40 @@ export function SessionWindow({
       )}
       {/* pre-mount history: windowed, and silent under aria-live so paging in
           fifty old rows never floods a screen reader — each row is still an
-          article, so step-through (#173) walks them like any other. */}
+          article, so step-through (#173) walks them like any other. Runs of
+          settled tool cards fold to one summary (#282, toolSteps.ts). */}
       <div aria-live="off" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {history.map((m, j) => (
-          <SessionRow
-            key={m.id}
-            msg={m}
-            animate={false}
-            superseded={supersededAt(m, start + j)}
-            thinking={hasChoices(m) && thinking}
-          />
-        ))}
+        {collapseToolRuns(history).map((item) =>
+          item.kind === 'steps' ? (
+            <StepsFold key={item.msgs[0].id} msgs={item.msgs} />
+          ) : (
+            <SessionRow
+              key={item.msg.id}
+              msg={item.msg}
+              animate={false}
+              superseded={supersededAt(item.msg, start + item.idx)}
+              thinking={hasChoices(item.msg) && thinking}
+            />
+          )
+        )}
       </div>
       {/* rows appended after mount: direct children of the polite region
           (announced), each landing like terminal output — blur-up entrance,
-          once, unless the reader asked for reduced motion. */}
-      {fresh.map((m, j) => (
-        <SessionRow
-          key={m.id}
-          msg={m}
-          animate={!reduceMotion && isFreshMessage(m.ts, mountedAt)}
-          superseded={supersededAt(m, boundary + j)}
-          thinking={hasChoices(m) && thinking}
-        />
-      ))}
+          once, unless the reader asked for reduced motion. A fold mounts plain
+          (its cards already played their entrance when they landed live). */}
+      {collapseToolRuns(fresh).map((item) =>
+        item.kind === 'steps' ? (
+          <StepsFold key={item.msgs[0].id} msgs={item.msgs} />
+        ) : (
+          <SessionRow
+            key={item.msg.id}
+            msg={item.msg}
+            animate={!reduceMotion && isFreshMessage(item.msg.ts, mountedAt)}
+            superseded={supersededAt(item.msg, boundary + item.idx)}
+            thinking={hasChoices(item.msg) && thinking}
+          />
+        )
+      )}
       {thinking && <LiveThinkingRow />}
     </div>
   )
@@ -446,10 +461,10 @@ const SessionRow = memo(function SessionRow({
       so the flip re-renders exactly the chips row it concerns; SessionWindow
       feeds plain rows a constant false, so their memo never notices. */
   superseded?: boolean
-  /** #254: a turn is mewing — chips park exactly like the composer
-      (disabled={thinking}); pickChoice would swallow a mid-turn click anyway.
-      Same memo discipline as `superseded`: significant under the default
-      shallow comparison, constant false for rows without choices. */
+  /** #254: a turn is mewing — chips park while it runs; pickChoice would
+      swallow a mid-turn click anyway (the composer itself never locks — #280
+      queues instead). Same memo discipline as `superseded`: significant under
+      the default shallow comparison, constant false for rows without choices. */
   thinking?: boolean
 }) {
   const live = useMew((s) => liveTail(s.chat, msg.id))
@@ -526,9 +541,33 @@ function DayHeader() {
   )
 }
 
+/* >2 consecutive settled tool cards fold into one expandable summary (#282) —
+   the native-<details> precedent set by the reasoning note: real DOM, keyboard
+   and AT support for free. The <summary> is the control; its accessible name
+   is its visible text ("n steps"). Folding replaces rows a reader already
+   heard settle, so the fold itself stays quiet — expanding is the reader's
+   own act. No motion wrapper: a fold never re-animates its cards. */
+function StepsFold({ msgs }: { msgs: ChatMessage[] }) {
+  return (
+    <details className="tool-steps">
+      <summary>{msgs.length} steps</summary>
+      {msgs.map((m) => (
+        <SessionRow key={m.id} msg={m} animate={false} />
+      ))}
+    </details>
+  )
+}
+
 /** what a reader hears as the role on a message article — the UI's own words,
-    not the raw enum, so a `user` line is announced "message from you …". */
-const ROLE_WORD: Record<ChatMessage['role'], string> = { user: 'you', mew: 'mew', nudge: 'nudge' }
+    not the raw enum, so a `user` line is announced "message from you …".
+    (`tool` cards label themselves "mew action — …" and never reach this map,
+    but the word stays honest: a card is mew acting.) */
+const ROLE_WORD: Record<ChatMessage['role'], string> = {
+  user: 'you',
+  mew: 'mew',
+  nudge: 'nudge',
+  tool: 'mew',
+}
 
 /* Memoized (see SessionRow's note): messages are append-only and replaced
    immutably, never mutated — so `msg` reference equality is a sound bail-out
@@ -546,8 +585,8 @@ export const LogLine = memo(function LogLine({
       from the live chat, so a stale click can never act. */
   superseded?: boolean
   /** Turn-level context from the window (#254): a turn is mewing, so chips
-      park exactly like the composer (disabled={thinking}) — what looks
-      clickable must be clickable. Same pure-props seam as `superseded`. */
+      park — what looks clickable must be clickable. Same pure-props seam as
+      `superseded`. */
   thinking?: boolean
 }) {
   const showScience = useMew((s) => s.settings.showScience)
@@ -559,6 +598,40 @@ export const LogLine = memo(function LogLine({
      only show visually. */
   const time = fmtTime(minOfDay(new Date(msg.ts)))
   const articleLabel = `message from ${ROLE_WORD[msg.role]} at ${time}`
+
+  if (msg.role === 'tool') {
+    /* the activity card (#282): a compact receipt of one executor step. The
+       shimmer is CSS-only and runs ONLY while `running` (reduced motion turns
+       it off in the stylesheet) — settling swaps the text once (✓ / a quiet
+       MEW-voiced line), so the polite log announces one settle, never a
+       per-shimmer churn. The label names the action and its state for AT. */
+    const t = msg.tool
+    const verb = t?.verb ?? 'working on it'
+    const state = t?.state ?? 'done'
+    const running = state === 'running'
+    const quiet =
+      state === 'error'
+        ? (t?.note ?? TOOL_ERROR_NOTE)
+        : state === 'interrupted'
+          ? (t?.note ?? TOOL_INTERRUPTED_NOTE)
+          : null
+    return (
+      <div
+        className="tool-card"
+        data-msg={msg.id}
+        role="article"
+        aria-label={`mew action — ${verb}, ${state}`}
+      >
+        {state === 'done' ? <span className="ok">✓ </span> : <span className="tool-glyph">▸ </span>}
+        <span className={running ? 'tool-run' : undefined}>
+          {verb}
+          {t?.target ? ` — ${t.target}` : ''}
+          {running ? '…' : ''}
+        </span>
+        {quiet && <span className="cm tool-note"># {quiet}</span>}
+      </div>
+    )
+  }
 
   if (msg.role === 'user') {
     return (
@@ -600,6 +673,9 @@ export const LogLine = memo(function LogLine({
         )}
         {(msg.choices?.length ?? 0) > 0 && (
           <ChoiceChips msg={msg} superseded={superseded} thinking={thinking} />
+        )}
+        {(msg.scenarios?.length ?? 0) > 0 && (
+          <ScenarioCards msg={msg} superseded={superseded} thinking={thinking} />
         )}
       </div>
     )
@@ -645,12 +721,12 @@ export const LogLine = memo(function LogLine({
    with the tokens focus ring; they ride the message row itself so they announce
    politely in the log's aria-live flow and survive windowing (#250 — the row
    carries them wherever the window puts it). Inert (native disabled) after a
-   pick, once any newer user message lands, or while a turn is mewing — the
-   same disabled={thinking} the composer wears, so a chip never looks tappable
-   while pickChoice would swallow the click. Rendering is a pure function of
-   props (the SSR-testable seam the window suite uses), while the store's
-   pickChoice re-derives the same liveness from the live chat, so a stale click
-   can never act. The picked chip keeps a ✓. */
+   pick, once any newer user message lands, or while a turn is mewing — a chip
+   never looks tappable while pickChoice would swallow the click (the composer,
+   by contrast, never locks: #280 queues a mid-turn send instead). Rendering is
+   a pure function of props (the SSR-testable seam the window suite uses),
+   while the store's pickChoice re-derives the same liveness from the live
+   chat, so a stale click can never act. The picked chip keeps a ✓. */
 function ChoiceChips({
   msg,
   superseded,
@@ -681,10 +757,52 @@ function ChoiceChips({
   )
 }
 
+/** Middle-ellipsis for the queued row: both the head and the tail of a long
+    parked thought stay readable. Display-only — the store keeps the full text
+    and cancel restores it intact. */
+function midTruncate(s: string, max = 96): string {
+  if (s.length <= max) return s
+  const head = Math.ceil((max - 1) / 2)
+  return `${s.slice(0, head)}…${s.slice(s.length - (max - 1 - head))}`
+}
+
+/** The parked message (#280), rendered above the hints: `queued ❯ <text>` plus
+    its cancel chip. role=status announces the queue politely, one region —
+    the assertive TurnAnnouncer stays turn-scoped and never speaks for it.
+    Pure props (the SSR-testable seam LogLine uses): the store snapshot doesn't
+    reflect setState under server rendering, but a prop always does. */
+export function QueuedRow({ text, onCancel }: { text: string; onCancel: () => void }) {
+  return (
+    <div className="prompt-queued" role="status">
+      <span className="q-label">queued</span> <span className="p-arr">❯</span>
+      <span className="q-text">{midTruncate(text)}</span>
+      <Button variant="chip" size="sm" onClick={onCancel} aria-label="cancel queued message">
+        cancel
+      </Button>
+    </div>
+  )
+}
+
+/** The kill switch while a turn runs; Esc does the same (#117). With a message
+    queued it reads `stop & send` — stopping already sends the parked message
+    via the settle drain (#280), so the accessible name follows the visible
+    label. Pure props for the same SSR-pin reason as QueuedRow. */
+export function StopButton({ queued, onStop }: { queued: boolean; onStop: () => void }) {
+  return (
+    <Button variant="chip" size="sm" onClick={onStop} aria-label={queued ? 'stop & send' : 'stop'}>
+      {queued ? '■ stop & send' : '■ stop'}
+    </Button>
+  )
+}
+
 function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | null> }) {
-  const speak = useMew((s) => s.speak)
+  /* one submit path (#280): the store's send() decides by turn phase — idle
+     speaks, mid-turn queues — so the composer never locks or branches */
+  const send = useMew((s) => s.send)
   const stopSpeaking = useMew((s) => s.stopSpeaking)
+  const cancelQueuedSpeak = useMew((s) => s.cancelQueuedSpeak)
   const thinking = useMew((s) => s.thinking)
+  const queued = useMew((s) => s.queuedSpeak)
   /* draft lives in the store so a Focus/Week/Settings switch doesn't drop it */
   const text = useMew((s) => s.promptDraft)
   const setText = useMew((s) => s.setPromptDraft)
@@ -703,10 +821,16 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
   }, [text, inputRef])
 
   const submit = () => {
-    if (!text.trim() || thinking) return
-    void speak(text)
-    setText('')
+    if (!text.trim()) return // Enter on an empty draft still no-ops
+    send(text) // send() consumes the draft (clears it) on both phases
   }
+
+  /* the composer's "turn is live" gate (#117/#280): thinking (pre-token), or a
+     message still queued — queued implies the turn hasn't settled, even after
+     the first streamed token flips `thinking` off. Esc and the ■ stop
+     affordance MUST share it: the keyboard twin is never dead while its
+     button shows. */
+  const turnLive = thinking || queued != null
 
   return (
     <div className="prompt-card" onClick={() => inputRef.current?.focus()}>
@@ -716,7 +840,6 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
           ref={inputRef}
           value={text}
           rows={1}
-          disabled={thinking}
           onChange={(e) => setText(e.target.value)}
           onCompositionStart={() => (composing.current = true)}
           onCompositionEnd={() => (composing.current = false)}
@@ -733,8 +856,10 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
               e.preventDefault()
               submit()
             }
-            /* Esc while mewing stops the turn — the keyboard twin of the ■ button (#117) */
-            if (e.key === 'Escape' && thinking) {
+            /* Esc while a turn is live stops it — the keyboard twin of the ■
+               button (#117); with a message queued that is stop & send, same
+               as the button (the settle drain does the send, #280) */
+            if (e.key === 'Escape' && turnLive) {
               e.preventDefault()
               stopSpeaking()
             }
@@ -744,19 +869,17 @@ function Prompt({ inputRef }: { inputRef: React.RefObject<HTMLTextAreaElement | 
           placeholder="talk to MEW…"
         />
       </div>
+      {queued != null && <QueuedRow text={queued} onCancel={cancelQueuedSpeak} />}
       <div className="prompt-hints" id={PROMPT_HINTS_ID}>
         <span className="hint">
           <span className="k">shift+↵</span> newline
         </span>
         <span className="hint dim">"block thursday morning for the deck"</span>
         <span className="spacer" />
-        {thinking ? (
+        {turnLive ? (
           <span className="mewing-row">
             <span className="hint mewing">mewing…</span>
-            {/* the kill switch while a turn runs; Esc does the same (#117) */}
-            <Button variant="chip" size="sm" onClick={stopSpeaking} aria-label="stop">
-              ■ stop
-            </Button>
+            <StopButton queued={queued != null} onStop={stopSpeaking} />
           </span>
         ) : (
           <button

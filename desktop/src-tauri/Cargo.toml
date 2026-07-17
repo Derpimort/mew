@@ -12,7 +12,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# tray companion (#283): `tray-icon` is core Tauri 2 (no plugin); `image-png`
+# lets the embedded state-dot PNGs (icons/tray/) parse into tray icons
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 # generate_context!'s expansion references ::serde_json directly in recent
 # tauri point releases — fleet CI broke on every regenerated lockfile
 serde_json = "1"
@@ -30,6 +32,9 @@ tauri-plugin-dialog = "2"
 # webview mirrors the newest nudge through window.__TAURI__.notification;
 # local-only, no network, keys unaffected
 tauri-plugin-notification = "2"
+# OS-global quick-capture hotkey (#284): registration lives Rust-side behind
+# one app command (set_capture_hotkey) — the webview never gets register rights
+tauri-plugin-global-shortcut = "2"
 # phase 5 (built-in brain): the bundled gbrain sidecar is spawned and killed
 # from Rust only — the webview gets an endpoint handshake, never spawn rights
 tauri-plugin-shell = "2"
