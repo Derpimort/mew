@@ -116,10 +116,11 @@ export function consolidate(
   const floor = addDaysKey(dayKey(today), -CONSOLIDATE_AFTER_DAYS)
   const kept: MemoryEvent[] = []
   const old: MemoryEvent[] = []
+  const STATE_KINDS = new Set(['weekly_summary', 'preference', 'learned_rule', 'dismissed_rule'])
   for (const e of events) {
-    /* preferences are state, not history — a standing rule never ages out
-       (it's the brain-off rulebook; compacting it un-teaches MEW) */
-    if (e.kind !== 'weekly_summary' && e.kind !== 'preference' && e.dayKey < floor) old.push(e)
+    /* state, not history — a standing/learned rule (or a recorded dismissal)
+       never ages out; compacting it would un-teach MEW (#327). */
+    if (!STATE_KINDS.has(e.kind) && e.dayKey < floor) old.push(e)
     else kept.push(e)
   }
   if (!old.length) return { kept, removedIds: [], summaries: [] }

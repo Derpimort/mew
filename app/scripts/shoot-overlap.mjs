@@ -271,6 +271,20 @@ await page.click('text=settings').catch(() => {})
 await page.waitForTimeout(600)
 await detect('settings')
 
+/* 3b · the quick-capture inbox (#348) — the capture field, waiting items, and
+   each item's fitting-slot offer must never collide at any width */
+await page.goto(`${base}/?t=15:20`)
+await ready()
+await page.click('.navlink:has-text("inbox")').catch(() => {})
+await page.waitForTimeout(400)
+for (const t of ['call the bank', 'ship the deck for the review']) {
+  await page.fill('.inbox-input', t).catch(() => {})
+  await page.click('.inbox-capture button:has-text("add")').catch(() => {})
+  await page.waitForTimeout(200)
+}
+await page.waitForTimeout(400)
+await detect('inbox')
+
 /* 4 · crowded focus — pile blocks onto one morning so dial labels must de-collide */
 await page.goto(`${base}/?t=09:40`)
 await ready()

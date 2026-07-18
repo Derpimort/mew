@@ -3,11 +3,17 @@
 
 import type { Rrule } from './recurrence'
 import type { Scenario } from './scenarios'
+import type { LearnedRule } from './prefs'
 
 export type Tag = 'work' | 'private' | 'health' | 'rest'
 export type BlockStatus = 'open' | 'done' | 'rolled'
 export type Visibility = 'details' | 'busy' | 'hidden'
 export type VisibleTag = Exclude<Tag, 'rest'>
+/** A time-of-day band. The scheduler scores placement against it; a CONFIRMED
+    rule (or the user's explicit ask) makes it FIRM (off-window collapses, like
+    the meal seam), an inferred tag default stays the soft scorer term. Owned
+    here so the resolver (prefs.ts) and the scorer (scheduler.ts) share it. */
+export type TimeWindow = 'morning' | 'afternoon' | 'evening'
 
 export interface Block {
   id: string
@@ -55,7 +61,29 @@ export interface Capture {
   createdAt: number
   status: 'open' | 'placed' | 'done'
   placedBlockId?: string
+  /** #348 inbox hints — the owner's optional shape for a captured intent that
+      holds no time. `tag`/`durationMin` size the placement offer and pick the
+      energy match; `energy` names the focus class outright when the owner knows
+      it (else it's derived from tag+duration via #321). All optional: a bare
+      "call the bank" carries none and behaves exactly as a #171 quick-capture. */
+  tag?: Tag
+  durationMin?: number
+  /** the focus class hint, mirroring energy.FocusClass — kept inline so the core
+      types file never cycles with energy.ts. undefined ⇒ fitOffers derives it. */
+  energy?: 'deep' | 'admin' | 'health'
+  /** #348 offer dedupe: the dayKey gbrain last OFFERED a slot for this item, so a
+      proactive offer fires at most once per item per day. "not now" sets it too —
+      a dismissal keeps the item waiting without re-nagging the same day. */
+  lastOfferedDay?: string
 }
+
+/** #348: the inbox's name for a captured intent that holds no time (MEW law:
+    optional/unscheduled events hold no time). An inbox item IS a Capture — the
+    #171 substrate, so the same table, lifecycle, persistence, and export carry
+    it with no new storage seam; #348 enriches it with the hints above and adds
+    the deterministic, owner-confirmed placement offer (domain/inbox.fitOffers).
+    Placed, it becomes an ordinary block and the mew is its completion. */
+export type InboxItem = Capture
 
 export type NudgeId =
   | 'right-size'
@@ -81,6 +109,12 @@ export type NudgeId =
   | 'morning-brief'
   | 'evening-wrap'
   | 'weekly-ritual'
+  | 'learn-offer' // gbrain Pillar 1 (#327): a learned-rule offer — a store ritual, not an engine nudge
+  | 'remove-done' // #334: an explicit done-block delete → a one-tap confirm (mews aren't walled off), not an engine nudge
+  | 'weekly-review' // #346: the once-a-week "want your week in review?" offer — a store ritual, not an engine nudge
+  | 'inbox-offer' // #348: gbrain OFFERS a fitting slot for a waiting inbox item — a store ritual (fitOffers), owner-confirmed, never auto-scheduled
+  | 'estimate' // #322: the once-a-day plan-time "give them room?" offer — a store ritual, keyed by the day it fired on
+  | 'scaffold-week' // #349: the once-a-week "rough out next week your usual way?" offer — a store ritual, keyed by the coming week
 
 /** What can occupy a lastFired slot: an engine nudge id, the sustenance
     scaffold's daily pass (#299 — a store ritual, not an engine nudge), one
@@ -194,6 +228,8 @@ export type MemoryKind =
   | 'rest_kept'
   | 'rest_skipped'
   | 'preference' // a stated standing rule (the brain-off home for remember)
+  | 'learned_rule' // gbrain Pillar 1 (#327): a rule confirmed from repetition — state, never ages out
+  | 'dismissed_rule' // #327: a candidate the user rejected — never offered again
   | 'weekly_summary' // consolidation artifact — old raw events compacted per ISO week
 
 export interface MemoryEvent {
@@ -208,10 +244,16 @@ export interface MemoryEvent {
   title?: string
   startMin?: number
   endMin?: number
+  /** whether the completed block held your focus or ran in the background —
+      the fourth signal repetition-learning reads (#327). undefined ⇒ focus. */
+  attention?: 'focus' | 'background'
   nudgeType?: NudgeId
   outcome?: 'accepted' | 'declined' | 'ignored'
   /* preference payload (kind:'preference') */
   pref?: PrefPayload
+  /* the confirmed/dismissed learned rule (kind:'learned_rule'|'dismissed_rule',
+     #327). A dismissal carries only `match`; a confirmation the full rule. */
+  rule?: LearnedRule
   /* weekly_summary payload */
   summary?: {
     completed: number
@@ -373,6 +415,19 @@ export interface Settings {
       placement paths reproduce today's behavior byte-for-byte. External events
       never move; only MEW's candidate generation honors it. */
   meetingBufferMin: number
+  /** #321: energy-fit planning — deep work placed where you DEMONSTRABLY finish
+      it (learned from completions, never a textbook curve) and admin batched.
+      'on' (default) only ENGAGES once the data floor is met (a real
+      energyProfile) or a stated batch/deep rule forces it — a fresh profile
+      behaves exactly as today. 'off' omits the energy-fit scenario always. */
+  energyFit: 'on' | 'off'
+  /** #322: estimate correction at plan time — size blocks to how they REALLY
+      run, per task-type (deep work vs admin, learned from completion lateness).
+      'off' (default) is byte-identical to today. 'ask' offers ONE chip nudge
+      after a plan places under-booked work of a run-long kind ("give them
+      room?"). 'always' silently pre-sizes the plan-mode scenario picker. A
+      duration stated in the ask is never touched, in any mode. */
+  estimateAutosize: 'off' | 'ask' | 'always'
 }
 
 /* The Rive "PixieMachine" input contract — PRD §6. The placeholder SVG and the
@@ -387,7 +442,8 @@ export interface PixieInputs {
 export type ClearScope = 'today' | 'tomorrow' | 'week' | 'upcoming'
 
 export interface ScheduleIntent {
-  /** insights: read-only — surface what local memory computed (#287); no fields */
+  /** insights: read-only — surface what local memory computed (#287); no fields.
+      list: read-only — itemize the day/week's blocks (#333); carries `list`. */
   kind:
     | 'plan'
     | 'complete'
@@ -396,9 +452,14 @@ export interface ScheduleIntent {
     | 'clear'
     | 'remove'
     | 'edit'
+    | 'resize'
+    | 'duplicate'
+    | 'relmove'
     | 'remember'
     | 'chat'
     | 'insights'
+    | 'list'
+    | 'giveRoom'
   /** clear: which open MEW-placed blocks to remove (mews + calendar events never) */
   scope?: ClearScope
   /** edit: changes to apply to the matched block */
@@ -410,6 +471,11 @@ export interface ScheduleIntent {
     tag?: Tag
     attention?: 'focus' | 'background'
     due?: number
+    /** A relative duration delta in minutes (#320): "make it longer" (+15),
+        "give it another 30" (+30), "shorten it by 15" (−15). The executor
+        applies it against the referent's CURRENT length after resolution —
+        parse.ts stays pure and never reads the block. */
+    relDurationMin?: number
   }
   /* plan */
   places?: {
@@ -430,15 +496,51 @@ export interface ScheduleIntent {
   frees?: { dayKey: string; startMin: number; endMin: number; label: string }[]
   /* complete / move / remove */
   query?: string
+  /** complete/move/edit: the TARGET block's start time ("19:45") pinning which
+      of several same-named blocks to act on — name AND time together address
+      exactly one (#334). Distinct from toStartMin (a move's new start) and from
+      edit.startMin (a retime); remove keeps its own `remove.at`. */
+  at?: string
   toDayKey?: string
   toStartMin?: number
+  /** move: a relative start shift in minutes (#320): "30 min earlier" (−30),
+      "push it back an hour" (+60). The executor computes the absolute start
+      from the referent's CURRENT start after resolution, on the same day —
+      today move needs an absolute target, so the relative math lives there. */
+  relStartMin?: number
   /** remove: pin which of several same-named blocks ("22:30"), or drop all */
   remove?: { at?: string; all?: boolean }
+  /** edit/remove: the recurring-edit scope a scope word named (#343) — 'this'
+      (just this one), 'following' (this & the ones after), 'series' (the whole
+      set). Absent on a series block ⇒ the executor asks with chips. */
+  seriesScope?: 'this' | 'following' | 'series'
   /* capture / chat */
   title?: string
   reply?: string
   /* remember */
   pref?: PrefPayload
+  /** list: which day(s) to itemize (a 0–13 day offset, or the whole week) and
+      an optional tag filter (#333) — read-only, mutates nothing. */
+  list?: { day: number | 'week'; tag?: Tag }
+  /** resize (#335): a duration-only change that keeps the block's start —
+      durationMin sets an absolute length, relDurationMin a signed delta
+      ("30 min longer" = +30). The executor keeps the start and moves only the
+      end; the target is the `query` (+ `at`/`seriesScope` like edit). */
+  resize?: { durationMin?: number; relDurationMin?: number }
+  /** duplicate (#335): copy the matched block to another day/time — the
+      original stays put and the copy is a new independent block. toDayOffset/
+      toStartMin place it (absent time ⇒ the source's clock, or the next free
+      slot within the same day); rrule makes the copy a repeating series (#159). */
+  duplicate?: { toDayOffset?: number; toStartMin?: number; rrule?: Rrule }
+  /** relmove (#335): a relative nudge with no absolute time — 'earlier'/'later'
+      shift the start by amountMin (default 30) on the same day, 'next_day' moves
+      one day on at the same clock, 'next_free' relocates to the soonest clear
+      slot from now. The target is the `query` (+ `at`). */
+  relmove?: { direction: 'earlier' | 'later' | 'next_day' | 'next_free'; amountMin?: number }
+  /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
+      blocks of this focus class up to how the kind really runs. The union is
+      spelled inline (not imported from energy) to keep types.ts a leaf. */
+  focusClass?: 'deep' | 'admin' | 'health'
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -477,4 +579,6 @@ export const DEFAULT_SETTINGS: Settings = {
   planMode: 'auto',
   hasSeenOnboarding: false,
   meetingBufferMin: 0,
+  energyFit: 'on',
+  estimateAutosize: 'off',
 }

@@ -9,8 +9,10 @@ import {
   findAllByQuery,
   findByQuery,
   findFreeSlot,
+  findTarget,
   freeWindows,
   isFixedTime,
+  nextFreeSlot,
   nextSlotAfter,
   overlappingFocus,
   isDeep,
@@ -18,9 +20,11 @@ import {
   looseThreads,
   place,
   plannedDeepMin,
+  resolveReferent,
   resolveRemoval,
   roll,
   rollup,
+  seriesMembership,
   tightMeetingJunction,
 } from '../week'
 import type { Block, BlockStatus } from '../types'
@@ -261,6 +265,63 @@ describe('week model', () => {
 
     it('no match at all → nothing to remove, nothing to ask', () => {
       expect(resolveRemoval([night], 'dentist', {}, D)).toEqual({ remove: [], candidates: [] })
+    })
+  })
+
+  describe('findTarget — precise name+time addressing (#334)', () => {
+    // the transcript: two same-named blocks the same evening; a bare name hit
+    // the wrong one, a name+time must hit exactly the intended block
+    const early = mk({ title: 'Release', startMin: 19 * 60 + 45, endMin: 20 * 60 + 45 })
+    const late = mk({ title: 'Release', startMin: 21 * 60 + 30, endMin: 22 * 60 + 30 })
+
+    it('name + time addresses exactly one block — never a silent wrong pick', () => {
+      const r = findTarget([early, late], 'release', D, { at: 19 * 60 + 45 })
+      expect(r).toEqual({ status: 'ok', block: early })
+    })
+
+    it('a bare ambiguous name exposes the candidate set (same day), never guesses', () => {
+      const r = findTarget([early, late], 'release', D)
+      expect(r.status).toBe('ambiguous')
+      if (r.status === 'ambiguous')
+        expect(r.candidates.map((b) => b.id).sort()).toEqual([early.id, late.id].sort())
+    })
+
+    it('a time that matches the name but not the clock surfaces the real times', () => {
+      const r = findTarget([early, late], 'release', D, { at: 18 * 60 })
+      expect(r.status).toBe('ambiguous') // not "none" — the name IS there, just not at 18:00
+    })
+
+    it('a single match resolves cleanly', () => {
+      const r = findTarget([early], 'release', D)
+      expect(r).toEqual({ status: 'ok', block: early })
+    })
+
+    it('a name shared across days resolves to the soonest, not an ambiguity', () => {
+      const tue = mk({ title: 'Gym', dayKey: D, startMin: 7 * 60 })
+      const wed = mk({ title: 'Gym', dayKey: '2026-06-10', startMin: 7 * 60 })
+      const r = findTarget([wed, tue], 'gym', D)
+      expect(r).toEqual({ status: 'ok', block: tue })
+    })
+
+    it('a done block is invisible by default but reachable with includeDone (the cage lifts)', () => {
+      const done = mk({ title: 'Deck', status: 'done', startMin: 9 * 60, endMin: 10 * 60 })
+      expect(findTarget([done], 'deck', D)).toEqual({ status: 'none' })
+      expect(findTarget([done], 'deck', D, { includeDone: true })).toEqual({
+        status: 'ok',
+        block: done,
+      })
+    })
+
+    it('a bare name prefers the still-open block over a finished namesake', () => {
+      const open = mk({ title: 'Deck', status: 'open', startMin: 14 * 60, endMin: 15 * 60 })
+      const done = mk({ title: 'Deck', status: 'done', startMin: 9 * 60, endMin: 10 * 60 })
+      const r = findTarget([done, open], 'deck', D, { includeDone: true })
+      expect(r).toEqual({ status: 'ok', block: open })
+    })
+
+    it('past-day blocks are not targetable by name', () => {
+      const past = mk({ title: 'Release', dayKey: '2026-06-08', startMin: 19 * 60 + 45 })
+      expect(findTarget([past], 'release', D)).toEqual({ status: 'none' })
     })
   })
 
@@ -721,5 +782,167 @@ describe('rollup — real sums for "how much has X eaten"', () => {
     const r = rollup(blocks, days, () => true)
     expect(r.plannedMin).toBe(0)
     expect(r.open).toBe(0)
+  })
+})
+
+describe('resolveReferent — sentinel + live week → concrete block (#320)', () => {
+  // A fixture Tuesday: lunch anchors a before/after pair; a 15:00 block for "@at".
+  const NOW = 9 * 60 + 40
+  const TOMORROW = '2026-06-10'
+  const week = [
+    mk({ id: 'deck', title: 'Q3 deck', startMin: 9 * 60, endMin: 10 * 60 + 30 }),
+    mk({ id: 'lunch', title: 'Lunch', tag: 'private', startMin: 12 * 60, endMin: 13 * 60 }),
+    mk({ id: 'review', title: 'Spec review', startMin: 14 * 60, endMin: 15 * 60 }),
+    mk({ id: 'call', title: 'Client call', startMin: 15 * 60, endMin: 16 * 60 }),
+    mk({ id: 'done1', title: 'Standup', status: 'done', startMin: 8 * 60, endMin: 8 * 60 + 30 }),
+  ]
+
+  it('a plain title is passthrough (the caller resolves it normally)', () => {
+    expect(resolveReferent(week, 'deck', null, D, NOW)).toEqual({ status: 'passthrough' })
+  })
+
+  it('@referent resolves the session id — and asks (none) when it is gone', () => {
+    expect(resolveReferent(week, '@referent', 'review', D, NOW)).toEqual({
+      status: 'ok',
+      block: week[2],
+    })
+    expect(resolveReferent(week, '@referent', null, D, NOW)).toEqual({ status: 'none' })
+    expect(resolveReferent(week, '@referent', 'ghost', D, NOW)).toEqual({ status: 'none' })
+  })
+
+  it('@after / @before resolve adjacency to a named anchor, same day', () => {
+    // after lunch (12–13) → the next block by start: the 14:00 review
+    expect(resolveReferent(week, '@after:lunch', null, D, NOW)).toMatchObject({
+      status: 'ok',
+      block: { id: 'review' },
+    })
+    // before lunch → the latest block ending by 12:00: the 9:00 deck
+    expect(resolveReferent(week, '@before:lunch', null, D, NOW)).toMatchObject({
+      status: 'ok',
+      block: { id: 'deck' },
+    })
+    // an anchor that isn't on the week → none, never a guess
+    expect(resolveReferent(week, '@after:dentist', null, D, NOW)).toEqual({ status: 'none' })
+  })
+
+  it('@next is the next open block from now', () => {
+    expect(resolveReferent(week, '@next', null, D, 11 * 60)).toMatchObject({
+      status: 'ok',
+      block: { id: 'lunch' },
+    })
+  })
+
+  it('@at resolves the block at that clock time', () => {
+    expect(resolveReferent(week, '@at:900', null, D, NOW)).toMatchObject({
+      status: 'ok',
+      block: { id: 'call' }, // 15:00
+    })
+    expect(resolveReferent(week, '@at:840', null, D, NOW)).toMatchObject({
+      status: 'ok',
+      block: { id: 'review' }, // 14:00
+    })
+  })
+
+  it('@at is ambiguous when two open blocks share the time on the soonest day', () => {
+    const clash = [
+      mk({ id: 'a', title: 'A', startMin: 15 * 60, endMin: 16 * 60 }),
+      mk({ id: 'b', title: 'B', startMin: 15 * 60, endMin: 15 * 60 + 30 }),
+    ]
+    const r = resolveReferent(clash, '@at:900', null, D, NOW)
+    expect(r.status).toBe('ambiguous')
+    if (r.status === 'ambiguous') expect(r.candidates).toHaveLength(2)
+  })
+
+  it('@at prefers the soonest day, not an ambiguity, across days', () => {
+    const acrossDays = [
+      mk({ id: 'today3', title: 'Today 3pm', startMin: 15 * 60, endMin: 16 * 60, dayKey: D }),
+      mk({
+        id: 'tmw3',
+        title: 'Tomorrow 3pm',
+        startMin: 15 * 60,
+        endMin: 16 * 60,
+        dayKey: TOMORROW,
+      }),
+    ]
+    expect(resolveReferent(acrossDays, '@at:900', null, D, NOW)).toMatchObject({
+      status: 'ok',
+      block: { id: 'today3' },
+    })
+  })
+})
+
+describe('seriesMembership — recurring-scope relevance (#343)', () => {
+  const series = (over: Partial<Block> & { dayKey: string }) =>
+    mk({ title: 'Gym', recurringBlockId: 'r1', startMin: 7 * 60, endMin: 8 * 60, ...over })
+  const three = [
+    series({ id: 'a', dayKey: '2026-06-09' }),
+    series({ id: 'b', dayKey: '2026-06-10' }),
+    series({ id: 'c', dayKey: '2026-06-11' }),
+  ]
+
+  it('is null for a one-off block (no recurringBlockId)', () => {
+    expect(seriesMembership(three, mk({ id: 'solo' }))).toBeNull()
+  })
+
+  it('reports the shared id, the open count, and first/middle/last position', () => {
+    expect(seriesMembership(three, three[0])).toEqual({
+      recurringBlockId: 'r1',
+      position: 'first',
+      count: 3,
+    })
+    expect(seriesMembership(three, three[1])!.position).toBe('middle')
+    expect(seriesMembership(three, three[2])!.position).toBe('last')
+  })
+
+  it("is 'only' with count 1 when the block stands alone in its series", () => {
+    const [solo] = three
+    expect(seriesMembership([solo], solo)).toEqual({
+      recurringBlockId: 'r1',
+      position: 'only',
+      count: 1,
+    })
+  })
+
+  it('counts open occurrences only — a done sibling is off the count', () => {
+    const withDone = [three[0], three[1], series({ id: 'c', dayKey: '2026-06-11', status: 'done' })]
+    const m = seriesMembership(withDone, three[0])!
+    expect(m.count).toBe(2)
+    expect(seriesMembership(withDone, withDone[1])!.position).toBe('last')
+  })
+})
+
+describe('nextFreeSlot — the cross-day "next free slot" search (#335)', () => {
+  it('returns the soonest clear window from fromMin on today when one fits', () => {
+    // today (D) holds 9–10; a 60-min task from 9:00 lands at 10:00
+    const busy = [mk({ startMin: 9 * 60, endMin: 10 * 60 })]
+    const slot = nextFreeSlot(busy, D, 9 * 60, 60)
+    expect(slot).toEqual({ dayKey: D, startMin: 10 * 60 })
+  })
+
+  it('rolls forward to the next day when today is packed to the cap', () => {
+    // fill the whole working day so nothing fits today → the search steps to D+1
+    const full = [mk({ startMin: 8 * 60, endMin: 18 * 60 + 30 })]
+    const slot = nextFreeSlot(full, D, 8 * 60, 60)
+    expect(slot).toEqual({ dayKey: '2026-06-10', startMin: 8 * 60 })
+  })
+
+  it('lands clear of a fixed/external block — never over it', () => {
+    // a calendar meeting 9–11; a 60-min task from 8:00 must take 8:00 (before) or 11:00 (after)
+    const ext = mk({
+      startMin: 9 * 60,
+      endMin: 11 * 60,
+      external: { calId: 'c', eventId: 'e' },
+    } as Partial<Block>)
+    const slot = nextFreeSlot([ext], D, 9 * 60 + 30, 60) // from 9:30, mid-meeting
+    expect(slot).toEqual({ dayKey: D, startMin: 11 * 60 }) // after the meeting, not over it
+  })
+
+  it('returns null when nothing fits inside the horizon', () => {
+    // every day full across a 1-day horizon
+    const wall = [
+      mk({ dayKey: D, startMin: 8 * 60, endMin: 18 * 60 + 30 }),
+      mk({ dayKey: '2026-06-10', startMin: 8 * 60, endMin: 18 * 60 + 30 }),
+    ]
+    expect(nextFreeSlot(wall, D, 8 * 60, 60, 1)).toBeNull()
   })
 })

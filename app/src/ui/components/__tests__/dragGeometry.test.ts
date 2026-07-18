@@ -3,14 +3,18 @@ import type { Block } from '../../../domain/types'
 import {
   type ColRect,
   type DragState,
+  MIN_RESIZE_MIN,
   SNAP_MIN,
   dayFromX,
   dropTarget,
   ghostConflicts,
   isMoved,
+  isResized,
   minFromY,
+  resizeTo,
   snapMin,
   startDrag,
+  startResize,
 } from '../dragGeometry'
 
 const H = 560
@@ -174,5 +178,59 @@ describe('ghostConflicts — live overlap set at the candidate drop', () => {
   it('only the target day counts — a same-time block on another day is clear', () => {
     const otherDay = [block({ id: 'x', dayKey: 'mon', startMin: 690, endMin: 750 })]
     expect(ghostConflicts(otherDay, dragInto(700, 30), transparent)).toHaveLength(0)
+  })
+})
+
+describe('startResize — a fresh resize anchors the block and marks the edge', () => {
+  it('captures the grabbed edge, the anchor end, and mode=resize', () => {
+    const d = startResize(block(), 'bottom')
+    expect(d).toMatchObject({
+      id: 'b1',
+      fromStartMin: 600,
+      fromEndMin: 720,
+      durationMin: 120,
+      toStartMin: 600,
+      mode: 'resize',
+      edge: 'bottom',
+    })
+  })
+  it('an immediate release is a no-op (isResized=false)', () => {
+    expect(isResized(startResize(block(), 'top'))).toBe(false)
+    expect(isResized(startResize(block(), 'bottom'))).toBe(false)
+  })
+})
+
+describe('resizeTo — one edge follows the cursor, the other stays anchored', () => {
+  // block is 10:00–12:00 (600–720); grid top at 0, H maps 0..1440 over 0..H
+  const yFor = (min: number) => (min / DAY) * H
+
+  it('bottom edge grows the end, holding the start', () => {
+    const r = resizeTo(startResize(block(), 'bottom'), yFor(780), 0, H) // drag end to 13:00
+    expect(r).toEqual({ toStartMin: 600, durationMin: 180 })
+  })
+  it('bottom edge shrinks the end, never below the min length', () => {
+    const r = resizeTo(startResize(block(), 'bottom'), yFor(605), 0, H) // below 600+15
+    expect(r).toEqual({ toStartMin: 600, durationMin: MIN_RESIZE_MIN })
+  })
+  it('bottom edge never runs the end past midnight', () => {
+    const r = resizeTo(startResize(block(), 'bottom'), yFor(2000), 0, H)
+    expect(r.toStartMin).toBe(600)
+    expect(r.durationMin).toBe(DAY - 600) // ends exactly at midnight
+  })
+  it('top edge moves the start earlier, holding the end (duration grows)', () => {
+    const r = resizeTo(startResize(block(), 'top'), yFor(540), 0, H) // drag start to 9:00
+    expect(r).toEqual({ toStartMin: 540, durationMin: 180 })
+  })
+  it('top edge never crosses within the min length of the anchored end', () => {
+    const r = resizeTo(startResize(block(), 'top'), yFor(715), 0, H) // past 720−15
+    expect(r).toEqual({ toStartMin: 720 - MIN_RESIZE_MIN, durationMin: MIN_RESIZE_MIN })
+  })
+  it('top edge never moves the start before midnight', () => {
+    const r = resizeTo(startResize(block(), 'top'), -50, 0, H)
+    expect(r).toEqual({ toStartMin: 0, durationMin: 720 })
+  })
+  it('snaps the dragged edge to the 5-minute grid', () => {
+    const r = resizeTo(startResize(block(), 'bottom'), yFor(662), 0, H) // 662 → 660
+    expect(r.durationMin).toBe(60) // end 660, start 600
   })
 })

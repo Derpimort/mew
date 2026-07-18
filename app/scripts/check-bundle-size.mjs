@@ -27,12 +27,16 @@ const KB = 1024
 // they get their own (larger) ceilings; every other lazy chunk falls under the
 // strict `lazy` default. See vite.config.ts codeSplitting.groups.
 export const BUDGETS = {
-  // entry (main) chunk — first paint depends on it. Raised 330→370 for v0.5:
-  // the daily-companion board added eager UI (the plan-mode picker, onboarding
-  // v2 steps, tray/settings rows) — proportionate ~20 KB growth, and first-load
-  // (main+vendor, 754 KB) stays well under its 1200 KB ceiling. Trimming main
-  // via lazy-loading onboarding/picker is a tracked follow-up.
-  main: 370 * KB,
+  // entry (main) chunk — first paint depends on it, kept tightest. Lowered
+  // 370→340 for v0.6 (#340): onboarding, the plan-mode scenario picker, and the
+  // Settings route now lazy-load, so ~52 KB of first-paint-optional UI left the
+  // eager graph (first-load 764→712 KB). This budget bounds the eager APP code
+  // the entry carries (~309 KB today = first-load − vendor); rolldown may keep
+  // that in this one chunk or hoist its shared parts into eager SIBLING chunks
+  // (e.g. Button/rules — first-load, not lazy, so they count under `firstLoad`),
+  // in which case the entry file itself reads smaller. 340 is the real ceiling
+  // on the eager app either way, with modest headroom over 309.
+  main: 340 * KB,
   // always-loaded vendor split: react, react-dom, zustand, dexie
   vendor: 460 * KB,
   // backstop only: three.js / @react-three were removed (the ambient WebGL anims

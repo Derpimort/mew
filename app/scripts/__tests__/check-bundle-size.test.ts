@@ -6,7 +6,7 @@ const KB = 1024
 // A chunk set that mirrors a healthy build, each comfortably under budget.
 function healthyChunks() {
   return [
-    { file: 'assets/index-x.js', name: 'index', isEntry: true, bytes: 360 * KB },
+    { file: 'assets/index-x.js', name: 'index', isEntry: true, bytes: 300 * KB },
     { file: 'assets/vendor-x.js', name: 'vendor', isEntry: false, bytes: 280 * KB },
     { file: 'assets/three-x.js', name: 'three', isEntry: false, bytes: 850 * KB },
     { file: 'assets/ai-x.js', name: 'ai', isEntry: false, bytes: 470 * KB },
@@ -31,9 +31,9 @@ describe('bundle-size budget policy', () => {
   })
 
   it('fails when the main chunk regresses by 50KB past its budget (acceptance: a +50KB main regression fails)', () => {
-    // main budget is 330KB; sit at 290KB so a +50KB regression lands at 340KB.
+    // main budget is 340KB; sit at 300KB so a +50KB regression lands at 350KB.
     const chunks = healthyChunks()
-    chunks[0].bytes = 290 * KB
+    chunks[0].bytes = 300 * KB
     expect(evaluate(chunks).ok).toBe(true) // baseline within budget
 
     chunks[0].bytes += 50 * KB // the regression
@@ -68,15 +68,15 @@ describe('bundle-size budget policy', () => {
   })
 
   it('keeps the documented budget caps (CONTRIBUTING.md contract)', () => {
-    expect(BUDGETS.main).toBe(450 * KB)
+    expect(BUDGETS.main).toBe(340 * KB)
     expect(BUDGETS.firstLoad).toBe(1200 * KB)
     expect(BUDGETS.total).toBe(2300 * KB)
   })
 
   it('counts only main + vendor toward first-load by default (three/ai are lazy)', () => {
     const result = evaluate(healthyChunks())
-    // 360 (main) + 280 (vendor) = 640KB; three/ai excluded
-    expect(result.firstLoadBytes).toBe(640 * KB)
+    // 300 (main) + 280 (vendor) = 580KB; three/ai excluded
+    expect(result.firstLoadBytes).toBe(580 * KB)
     expect(result.firstLoadOver).toBe(false)
   })
 
@@ -84,12 +84,12 @@ describe('bundle-size budget policy', () => {
     // Spread the eager weight across chunks each under its own per-chunk cap, so
     // only the first-load *sum* is what trips — proving that budget is real.
     const eager = [
-      { file: 'a.js', name: 'index', isEntry: true, bytes: 320 * KB }, // < 330 main
+      { file: 'a.js', name: 'index', isEntry: true, bytes: 320 * KB }, // < 340 main
       { file: 'b.js', name: 'vendor', isEntry: false, bytes: 450 * KB }, // < 460 vendor
       { file: 'c.js', name: 'shared', isEntry: false, bytes: 290 * KB }, // < 300 lazy
     ]
     const allEager = new Set(['a.js', 'b.js', 'c.js'])
-    // 440 + 330 + 290 = 1060KB, still under 1200
+    // 320 + 450 + 290 = 1060KB, still under 1200
     expect(evaluate(eager, BUDGETS, allEager).firstLoadOver).toBe(false)
 
     // one more eager chunk pushes the first-load sum past 1.2MB

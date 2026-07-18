@@ -2,7 +2,7 @@
    Actions resolve through the store; external (calendar) events get no
    move/hold — not ours to move. */
 
-import type { CSSProperties } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { useMew } from '../../state/store'
 import type { Block } from '../../domain/types'
 import { fmtTime } from '../../domain/time'
@@ -31,6 +31,7 @@ export function BlockCard({
   const interruptBlock = useMew((s) => s.interruptBlock)
   const moveToNextFree = useMew((s) => s.moveToNextFree)
   const toggleProtected = useMew((s) => s.toggleProtected)
+  const removeBlock = useMew((s) => s.removeBlock)
 
   const done = block.status === 'done'
   const life = block.tag !== 'work'
@@ -38,6 +39,35 @@ export function BlockCard({
     fn()
     onClose()
   }
+
+  /* the remove affordance (#334): a one-line confirm, then delete. On a done
+     block this deletes the block AND its mew (undoable) — the same confirm path
+     the chat proposal's "remove it" chip runs (store.removeBlock). External
+     (calendar) events aren't ours to delete, so they never show it. */
+  const [confirming, setConfirming] = useState(false)
+  const removeControl = block.external ? null : confirming ? (
+    <>
+      <button type="button" className="ca pri" onClick={act(() => removeBlock(block.id))}>
+        {done ? 'Remove the mew?' : 'Remove?'}
+      </button>
+      <button type="button" className="ca sec" onClick={() => setConfirming(false)}>
+        cancel
+      </button>
+    </>
+  ) : (
+    <button
+      type="button"
+      className="ca sec"
+      title={
+        done
+          ? 'delete this completed block and its mew — undoable'
+          : 'delete this block from the week — undoable'
+      }
+      onClick={() => setConfirming(true)}
+    >
+      Remove
+    </button>
+  )
 
   return (
     <div
@@ -120,10 +150,14 @@ export function BlockCard({
               >
                 {block.protected ? 'Release hold' : 'Hold (protect)'}
               </button>
+              {removeControl}
             </>
           )}
         </div>
       )}
+      {/* a done block keeps its ✓ but is no longer walled off (#334): the same
+          remove control, one-line confirm, deletes the block and its mew. */}
+      {done && !block.external && <div className="cacts">{removeControl}</div>}
     </div>
   )
 }

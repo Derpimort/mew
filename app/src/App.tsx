@@ -1,9 +1,24 @@
-import { useEffect, useRef } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { useMew } from './state/store'
 import { MainPage } from './ui/pages/MainPage'
-import { SettingsPage } from './ui/pages/SettingsPage'
 import { ErrorBoundary } from './ui/components/ErrorBoundary'
 import Preloader from './ui/react-bits/preloader'
+
+/* Settings is a first-paint-optional route (#340): the app always lands on the
+   week, and Settings — the heaviest single surface, and the eager home of the
+   key-probe/setup flow — only renders when the user navigates to it. Splitting
+   it here (at the import site, not inside the page) keeps it out of the entry
+   chunk without touching the page's internals. The chunk is local + small, so
+   the null fallback is a near-instant no-op, never a flash on the common week
+   path (Settings never mounts there); its own ErrorBoundary still wraps it. */
+const SettingsPage = lazy(() =>
+  import('./ui/pages/SettingsPage').then((m) => ({ default: m.SettingsPage }))
+)
+
+/* The quick-capture inbox (#348) is its own surface, split at the import site
+   like Settings so it stays out of the entry chunk — the app always lands on
+   the week, and the inbox mounts only when navigated to. */
+const InboxPage = lazy(() => import('./ui/pages/InboxPage').then((m) => ({ default: m.InboxPage })))
 
 /* 5s keeps liveNow's current/next flips feeling immediate; the dial's own
    1s clock handles the countdown, and sync/nudges self-throttle by time. */
@@ -88,9 +103,17 @@ export default function App() {
             <ErrorBoundary variant="full" label="mew">
               {page === 'week' ? (
                 <MainPage />
+              ) : page === 'inbox' ? (
+                <ErrorBoundary label="inbox">
+                  <Suspense fallback={null}>
+                    <InboxPage />
+                  </Suspense>
+                </ErrorBoundary>
               ) : (
                 <ErrorBoundary label="settings">
-                  <SettingsPage />
+                  <Suspense fallback={null}>
+                    <SettingsPage />
+                  </Suspense>
                 </ErrorBoundary>
               )}
             </ErrorBoundary>

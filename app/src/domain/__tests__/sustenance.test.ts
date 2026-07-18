@@ -9,12 +9,14 @@ import { DEFAULT_SUSTENANCE_MEALS, type Block, type PrefPayload } from '../types
 import { generateScenarios } from '../scenarios'
 import { scoreSlots, type ScoreWeights, type SlotQuery } from '../scheduler'
 import {
+  correctMeal,
   MEAL_WINDOWS,
   mealAdjacencyPenalty,
   mealClassOf,
   mealWindowFor,
   scaffoldDay,
   scaffoldLine,
+  validateMealPlacement,
   type MealWindow,
   type ScaffoldPlacement,
 } from '../sustenance'
@@ -647,5 +649,187 @@ describe('sustenance — scaffoldLine (the one line it says)', () => {
       scaffoldLine([P('Breather', 'rest', 10 * 60 + 30), P('Breather', 'rest', 15 * 60)])
     ).toBe('fed and paced: breathers at 10:30 and 15:00 — say the word to reshape')
     expect(scaffoldLine([])).toBe('')
+  })
+})
+
+/* ── the meal guardrail (#323) ─────────────────────────────────────────
+   The pin behind "how can dinner be 6pm are you stupid?": a plan_blocks
+   reshape with explicit startMin skips the scorer, so these two pure
+   functions are the safety net the executor runs on every explicit meal. */
+
+describe('sustenance — validateMealPlacement (#323 window + hard-gap check)', () => {
+  it('a non-meal title is trivially sane — cls null, ok true', () => {
+    expect(
+      validateMealPlacement([], { title: 'Deep work', startMin: 9 * 60, endMin: 10 * 60 })
+    ).toEqual({ cls: null, inWindow: true, spaced: true, ok: true })
+    // "order lunch" is an errand, not the meal — never classified, never checked
+    expect(
+      validateMealPlacement([], { title: 'order lunch', startMin: 16 * 60, endMin: 16 * 60 + 15 })
+        .cls
+    ).toBeNull()
+  })
+
+  it('an in-window, well-spaced meal is ok', () => {
+    const lunch = mk({ title: 'Lunch', tag: 'private', startMin: 12 * 60, endMin: 12 * 60 + 45 })
+    expect(
+      validateMealPlacement([lunch], {
+        title: 'Dinner',
+        startMin: 18 * 60 + 30,
+        endMin: 19 * 60 + 30,
+      })
+    ).toEqual({ cls: 'dinner', inWindow: true, spaced: true, ok: true })
+  })
+
+  it('the transcript numbers: dinner 18:15 after a 15:19–16:04 lunch is out of window AND too close', () => {
+    const lateLunch = mk({
+      title: 'Lunch',
+      tag: 'private',
+      startMin: 15 * 60 + 19,
+      endMin: 16 * 60 + 4,
+    })
+    const v = validateMealPlacement([lateLunch], {
+      title: 'Dinner',
+      startMin: 18 * 60 + 15,
+      endMin: 19 * 60 + 15,
+    })
+    expect(v.cls).toBe('dinner')
+    expect(v.inWindow).toBe(false) // 18:15 is before the 18:30 window edge
+    expect(v.spaced).toBe(false) // 18:15 − 16:04 = 2h11m, short of the 4h gap
+    expect(v.ok).toBe(false)
+  })
+
+  it('the hard gap is exactly 4h after lunch ends — one minute short fails, exactly 4h holds', () => {
+    const lunch = mk({ title: 'Lunch', tag: 'private', startMin: 13 * 60, endMin: 14 * 60 })
+    // window aside (both off-window here): the gap term alone flips at 4h sharp
+    expect(
+      validateMealPlacement([lunch], { title: 'Dinner', startMin: 18 * 60, endMin: 19 * 60 }).spaced
+    ).toBe(true)
+    expect(
+      validateMealPlacement([lunch], {
+        title: 'Dinner',
+        startMin: 17 * 60 + 59,
+        endMin: 18 * 60 + 59,
+      }).spaced
+    ).toBe(false)
+  })
+
+  it('a remembered late-lunch rule recenters the window, so a 15:00 lunch reads in-window', () => {
+    const prefs: PrefPayload[] = [
+      { kind: 'time-default', match: 'lunch', value: 'starts 15:00', stated: 'lunch at 15:00' },
+    ]
+    const v = validateMealPlacement(
+      [],
+      { title: 'Lunch', startMin: 15 * 60, endMin: 15 * 60 + 45 },
+      prefs
+    )
+    expect(v.inWindow).toBe(true)
+    expect(v.ok).toBe(true)
+  })
+})
+
+describe('sustenance — correctMeal (#323 the guardrail)', () => {
+  it('a model-derived dinner too close to lunch shifts to a gap-respecting in-window slot', () => {
+    const lunch = mk({
+      title: 'Lunch',
+      tag: 'private',
+      startMin: 12 * 60 + 30,
+      endMin: 13 * 60 + 15,
+    })
+    const fix = correctMeal([lunch], D, D, NOW, {
+      title: 'Dinner',
+      tag: 'private',
+      startMin: 15 * 60 + 30, // derived, 2h15m after lunch
+      durationMin: 60,
+      stated: false,
+    })
+    expect(fix.kind).toBe('shift')
+    if (fix.kind !== 'shift') return
+    expect(inAny(MEAL_WINDOWS.dinner, { startMin: fix.startMin, endMin: fix.endMin })).toBe(true)
+    expect(fix.startMin - (13 * 60 + 15)).toBeGreaterThanOrEqual(4 * 60)
+    expect(fix.reason).toMatch(/dinner.*room/i)
+  })
+
+  it('AC2: a lunch squeezed out of its window moves to an in-window slot before the work', () => {
+    const work = mk({ title: 'Meetings', startMin: 14 * 60, endMin: 18 * 60 })
+    const fix = correctMeal([work], D, D, NOW, {
+      title: 'Lunch',
+      tag: 'private',
+      startMin: 16 * 60, // derived, jammed after the work window
+      durationMin: 45,
+      stated: false,
+    })
+    expect(fix.kind).toBe('shift')
+    if (fix.kind !== 'shift') return
+    expect(inAny(MEAL_WINDOWS.lunch, { startMin: fix.startMin, endMin: fix.endMin })).toBe(true)
+    expect(fix.startMin).toBeLessThan(14 * 60) // the room is before the work
+  })
+
+  it("AC3: the user's own stated meal time is kept and named, never moved", () => {
+    const lunch = mk({ title: 'Lunch', tag: 'private', startMin: 15 * 60, endMin: 15 * 60 + 45 })
+    const fix = correctMeal([lunch], D, D, NOW, {
+      title: 'Dinner',
+      tag: 'private',
+      startMin: 17 * 60, // out of window, tight after a 15:00 lunch — but THEY said 5pm
+      durationMin: 60,
+      stated: true,
+    })
+    expect(fix.kind).toBe('warn')
+    if (fix.kind !== 'warn') return
+    expect(fix.reason).toMatch(/your|yours/i)
+  })
+
+  it('an in-window, well-spaced derived meal needs no correction', () => {
+    const lunch = mk({ title: 'Lunch', tag: 'private', startMin: 12 * 60, endMin: 12 * 60 + 45 })
+    expect(
+      correctMeal([lunch], D, D, NOW, {
+        title: 'Dinner',
+        tag: 'private',
+        startMin: 18 * 60 + 30,
+        durationMin: 60,
+        stated: false,
+      })
+    ).toEqual({ kind: 'ok' })
+  })
+
+  it('a non-meal explicit placement is never touched', () => {
+    expect(
+      correctMeal([], D, D, NOW, {
+        title: 'Deep work',
+        tag: 'work',
+        startMin: 16 * 60,
+        durationMin: 60,
+        stated: false,
+      })
+    ).toEqual({ kind: 'ok' })
+  })
+
+  it('a wall-to-wall day with no sane slot leaves a derived meal as placed — honest, silent', () => {
+    const packed = mk({ title: 'Offsite', startMin: 8 * 60, endMin: 21 * 60, protected: true })
+    expect(
+      correctMeal([packed], D, D, NOW, {
+        title: 'Lunch',
+        tag: 'private',
+        startMin: 15 * 60,
+        durationMin: 45,
+        stated: false,
+      })
+    ).toEqual({ kind: 'ok' })
+  })
+
+  it('is deterministic and keyless — same inputs, same correction', () => {
+    const lunch = mk({
+      title: 'Lunch',
+      tag: 'private',
+      startMin: 12 * 60 + 30,
+      endMin: 13 * 60 + 15,
+    })
+    const place = {
+      title: 'Dinner',
+      tag: 'private' as const,
+      startMin: 15 * 60,
+      durationMin: 60,
+      stated: false,
+    }
+    expect(correctMeal([lunch], D, D, NOW, place)).toEqual(correctMeal([lunch], D, D, NOW, place))
   })
 })

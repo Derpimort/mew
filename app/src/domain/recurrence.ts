@@ -155,3 +155,48 @@ export function describeRrule(rule: Rrule, anchorDayKey: string): string {
 function anchorKeyForWeekday(w: Weekday, anchorDayKey: string): string {
   return addDaysKey(anchorDayKey, BYDAY_INDEX[w] - dowMon0(anchorDayKey))
 }
+
+/** The two rules a "this & following" split produces (#343): the `head` keeps
+    the original cadence but ends the day before the split, and the `tail` carries
+    that same cadence forward from the split day to seed a new series. */
+export interface SeriesSplit {
+  head: Rrule
+  tail: Rrule
+}
+
+/** Split a recurring rule at a day boundary for a "this & following" edit (#343):
+    bound the existing rule the day BEFORE `fromDayKey` (a tighter UNTIL), and
+    return a fresh tail rule that begins at `fromDayKey`. The two rules share the
+    cadence (freq/interval/byday) — this never changes WHICH weekdays fire, only
+    where the series divides — so the caller re-links the tail occurrences under a
+    new id with the edit applied. Returns null for a one-off (no rule): the caller
+    then treats the block as a single occurrence, no split.
+
+    COUNT can't survive a split cleanly (the tail's remaining count is unknown
+    without expanding), so a counted rule's head/tail drop COUNT and lean on the
+    date bounds; an open-ended tail then expands within RRULE_DEFAULT_WEEKS,
+    capped at RRULE_HARD_CAP, exactly as a fresh rule would. Pure. */
+export function splitSeriesFrom(
+  rule: Rrule | null | undefined,
+  fromDayKey: string
+): SeriesSplit | null {
+  if (!rule) return null
+  const interval = Math.max(1, rule.interval || 1)
+  const byday = rule.byday && rule.byday.length ? { byday: [...rule.byday] } : {}
+  const dayBefore = addDaysKey(fromDayKey, -1)
+  /* the head stops the day before the split — or earlier, if the rule's own
+     UNTIL already lands before that (a split past the series' end leaves the
+     whole thing as the head, an empty tail). */
+  const headUntil = rule.until && rule.until < dayBefore ? rule.until : dayBefore
+  const head: Rrule = { freq: rule.freq, interval, ...byday, until: headUntil }
+  /* the tail keeps the rule's own UNTIL only when it still lies at/after the
+     split (a split before the end); otherwise it runs open-ended and the
+     expander's window/cap bound it. */
+  const tail: Rrule = {
+    freq: rule.freq,
+    interval,
+    ...byday,
+    ...(rule.until && rule.until >= fromDayKey ? { until: rule.until } : {}),
+  }
+  return { head, tail }
+}

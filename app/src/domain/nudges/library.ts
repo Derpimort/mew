@@ -314,15 +314,24 @@ export const NUDGES: NudgeDef[] = [
       if (c.restCollision) {
         const { rest, intruder } = c.restCollision
         const restName = rest.title.split('—')[0].trim().toLowerCase()
+        const work = intruder.title.split('—')[0].trim()
         return {
-          body: `${intruder.title.split('—')[0].trim()} lands on your ${restName}. The ${restName} is yours — keep it?`,
+          /* one clean line — the work and the rest named once each. The old
+             copy jammed the rest title in twice across two sentences (#326);
+             "keep it?" carries the whole ask and pairs with the Keep-it chip.
+             restName is the rest's own title, so an errand ("groceries order")
+             is named naturally rather than called a generic "rest". */
+          body: `${work} is set to run over your ${restName} — keep it?`,
           footnote: `The WHO defines burnout as chronic workplace stress that never got successfully managed — so rest gets scheduled and protected like work. (WHO ICD-11; Eagle Hill, 2025)`,
           actions: [
             { id: 'keeprest', label: 'Keep it', kind: 'primary' },
             { id: 'moverest', label: 'Move the rest instead', kind: 'secondary' },
           ],
           payload: { restId: rest.id, intruderId: intruder.id } as Record<string, string | number>,
-          key: `${restName}|${intruder.title.split('—')[0].trim().toLowerCase()}`,
+          /* dedup per (rest block × day): a burst of placements can swap the
+             intruder tick-to-tick, so keying on the intruder re-fired the same
+             minute (#326). Key on the rest alone → one ask per rest per day. */
+          key: `${rest.id}|${rest.dayKey}`,
         }
       }
       const rest = c.restPlannedToday!

@@ -39,6 +39,8 @@ interface CommandApi {
   setMode: (m: Mode) => void
   setView: (v: 'focus' | 'week') => void
   setPage: (p: 'week' | 'settings') => void
+  openReview: () => void
+  draftWeek: () => void
   close: () => void
 }
 
@@ -82,8 +84,28 @@ const COMMANDS: Command[] = [
     id: 'analyze',
     label: 'Read my day',
     hint: 'a',
-    keys: 'analyze day shape load review look',
+    keys: 'analyze day shape load look',
     run: (a) => a.seedComposer('how does today look'),
+  },
+  {
+    id: 'review',
+    label: 'Weekly review',
+    hint: 'r',
+    keys: 'week review recap mews celebrate carry roll forward reflect close the week',
+    run: (a) => {
+      a.openReview()
+      a.close()
+    },
+  },
+  {
+    id: 'scaffold',
+    label: 'Rough out next week',
+    hint: 'n',
+    keys: 'scaffold rough draft shape next week usual plan ahead template routine',
+    run: (a) => {
+      a.draftWeek()
+      a.close()
+    },
   },
   {
     id: 'search',
@@ -147,6 +169,8 @@ export function CommandPalette() {
   const setPromptDraft = useMew((s) => s.setPromptDraft)
   const setView = useMew((s) => s.setView)
   const setPage = useMew((s) => s.setPage)
+  const openReview = useMew((s) => s.openWeeklyReview)
+  const proposeScaffold = useMew((s) => s.proposeScaffold)
 
   /* which pane the next open lands on (Cmd+K → command, Cmd+Shift+F → search,
      Cmd+Shift+C → capture) lives in the store: the tray's quick-capture route
@@ -183,7 +207,13 @@ export function CommandPalette() {
       key={requestedMode}
       initialMode={requestedMode}
       onClose={closePalette}
-      api={{ setPromptDraft, setView, setPage }}
+      api={{
+        setPromptDraft,
+        setView,
+        setPage,
+        openReview,
+        draftWeek: () => void proposeScaffold(),
+      }}
     />
   )
 }
@@ -201,6 +231,8 @@ function PaletteSurface({
     setPromptDraft: (t: string) => void
     setView: (v: 'focus' | 'week') => void
     setPage: (p: 'week' | 'settings') => void
+    openReview: () => void
+    draftWeek: () => void
   }
 }) {
   const searchAll = useMew((s) => s.searchAll)
@@ -281,6 +313,8 @@ function PaletteSurface({
       setMode: switchMode,
       setView: api.setView,
       setPage: api.setPage,
+      openReview: api.openReview,
+      draftWeek: api.draftWeek,
       close,
     }),
     [api, close, switchMode]

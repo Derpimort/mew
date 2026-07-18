@@ -9,7 +9,17 @@
    memoized, only post-mount rows animate, and a streaming turn re-renders the
    live row alone — see sessionWindow.ts for the pure rules. */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { motion, useReducedMotion } from 'motion/react'
 import { useMew, useLive, clockNow } from '../../state/store'
 import { Button } from '../primitives/Button'
@@ -19,7 +29,6 @@ import { choicePicked, lastUserIndex } from '../../domain/choices'
 import { dayKey, fmtDowLong, fmtTime, minOfDay } from '../../domain/time'
 import { TOOL_ERROR_NOTE, TOOL_INTERRUPTED_NOTE } from '../../domain/toolCard'
 import { blocksForDay } from '../../domain/week'
-import { ScenarioCards } from './ScenarioPicker'
 import { streamAnnouncement } from './sessionAnnounce'
 import {
   PAGE,
@@ -38,6 +47,17 @@ const STICK_THRESHOLD = 80
 /** id the prompt's aria-describedby points at, so a screen reader reads the
     ⌘K / shift+↵ hint line after the textarea's own label. */
 const PROMPT_HINTS_ID = 'prompt-hints'
+
+/* The plan-mode scenario picker is lazy (#340): its cards + strip geometry only
+   render when a mew message carries `scenarios` (plan mode), so they stay off
+   the entry chunk and out of every keyless/no-plan session. Mounted only inside
+   the guard below, so the common path never triggers the fetch or the fallback;
+   the null fallback lets the cards land a frame after the row — the row's own
+   entrance motion already covers that beat — and once the chunk is cached a
+   re-mount (windowing) resolves synchronously. */
+const ScenarioCards = lazy(() =>
+  import('./ScenarioPicker').then((m) => ({ default: m.ScenarioCards }))
+)
 
 export function SessionLog() {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -675,7 +695,9 @@ export const LogLine = memo(function LogLine({
           <ChoiceChips msg={msg} superseded={superseded} thinking={thinking} />
         )}
         {(msg.scenarios?.length ?? 0) > 0 && (
-          <ScenarioCards msg={msg} superseded={superseded} thinking={thinking} />
+          <Suspense fallback={null}>
+            <ScenarioCards msg={msg} superseded={superseded} thinking={thinking} />
+          </Suspense>
         )}
       </div>
     )

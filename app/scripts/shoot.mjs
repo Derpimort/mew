@@ -594,6 +594,122 @@ phase = 'plan-picker'
   await page.screenshot({ path: `${outDir}/10-plan-picker.png` })
 }
 
+/* 4e · the block-card remove affordance + done-block confirm (#334). A done
+   block is no longer walled off: its detail card offers Remove, and one confirm
+   deletes it — the block AND its mew — in the built app, through the real
+   week-view card + store. Proves the cage-lift end-to-end, not just in units. */
+phase = 'remove-affordance'
+{
+  await page.click('.seg2 button:has-text("Week")')
+  const doneSel = '.nxb-blk[aria-label*="done"]'
+  await page.waitForSelector(doneSel, { timeout: 5000 })
+  const doneBefore = (await page.$$(doneSel)).length
+  await page.click(doneSel) // pin the done block → its detail card docks
+  await page.waitForSelector('.nx-card', { timeout: 5000 })
+  const removeBtn = await page.$('.nx-card .ca:has-text("Remove")')
+  assert(removeBtn, "a done block's detail card offers no Remove control (the cage did not lift)")
+  await removeBtn.click() // → the one-line confirm
+  const confirmBtn = await page.waitForSelector('.nx-card .ca:has-text("Remove the mew?")', {
+    timeout: 3000,
+  })
+  assert(confirmBtn, 'the remove control did not reveal a confirm step')
+  await page.screenshot({ path: `${outDir}/12-remove-affordance.png` }) // gitignored — proof, not canon
+  await confirmBtn.click() // confirm → delete the block and its completion
+  await page.waitForFunction(
+    (n) => document.querySelectorAll('.nxb-blk[aria-label*="done"]').length === n - 1,
+    doneBefore,
+    { timeout: 5000 }
+  )
+  const doneAfter = (await page.$$(doneSel)).length
+  const session = await page.evaluate(
+    () => document.querySelector('.session-scroll')?.textContent ?? ''
+  )
+  assert(/Removed —/.test(session), 'no positive-voice confirmation of the done-block removal')
+  assert(
+    !/resurrect|reopened|failed/i.test(session),
+    'a removed mew must not be re-opened or spoken as a failure'
+  )
+  console.log('remove affordance:', JSON.stringify({ doneBefore, doneAfter, confirmed: true }))
+}
+
+/* 4f · drag-to-reschedule (#347): direct manipulation on the week grid, proven
+   end-to-end with real pointer drags — a RESIZE (edge grip) then a MOVE (carry
+   to another day). Both commit through the SAME dragMove door a chat command
+   uses (executor law), so the proof is the executor's own "Resized —"/"Moved —"
+   line in the session, not a pixel guess. A deterministic demo block lands in
+   the empty evening (nothing on the seeded today after ~19:00), so the gesture
+   can't collide with the seeded day. */
+phase = 'drag-reschedule'
+{
+  await page.click('.seg2 button:has-text("Week")')
+  await page.fill(composer, 'block 90m for drag demo today at 8pm')
+  await page.press(composer, 'Enter')
+  const tileSel = '.nxb-blk[aria-label*="drag demo" i]'
+  await page.waitForSelector(tileSel, { timeout: 6000 })
+
+  const drag = async (fromX, fromY, toX, toY) => {
+    await page.mouse.move(fromX, fromY)
+    await page.mouse.down()
+    await page.mouse.move(fromX, fromY + 6) // arm past the 4px threshold
+    await page.mouse.move((fromX + toX) / 2, (fromY + toY) / 2, { steps: 8 })
+    await page.mouse.move(toX, toY, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForTimeout(450)
+  }
+  const sessionText = () =>
+    page.evaluate(() => document.querySelector('.session-scroll')?.textContent ?? '')
+
+  // RESIZE — grab the bottom grip and stretch the duration down into the void
+  const handle = await page.waitForSelector(`${tileSel} .nxb-resize.bottom`, { timeout: 5000 })
+  const hb = await handle.boundingBox()
+  await drag(hb.x + hb.width / 2, hb.y + hb.height / 2, hb.x + hb.width / 2, hb.y + 48)
+  await page.waitForSelector(tileSel, { timeout: 5000 })
+  assert(
+    /Resized — drag demo/i.test(await sessionText()),
+    'a pointer edge-drag did not commit a resize through the executor'
+  )
+  await page.screenshot({ path: `${outDir}/14-drag-resize.png` }) // gitignored — proof, not canon
+
+  // MOVE — carry the block to a different day column at the same time (every
+  // seeded day's evening is clear, so the horizontal drop always lands free)
+  const box = await (await page.$(tileSel)).boundingBox()
+  const tileCx = box.x + box.width / 2
+  const cols = await page.$$eval('.wk-grid [data-daykey]', (els) =>
+    els.map((e) => {
+      const r = e.getBoundingClientRect()
+      return { left: r.left, right: r.right, cx: r.left + r.width / 2 }
+    })
+  )
+  const target = cols.find((c) => !(tileCx >= c.left && tileCx < c.right))
+  assert(target, 'no neighbouring day column to move the block into')
+  const midY = box.y + box.height / 2
+  await drag(tileCx, midY, target.cx, midY)
+  await page.waitForSelector(tileSel, { timeout: 5000 })
+  assert(
+    /Moved — drag demo/i.test(await sessionText()),
+    'a pointer drag did not commit a move through the executor'
+  )
+  await page.screenshot({ path: `${outDir}/13-drag-move.png` }) // gitignored — proof, not canon
+  console.log('drag-reschedule: resize + move committed via the executor')
+}
+
+/* 4c · the quick-capture inbox (#348) — capture an intent that holds no time,
+   then gbrain's fitting-slot offer the owner confirms. Driven through the REAL
+   capture field + the real fitOffers, keyless; back to the week when done so
+   the settings phase below finds its navlink. */
+phase = 'inbox'
+await page.click('.navlink:has-text("inbox")')
+await page.waitForSelector('.inbox-page')
+for (const t of ['call the bank', 'ship the deck for the review']) {
+  await page.fill('.inbox-input', t)
+  await page.click('.inbox-capture button:has-text("add")')
+  await page.waitForTimeout(150)
+}
+await page.waitForSelector('.inbox-item')
+await page.screenshot({ path: `${outDir}/15-inbox.png` }) // gitignored — proof, not canon
+await page.click('.inbox-head button') // ← week
+await page.waitForSelector('.seg2')
+
 /* 5 · settings + retheme + light */
 phase = 'settings'
 await page.click('text=settings')
@@ -608,7 +724,7 @@ await page.screenshot({ path: `${outDir}/7-fox-petwhite.png` })
    the seeded memory (populated rides in 6-settings.png), each row carrying
    its data-claim traceability pin and never failure language. */
 phase = 'insights-card'
-const claims = await page.$$eval('[data-claim]', (els) =>
+const claims = await page.$$eval('[data-card="noticed"] [data-claim]', (els) =>
   els.map((e) => ({ claim: e.getAttribute('data-claim'), text: e.textContent ?? '' }))
 )
 console.log('insights card:', JSON.stringify(claims.map((c) => c.claim)))
@@ -624,6 +740,37 @@ assert(
   !/missed|failed|behind|overdue/i.test(claims.map((c) => c.text).join(' ')),
   'insights card leaked failure language'
 )
+
+/* 6a · the memory console (#330) — "what I've picked up about you" extends the
+   insights card: it renders from the SAME seeded local memory, every row
+   carrying its own data-claim traceability pin (a rule's support count, an
+   insights fn, a stated rule), and never failure language. Scoped to its own
+   card so it can't be confused with the noticed card above. Populated rides in
+   6-settings.png; this asserts the live contract and captures a proof shot. */
+phase = 'memory-console'
+{
+  const rows = await page.$$eval('[data-card="memory"] [data-claim]', (els) =>
+    els.map((e) => ({ claim: e.getAttribute('data-claim'), text: e.textContent ?? '' }))
+  )
+  console.log(
+    'memory console:',
+    JSON.stringify({ rows: rows.length, claims: rows.map((r) => r.claim) })
+  )
+  assert(rows.length >= 1, 'memory console shows nothing from the seeded memory')
+  assert(
+    rows.every((r) => r.text.trim().length > 0),
+    'a memory console row rendered empty'
+  )
+  assert(
+    !/missed|failed|behind|overdue/i.test(rows.map((r) => r.text).join(' ')),
+    'memory console leaked failure language'
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-card="memory"]')?.scrollIntoView({ block: 'center' })
+  )
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: `${outDir}/12-memory-console.png` }) // gitignored — proof, not canon
+}
 
 /* …and the empty state: wipe ONLY the memory table — blocks/settings stay,
    so the reload skips the first-run seed and the floor is honestly empty */
@@ -653,6 +800,28 @@ assert(
 assert(!(await page.$('[data-claim]')), 'below the floor the card must not claim science')
 await page.screenshot({ path: `${outDir}/8-insights-empty.png` }) // gitignored — proof, not canon
 console.log('insights: populated rows asserted; empty state honest')
+
+/* 6b · the memory console under the same wiped floor (#330): with nothing
+   learned or stated, it drops every row and speaks one kind line — never thin
+   claims from noise, and no data-claim under its card. */
+phase = 'memory-console-empty'
+{
+  const memText = (await page.textContent('[data-card="memory"]')) ?? ''
+  assert(
+    /still getting to know you/.test(memText),
+    'below the floor the memory console must show the kind empty state'
+  )
+  assert(
+    !(await page.$('[data-card="memory"] [data-claim]')),
+    'below the floor the memory console must not claim anything'
+  )
+  await page.evaluate(() =>
+    document.querySelector('[data-card="memory"]')?.scrollIntoView({ block: 'center' })
+  )
+  await page.waitForTimeout(300)
+  await page.screenshot({ path: `${outDir}/12-memory-console-empty.png` }) // gitignored — proof
+  console.log('memory console: populated rows asserted; empty state honest')
+}
 
 await browser.close()
 console.log('done →', outDir)

@@ -45,6 +45,7 @@ const MC = { size: 52, cx: 26, cy: 26, r: 19, band: 5 }
 export function WeekColumns() {
   const blocks = useMew((s) => s.blocks)
   const memory = useMew((s) => s.memory)
+  const noteReferent = useMew((s) => s.noteReferent)
   const nowMs = useMew((s) => s.nowMs)
   const focusedDayKey = useMew((s) => s.focusedDayKey)
   const focusDay = useMew((s) => s.focusDay)
@@ -147,8 +148,16 @@ export function WeekColumns() {
      drop it. All gesture/geometry lives in useGridDrag; the store's dragMove is
      the only mutation path. The view just wires the handlers/refs and renders the
      ghost + conflict glow — staying a thin skin. */
-  const { drag, ghostBox, dragClash, bouncedId, gridRef, beginPress, consumeSuppressedClick } =
-    useGridDrag(H, clearPreview)
+  const {
+    drag,
+    ghostBox,
+    dragClash,
+    bouncedId,
+    gridRef,
+    beginPress,
+    beginResize,
+    consumeSuppressedClick,
+  } = useGridDrag(H, clearPreview)
 
   /* keyboard-first week (#303 — the dial's #253 grammar on the grid): one
      roving tab stop for all tiles, arrows walk them in visual order, Shift/Alt
@@ -293,7 +302,9 @@ export function WeekColumns() {
 
       <div
         ref={gridRef}
-        className={drag ? 'wk-grid dragging' : 'wk-grid'}
+        className={
+          drag ? 'wk-grid dragging' + (drag.mode === 'resize' ? ' resizing' : '') : 'wk-grid'
+        }
         /* role=application, like the dial (#253): a 2-D widget with its own
            arrow-key model, so AT hands keystrokes to the grid instead of the
            virtual cursor. The hint teaches the grammar once, on entry. */
@@ -370,10 +381,16 @@ export function WeekColumns() {
                 const isDragSrc = drag?.id === b.id
                 const isClash = dragClash.has(b.id)
                 const isBounced = bouncedId === b.id
+                /* edge handles ride owned, open blocks with room to grab (a
+                   sliver would swallow its own body); external blocks aren't
+                   ours to resize, and a resize past the keyboard floor is the
+                   Alt+arrow alternative. */
+                const resizable = !b.external && !done && blkH >= 24
                 const openBlock = () => {
                   clearPreview()
                   setPinnedId(pinnedId === b.id ? null : b.id)
                   setCard(b)
+                  noteReferent(b.id) // tapping a block makes it the conversational "it" (#320)
                 }
                 return (
                   <div
@@ -435,6 +452,28 @@ export function WeekColumns() {
                       onBlockKeyDown(b)(e)
                     }}
                   >
+                    {/* resize grips (#347): drag an edge to change duration. The
+                        top edge moves the start, the bottom the end; both commit
+                        through the SAME dragMove door the move gesture and the
+                        keyboard Alt+arrows use. Pointer-only + aria-hidden — the
+                        keyboard alternative owns a11y, so these add no tab stop
+                        and no text for the overlap gate to see. */}
+                    {resizable && (
+                      <>
+                        <div
+                          className="nxb-resize top"
+                          aria-hidden="true"
+                          onMouseDown={(e) => beginResize(b, 'top', e)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div
+                          className="nxb-resize bottom"
+                          aria-hidden="true"
+                          onMouseDown={(e) => beginResize(b, 'bottom', e)}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      </>
+                    )}
                     <div className={'t' + (isSel ? '' : ' small') + (tiny ? ' tiny' : '')}>
                       {done ? '✓ ' : ''}
                       {inlineTime && <span className="ti">{fmtTime(b.startMin)} </span>}
@@ -486,7 +525,7 @@ export function WeekColumns() {
                 }
                 style={{ top, height, left: ghostBox.left, width: ghostBox.width }}
                 role="status"
-                aria-label={`Moving ${b.title} to ${fmtTime(drag.toStartMin)}${conflict ? ', conflicts here' : ''}`}
+                aria-label={`${drag.mode === 'resize' ? 'Resizing' : 'Moving'} ${b.title} to ${fmtTime(drag.toStartMin)}–${fmtTime(drag.toStartMin + drag.durationMin)}${conflict ? ', conflicts here' : ''}`}
               >
                 <div className="wk-ghost-t">{b.title}</div>
                 <div className="wk-ghost-m">

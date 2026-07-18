@@ -217,6 +217,11 @@ const SIDECAR: &str = "gbrain";
 /// after this many unexpected exits the shell gives up — floor takes over,
 /// and the webview hears "unavailable" rather than silence
 const MAX_RESTARTS: u32 = 3;
+/// a run that stayed connected at least this long before dying was healthy,
+/// not flapping — its death refunds the restart budget so an all-day session
+/// self-heals isolated disconnects (#249); a rapid flapper never earns the
+/// uptime and still converges to the floor after MAX_RESTARTS back-to-back deaths
+const HEALTHY_UPTIME: Duration = Duration::from_secs(120);
 /// PGLite's first boot loads WASM and writes a fresh datadir — generous on purpose
 const PORT_WAIT: Duration = Duration::from_secs(90);
 
@@ -372,9 +377,11 @@ fn manage_brain(app: AppHandle) {
                 status.to_string();
             let _ = app.emit("mew://brain-status", status);
         };
-        /* deliberately never reset on healthy uptime: the budget is 3 deaths
-           per app session, so a slow-flapping brain still converges to the
-           floor instead of restarting forever; relaunching MEW renews it */
+        /* the budget refunds after a healthy run (see HEALTHY_UPTIME): a
+           brain that ran for hours and then hit one transient death is
+           self-healed for the whole session, while a rapid flapper never
+           earns the uptime and still converges to the floor after
+           MAX_RESTARTS back-to-back deaths; relaunching MEW renews it too */
         let mut restarts: u32 = 0;
         loop {
             let state = app.state::<BrainState>();
@@ -392,6 +399,7 @@ fn manage_brain(app: AppHandle) {
                     *state.status.lock().expect("brain status lock") = "connected".to_string();
                     let _ = app.emit("mew://brain-endpoint", endpoint);
                     /* park here for the life of the process, draining stdio */
+                    let up_since = Instant::now();
                     while let Some(ev) = rx.recv().await {
                         if matches!(ev, CommandEvent::Terminated(_)) {
                             break;
@@ -399,6 +407,12 @@ fn manage_brain(app: AppHandle) {
                     }
                     *state.endpoint.lock().expect("brain lock") = None;
                     *state.child.lock().expect("child lock") = None;
+                    /* an isolated death after a long healthy run is exactly the
+                       disconnect #249 wants self-healed, not flapping — refund
+                       the budget so this counts as a fresh first retry */
+                    if up_since.elapsed() >= HEALTHY_UPTIME {
+                        restarts = 0;
+                    }
                 }
             }
             if state.shutting_down.load(Ordering::SeqCst) {

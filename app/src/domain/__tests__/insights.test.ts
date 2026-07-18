@@ -3,7 +3,11 @@ import {
   computeInsights,
   dayDebrief,
   delegationCandidates,
+  estimateFactorByTag,
+  ESTIMATE_PAD_FLOOR,
+  ESTIMATE_TAG_FLOOR,
   insightsCard,
+  padDuration,
   prefContradictions,
   proposeKinderPlan,
   taskDurations,
@@ -722,5 +726,79 @@ describe('taskDurations — what this task REALLY takes', () => {
       took(9, 'Interview prep', 9 * 60, 40),
     ]
     expect(taskDurations(events, NOW).get('interview prep')?.n).toBe(3)
+  })
+})
+
+describe('estimateFactorByTag — booking honesty PER task-type (#322)', () => {
+  const T = new Date(2026, 5, 10) // Wednesday
+  const tk = dayKey(T)
+  /** a completed event of one focus class, `plannedMin` long, finished `lateMin`
+      past its planned end, on day offset −d (inside the 28-day window). */
+  const late = (
+    cls: 'deep' | 'admin' | 'health',
+    d: number,
+    plannedMin: number,
+    lateMin: number,
+    id: string
+  ): MemoryEvent => {
+    const k = addDaysKey(tk, -d)
+    const startMin = 9 * 60
+    const endMin = startMin + plannedMin
+    const ts = new Date(k + 'T00:00:00').getTime() + (endMin + lateMin) * 60_000
+    return {
+      id,
+      ts,
+      kind: 'completed',
+      dayKey: k,
+      tag: cls === 'health' ? 'health' : cls === 'admin' ? 'private' : 'work',
+      plannedMin,
+      startMin,
+      endMin,
+      ...(cls === 'deep' ? { deep: true } : {}),
+    }
+  }
+
+  it('deep runs long, batched admin does not — one number split would over-pad admin', () => {
+    const events = [
+      ...Array.from({ length: 6 }, (_, i) => late('deep', i + 1, 120, 24, `d${i}`)),
+      ...Array.from({ length: 6 }, (_, i) => late('admin', i + 1, 30, 2, `a${i}`)),
+    ]
+    const f = estimateFactorByTag(events, T)
+    expect(f.deep).toBeCloseTo(1.2, 5) // 1 + (6·24)/(6·120)
+    expect(f.deep!).toBeGreaterThanOrEqual(ESTIMATE_PAD_FLOOR)
+    expect(f.admin).toBeCloseTo(1.07, 2) // 1 + (6·2)/(6·30)
+    expect(f.admin!).toBeLessThan(ESTIMATE_PAD_FLOOR) // never over-padded
+    expect(f.health).toBeNull() // no signal → no claim
+  })
+
+  it('null per tag under the data floor (pinned): 4 samples → null, 5 → a factor', () => {
+    const four = Array.from({ length: ESTIMATE_TAG_FLOOR - 1 }, (_, i) =>
+      late('deep', i + 1, 120, 24, `d${i}`)
+    )
+    expect(estimateFactorByTag(four, T).deep).toBeNull()
+    const five = Array.from({ length: ESTIMATE_TAG_FLOOR }, (_, i) =>
+      late('deep', i + 1, 120, 24, `d${i}`)
+    )
+    expect(estimateFactorByTag(five, T).deep).not.toBeNull()
+  })
+
+  it('health is its own axis — a run-long factor there never touches deep/admin', () => {
+    const events = Array.from({ length: 6 }, (_, i) => late('health', i + 1, 45, 20, `h${i}`))
+    const f = estimateFactorByTag(events, T)
+    expect(f.health).toBeCloseTo(1.44, 2) // 1 + (6·20)/(6·45)
+    expect(f.deep).toBeNull()
+    expect(f.admin).toBeNull()
+  })
+
+  it('a factor is never < 1: honest estimates read 1.0, not a shrink', () => {
+    const early = Array.from({ length: 6 }, (_, i) => late('deep', i + 1, 120, -30, `d${i}`))
+    expect(estimateFactorByTag(early, T).deep).toBe(1)
+  })
+
+  it('padDuration rounds to 5-min honesty and clamps to the resize bounds', () => {
+    expect(padDuration(120, 1.25)).toBe(150)
+    expect(padDuration(100, 1.2)).toBe(120)
+    expect(padDuration(700, 1.2)).toBe(720) // clamp ceiling (840 → 720)
+    expect(padDuration(10, 1.0)).toBe(10)
   })
 })

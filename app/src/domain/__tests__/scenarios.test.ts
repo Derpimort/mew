@@ -4,6 +4,8 @@ import { addDaysKey } from '../time'
 import { conflictsWith, overlaps } from '../week'
 import type { Scenario, ScenarioOpts, ScenarioTask } from '../scenarios'
 import { generateScenarios, validateScenario } from '../scenarios'
+import { windowOf } from '../scheduler'
+import type { EnergyBand, EnergyProfile, FocusClass } from '../energy'
 
 const D = '2026-06-09' // Tuesday
 const NOW = 8 * 60
@@ -446,5 +448,154 @@ describe('scenarios — determinism + the sweep', () => {
       for (let i = 1; i < out.length; i++)
         expect(out[i - 1].places.length).toBeGreaterThanOrEqual(out[i].places.length)
     }
+  })
+})
+
+/* ── the energy-fit profile (#321) ─────────────────────────────────────
+   Placement learned from what you finish, admin batched, stated rules winning,
+   and — the whole point — the no-history default left byte-identical to today. */
+
+/** a profile fabricated by its deep-work rates per band; only .deep.rate drives
+    demonstratedDeepWindows, so admin/health cells stay empty here */
+function profileWith(deep: Partial<Record<EnergyBand, number>>): EnergyProfile {
+  const zero = () => ({ completed: 0, attempted: 0, rate: null as number | null })
+  const rated = (rate?: number) =>
+    rate == null ? zero() : { completed: Math.round(rate * 10), attempted: 10, rate }
+  const band = (rate?: number): Record<FocusClass, ReturnType<typeof zero>> => ({
+    deep: rated(rate),
+    admin: zero(),
+    health: zero(),
+  })
+  return {
+    cells: {
+      morning: band(deep.morning),
+      midday: band(deep.midday),
+      late: band(deep.late),
+      evening: band(deep.evening),
+    },
+  }
+}
+
+const FLAT = profileWith({ morning: 0.8, midday: 0.8, late: 0.8, evening: 0.8 })
+const PEAK_MORNING = profileWith({ morning: 1.0, midday: 0.2, late: 0.2, evening: 0.2 })
+
+/* three deep anchors + three low-focus items, on an OPEN week so placement has
+   room to reveal the shape without fixed blocks steering it */
+const efTasks: ScenarioTask[] = [
+  { title: 'Deck', tag: 'work', durationMin: 120 },
+  { title: 'Model', tag: 'work', durationMin: 120 },
+  { title: 'Spec', tag: 'work', durationMin: 90 },
+  { title: 'Inbox', tag: 'private', durationMin: 30 },
+  { title: 'Groceries', tag: 'private', durationMin: 30 },
+  { title: 'Invoices', tag: 'private', durationMin: 30 },
+]
+
+const deepPlaces = (s: Scenario) => s.places.filter((p) => p.tag === 'work' && p.durationMin >= 60)
+const deepWindows = (s: Scenario) => new Set(deepPlaces(s).map((p) => windowOf(p.startMin)))
+function adminBatched(s: Scenario): boolean {
+  const admin = s.places
+    .filter((p) => p.tag === 'private')
+    .sort((a, b) => a.dayOffset - b.dayOffset || a.startMin - b.startMin)
+  if (admin.length < 2) return false
+  return admin.every(
+    (p, i) =>
+      i === 0 ||
+      (p.dayOffset === admin[0].dayOffset &&
+        p.startMin === admin[i - 1].startMin + admin[i - 1].durationMin)
+  )
+}
+const energyFit = (out: Scenario[]) => out.find((s) => s.name === 'energy-fit')
+
+describe('scenarios — energy-fit (#321)', () => {
+  it('a FLAT deep-work profile SPREADS deep work across bands — never peak-ghettoed', () => {
+    const ef = energyFit(gen([], efTasks, { energyProfile: FLAT }))
+    expect(ef).toBeTruthy()
+    // the anti-pattern the owner called out: deep work must not collapse into
+    // one peak window when the profile shows they finish it everywhere
+    expect(deepWindows(ef!).size).toBeGreaterThanOrEqual(2)
+    // …and admin lands as ONE contiguous quick-and-dusted run
+    expect(adminBatched(ef!)).toBe(true)
+    expect(ef!.line).not.toMatch(BANNED)
+  })
+
+  it('a peaked profile leans deep work to the demonstrated window (learned, not textbook)', () => {
+    const ef = energyFit(gen([], efTasks, { energyProfile: PEAK_MORNING }))!
+    expect([...deepWindows(ef)]).toEqual(['morning'])
+    expect(adminBatched(ef)).toBe(true)
+  })
+
+  it('precedence: "deep work anytime" pref BEATS a peak-leaning profile (spreads)', () => {
+    const leaned = energyFit(gen([], efTasks, { energyProfile: PEAK_MORNING }))!
+    const freed = energyFit(gen([], efTasks, { energyProfile: PEAK_MORNING, deepFlexible: true }))!
+    expect(deepWindows(leaned).size).toBe(1) // learned peak → one window
+    expect(deepWindows(freed).size).toBeGreaterThanOrEqual(2) // stated word overrides it
+  })
+
+  it('precedence: "batch my admin" pref BEATS the absence of a profile (engages + batches)', () => {
+    // no profile, no rule → energy-fit is omitted entirely
+    expect(energyFit(gen([], efTasks, {}))).toBeUndefined()
+    // the stated rule alone engages it, above the data floor, and batches admin
+    const ef = energyFit(gen([], efTasks, { batchAdmin: true }))
+    expect(ef).toBeTruthy()
+    expect(adminBatched(ef!)).toBe(true)
+  })
+
+  it('precedence: no pref + no data → placement byte-identical to today', () => {
+    const today = gen([], efTasks, {})
+    // the flags, explicitly off/absent, change nothing
+    expect(gen([], efTasks, { batchAdmin: false, deepFlexible: false })).toEqual(today)
+    // and today's set never contains energy-fit
+    expect(today.some((s) => s.name === 'energy-fit')).toBe(false)
+    // the same holds on the lived-in fixture the rest of the suite uses
+    expect(gen(week, tasks, {}).some((s) => s.name === 'energy-fit')).toBe(false)
+  })
+
+  it('energy-fit is purely ADDITIVE — the other scenarios stay byte-identical', () => {
+    const base = gen([], efTasks, {})
+    const withProfile = gen([], efTasks, { energyProfile: FLAT })
+    expect(energyFit(withProfile)).toBeTruthy() // the feature engages
+    // adding a learned profile only APPENDS energy-fit; it never perturbs the rest
+    expect(withProfile.filter((s) => s.name !== 'energy-fit')).toEqual(base)
+  })
+
+  it('every energy-fit place is conflict-free and never self-overlaps', () => {
+    for (const opts of [
+      { energyProfile: FLAT },
+      { energyProfile: PEAK_MORNING, deepFlexible: true },
+      { batchAdmin: true },
+    ] as Partial<Omit<ScenarioOpts, 'ids'>>[]) {
+      const ef = energyFit(gen([], efTasks, opts))
+      if (!ef) continue
+      expectConflictFree([], ef)
+      expectNoSelfOverlap(ef)
+    }
+  })
+})
+
+describe('#322 — "always" pre-size to demonstrated durations', () => {
+  it('pads run-long kinds, never admin, never a stated length; off is byte-identical', async () => {
+    const { padDuration } = await import('../insights')
+    const ts: ScenarioTask[] = [
+      { title: 'Deck', tag: 'work', durationMin: 120 }, // deep → padded
+      { title: 'Quick sync', tag: 'work', durationMin: 90, durationStated: true }, // stated → kept
+      { title: 'Emails', tag: 'work', durationMin: 30 }, // admin (short work) → kept
+    ]
+    const factors: Record<FocusClass, number | null> = { deep: 1.25, admin: 1.05, health: null }
+    const on = gen(week, ts, { estimateFactor: factors })
+    const off = gen(week, ts, {})
+    const durOf = (scs: Scenario[], title: string): number | null => {
+      for (const sc of scs) for (const p of sc.places) if (p.title === title) return p.durationMin
+      return null
+    }
+    /* run-long deep work grows to how it really goes */
+    expect(durOf(on, 'Deck')).toBe(padDuration(120, 1.25)) // 150
+    /* stated word wins — a length the user named is never touched */
+    expect(durOf(on, 'Quick sync')).toBe(90)
+    /* admin (factor below the pad floor) is never over-padded */
+    expect(durOf(on, 'Emails')).toBe(30)
+    /* off = byte-identical to today: absent factors, every length is as asked */
+    expect(durOf(off, 'Deck')).toBe(120)
+    expect(durOf(off, 'Quick sync')).toBe(90)
+    expect(durOf(off, 'Emails')).toBe(30)
   })
 })

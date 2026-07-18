@@ -9,7 +9,7 @@
    makes that a named last resort, never a silent preference. */
 
 import type { Block, PrefPayload, ScaffoldMealId, ScaffoldMealPlan, Tag } from './types'
-import { parseTimeValue } from './prefs'
+import { parseTimeValue, resolveTaskSpec, type LearnedRule } from './prefs'
 import { fmtTime } from './time'
 import { blocksForDay } from './week'
 /* scheduler.ts also imports this module (the meal facts feed its scoring
@@ -126,6 +126,114 @@ export function mealAdjacencyPenalty(cls: MealClass, startMin: number, dayBlocks
   return factor
 }
 
+/* ── the meal guardrail (#323) ─────────────────────────────────────────
+   The anchors above engage only through the SCORER (candidateSlots →
+   scoreSlots). A model plan_blocks reshape with an EXPLICIT startMin skips
+   that path, so its own meal arithmetic — "dinner 18:15 after a 15:19 lunch"
+   — lands uncorrected ("how can dinner be 6pm are you stupid?"). These two
+   pure functions are the safety net the executor runs on every explicit meal
+   placement, keyed and keyless alike: check the time against the same window
+   + gap the scorer honors, and — for a time the MODEL derived, not one the
+   USER stated — pull it back to the nearest sane slot the scorer would itself
+   have chosen. A stated time always wins: it is kept, named once. */
+
+/** A meal placement's standing against its circadian window and the hard
+    inter-meal gap. Pure diagnosis, no slot search. A non-meal title is
+    trivially sane (`cls` null). `inWindow`: the whole meal fits one of its
+    (pref-recentered) windows — the scorer's own `inMealWindow` notion.
+    `spaced`: it clears every paired-meal gap (adjacency at full strength).
+    Total — never throws. */
+export interface MealCheck {
+  cls: MealClass | null
+  inWindow: boolean
+  spaced: boolean
+  ok: boolean
+}
+
+export function validateMealPlacement(
+  dayBlocks: Block[],
+  place: { title: string; startMin: number; endMin: number },
+  prefs: PrefPayload[] = [],
+  base?: readonly MealWindow[]
+): MealCheck {
+  const cls = mealClassOf(place.title)
+  if (!cls) return { cls: null, inWindow: true, spaced: true, ok: true }
+  const wins = mealWindowFor(cls, prefs, base)
+  const inWindow = wins.some((w) => place.startMin >= w.startMin && place.endMin <= w.endMin)
+  // a full-strength adjacency factor (exactly 1) IS the hard minimum gap; any
+  // crowding of a paired meal-class block on the day drops it below 1
+  const spaced = mealAdjacencyPenalty(cls, place.startMin, dayBlocks) === 1
+  return { cls, inWindow, spaced, ok: inWindow && spaced }
+}
+
+/** What to do with a meal placed at an EXPLICIT time. `ok` — already sane (or
+    not a meal). `shift` — a MODEL-derived time out of window or too close to
+    another meal, moved to the nearest in-window, gap-respecting slot the
+    scorer ranks first (never to another day; a packed day with no sane slot
+    stays `ok` and silent — the scorer would land there too). `warn` — the
+    USER's own stated time, kept as placed and named once so the tension is
+    honest, never overridden and never blamed. */
+export type MealCorrection =
+  | { kind: 'ok' }
+  | { kind: 'shift'; startMin: number; endMin: number; reason: string }
+  | { kind: 'warn'; reason: string }
+
+export function correctMeal(
+  blocks: Block[],
+  dayKey: string,
+  todayKey: string,
+  nowMin: number,
+  place: { title: string; tag: Tag; startMin: number; durationMin: number; stated: boolean },
+  prefs: PrefPayload[] = [],
+  base?: readonly MealWindow[]
+): MealCorrection {
+  const dayBlocks = blocksForDay(blocks, dayKey)
+  const endMin = place.startMin + place.durationMin
+  const check = validateMealPlacement(
+    dayBlocks,
+    { title: place.title, startMin: place.startMin, endMin },
+    prefs,
+    base
+  )
+  const cls = check.cls
+  if (check.ok || cls == null) return { kind: 'ok' }
+  // the user's own words win — keep the time, name the tension once
+  if (place.stated) return { kind: 'warn', reason: statedNote(cls, check) }
+  // a model-derived time: the nearest in-window, gap-respecting slot the
+  // scorer ranks first — the same slot suggest_slots would have handed back
+  const q: SlotQuery = { title: place.title, tag: place.tag, durationMin: place.durationMin }
+  const sane = scoreSlots(blocks, q, todayKey, nowMin, prefs, undefined, undefined, base).find(
+    (c) =>
+      c.dayKey === dayKey &&
+      validateMealPlacement(
+        dayBlocks,
+        { title: place.title, startMin: c.startMin, endMin: c.endMin },
+        prefs,
+        base
+      ).ok
+  )
+  if (sane && sane.startMin !== place.startMin)
+    return {
+      kind: 'shift',
+      startMin: sane.startMin,
+      endMin: sane.endMin,
+      reason: shiftNote(cls, check),
+    }
+  return { kind: 'ok' } // packed day, no sane slot — leave it as placed
+}
+
+/* positive-voice, time-free — the executor's own line already names the slot */
+function shiftNote(cls: MealClass, check: MealCheck): string {
+  return check.spaced
+    ? `settled ${cls} back into its usual window`
+    : `gave ${cls} real room after your other meals`
+}
+function statedNote(cls: MealClass, check: MealCheck): string {
+  return check.spaced
+    ? `${cls}'s a little off its usual window, but it's yours`
+    : `${cls} lands close on your last meal, but it's your call`
+}
+
 /* ── the standing day-scaffold (#299, v0.5 plan 16b) ──────────────────
    Each morning, the layer of the day that should simply be there: the meals
    the day is missing, placed through the 16a-anchored scoring around
@@ -182,6 +290,9 @@ export function scaffoldDay(
   todayKey: string,
   opts: {
     prefs?: PrefPayload[]
+    /** #328: confirmed rules — a "dinner → 45m" rule sizes the meal it feeds;
+        absent (today, pre-#327) the plan default holds, byte-identical. */
+    learned?: LearnedRule[]
     meals: Record<ScaffoldMealId, ScaffoldMealPlan>
     nowMin: number
   }
@@ -199,10 +310,16 @@ export function scaffoldDay(
   let working = blocks
   for (const meal of missing) {
     const plan = opts.meals[meal]
+    /* #328: the scaffold inherits the resolver — a confirmed duration rule (or
+       a stated one) sizes the meal; the circadian window stays firm via the
+       meal seam below. No rule ⇒ the plan default, byte-identical. */
+    const durationMin =
+      resolveTaskSpec(SCAFFOLD_TITLE[meal], {}, prefs, undefined, opts.learned).spec.durationMin ??
+      plan.durationMin
     const q: SlotQuery = {
       title: SCAFFOLD_TITLE[meal],
       tag: 'private',
-      durationMin: plan.durationMin,
+      durationMin,
     }
     const best = scoreSlots(working, q, todayKey, opts.nowMin, prefs, undefined, 0, [
       { startMin: plan.startMin, endMin: plan.endMin },
@@ -213,7 +330,7 @@ export function scaffoldDay(
       tag: 'private',
       dayOffset: 0,
       startMin: best.startMin,
-      durationMin: plan.durationMin,
+      durationMin,
       protected: false,
     }
     out.push(placed)

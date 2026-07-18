@@ -14,6 +14,9 @@ import { conflictsWith } from './week'
 import type { ScoreWeights, SlotCandidate, TimeWindow } from './scheduler'
 import { scoreSlots, windowOf } from './scheduler'
 import { mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
+import type { EnergyProfile } from './energy'
+import { adminBatch, demonstratedDeepWindows, focusClassOfTask, isDeepTask } from './energy'
+import { ESTIMATE_PAD_FLOOR, padDuration, type EstimateFactorByTag } from './insights'
 
 /** One classified braindump item (15b produces these; tests fixture them). */
 export interface ScenarioTask {
@@ -24,6 +27,9 @@ export interface ScenarioTask {
   due?: number
   /** the user's STATED time of day; every profile honors it over its own taste */
   window?: TimeWindow
+  /** #322: the user stated this length in their own words — "always" pre-size
+      leaves it exactly as asked (stated word wins). */
+  durationStated?: boolean
 }
 
 /** Executor-shaped (adapters/model PlaceSpec): dayOffset counts from the
@@ -64,8 +70,39 @@ export interface ScenarioOpts {
   /** #302: MEW's meeting buffer, inherited through the same scoreSlots seam so
       every scenario places shy of external meetings' edges; absent ⇒ 0 (off) */
   bufferMin?: number
+  /** #321: the learned (band × task-type) rhythm. Present ⇒ the "energy-fit"
+      profile joins the set, placing deep work where the user DEMONSTRABLY
+      finishes it (spread when the profile is flat, leaned when it peaks) and
+      batching admin. Absent (and no batchAdmin rule) ⇒ energy-fit is omitted
+      entirely and the scenario set is byte-identical to today. */
+  energyProfile?: EnergyProfile
+  /** #321: a stated "batch my admin"/"keep admin quick" rule. Forces the
+      energy-fit profile to engage — and its admin-clustering — even with no
+      learned profile yet (stated word wins, above the data floor). */
+  batchAdmin?: boolean
+  /** #321: a stated "deep work anytime"/"don't gate my mornings" rule. Frees
+      deep work from any single window, OVERRIDING a peak-leaning learned
+      profile — stated pref > learned energyProfile. */
+  deepFlexible?: boolean
+  /** #322: the per-task-type run-long factors ("always" auto-size). Present ⇒
+      each task whose length the user did NOT state is pre-sized up to how that
+      kind really runs, so the preview AND the applied places carry honest
+      durations. Absent (off/ask) ⇒ every task keeps its asked length and the
+      scenario set is byte-identical to today. */
+  estimateFactor?: EstimateFactorByTag
   /** injected id factory — 15b's exact-apply contract rides on determinism */
   ids: () => string
+}
+
+/** "always" pre-size: grow a task to how its kind really runs, unless the user
+    stated the length (stated word wins) or the kind is honest enough (< the pad
+    floor). Pure — a new task object, never a mutation. */
+function sizeToDemonstrated(t: ScenarioTask, factors: EstimateFactorByTag): ScenarioTask {
+  if (t.durationStated) return t
+  const cls = focusClassOfTask(t)
+  const f = cls ? factors[cls] : null
+  if (f == null || f < ESTIMATE_PAD_FLOOR) return t
+  return { ...t, durationMin: padDuration(t.durationMin, f) }
 }
 
 /** Variation is data: adding a profile later is one entry. `bias: 'earliest'`
@@ -294,6 +331,179 @@ function buildDraft(
   }
 }
 
+/* ── the energy-fit profile (#321) ─────────────────────────────────────
+   The one profile that reads the user's OWN rhythm instead of a textbook
+   curve. Deep work lands in the windows they DEMONSTRABLY finish it in —
+   spread across every window when the profile is flat (never peak-ghettoed;
+   the whole point: "I still do coding and dev work on low energy"), leaned to
+   one window only when the data genuinely peaks there. Admin is batched into
+   one contiguous "quick and dusted" run rather than sprinkled through the
+   dips. Precedence is honored by the caller (deepFitWindows): a stated rule
+   outranks the learned profile, which outranks today's default. */
+
+/** slightly time-of-day-led so a demonstrated window actually pulls the deep
+    block, with real breathing room; preference still counts standing rules */
+const ENERGY_FIT_WEIGHTS: ScoreWeights = { timeOfDay: 0.5, rest: 0.35, preference: 0.15 }
+
+/** The windows deep work may land in, by precedence: a stated "anytime" rule
+    frees it across all three (overriding a peak-leaning profile); else the
+    learned profile's demonstrated windows; else none (batch-admin-only — impose
+    no window on deep work, MEW has observed no rhythm to apply). */
+function deepFitWindows(opts: ScenarioOpts): TimeWindow[] {
+  if (opts.deepFlexible) return ['morning', 'afternoon', 'evening']
+  if (opts.energyProfile) return demonstratedDeepWindows(opts.energyProfile)
+  return []
+}
+
+function energyFitLine(
+  deepWindows: TimeWindow[],
+  batched: boolean,
+  total: number,
+  waits: string[]
+): string {
+  const character =
+    deepWindows.length >= 2
+      ? 'deep work spread where you finish it'
+      : deepWindows.length === 1
+        ? `deep work in your ${WINDOW_LABEL[deepWindows[0]]}`
+        : batched
+          ? 'admin kept quick and dusted'
+          : 'a steady shape'
+  const admin = batched && deepWindows.length ? ', admin batched' : ''
+  const fit = waits.length ? waitsClause(waits, true) : `all ${total} fit`
+  const full = `${character}${admin} — ${fit}`
+  return full.length <= LINE_MAX ? full : `${character}${admin}`.slice(0, LINE_MAX)
+}
+
+/** One greedy pass in the energy-fit voice. Deep tasks take a window round-robin
+    from `deepWindows` (so a flat profile SPREADS them window to window, a single
+    demonstrated window leans them all there), unless the user stated a window on
+    the task. Everything else places on its own taste. The low-focus items are
+    then dropped as ONE adjacent run in the first gap that fits the whole batch
+    (adminBatch says which and how long) — its "quick and dusted" contiguity is
+    the anti-sprinkle move. Phantoms accumulate so nothing self-overlaps; a task
+    that fits nowhere is named in the line, never dropped. */
+function buildEnergyFit(
+  blocks: Block[],
+  ordered: ScenarioTask[],
+  deepWindows: TimeWindow[],
+  opts: ScenarioOpts
+): Draft {
+  const offsets = new Map<string, number>()
+  for (let d = 0; d <= opts.horizonDays; d++) offsets.set(addDaysKey(opts.todayKey, d), d)
+  const places: ScenarioPlace[] = []
+  const phantoms: Block[] = []
+  const waits: string[] = []
+
+  const placeOne = (t: ScenarioTask, window: TimeWindow | undefined) => {
+    const meal = t.window == null ? mealClassOf(t.title) : null
+    const win = t.window ?? window
+    const pick = choose(
+      scoreSlots(
+        [...blocks, ...phantoms],
+        {
+          title: t.title,
+          tag: t.tag,
+          durationMin: t.durationMin,
+          ...(t.due != null ? { due: t.due } : {}),
+          ...(win ? { window: win } : {}),
+        },
+        opts.todayKey,
+        opts.nowMin,
+        opts.prefs ?? [],
+        ENERGY_FIT_WEIGHTS,
+        opts.horizonDays,
+        undefined,
+        opts.bufferMin ?? 0
+      ),
+      win ? { ...t, window: win } : t,
+      undefined,
+      meal ? mealWindowFor(meal, opts.prefs ?? []) : null
+    )
+    if (!pick) {
+      waits.push(t.title)
+      return
+    }
+    places.push({
+      title: t.title,
+      tag: t.tag,
+      dayOffset: offsets.get(pick.dayKey)!,
+      startMin: pick.startMin,
+      durationMin: t.durationMin,
+      ...(t.due != null ? { due: t.due } : {}),
+    })
+    phantoms.push(phantom(t, pick, phantoms.length))
+  }
+
+  const batch = adminBatch(ordered)
+  const batched = new Set(batch?.tasks ?? [])
+
+  /* deep + everything-not-batched first (deep first via orderTasks), so the run
+     lands around them */
+  let deepIdx = 0
+  for (const t of ordered) {
+    if (batched.has(t)) continue
+    let window: TimeWindow | undefined
+    if (t.window == null && !mealClassOf(t.title) && isDeepTask(t) && deepWindows.length) {
+      window = deepWindows[deepIdx % deepWindows.length]
+      deepIdx++
+    }
+    placeOne(t, window)
+  }
+
+  /* the admin batch: one contiguous run in the first gap that holds it all */
+  if (batch) {
+    const run = scoreSlots(
+      [...blocks, ...phantoms],
+      { title: 'admin', tag: 'private', durationMin: batch.totalMin },
+      opts.todayKey,
+      opts.nowMin,
+      opts.prefs ?? [],
+      ENERGY_FIT_WEIGHTS,
+      opts.horizonDays,
+      undefined,
+      opts.bufferMin ?? 0
+    )
+    const slot = run[0]
+    if (slot) {
+      const dayOffset = offsets.get(slot.dayKey)!
+      let cursor = slot.startMin
+      for (const at of batch.tasks) {
+        places.push({
+          title: at.title,
+          tag: at.tag,
+          dayOffset,
+          startMin: cursor,
+          durationMin: at.durationMin,
+        })
+        phantoms.push(
+          phantom(
+            at,
+            {
+              dayKey: slot.dayKey,
+              startMin: cursor,
+              endMin: cursor + at.durationMin,
+              score: 1,
+              why: '',
+            },
+            phantoms.length
+          )
+        )
+        cursor += at.durationMin
+      }
+    } else {
+      // no single gap holds the whole run — place each honestly, still batched intent
+      for (const at of batch.tasks) placeOne(at, undefined)
+    }
+  }
+
+  return {
+    name: 'energy-fit',
+    line: energyFitLine(deepWindows, !!batch, ordered.length, waits),
+    places,
+  }
+}
+
 /** K named, valid, explainable week-placements for one classified braindump.
     Distinct by construction where the profiles genuinely disagree; profiles
     that collapse to identical placements dedupe (a sparse week does this), so
@@ -306,8 +516,20 @@ export function generateScenarios(
   opts: ScenarioOpts
 ): Scenario[] {
   if (!tasks.length) return []
-  const ordered = orderTasks(tasks)
+  /* #322 "always": pre-size to demonstrated durations BEFORE placing, so every
+     profile (and the applied quote) reasons about the honest length. Off/ask ⇒
+     estimateFactor is absent ⇒ this is the identity map, byte-identical. */
+  const sized = opts.estimateFactor
+    ? tasks.map((t) => sizeToDemonstrated(t, opts.estimateFactor!))
+    : tasks
+  const ordered = orderTasks(sized)
   const drafts = PROFILES.map((p) => buildDraft(blocks, ordered, p, opts))
+  /* #321: energy-fit joins ONLY when a learned rhythm exists or a stated
+     batch-admin rule forces it — no profile and no rule ⇒ this branch is skipped
+     and the set is byte-identical to today (MEW imposes no energy model it
+     hasn't observed). Appended last, so it dedupes/ranks against the others. */
+  if (opts.energyProfile || opts.batchAdmin)
+    drafts.push(buildEnergyFit(blocks, ordered, deepFitWindows(opts), opts))
   const seen = new Set<string>()
   const distinct = drafts.filter((d) => {
     const key = placementKey(d.places)

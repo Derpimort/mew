@@ -3,7 +3,7 @@
    and model settings keep their full behavior, re-skinned. */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { brainIsOn, mewBrain, useMew, type SidecarStatus } from '../../state/store'
+import { activePrefsFrom, brainIsOn, mewBrain, useMew, type SidecarStatus } from '../../state/store'
 import {
   DEFAULT_SETTINGS,
   type PetId,
@@ -20,6 +20,8 @@ import { PETS, petById } from '../primitives/pets'
 import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
 import { usePetPalette } from '../components/petPalette'
 import { NoticedCard } from '../components/NoticedCard'
+import { MemoryConsole } from '../components/MemoryConsole'
+import { memoryConsole } from '../../domain/console'
 import { ApiKeySetupFlow } from '../components/ApiKeySetupFlow'
 import { keySetupView } from '../components/apiKeySetup'
 import SimpleGraph from '../react-bits/simple-graph'
@@ -156,6 +158,7 @@ export function SettingsPage() {
           <AppearanceCard />
           <NudgesCard />
           <NoticedFromStore />
+          <MemoryConsoleFromStore />
           <PrivacyModelCard />
         </div>
       </div>
@@ -219,6 +222,35 @@ function NoticedFromStore() {
     return insightsCard(computeInsights(memory, aggregates(memory, now), now))
   }, [memory, nowMs])
   return <NoticedCard card={card} />
+}
+
+/* store → presenter wiring for the memory console (#330): "what I've picked up
+   about you." Reads LOCAL memory alone (activePrefsFrom over local, brain-off
+   by law) into the pure domain presenter, and passes the tools-only edit/forget
+   actions down. The console skin (MemoryConsole) stays headless-testable. */
+function MemoryConsoleFromStore() {
+  const memory = useMew((s) => s.memory)
+  const nowMs = useMew((s) => s.nowMs)
+  const confirmTaskRule = useMew((s) => s.confirmTaskRule)
+  const forgetRule = useMew((s) => s.forgetRule)
+  const reEnableRule = useMew((s) => s.reEnableRule)
+  const saveStandingPref = useMew((s) => s.saveStandingPref)
+  const forgetStandingPref = useMew((s) => s.forgetStandingPref)
+  const data = useMemo(() => {
+    const now = new Date(nowMs)
+    const insights = computeInsights(memory, aggregates(memory, now), now)
+    return memoryConsole({ events: memory, prefs: activePrefsFrom(memory, null), insights })
+  }, [memory, nowMs])
+  return (
+    <MemoryConsole
+      data={data}
+      onConfirm={confirmTaskRule}
+      onForget={forgetRule}
+      onReEnable={reEnableRule}
+      onSavePref={saveStandingPref}
+      onForgetPref={forgetStandingPref}
+    />
+  )
 }
 
 function CompanionCard() {
@@ -1088,6 +1120,33 @@ function NudgesCard() {
           onChange={(id) => updateSettings({ planMode: id as Settings['planMode'] })}
         />
       </SetRow>
+      <SetRow
+        t="Energy-fit planning"
+        s="Deep work lands where you actually finish it, admin gets batched — learned from what you complete, never a fixed curve. A fresh week behaves exactly as today."
+      >
+        <Tgl
+          on={settings.energyFit !== 'off'}
+          onToggle={() =>
+            updateSettings({ energyFit: settings.energyFit === 'off' ? 'on' : 'off' })
+          }
+        />
+      </SetRow>
+      <SetRow
+        t="Auto-size to demonstrated durations"
+        s="MEW notices which kinds of work run long — deep work usually does, batched admin usually doesn't. Ask offers to give them room after a plan; Always pre-sizes the picker. A length you state is always kept. Off is exactly today."
+      >
+        <Segc
+          options={[
+            { id: 'off', label: 'Off' },
+            { id: 'ask', label: 'Ask' },
+            { id: 'always', label: 'Always' },
+          ]}
+          value={settings.estimateAutosize}
+          onChange={(id) =>
+            updateSettings({ estimateAutosize: id as Settings['estimateAutosize'] })
+          }
+        />
+      </SetRow>
       <SetRow t="Positive only" s="Reward follow-through; never punish gaps.">
         <Tgl
           on
@@ -1177,9 +1236,9 @@ const SIDECAR_STATE: Record<
     copy: 'The brain hit a snag and the desktop app is bringing it back. The week keeps moving meanwhile.',
   },
   unavailable: {
-    label: 'unavailable — running on the floor',
+    label: 'on device only',
     tone: 'var(--gold)',
-    copy: "The built-in brain couldn't start this session. Your week still works fully; memory recall returns on the next launch.",
+    copy: "The built-in brain isn't running this session — MEW is on your on-device memory, learning and applying as ever. Cross-session recall returns on the next launch.",
   },
 }
 
@@ -1358,27 +1417,45 @@ function PrivacyModelCard() {
       <SetRow
         t="Brain"
         s={
-          settings.brainEnabled
-            ? `Writes what happens, recalls what matters — gbrain at ${settings.brainUrl}.`
-            : brainSidecar !== 'off'
-              ? 'The desktop runs a built-in brain on this machine (status below). Toggle on to point MEW at your own gbrain instead.'
-              : 'Optional gbrain endpoint: MEW writes what happens and recalls what matters. Off = nothing leaves this tab.'
+          /* honest, always-positive: an ON brain that isn't answering reads as
+             on-device (still helpful), never broken; an OFF brain says the
+             on-device floor still learns and applies (#329) */
+          effectiveOn && brainUp === false
+            ? 'Not answering right now — MEW is running on your on-device memory; nothing is lost.'
+            : settings.brainEnabled
+              ? `Enriching your on-device memory with cross-session recall — gbrain at ${settings.brainUrl}.`
+              : brainSidecar !== 'off'
+                ? 'A built-in brain runs on this machine (status below), enriching your on-device memory. Toggle on to point MEW at your own gbrain instead.'
+                : 'MEW learns and applies on this device. A gbrain adds cross-session recall on top — off means nothing leaves this tab.'
         }
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* the dot follows the EFFECTIVE brain — a live sidecar shows health
-              here even with the toggle off; a dead one honestly shows nothing */}
+          {/* the dot + word follow the EFFECTIVE brain — a live sidecar shows
+              health here even with the toggle off; a dead one honestly shows
+              nothing. The word states the mode so it's seen, not only hovered:
+              enriching (answering) vs on-device (present but silent) — #329 */}
           {effectiveOn && (
-            <span
-              title={brainUp == null ? 'checking…' : brainUp ? 'reachable' : 'unreachable'}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background:
-                  brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
-              }}
-            />
+            <>
+              <span
+                title={brainUp == null ? 'checking…' : brainUp ? 'reachable' : 'unreachable'}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background:
+                    brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
+                }}
+              />
+              <span
+                className="mono"
+                style={{
+                  fontSize: 10,
+                  color: brainUp == null ? 'var(--faint)' : brainUp ? 'var(--teal)' : 'var(--gold)',
+                }}
+              >
+                {brainUp == null ? 'checking…' : brainUp ? 'enriching' : 'on device'}
+              </span>
+            </>
           )}
           {settings.brainEnabled && (
             <>
@@ -1421,7 +1498,7 @@ function PrivacyModelCard() {
         </span>
       </SetRow>
       {/* the built-in brain's live state — connected / starting / restarting /
-          unavailable ("running on the floor"). Rendered whenever the shell has
+          unavailable ("on device only"). Rendered whenever the shell has
           reported a beat and the user hasn't opted into their own endpoint, so
           a dead sidecar is visibly dead instead of masquerading as "Off". */}
       {!settings.brainEnabled && brainSidecar !== 'off' && (

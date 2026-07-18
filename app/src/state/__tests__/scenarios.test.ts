@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS } from '../../domain/types'
-import type { ChatMessage, MemoryEvent, PrefPayload, Settings } from '../../domain/types'
+import type { Block, ChatMessage, MemoryEvent, PrefPayload, Settings } from '../../domain/types'
 import { addDaysKey, dayKey, uid, weekKey, weekKeys as domainWeekKeys } from '../../domain/time'
 import { CHAT_BOOT_PAGE, chatOrder, stripSecrets } from '../../adapters/storage-port'
 import { applyWeekKey } from '../../ui/components/weekKeys'
@@ -273,6 +273,16 @@ const scriptedModel = {
       Gets the turn's abort signal too, so a test can press stop mid-stream. */
   midTurn: null as
     null | ((exec: import('../../adapters/model').ToolExecutor, signal?: AbortSignal) => void),
+  /** #325: an ordered interleave of reply-text deltas and tool thunks — models a
+      real stream where the model speaks, calls a tool, then speaks again. When
+      set it supersedes chunks/midTurn, so text→card→text chronology (and the
+      per-turn guardrails that ride it) run exactly as in production. */
+  steps: null as null | Array<
+    | { text: string }
+    | {
+        tool: (exec: import('../../adapters/model').ToolExecutor, signal?: AbortSignal) => void
+      }
+  >,
   throwAfter: false, // simulate a connection hiccup once the tool has acted
   /** what the next remote (anthropic/openai) turn throws — a classifiable
       failure for the honest-copy scenarios (#153); default = transient. */
@@ -285,6 +295,7 @@ const scriptedModel = {
     this.lastCtx = null
     this.lastThread = null
     this.midTurn = null
+    this.steps = null
     this.throwAfter = false
     this.remoteError = null
     this.localError = null
@@ -319,6 +330,18 @@ vi.mock('../../adapters/model/aiAdapter', () => ({
       if (scriptedModel.localError) throw scriptedModel.localError
       // the plan lands ahead of any text/tool, exactly as the AI adapter emits it
       if (scriptedModel.reasoning) yield { reasoning: scriptedModel.reasoning }
+      /* #325: an interleaved script (text → tool → text) supersedes the
+         chunks/midTurn shape when set, so a flailed correction can be replayed
+         beat for beat against the real store guardrails. */
+      if (scriptedModel.steps) {
+        for (const step of scriptedModel.steps) {
+          if ('text' in step) yield step.text
+          else step.tool(exec, signal)
+          if (signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+        }
+        if (scriptedModel.throwAfter) throw new Error('connection hiccup')
+        return
+      }
       const [first, ...rest] = scriptedModel.chunks
       if (first) yield first
       scriptedModel.midTurn?.(exec, signal)
@@ -337,7 +360,9 @@ import { mealClassOf } from '../../domain/sustenance'
 import { TOOL_ERROR_NOTE } from '../../domain/toolCard'
 import { scenariosActive } from '../../domain/choices'
 import { validateScenario } from '../../domain/scenarios'
-import { runToolWithCard, useMew } from '../store'
+import { activePrefsFrom, isAcknowledgmentOnly, runToolWithCard, useMew } from '../store'
+import { confirmedRulesFrom, dismissedMatchesFrom } from '../../domain/learn'
+import type { LearnedRule } from '../../domain/prefs'
 
 /* ── harness ──────────────────────────────────────────────────────── */
 
@@ -790,6 +815,63 @@ describe('a seeded Tuesday morning', () => {
       expect(out).toBe('noop')
       expect(chat().length).toBe(chatLen) // no chat line for a non-move
     })
+
+    /* #347 — every drop routes through the SAME executor a chat command uses:
+       a move through moveResolved, so the merged #324 drift and undo come free;
+       no second mutation door. The law splits collisions by nature. */
+    it('a drop over a fixed-time meeting bounces even when it is unprotected (law)', async () => {
+      await fresh(TUE(9, 40))
+      const r = reply()
+      const standup = useMew
+        .getState()
+        .blocks.find((b) => /standup/i.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+      expect(standup.protected).toBe(false) // held by its nature (a meeting), not by a flag
+      const before = { day: r.dayKey, start: r.startMin }
+      const out = useMew.getState().dragMove(r.id, r.dayKey, standup.startMin)
+      expect(out).toBe('conflict') // never OVER a fixed meeting
+      const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+      expect({ day: after.dayKey, start: after.startMin }).toEqual(before) // returned to origin
+      expect(useMew.getState().blocks.find((b) => b.id === standup.id)!.startMin).toBe(
+        standup.startMin
+      ) // the meeting itself never moved
+    })
+
+    it('a drop onto an unprotected own-flexible block drifts it clear (#324) — moved, not bounced', async () => {
+      await fresh(TUE(9, 40))
+      const r = reply() // work
+      const lunch = useMew
+        .getState()
+        .blocks.find((b) => /Lunch/.test(b.title) && b.dayKey === dayKey(TUE(0)))!
+      expect(lunch.protected).toBe(false)
+      const out = useMew.getState().dragMove(r.id, r.dayKey, lunch.startMin) // land on Lunch
+      expect(out).toBe('moved') // committed via the executor, not bounced
+      expect(useMew.getState().blocks.find((b) => b.id === r.id)!.startMin).toBe(lunch.startMin)
+      // the executor's #324 pass cleared the collision — nothing on the day overlaps
+      const day = useMew
+        .getState()
+        .blocks.filter((b) => b.dayKey === dayKey(TUE(0)) && b.status === 'open')
+      const anyOverlap = day.some((a) =>
+        day.some((b) => a.id !== b.id && a.startMin < b.endMin && b.startMin < a.endMin)
+      )
+      expect(anyOverlap).toBe(false)
+    })
+
+    it('a drag move is undoable — a keyed "undo that" puts the block back (#162)', async () => {
+      await fresh(TUE(9, 40))
+      useMew.getState().updateSettings({ modelLocation: 'local' })
+      const r = reply()
+      const { startMin: origStart, dayKey: origDay } = r
+      expect(useMew.getState().dragMove(r.id, r.dayKey, 20 * 60)).toBe('moved')
+      expect(useMew.getState().blocks.find((b) => b.id === r.id)!.startMin).toBe(20 * 60)
+      /* the drag committed OUTSIDE any turn; its snapshot must survive the next
+         exchange's fresh reset (the #293 hold) so "undo that" still reaches it */
+      scriptedModel.chunks = ['undoing… ', 'put back.']
+      scriptedModel.midTurn = (exec) => exec.undoLast()
+      await say('undo that')
+      const after = useMew.getState().blocks.find((b) => b.id === r.id)!
+      expect(after.startMin).toBe(origStart)
+      expect(after.dayKey).toBe(origDay)
+    })
   })
 })
 
@@ -906,6 +988,20 @@ describe('#303 — keyboard week commits through the drag door', () => {
     const out = useMew.getState().dragMove(r.id, r.dayKey, r.startMin, r.endMin - r.startMin)
     expect(out).toBe('noop')
     expect(chat().length).toBe(chatLen)
+  })
+
+  it('a resize routes through the edit executor and is undoable (#347 durationMin arm)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const r = reply()
+    const origEnd = r.endMin
+    // grow 14:30–15:00 to 60 min → 14:30–15:30, clear of Walk at 16:00
+    expect(useMew.getState().dragMove(r.id, r.dayKey, r.startMin, 60)).toBe('resized')
+    expect(useMew.getState().blocks.find((b) => b.id === r.id)!.endMin).toBe(15 * 60 + 30)
+    scriptedModel.chunks = ['undoing… ', 'back.']
+    scriptedModel.midTurn = (exec) => exec.undoLast()
+    await say('undo that')
+    expect(useMew.getState().blocks.find((b) => b.id === r.id)!.endMin).toBe(origEnd)
   })
 
   it('an edge press never reaches the executor — spoken, not silent, no mutation', async () => {
@@ -1452,6 +1548,85 @@ describe('the sustenance scaffold (#299)', () => {
   })
 })
 
+/* #323 — meals stay sane under packing/reshape. The live pin: "how can dinner
+   be 6pm are you stupid?" A model plan_blocks reshape with explicit startMin
+   skips the scorer; the executor's meal guardrail catches it regardless of
+   path, and honors a time the user stated in their own words. */
+describe('#323 — meals stay sane under packing/reshape', () => {
+  const TODAY = () => dayKey(TUE(0))
+  const meal = (cls: 'lunch' | 'dinner') =>
+    useMew
+      .getState()
+      .blocks.find(
+        (b) => b.dayKey === TODAY() && mealClassOf(b.title) === cls && b.status === 'open'
+      )
+
+  it('a model reshape squeezing lunch late + dinner too close auto-corrects both into sane slots, named', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ modelLocation: 'local' }) // the scripted model path
+    // empty today so the reshape starts clean (no de-dup with the seeded lunch)
+    useMew.setState((s) => ({ blocks: s.blocks.filter((b) => b.dayKey !== TODAY()) }))
+    let result = ''
+    scriptedModel.chunks = ['reshaping your afternoon.']
+    scriptedModel.midTurn = (exec) => {
+      // the transcript itself: MEW squeezed lunch to 15:19 and placed dinner
+      // 18:15 — both derived by the model, neither startStated
+      result = exec.plan(
+        [
+          { title: 'Lunch', tag: 'private', dayOffset: 0, startMin: 15 * 60 + 19, durationMin: 45 },
+          {
+            title: 'Dinner',
+            tag: 'private',
+            dayOffset: 0,
+            startMin: 18 * 60 + 15,
+            durationMin: 60,
+          },
+        ],
+        []
+      )
+    }
+    await say('pack my afternoon')
+
+    const lunch = meal('lunch')!
+    const dinner = meal('dinner')!
+    expect(lunch).toBeDefined()
+    expect(dinner).toBeDefined()
+    // lunch back in its noon window, dinner back in its evening window
+    expect(lunch.startMin).toBeGreaterThanOrEqual(12 * 60)
+    expect(lunch.endMin).toBeLessThanOrEqual(14 * 60)
+    expect(dinner.startMin).toBeGreaterThanOrEqual(18 * 60 + 30)
+    expect(dinner.endMin).toBeLessThanOrEqual(20 * 60 + 30)
+    // the "are you stupid" 2h gap cannot recur: a real ≥4h stretch between them
+    expect(dinner.startMin - lunch.endMin).toBeGreaterThanOrEqual(4 * 60)
+    // the reply names the correction, in the positive voice
+    expect(result).toMatch(/dinner/i)
+    expect(result).toMatch(/window|room/i)
+  })
+
+  it("a meal time in the user's own words is honored and named once — keyless (keyless-identical)", async () => {
+    await fresh(TUE(8, 0)) // pre-brief boot, no key: the deterministic floor
+    await say('block 1h for dinner today at 5pm') // 17:00 — out of window, but their word
+    const dinner = meal('dinner')!
+    expect(dinner).toBeDefined()
+    expect(dinner.startMin).toBe(17 * 60) // kept exactly — the stated time wins
+    expect(dinner.endMin).toBe(18 * 60)
+    expect(lastMsg().body).toMatch(/dinner/i)
+    expect(lastMsg().body).toMatch(/yours|your call/i)
+  })
+
+  it('an in-window meal is placed exactly, with no correction aside — byte-identical to today', async () => {
+    await fresh(TUE(8, 0))
+    await say('clear today')
+    await say('block 45m for lunch today at 1pm') // 13:00 — squarely in the lunch window
+    const lunch = meal('lunch')!
+    expect(lunch).toBeDefined()
+    expect(lunch.startMin).toBe(13 * 60)
+    expect(lunch.endMin).toBe(13 * 60 + 45)
+    // the guardrail found it sane and stayed silent — no shift, no warn aside
+    expect(lastMsg().body).not.toMatch(/usual window|real room|your call/i)
+  })
+})
+
 /* ── the brain is optional-path: off = invisible, on = a sense ───────── */
 
 describe('brain senses', () => {
@@ -1522,7 +1697,7 @@ describe('brain senses', () => {
   it('desktop sidecar: the rulebook is live too — a brain-held rule shapes the plan, Settings still off', async () => {
     /* the named failure mode of a half-on sidecar: senses writing while the
        always-on rulebook stays dark. The rule lives ONLY in the brain, so the
-       sole path to the plan is handshake → pref-cache refresh → applyPrefs. */
+       sole path to the plan is handshake → pref-cache refresh → resolveTaskSpec. */
     desktopFake.tauri = true
     brainFake.prefs = [
       { kind: 'time-default', match: 'gym', value: 'starts 07:00', stated: 'gym is always at 7am' },
@@ -1767,7 +1942,7 @@ describe('recall honesty — degraded vs empty', () => {
     expect(out).not.toContain(`didn't answer`)
   })
 
-  it("query_brain, brain errored: MEW says the brain didn't answer — never that it was empty", async () => {
+  it("query_brain, brain errored: MEW says it's on-device, the brain didn't answer — never that it was empty (#329)", async () => {
     await fresh(TUE(9, 40))
     useMew.getState().updateSettings({ brainEnabled: true })
     await settle()
@@ -1775,7 +1950,10 @@ describe('recall honesty — degraded vs empty', () => {
       throw new Error('brain down')
     }
     const out = await useMew.getState().queryBrain('how did the pottery class go last week')
-    expect(out).toContain(`The brain didn't answer just now`)
+    /* reframed still-helpful (#329): leads with the on-device floor, names the
+       silent brain honestly, never passes its silence off as an empty history */
+    expect(out).toContain('running on what I know on-device')
+    expect(out).toContain(`didn't answer just now`)
     expect(out).not.toContain('or the brain')
   })
 
@@ -1863,6 +2041,52 @@ describe('remember (the standing rulebook)', () => {
     await say('remember that the standup always takes 15 min')
     await vi.advanceTimersByTimeAsync(0)
     expect(brainFake.ingests.map((p) => p.slug)).toContain('pref/duration-default-standup')
+    await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
+  })
+})
+
+/* ── #329: the on-device floor carries learn→apply, brain-off and degraded ──
+   The always-local pillar's core promise: MEW knows you with no brain at all,
+   and a brain that goes dark mid-session never drops what it already learned —
+   the local memory floor carries the rule to placement either way. */
+
+describe('#329 — always-local: learn→apply works on the on-device floor', () => {
+  it('brain OFF: a confirmed rule forms, persists locally, and prefills placement — nothing leaves the device', async () => {
+    await fresh(TUE(9, 40)) // no Settings opt-in, no sidecar — the brain is off
+    await say('remember that gym is always at 7am')
+    /* the rule is durable on-device (the memory event IS the floor's rulebook) */
+    const ev = useMew.getState().memory.findLast((e: MemoryEvent) => e.kind === 'preference')!
+    expect(ev.pref).toMatchObject({ kind: 'time-default', match: 'gym', value: 'starts 07:00' })
+    expect(brainFake.ingests).toHaveLength(0) // brain off — the rule never left the device
+    /* and it APPLIES with brainOn()===false: the standing rule chooses the slot */
+    await say('add gym tomorrow')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const gym = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /gym/i.test(b.title))!
+    expect(gym.startMin).toBe(7 * 60)
+    expect(lastMsg().body).toContain('(your standing rule)')
+  })
+
+  it('brain ON but degraded (writes swallowed, recall empty): learning is not dropped — the floor carries it', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    await settle() // let the enable-connect replay drain
+    /* the degraded port: ingests are swallowed (write failure) and listPrefs
+       comes back empty (the graph can't answer) — exactly the silent-disconnect
+       shape #249 describes */
+    brainFake.dropIngests = true
+    brainFake.prefs = []
+    await say('remember that gym is always at 7am')
+    await settle()
+    /* the local memory event still landed — a degraded brain never drops learning */
+    const ev = useMew.getState().memory.findLast((e: MemoryEvent) => e.kind === 'preference')!
+    expect(ev.pref).toMatchObject({ match: 'gym', value: 'starts 07:00' })
+    /* and the rule still applies: activePrefsFrom falls back to memory when the
+       brain's pref list is empty, so placement honors it despite the dark graph */
+    await say('add gym tomorrow')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const gym = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /gym/i.test(b.title))!
+    expect(gym.startMin).toBe(7 * 60)
+    expect(lastMsg().body).toContain('(your standing rule)')
     await vi.advanceTimersByTimeAsync(60_000) // drain the chat batcher
   })
 })
@@ -2928,14 +3152,44 @@ describe('prefs applied at placement', () => {
     expect(dep.endMin - dep.startMin).toBe(45)
   })
 
-  it('move-collision wording follows the rulebook: landing on a pref-flexed sync reads flexible', async () => {
+  /* #328 (gbrain Pillar 2): deterministic apply on the KEYLESS floor. Two
+     confirmed rules fill BOTH the unstated time and duration from a single
+     "add X" — proving the whole spec resolves before block creation with no
+     model in the loop. #327 will feed richer confirmed rules (tag/window) into
+     the same resolver seam; here the stated-rule inputs stand in. */
+  it('full spec, keyless: one "add gym" lands time AND duration from confirmed rules', async () => {
     await fresh(TUE(9, 40))
+    await say('remember that gym is always at 7am')
+    await say('remember gym always takes 45 min')
+    await say('add gym tomorrow')
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    const gym = useMew.getState().blocks.find((b) => b.dayKey === tomorrow && /gym/i.test(b.title))!
+    expect(gym.startMin).toBe(7 * 60) // the time-default chose the slot
+    expect(gym.endMin - gym.startMin).toBe(45) // the duration-default sized it
+    expect(lastMsg().body).toContain('(your standing rule)')
+  })
+
+  it('move-collision drift follows the rulebook: a pref-flexed sync drifts clear, never fixed (#324)', async () => {
+    await fresh(TUE(9, 40))
+    const tomorrow = addDaysKey(dayKey(TUE(9, 40)), 1)
+    // a clean day so the drift is unambiguous (no seed blocks in the way)
+    useMew.setState((s) => ({ blocks: s.blocks.filter((b) => b.dayKey !== tomorrow) }))
     await say('remember that the design sync always moves')
-    await say('block design sync tomorrow at 10')
+    await say('block design sync tomorrow at 10') // pref-flexed → movable, not fixed
     await say('block deck work tomorrow at 14')
-    await say('move deck work to tomorrow at 10')
-    expect(lastMsg().body).toContain('flexible — offer to drift it')
-    expect(lastMsg().body).not.toContain("can't move")
+    await say('move deck work to tomorrow at 10') // lands on the flexible sync
+    const reply = lastMsg().body
+    // the flexible sync drifts out of the way in the SAME pass, named — no ask-after
+    expect(reply.toLowerCase()).toContain('moved design sync')
+    expect(reply).not.toContain('offer to drift it') // the #102 place-then-ask is gone
+    expect(reply).not.toContain("can't move") // it's flexible (the pref), not fixed
+    const open = useMew
+      .getState()
+      .blocks.filter((b) => b.dayKey === tomorrow && b.status === 'open')
+    const deck = open.find((b) => /deck work/i.test(b.title))!
+    const sync = open.find((b) => /design sync/i.test(b.title))!
+    expect(deck.startMin).toBe(10 * 60) // placed exactly as asked
+    expect(sync.startMin < deck.endMin && deck.startMin < sync.endMin).toBe(false) // no overlap left
   })
 })
 
@@ -3048,21 +3302,133 @@ describe('scheduler slice 2 — scored placement + de-dup (#80, #89)', () => {
   })
 })
 
-describe('scheduler: honor explicit times, place-then-offer-drift (#102)', () => {
-  it('an explicit time lands as asked over a soft conflict and offers to drift, not reshape', async () => {
+describe('scheduler: honor explicit times, drift the flexible side (#324, was #102 place-then-offer)', () => {
+  it('explicit new work lands as asked and drifts the colliding flexible block clear in the same pass', async () => {
     await fresh(TUE(9, 40))
+    const today = dayKey(TUE(9, 40))
+    // a clean day so the drift is unambiguous (no seed blocks in the way)
+    useMew.setState((s) => ({ blocks: s.blocks.filter((b) => b.dayKey !== today) }))
     await say('block 1h for deep work today at 2pm') // a flexible work block at 14:00
     await say('block 1h for call with sam today at 2pm') // explicit time, same slot
-    const open = useMew.getState().blocks.filter((b) => b.status === 'open')
-    // exact-title match — the demo seed carries several "… — deep work" blocks; mine is titled exactly "deep work"
+    const open = useMew.getState().blocks.filter((b) => b.status === 'open' && b.dayKey === today)
     const call = open.find((b) => b.title.toLowerCase() === 'call with sam')!
     const deep = open.find((b) => b.title.toLowerCase() === 'deep work')!
     expect(call).toBeDefined()
     expect(deep).toBeDefined()
     expect(call.startMin).toBe(14 * 60) // placed exactly as the user asked
-    expect(deep.startMin).toBe(14 * 60) // the flexible block was NOT auto-moved out from under it
-    // the reply offers to drift the flexible side rather than silently reshaping
-    expect(lastMsg().body.toLowerCase()).toMatch(/overlap|drift|nudge/)
+    // #324: the flexible block drifts clear in the same pass — no place-then-ask
+    expect(deep.startMin).not.toBe(14 * 60)
+    expect(deep.startMin).toBeGreaterThanOrEqual(call.endMin) // pushed later, never earlier
+    expect(deep.startMin < call.endMin && call.startMin < deep.endMin).toBe(false) // no overlap left
+    // the reply names what moved rather than offering to drift it later
+    expect(lastMsg().body.toLowerCase()).toContain('moved deep work')
+  })
+})
+
+/* #324 — the live transcript: MEW placed the STG/PROD + v1.x-rc pushes over
+   lunch, dinner, and the groceries order, then ASKED "want me to drift them?".
+   Backwards. New explicit-time work drifts the user's own flexible blocks clear
+   in the same pass and names what moved — no lingering overlap, no place-then-
+   ask. Whole flow through the REAL store, keyless floor. */
+describe('#324 — own-vs-own collision auto-drift (the live transcript)', () => {
+  const TODAY = () => dayKey(TUE(9, 40))
+  const openOn = () =>
+    useMew.getState().blocks.filter((b) => b.dayKey === TODAY() && b.status === 'open')
+  const find = (re: RegExp) => openOn().find((b) => re.test(b.title))!
+  const overlapsBlock = (
+    a: { startMin: number; endMin: number },
+    b: { startMin: number; endMin: number }
+  ) => a.startMin < b.endMin && b.startMin < a.endMin
+
+  it('pushes land at their times; lunch, the errand, and dinner drift clear, each named, none left overlapping', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((s) => ({ blocks: s.blocks.filter((b) => b.dayKey !== TODAY()) })) // clean slate
+
+    // the user's own flexible blocks (two meals + an errand)
+    await say('block 45m for lunch today at 12pm') // 12:00 — a meal
+    await say('block 30m for the groceries order today at 12:45pm') // an errand
+    await say('block 1h for dinner today at 6:30pm') // 18:30 — a meal
+
+    // a push lands on BOTH the lunch and the errand in one turn
+    await say('block 1h for the STG push today at 12pm') // 12:00–13:00
+    const stgReply = lastMsg().body
+    // a second push lands on dinner
+    await say('block 45m for the v1.1-rc push today at 6:30pm') // 18:30–19:15
+    const dinnerReply = lastMsg().body
+
+    const stg = find(/stg push/i)
+    const v11 = find(/v1\.1-rc push/i)
+    const lunch = find(/lunch/i)
+    const errand = find(/groceries order/i)
+    const dinner = find(/dinner/i)
+
+    // the explicit work landed exactly as asked
+    expect(stg.startMin).toBe(12 * 60)
+    expect(v11.startMin).toBe(18 * 60 + 30)
+
+    // every flexible block drifted OFF the push it collided with — nothing lingers
+    expect(overlapsBlock(lunch, stg)).toBe(false)
+    expect(overlapsBlock(errand, stg)).toBe(false)
+    expect(overlapsBlock(dinner, v11)).toBe(false)
+    expect(lunch.startMin).not.toBe(12 * 60) // it moved
+    expect(errand.startMin).not.toBe(12 * 60 + 45) // it moved
+
+    // the meals re-anchored through the circadian scorer, back inside their windows
+    expect(lunch.startMin).toBeGreaterThanOrEqual(12 * 60)
+    expect(lunch.endMin).toBeLessThanOrEqual(14 * 60)
+    expect(dinner.startMin).toBeGreaterThanOrEqual(18 * 60 + 30)
+    expect(dinner.endMin).toBeLessThanOrEqual(20 * 60 + 30)
+
+    // the drift is NAMED in the same reply that placed the push — not asked after
+    expect(stgReply.toLowerCase()).toContain('moved lunch')
+    expect(stgReply.toLowerCase()).toContain('moved') // errand named in the same breath
+    expect(stgReply.toLowerCase()).toContain('groceries order')
+    expect(dinnerReply.toLowerCase()).toContain('moved dinner')
+
+    // the #102 place-then-ask is gone — no "offer to drift" anywhere
+    expect(stgReply).not.toContain('offer to drift it')
+    expect(dinnerReply).not.toContain('offer to drift it')
+
+    // nothing at all still overlaps either push (the whole point)
+    for (const push of [stg, v11])
+      expect(openOn().filter((b) => b.id !== push.id && overlapsBlock(b, push))).toEqual([])
+  })
+
+  it('an external meeting is never moved — an honest overlap note, while own flexible blocks still drift', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState((s) => ({ blocks: s.blocks.filter((b) => b.dayKey !== TODAY()) }))
+    // an EXTERNAL (calendar) block MEW may not move, plus the user's own lunch
+    useMew.setState((s) => ({
+      blocks: [
+        ...s.blocks,
+        {
+          id: 'ext-board',
+          title: 'Board meeting',
+          tag: 'work',
+          dayKey: TODAY(),
+          startMin: 12 * 60,
+          endMin: 13 * 60,
+          protected: true,
+          status: 'open',
+          calendarRefs: [],
+          estimateSource: 'user',
+          external: { calId: 'work', eventId: 'b1' },
+        } as Block,
+      ],
+    }))
+    await say('block 45m for lunch today at 12:15pm') // own meal, overlaps the meeting
+    await say('block 1h for the STG push today at 12pm') // 12:00–13:00, hits both
+    const reply = lastMsg().body
+
+    const board = find(/board meeting/i)
+    const lunch = find(/lunch/i)
+    // the external meeting stays exactly put — a fact, surfaced honestly
+    expect(board.startMin).toBe(12 * 60)
+    expect(board.endMin).toBe(13 * 60)
+    expect(reply.toLowerCase()).toMatch(/board meeting.*can't move|overlaps.*board meeting/i)
+    // the user's own lunch still drifts clear in the same pass
+    expect(lunch.startMin).not.toBe(12 * 60 + 15)
+    expect(reply.toLowerCase()).toContain('moved lunch')
   })
 })
 
@@ -5129,6 +5495,119 @@ describe('#293 — plan mode scenario picker', () => {
   })
 })
 
+/* ── #349 — gbrain week-scaffolding: draft next week the owner's usual way ──
+   The marquee at WEEK scale. weekScaffold (pinned pure in scaffold.test.ts)
+   builds the draft; here the STORE proves the product laws end to end: it is a
+   plan-mode PREVIEW that commits ONLY on an owner accept, through the SAME plan
+   executor plan_blocks uses — MEW never auto-fills a week. The offer dedupes;
+   with no learned shape yet it stays honest. Keyless throughout (the local rules
+   floor), so every flow here doubles as the zero-key proof. */
+
+describe('#349 — gbrain week-scaffolding', () => {
+  const REVIEW: LearnedRule = {
+    match: 'weekly review',
+    tag: 'work',
+    durationMin: 60,
+    window: 'afternoon',
+  }
+  const DEEP: LearnedRule = { match: 'deep work', tag: 'work', durationMin: 90, window: 'morning' }
+
+  it('proposeScaffold posts ONE preview and places NOTHING pre-acceptance (human-in-the-loop)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().confirmTaskRule(REVIEW)
+    useMew.getState().confirmTaskRule(DEEP)
+    const before = useMew.getState().blocks
+
+    const posted = useMew.getState().proposeScaffold()
+    expect(posted).toBe(true)
+
+    const pickers = chat().filter((m) => (m.scenarios?.length ?? 0) > 0)
+    expect(pickers).toHaveLength(1)
+    const sc = pickers[0].scenarios![0]
+    expect(sc.name).toBe('your usual week')
+    expect(sc.places.length).toBeGreaterThan(0)
+    /* zero-overlap, appliable-as-previewed: every stored place lands
+       conflict-free against the live week (the picker's post-time gate) */
+    expect(validateScenario(useMew.getState().blocks, sc)).toBe(true)
+    /* the pin: proposing mutates nothing — the week is byte-identical until the
+       owner accepts. MEW never auto-fills. */
+    expect(useMew.getState().blocks).toBe(before)
+  })
+
+  it('accepting the draft places the stored blocks byte-exactly through the plan executor', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().confirmTaskRule(REVIEW)
+    useMew.getState().confirmTaskRule(DEEP)
+    useMew.getState().proposeScaffold()
+    const msg = chat()
+      .filter((m) => (m.scenarios?.length ?? 0) > 0)
+      .pop()!
+    const sc = msg.scenarios![0]
+    const before = useMew.getState().blocks
+    const todayKey = dayKey(TUE(9, 40))
+
+    useMew.getState().pickScenario(msg.id, sc.id)
+
+    const after = useMew.getState().blocks
+    const added = after.filter((b) => !before.some((p) => p.id === b.id))
+    /* the quote landed verbatim: every stored place is a block at exactly the
+       previewed day, start, length, title and tag — the executor received the
+       stored places, nothing re-derived (#102) */
+    for (const p of sc.places) {
+      const landed = added.filter(
+        (b) =>
+          b.title === p.title &&
+          b.tag === p.tag &&
+          b.dayKey === addDaysKey(todayKey, p.dayOffset) &&
+          b.startMin === p.startMin &&
+          b.endMin === p.startMin + p.durationMin
+      )
+      expect(landed).toHaveLength(1)
+    }
+    /* one executor invocation (the same door plan_blocks uses) + the plan-voice
+       confirmation; the picked flag persists so the preview rehydrates settled */
+    const card = chat().findLast((m) => m.role === 'tool')!
+    expect(card.tool).toMatchObject({ name: 'plan', state: 'done' })
+    expect(lastMsg().body).toMatch(/^Done — /)
+    expect(
+      chat()
+        .find((m) => m.id === msg.id)!
+        .scenarios!.find((x) => x.id === sc.id)!.picked
+    ).toBe(true)
+  })
+
+  it('offers to rough out the coming week once, dedupes, and the chip only opens the preview', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().confirmTaskRule(REVIEW)
+    at(TUE(10, 0)) // a regular tick: the coming week is empty AND a rhythm is learned
+    const offers = nudges('scaffold-week')
+    expect(offers).toHaveLength(1)
+    expect(offers[0].actions!.map((a) => a.id)).toEqual(['draft', 'later'])
+
+    // deduped: another tick the same coming week does not re-offer (nudgeLastFired)
+    at(TUE(11, 0))
+    expect(nudges('scaffold-week')).toHaveLength(1)
+
+    // the offer itself places nothing — the chip only opens the preview
+    const before = useMew.getState().blocks
+    act(offers[0], 'draft')
+    expect(chat().filter((m) => (m.scenarios?.length ?? 0) > 0)).toHaveLength(1)
+    expect(useMew.getState().blocks).toBe(before)
+  })
+
+  it('with no learned shape yet, an on-demand draft stays honest — no scenario, no week touched', async () => {
+    await fresh(TUE(9, 40)) // seeded memory has outcomes, but zero confirmed rules/recurrences
+    const before = useMew.getState().blocks
+
+    const posted = useMew.getState().proposeScaffold()
+
+    expect(posted).toBe(false)
+    expect(chat().filter((m) => (m.scenarios?.length ?? 0) > 0)).toHaveLength(0)
+    expect(lastMsg().body).toMatch(/don't know your week yet/i)
+    expect(useMew.getState().blocks).toBe(before)
+  })
+})
+
 /* ── #304 — the weekly planning ritual ──────────────────────────────────
    Sunday's shaping invite (once per ISO week, persisted weekKey, heal-safe)
    and the "plan my week" turn: a pure composition of EXISTING tools —
@@ -5376,5 +5855,663 @@ describe('#304 — the weekly planning ritual', () => {
     expect(pickers.length).toBe(pickersBefore + 1)
     /* and the block grammar never saw it — no "my week"/"the week" block */
     expect(useMew.getState().blocks.some((b) => /^(my|the) week$/i.test(b.title))).toBe(false)
+  })
+})
+
+/* ── conversational multi-turn editing (#320) ──────────────────────────────
+   The keyless floor now carries context across turns: a referent set when the
+   executor touches one block (or the user taps it), resolved for "it / that /
+   the one after lunch / 30 min earlier" — never a wrong-block mutation. */
+describe('conversational multi-turn editing (#320, keyless floor)', () => {
+  const today = () => dayKey(new Date(useMew.getState().nowMs))
+  const blk = (over: Partial<Block>): Block => ({
+    id: uid(),
+    title: 'X',
+    tag: 'work',
+    dayKey: dayKey(TUE(9, 40)),
+    startMin: 9 * 60,
+    endMin: 10 * 60,
+    protected: true,
+    status: 'open',
+    calendarRefs: [],
+    estimateSource: 'user',
+    ...over,
+  })
+
+  it('block the deck → "move it 30 min earlier" → "make that 90 min": one block, each step (AC1)', async () => {
+    await fresh(TUE(9, 40))
+    await say('block the deck thursday at 9')
+    const thu = addDaysKey(dayKey(TUE(9, 40)), 2)
+    const deck0 = useMew.getState().blocks.find((b) => b.title === 'deck' && b.dayKey === thu)!
+    expect(deck0).toBeDefined()
+    expect(deck0.startMin).toBe(9 * 60)
+    const id = deck0.id
+
+    await say('move it 30 min earlier')
+    const deck1 = useMew.getState().blocks.find((b) => b.id === id)!
+    expect(deck1.startMin).toBe(8 * 60 + 30) // 9:00 − 30
+    expect(deck1.dayKey).toBe(thu) // a relative shift stays on the same day
+
+    await say('make that 90 min')
+    const deck2 = useMew.getState().blocks.find((b) => b.id === id)!
+    expect(deck2.endMin - deck2.startMin).toBe(90)
+    // only ever the ONE deck block on thursday was touched
+    expect(
+      useMew.getState().blocks.filter((b) => b.title === 'deck' && b.dayKey === thu)
+    ).toHaveLength(1)
+  })
+
+  it('positional: "move the block after lunch to 4pm" resolves against the live week (AC2)', async () => {
+    await fresh(TUE(9, 40))
+    const d = today()
+    useMew.setState({
+      blocks: [
+        blk({
+          id: 'lunch',
+          title: 'Lunch',
+          tag: 'private',
+          dayKey: d,
+          startMin: 12 * 60,
+          endMin: 13 * 60,
+        }),
+        blk({ id: 'inbox', title: 'Inbox', dayKey: d, startMin: 14 * 60, endMin: 15 * 60 }),
+      ],
+    })
+    await say('move the block after lunch to 4pm')
+    expect(useMew.getState().blocks.find((b) => b.id === 'inbox')!.startMin).toBe(16 * 60)
+    expect(useMew.getState().blocks.find((b) => b.id === 'lunch')!.startMin).toBe(12 * 60) // untouched
+  })
+
+  it('relative "push it back an hour" parses against the referent, clamped like a move (AC3)', async () => {
+    await fresh(TUE(9, 40))
+    const d = today()
+    useMew.setState({
+      blocks: [blk({ id: 'x', title: 'Draft', dayKey: d, startMin: 10 * 60, endMin: 11 * 60 })],
+    })
+    useMew.getState().noteReferent('x')
+    await say('push it back an hour')
+    expect(useMew.getState().blocks.find((b) => b.id === 'x')!.startMin).toBe(11 * 60) // 10:00 + 60
+  })
+
+  it('absent referent → a kind ask, never a wrong-block mutation (AC4)', async () => {
+    await fresh(TUE(9, 40))
+    const before = useMew.getState().blocks.map((b) => `${b.id}:${b.startMin}`)
+    await say('move it 30 min earlier') // nothing touched yet this session
+    expect(lastMsg().body).toMatch(/which block|tap it|name it/i)
+    expect(useMew.getState().blocks.map((b) => `${b.id}:${b.startMin}`)).toEqual(before) // no mutation
+  })
+
+  it('an external referent refuses to move — not ours to move (AC5, law)', async () => {
+    await fresh(TUE(9, 40))
+    const d = today()
+    useMew.setState({
+      blocks: [
+        blk({
+          id: 'ext',
+          title: 'Design sync',
+          dayKey: d,
+          startMin: 15 * 60,
+          endMin: 16 * 60,
+          external: { calId: 'cal', eventId: 'e1' },
+        }),
+      ],
+    })
+    useMew.getState().noteReferent('ext') // e.g. the user tapped it
+    await say('move it 30 min earlier')
+    expect(lastMsg().body).toMatch(/connected calendar|not mine to move/i)
+    expect(useMew.getState().blocks.find((b) => b.id === 'ext')!.startMin).toBe(15 * 60) // unmoved
+  })
+
+  it('a block-tap sets the referent so "make it 45" lands on what you tapped (parity, keyless)', async () => {
+    await fresh(TUE(9, 40))
+    const d = today()
+    useMew.setState({
+      blocks: [
+        blk({ id: 'a', title: 'Alpha', dayKey: d, startMin: 9 * 60, endMin: 10 * 60 }),
+        blk({ id: 'b', title: 'Beta', dayKey: d, startMin: 11 * 60, endMin: 12 * 60 }),
+      ],
+    })
+    useMew.getState().noteReferent('b') // tap Beta
+    await say('make it 45')
+    expect(useMew.getState().blocks.find((b) => b.id === 'b')!.endMin).toBe(11 * 60 + 45)
+    expect(useMew.getState().blocks.find((b) => b.id === 'a')!.endMin).toBe(10 * 60) // Alpha untouched
+  })
+
+  it('day rollover clears the referent — yesterday’s "it" means nothing today', async () => {
+    await fresh(TUE(9, 40))
+    useMew.setState({
+      blocks: [blk({ id: 'x', title: 'Draft', startMin: 10 * 60, endMin: 11 * 60 })],
+    })
+    useMew.getState().noteReferent('x')
+    expect(useMew.getState().lastReferent?.blockId).toBe('x')
+    at(new Date(2026, 5, 10, 9, 0)) // next day tick
+    expect(useMew.getState().lastReferent).toBeNull()
+  })
+})
+
+describe('gbrain Pillar 1 — learn from doing (#327)', () => {
+  /* three past mornings blocking "the deck" as 90-min deep work — the signature
+     detectTaskRules forms a candidate from. Replaces memory outright so the
+     seed's own history can't muddy the detection. */
+  const deckHistory = (): MemoryEvent[] =>
+    [1, 2, 3].map((d): MemoryEvent => ({
+      id: uid(),
+      ts: TUE(9, 0).getTime() - d * 86_400_000,
+      kind: 'completed',
+      dayKey: addDaysKey(dayKey(TUE(9, 40)), -d),
+      title: 'the deck',
+      tag: 'work',
+      plannedMin: 90,
+      startMin: 9 * 60,
+      endMin: 10 * 60 + 30,
+      deep: true,
+      attention: 'focus',
+    }))
+
+  /* the learn pass waits for a regular tick (never the boot tick), so seed
+     memory is swapped for the fixture before that first tick fires it */
+  async function offerFrom(history: MemoryEvent[]) {
+    await fresh(TUE(9, 40))
+    useMew.setState({ memory: history })
+    at(TUE(9, 41))
+    return lastNudge('learn-offer')
+  }
+
+  it('offers a repeated pattern once, then "yes, always" remembers it forever', async () => {
+    const offer = await offerFrom(deckHistory())
+    expect(offer).toBeDefined()
+    expect(offer.body).toMatch(/the deck.*a few times.*want me to just do that/i)
+    expect(offer.actions!.map((a) => a.label)).toEqual(['yes, always', 'not a rule'])
+
+    /* confirm → a confirmed rule lands in local memory; the learnedRules seam
+       (confirmedRulesFrom) returns it for #328's resolver, silently forever */
+    act(offer, 'confirm')
+    expect(confirmedRulesFrom(useMew.getState().memory)).toEqual([
+      expect.objectContaining({
+        match: 'the deck',
+        durationMin: 90,
+        tag: 'work',
+        window: 'morning',
+      }),
+    ])
+
+    /* offer-once-then-silent: no second offer later the same day … */
+    at(TUE(9, 42))
+    expect(nudges('learn-offer')).toHaveLength(1)
+    /* … and a confirmed pattern is never re-offered the next day */
+    at(new Date(2026, 5, 10, 9, 40))
+    expect(nudges('learn-offer')).toHaveLength(1)
+  })
+
+  it('"not a rule" records a dismissal and never re-offers', async () => {
+    const gymHistory: MemoryEvent[] = [1, 2, 3].map((d): MemoryEvent => ({
+      id: uid(),
+      ts: TUE(18, 0).getTime() - d * 86_400_000,
+      kind: 'completed',
+      dayKey: addDaysKey(dayKey(TUE(9, 40)), -d),
+      title: 'gym',
+      tag: 'health',
+      plannedMin: 60,
+      startMin: 18 * 60,
+      endMin: 19 * 60,
+    }))
+    const offer = await offerFrom(gymHistory)
+    expect(offer).toBeDefined()
+    expect(offer.body).toMatch(/gym/i)
+
+    act(offer, 'dismiss')
+    expect(dismissedMatchesFrom(useMew.getState().memory)).toContain('gym')
+    expect(confirmedRulesFrom(useMew.getState().memory)).toHaveLength(0)
+
+    /* the next day the dismissed pattern stays silent — still just the one offer */
+    at(new Date(2026, 5, 10, 9, 40))
+    expect(nudges('learn-offer').filter((m) => m.payload?.match === 'gym')).toHaveLength(1)
+  })
+
+  it('confirmed rules survive a restart (the local-memory floor)', async () => {
+    const offer = await offerFrom(deckHistory())
+    act(offer, 'confirm')
+
+    /* reload: fresh store state, same storage — the confirmed rule persisted */
+    useMew.setState(
+      { ...pristine, lastTickDay: dayKey(TUE(9, 41)), nowMs: TUE(9, 41).getTime() },
+      true
+    )
+    await useMew.getState().hydrate()
+    expect(confirmedRulesFrom(useMew.getState().memory)).toEqual([
+      expect.objectContaining({ match: 'the deck', durationMin: 90, window: 'morning' }),
+    ])
+  })
+
+  it('a confirmed rule ingests to gbrain as a page when a brain is on', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().updateSettings({ brainEnabled: true })
+    await settle()
+    useMew.setState({ memory: deckHistory() })
+    at(TUE(9, 41))
+    const offer = lastNudge('learn-offer')
+    expect(offer).toBeDefined()
+
+    act(offer, 'confirm')
+    await settle()
+    expect(brainFake.ingests.map((p) => p.slug)).toContain('rule/the-deck')
+  })
+})
+
+describe('memory console edits (#330) — through the real store', () => {
+  const RULE = {
+    match: 'console deck',
+    durationMin: 90,
+    tag: 'work' as const,
+    window: 'morning' as const,
+    stated: 'Console deck — learned from what you do',
+  }
+
+  it('confirms a task rule: it applies (confirmedRulesFrom) and persists', async () => {
+    await fresh(TUE(9, 40))
+    expect(confirmedRulesFrom(useMew.getState().memory).some((r) => r.match === RULE.match)).toBe(
+      false
+    )
+    useMew.getState().confirmTaskRule(RULE)
+    expect(confirmedRulesFrom(useMew.getState().memory).some((r) => r.match === RULE.match)).toBe(
+      true
+    )
+    /* persisted to storage — a learned_rule event for this match landed */
+    const persisted = [...fakeDb.memory.values()] as MemoryEvent[]
+    expect(persisted.some((e) => e.kind === 'learned_rule' && e.rule?.match === RULE.match)).toBe(
+      true
+    )
+  })
+
+  it('forgets a rule: it stops applying, is removed from ingest, and will not re-learn at once', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().confirmTaskRule(RULE)
+    useMew.getState().forgetRule(RULE.match)
+
+    const mem = useMew.getState().memory
+    // stops applying — gone from the resolver's confirmed set
+    expect(confirmedRulesFrom(mem).some((r) => r.match === RULE.match)).toBe(false)
+    // removed from ingest — the learned_rule event itself is deleted, in state and storage
+    expect(mem.some((e) => e.kind === 'learned_rule' && e.rule?.match === RULE.match)).toBe(false)
+    expect(
+      [...fakeDb.memory.values()].some(
+        (e) =>
+          (e as MemoryEvent).kind === 'learned_rule' &&
+          (e as MemoryEvent).rule?.match === RULE.match
+      )
+    ).toBe(false)
+    // won't instantly re-learn — the dismissal is recorded
+    expect(dismissedMatchesFrom(mem)).toContain(RULE.match)
+  })
+
+  it('re-enables a forgotten pattern: the dismissal is dropped so it can be offered again', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().confirmTaskRule(RULE)
+    useMew.getState().forgetRule(RULE.match)
+    expect(dismissedMatchesFrom(useMew.getState().memory)).toContain(RULE.match)
+
+    useMew.getState().reEnableRule(RULE.match)
+    expect(dismissedMatchesFrom(useMew.getState().memory)).not.toContain(RULE.match)
+  })
+
+  it('saves and forgets a standing rule through the local rulebook', async () => {
+    await fresh(TUE(9, 40))
+    const pref = {
+      kind: 'time-default' as const,
+      match: 'console gym',
+      value: 'starts 07:00',
+      stated: 'console gym at 7am',
+    }
+    useMew.getState().saveStandingPref(pref)
+    expect(
+      activePrefsFrom(useMew.getState().memory, null).some((p) => p.match === pref.match)
+    ).toBe(true)
+
+    useMew.getState().forgetStandingPref(pref)
+    expect(
+      activePrefsFrom(useMew.getState().memory, null).some((p) => p.match === pref.match)
+    ).toBe(false)
+    expect(
+      [...fakeDb.memory.values()].some(
+        (e) =>
+          (e as MemoryEvent).kind === 'preference' && (e as MemoryEvent).pref?.match === pref.match
+      )
+    ).toBe(false)
+  })
+})
+
+/* ── #325 — reshape without flailing: a correction is one acknowledgment + one
+   reshape sweep. MEW_VOICE asks the model for this; the store enforces it as
+   the net for when the model ignores the voice (the live bug: five "you're
+   right" messages + repeated find_slot — Dinner to move ONE block). Two
+   guardrails, both turn-scoped: a read-only slot query for the same target
+   collapses to one call, and a chain of standalone apology rows collapses to
+   one. Composes with meal-sanity (#323) and collision-drift (#324) — the
+   reshape still lands. */
+describe('reshape without flailing (#325)', () => {
+  const toolCards = () => chat().filter((m) => m.role === 'tool')
+  const mewRows = () => chat().filter((m) => m.role === 'mew')
+  const dinnerToday = () =>
+    useMew.getState().blocks.find((b) => /Dinner/.test(b.title) && b.dayKey === dayKey(TUE(0)))
+
+  it('isAcknowledgmentOnly flags grovel but never the fix line (the classifier)', () => {
+    for (const yes of [
+      "you're right",
+      "You're right.",
+      "**you're absolutely right**",
+      'Fair point.',
+      'good catch!',
+      'my apologies',
+      'sorry about that',
+      'oops — sorry',
+      "you're right, fair point, good catch",
+      "and sorry, you're right",
+    ])
+      expect(isAcknowledgmentOnly(yes)).toBe(true)
+
+    for (const no of [
+      "moved dinner to 20:00 — here's the evening",
+      "you're right — moved it to 20:00",
+      "sorry, I can't see that yet",
+      'done — thursday 9:00 to 12:00 is held for the deck',
+      'all set.',
+      '',
+      'first — ',
+    ])
+      expect(isAcknowledgmentOnly(no)).toBe(false)
+  })
+
+  it('per-turn dedup: an identical read-only slot query collapses to one call and one card', async () => {
+    await fresh(TUE(8, 0)) // pre-ritual: no scaffold slot-finds of its own (#299)
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+    const seen: string[] = []
+    scriptedModel.chunks = ['looking.']
+    scriptedModel.midTurn = (exec) => {
+      seen.push(exec.suggestSlots('Dinner', 'private', 45)) // runs
+      seen.push(exec.suggestSlots('Dinner', 'private', 45)) // identical → cached
+      seen.push(exec.suggestSlots('Dinner', 'private', 90)) // different duration → runs
+      seen.push(exec.findSlot(45, 0)) // different tool → runs
+      seen.push(exec.findSlot(45, 0)) // identical → cached
+    }
+    await say('find dinner a slot')
+
+    // two distinct suggest_slots questions ran (45 once, 90 once); the repeat did not
+    expect(toolCards().filter((m) => m.tool?.name === 'suggestSlots')).toHaveLength(2)
+    // find_slot for the same window ran exactly once
+    expect(toolCards().filter((m) => m.tool?.name === 'findSlot')).toHaveLength(1)
+    // the collapsed calls returned the first answer verbatim — the executor already had it
+    expect(seen[1]).toBe(seen[0])
+    expect(seen[4]).toBe(seen[3])
+  })
+
+  it('a flailed correction lands as one acknowledgment + one reshape (the live-bug transcript)', async () => {
+    await fresh(TUE(8, 0))
+    useMew.getState().updateSettings({ modelLocation: 'local' })
+
+    // a dinner block to correct, placed in an ordinary prior turn (stated time,
+    // so meal-sanity keeps it — #323)
+    scriptedModel.chunks = ['ok.']
+    scriptedModel.midTurn = (exec) =>
+      exec.plan(
+        [
+          {
+            title: 'Dinner',
+            tag: 'private',
+            dayOffset: 0,
+            startMin: 19 * 60,
+            startStated: true,
+            durationMin: 45,
+          },
+        ],
+        []
+      )
+    await say('dinner at 7')
+    scriptedModel.reset()
+
+    // the correction turn: the model grovels ("you're right / fair point / good
+    // catch") AND re-asks suggest_slots for the same target three times before
+    // it finally reshapes. The store must cap it at ≤1 ack row, ≤1 slot-find,
+    // and one move — then done.
+    scriptedModel.steps = [
+      { text: "you're right — " },
+      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // first: runs
+      { text: 'fair point, ' },
+      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
+      { text: "you're right again, " },
+      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
+      { text: 'good catch. ' },
+      { tool: (e) => e.move('Dinner', 0, 20 * 60) }, // the ONE reshape sweep
+      { text: 'all set.' },
+    ]
+    await say('align dinner better — it should be at 8')
+    await settle()
+
+    // ≤1 apology line survived: the grovel chain collapsed to a single ack
+    expect(mewRows().filter((m) => isAcknowledgmentOnly(m.body))).toHaveLength(1)
+    // ≤1 slot-find per target this turn: the repeated suggest_slots collapsed
+    expect(toolCards().filter((m) => m.tool?.name === 'suggestSlots')).toHaveLength(1)
+    // the reshape is one sweep and it lands (composes with #323/#324)
+    const moves = toolCards().filter((m) => m.tool?.name === 'move')
+    expect(moves).toHaveLength(1)
+    expect(moves[0].tool!.state).toBe('done')
+    expect(dinnerToday()?.startMin).toBe(20 * 60)
+  })
+})
+
+/* #346 — weekly review + roll-forward. The whole ritual driven through the REAL
+   store: the read-only presenter sees the right carried set, roll-forward moves
+   ONLY owner-selected flexible blocks through the executor (mews/external/fixed
+   refused at the gate, pinned both ways), and the once-a-week offer dedupes.
+   Positive voice pinned throughout — no shame or streak vocabulary. */
+describe('#346 — weekly review + roll-forward', () => {
+  /* Friday, June 12 2026 — the same seeded week (June 8 Monday). Friday is the
+     review offer's window. */
+  const FRI = (h: number, m = 0) => new Date(2026, 5, 12, h, m)
+
+  const blk = (over: Partial<Block>): Block => ({
+    id: uid(),
+    title: 'X',
+    tag: 'work',
+    dayKey: '2026-06-10',
+    startMin: 9 * 60,
+    endMin: 10 * 60,
+    protected: true,
+    status: 'open',
+    calendarRefs: [],
+    estimateSource: 'user',
+    ...over,
+  })
+
+  it('presenter sees own+flexible carried; roll-forward moves ONLY selected, via the executor', async () => {
+    await fresh(FRI(10)) // before the wrap → no auto-offer to muddy this
+    const wk = weekKey(FRI(10)) // 2026-06-08
+    const target = addDaysKey(wk, 7) // 2026-06-15 (next Monday)
+
+    const mew = blk({ title: 'Q3 deck', tag: 'work', dayKey: '2026-06-08', status: 'done' })
+    const carryWork = blk({ title: 'Roadmap draft', tag: 'work', dayKey: '2026-06-10' })
+    const carryGym = blk({ title: 'Gym', tag: 'private', dayKey: '2026-06-11' })
+    const ext = blk({
+      title: 'Product sync',
+      dayKey: '2026-06-10',
+      external: { calId: 'c', eventId: 'e' },
+    })
+    const fixed = blk({ title: 'Interview with Dana', tag: 'work', dayKey: '2026-06-12' })
+    useMew.setState({ blocks: [mew, carryWork, carryGym, ext, fixed] })
+
+    // the read-only presenter: carried = own+flexible+open only; mews celebrated
+    const review = useMew.getState().openWeeklyReview()
+    expect([...review.carried.map((b) => b.id)].sort()).toEqual([carryGym.id, carryWork.id].sort())
+    expect(review.mews.map((b) => b.id)).toEqual([mew.id])
+    expect(useMew.getState().weeklyReviewOpen).toBe(true)
+
+    // the owner selects ONE flexible block — and (adversarially) also hands in a
+    // mew id and an external id, which the gate MUST refuse.
+    useMew.getState().rollForward([carryWork.id, mew.id, ext.id], target)
+
+    const after = useMew.getState().blocks
+    const targetDays = new Set(Array.from({ length: 7 }, (_, i) => addDaysKey(target, i)))
+    const inTarget = (title: string) =>
+      after.some(
+        (b) =>
+          b.status === 'open' && targetDays.has(b.dayKey) && b.title.split('—')[0].trim() === title
+      )
+
+    expect(inTarget('Roadmap draft')).toBe(true) // the selected flexible block rolled
+    expect(inTarget('Product sync')).toBe(false) // external refused — never moved
+    expect(inTarget('Q3 deck')).toBe(false) // a mew is history, refused
+    expect(inTarget('Gym')).toBe(false) // not selected — stays put
+    // the external event itself never moved
+    expect(after.find((b) => b.id === ext.id)?.dayKey).toBe('2026-06-10')
+
+    // it went THROUGH the executor: a plan tool card records the roll
+    expect(chat().some((m) => m.role === 'tool' && m.tool?.name === 'plan')).toBe(true)
+    // positive voice: the confirmation celebrates, never shames
+    const confirm = chat().find((m) => /Rolled forward/.test(m.body))
+    expect(confirm).toBeTruthy()
+    expect(confirm!.body).not.toMatch(/\b(missed|failed|behind|overdue|streak|broke|broken)\b/i)
+  })
+
+  it('roll-forward refuses to move anything when nothing selectable is passed', async () => {
+    await fresh(FRI(10))
+    const target = addDaysKey(weekKey(FRI(10)), 7)
+    const mew = blk({ title: 'Q3 deck', dayKey: '2026-06-08', status: 'done' })
+    const ext = blk({ title: 'Sync', dayKey: '2026-06-10', external: { calId: 'c', eventId: 'e' } })
+    useMew.setState({ blocks: [mew, ext] })
+    const before = useMew.getState().blocks.length
+    useMew.getState().rollForward([mew.id, ext.id, 'ghost-id'], target) // all illegitimate
+    expect(useMew.getState().blocks).toHaveLength(before) // nothing placed, nothing moved
+  })
+
+  it('offers the weekly review once per ISO week, only from Friday evening (deduped)', async () => {
+    await fresh(FRI(10))
+    useMew.setState({
+      blocks: [
+        blk({ title: 'Q3 deck', dayKey: '2026-06-08', status: 'done' }),
+        blk({ title: 'Roadmap draft', dayKey: '2026-06-10', status: 'open' }),
+      ],
+    })
+    const offers = () => chat().filter((m) => m.nudgeType === 'weekly-review')
+
+    at(FRI(10)) // Friday morning, before the wrap → silent
+    expect(offers()).toHaveLength(0)
+
+    at(FRI(17, 35)) // Friday evening → the offer fires, exactly once
+    expect(offers()).toHaveLength(1)
+
+    at(FRI(18))
+    at(FRI(19, 30)) // re-ticks add nothing — once per ISO week
+    expect(offers()).toHaveLength(1)
+
+    // positive voice + it opens the review, it doesn't roll anything itself
+    expect(offers()[0].body).not.toMatch(/\b(missed|failed|behind|overdue|streak|broke|broken)\b/i)
+    const openAction = offers()[0].actions?.find((a) => a.id === 'open')
+    expect(openAction).toBeTruthy()
+    act(offers()[0], 'open')
+    expect(useMew.getState().weeklyReviewOpen).toBe(true)
+  })
+})
+
+/* ── quick-capture inbox (#348) ───────────────────────────────────────
+   The inbox holds intents that hold NO time; gbrain OFFERS a fitting slot the
+   owner confirms; placement routes through the executor — never auto-scheduled.
+   Driven through the REAL store on the keyless floor. */
+describe('quick-capture inbox (#348)', () => {
+  it('capture adds a WAITING item that holds no grid time (no auto-schedule)', async () => {
+    await fresh(TUE(9, 40))
+    const blocksBefore = useMew.getState().blocks.length
+    const res = useMew.getState().capture('call the bank')
+    expect(res.kind).toBe('open')
+    const item = useMew.getState().captures.find((c) => c.title === 'call the bank')!
+    expect(item.status).toBe('open')
+    // holds NO time: the week is untouched — no block, no slot consumed
+    expect(useMew.getState().blocks.length).toBe(blocksBefore)
+    expect(useMew.getState().blocks.some((b) => b.title === 'call the bank')).toBe(false)
+  })
+
+  it('a fitting slot triggers an OFFER the owner confirms → the executor places it', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().capture('call the bank')
+    const blocksBefore = useMew.getState().blocks.length
+    // gbrain OFFERS — a nudge with confirm/dismiss chips, NOT a placement
+    useMew.getState().offerNextInboxPlacement()
+    const offer = lastNudge('inbox-offer')!
+    expect(offer).toBeTruthy()
+    expect(offer.actions?.map((a) => a.id)).toEqual(['place', 'notnow'])
+    // the offer alone schedules NOTHING (human-in-the-loop, never auto)
+    expect(useMew.getState().blocks.length).toBe(blocksBefore)
+    // the owner CONFIRMS → the executor places it, and the item becomes a block
+    act(offer, 'place')
+    expect(useMew.getState().blocks.length).toBe(blocksBefore + 1)
+    const placed = useMew.getState().captures.find((c) => c.title === 'call the bank')!
+    expect(placed.status).toBe('placed')
+    expect(placed.placedBlockId).toBeTruthy()
+    expect(useMew.getState().blocks.some((b) => b.id === placed.placedBlockId)).toBe(true)
+  })
+
+  it('placeFromInbox routes through the executor, sized by the duration hint', async () => {
+    await fresh(TUE(9, 40))
+    const res = useMew.getState().capture('email the printer repair', { durationMin: 45 })
+    const id = res.item!.id
+    const offer = useMew
+      .getState()
+      .inboxOffers()
+      .find((o) => o.itemId === id)!
+    expect(offer.durationMin).toBe(45)
+    const ok = useMew.getState().placeFromInbox(id, offer)
+    expect(ok).toBe(true)
+    const placed = useMew.getState().captures.find((c) => c.id === id)!
+    expect(placed.status).toBe('placed')
+    const block = useMew.getState().blocks.find((b) => b.id === placed.placedBlockId)!
+    expect(block.endMin - block.startMin).toBe(45)
+  })
+
+  it('“not now” keeps the item WAITING and dedupes the offer for the day', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().capture('call the bank')
+    useMew.getState().offerNextInboxPlacement()
+    const offer = lastNudge('inbox-offer')!
+    act(offer, 'notnow')
+    const item = useMew.getState().captures.find((c) => c.title === 'call the bank')!
+    expect(item.status).toBe('open') // still waiting — the intent is never lost
+    expect(item.lastOfferedDay).toBe(dayKey(TUE(9, 40)))
+    const before = nudges('inbox-offer').length
+    // a second pass the same day offers nothing new (offer-once per item/day)
+    useMew.getState().offerNextInboxPlacement()
+    expect(nudges('inbox-offer').length).toBe(before)
+  })
+
+  it('captures persist across a reload (local-first, keyless)', async () => {
+    await fresh(TUE(9, 40))
+    useMew.getState().capture('water the plants', { tag: 'private' })
+    await settle()
+    // reload: drop in-memory captures, re-hydrate from on-device storage
+    useMew.setState({ captures: [] })
+    await useMew.getState().hydrate()
+    const item = useMew.getState().captures.find((c) => c.title === 'water the plants')
+    expect(item).toBeTruthy()
+    expect(item!.status).toBe('open')
+    expect(item!.tag).toBe('private')
+  })
+
+  it('capture + the offer work with NO key (the keyless floor)', async () => {
+    await fresh(TUE(9, 40))
+    expect(useMew.getState().settings.anthropicKey).toBe('') // no key, no brain
+    useMew.getState().capture('call the bank')
+    useMew.getState().offerNextInboxPlacement()
+    expect(lastNudge('inbox-offer')).toBeTruthy()
+  })
+
+  it('captures via chat lead-ins — “add X to my list” / “remind me to X”', async () => {
+    await fresh(TUE(9, 40))
+    const blocksBefore = useMew.getState().blocks.length
+    await say('add milk to my list')
+    await settle()
+    await say('remind me to call the plumber')
+    await settle()
+    const titles = useMew.getState().captures.map((c) => c.title)
+    expect(titles).toContain('milk')
+    expect(titles).toContain('call the plumber')
+    // chat capture also holds no time — nothing landed on the grid
+    expect(useMew.getState().blocks.length).toBe(blocksBefore)
   })
 })

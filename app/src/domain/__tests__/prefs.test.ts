@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { applyPrefs, flexOverride, matchesPref, parseDurationValue, parseTimeValue } from '../prefs'
+import {
+  batchAdminRule,
+  deepWorkAnytime,
+  flexOverride,
+  matchesPref,
+  parseDurationValue,
+  parseTimeValue,
+  resolveTaskSpec,
+  type LearnedRule,
+  type TaskSpec,
+} from '../prefs'
 import type { PrefPayload } from '../types'
 
 const pref = (over: Partial<PrefPayload>): PrefPayload => ({
@@ -41,36 +51,162 @@ describe('value parsing', () => {
   })
 })
 
-describe('applyPrefs — rules fill defaults, explicit always wins', () => {
+describe('resolveTaskSpec — stated rules fill defaults, explicit always wins', () => {
   const timePref = pref({ kind: 'time-default', value: 'starts 07:00' })
   const durPref = pref({ kind: 'duration-default', match: 'deploy', value: '45m' })
 
   it('fills a missing start from a time-default', () => {
-    const { spec, applied } = applyPrefs({ title: 'gym' }, [timePref])
+    const { spec, applied } = resolveTaskSpec('gym', {}, [timePref])
     expect(spec.startMin).toBe(420)
     expect(applied).toEqual([timePref])
   })
 
   it('never touches an explicit start — even against the user’s own rule', () => {
-    const { spec, applied } = applyPrefs({ title: 'gym', startMin: 18 * 60 }, [timePref])
+    const { spec, applied } = resolveTaskSpec('gym', { startMin: 18 * 60 }, [timePref])
     expect(spec.startMin).toBe(18 * 60)
     expect(applied).toHaveLength(0)
   })
 
   it('fills duration; leaves stated durations and end-bounded specs alone', () => {
-    expect(applyPrefs({ title: 'deploy api' }, [durPref]).spec.durationMin).toBe(45)
-    expect(applyPrefs({ title: 'deploy api', durationMin: 90 }, [durPref]).spec.durationMin).toBe(
-      90
-    )
+    expect(resolveTaskSpec('deploy api', {}, [durPref]).spec.durationMin).toBe(45)
+    expect(resolveTaskSpec('deploy api', { durationMin: 90 }, [durPref]).spec.durationMin).toBe(90)
     expect(
-      applyPrefs({ title: 'deploy api', startMin: 600, endMin: 660 }, [durPref]).spec.durationMin
+      resolveTaskSpec('deploy api', { startMin: 600, endMin: 660 }, [durPref]).spec.durationMin
     ).toBeUndefined()
   })
 
-  it('non-matching rules are inert', () => {
-    const { spec, applied } = applyPrefs({ title: 'standup' }, [timePref, durPref])
-    expect(spec).toEqual({ title: 'standup' })
+  it('non-matching rules are inert — the spec is returned untouched', () => {
+    const { spec, applied, learned, credit } = resolveTaskSpec('standup', {}, [timePref, durPref])
+    expect(spec).toEqual({})
     expect(applied).toHaveLength(0)
+    expect(learned).toBeNull()
+    expect(credit).toBeNull()
+  })
+})
+
+describe('resolveTaskSpec — a confirmed rule prefills the FULL spec (#328)', () => {
+  const deckRule: LearnedRule = {
+    match: 'deck',
+    durationMin: 90,
+    tag: 'work',
+    window: 'morning',
+    attention: 'focus',
+    protected: true,
+    stated: 'the deck is 90-min deep work in the morning',
+  }
+
+  it('fills duration + tag + firm window + attention + protected when all unstated', () => {
+    const r = resolveTaskSpec('deck', {}, [], undefined, [deckRule])
+    expect(r.spec.durationMin).toBe(90)
+    expect(r.spec.tag).toBe('work')
+    expect(r.spec.window).toBe('morning')
+    expect(r.spec.windowFirm).toBe(true) // a confirmed window is FIRM, not a nudge
+    expect(r.spec.attention).toBe('focus')
+    expect(r.spec.protected).toBe(true)
+    expect(r.learned).toBe(deckRule)
+  })
+
+  it('the reply names what memory filled, once', () => {
+    // deep work (work tag, ≥60m) + the confirmed morning window
+    expect(resolveTaskSpec('deck', {}, [], undefined, [deckRule]).credit).toBe(
+      'deep work, your usual morning'
+    )
+    // a rule that only pins the window credits only that
+    expect(
+      resolveTaskSpec('walk', {}, [], undefined, [{ match: 'walk', window: 'evening' }]).credit
+    ).toBe('your usual evening')
+    // a short work block is not "deep work"
+    expect(
+      resolveTaskSpec('standup', {}, [], undefined, [
+        { match: 'standup', tag: 'work', window: 'morning' },
+      ]).credit
+    ).toBe('your usual morning')
+  })
+
+  it('explicit words THIS TURN win over the confirmed rule, field by field', () => {
+    const spec: TaskSpec = {
+      startMin: 15 * 60,
+      endMin: 15 * 60 + 30, // an explicit 30-min block at 3pm
+      tag: 'private',
+      attention: 'background',
+      protected: false,
+    }
+    const r = resolveTaskSpec('deck', spec, [], undefined, [deckRule])
+    expect(r.spec.durationMin).toBeUndefined() // end-bounded ⇒ explicit duration, rule stays out
+    expect(r.spec.tag).toBe('private')
+    expect(r.spec.attention).toBe('background')
+    expect(r.spec.protected).toBe(false)
+    expect(r.spec.window).toBeUndefined() // the user pinned an exact time; no firm window imposed
+  })
+
+  it('a stated PrefPayload outranks a learned rule for the same field', () => {
+    const durPref = pref({ kind: 'duration-default', match: 'deck', value: '30m' })
+    const r = resolveTaskSpec('deck', {}, [durPref], undefined, [deckRule])
+    expect(r.spec.durationMin).toBe(30) // the user's stated 30m beats the learned 90m
+    expect(r.applied).toEqual([durPref])
+    expect(r.spec.window).toBe('morning') // other fields still fill from the learned rule
+  })
+})
+
+describe('duration precedence — explicit > stated rule > learned rule > your usual > the floor', () => {
+  const HIST = new Map([['interview prep', { median: 40, n: 3 }]])
+  const durPref = pref({ kind: 'duration-default', match: 'interview prep', value: '45m' })
+  const durRule: LearnedRule = { match: 'interview prep', durationMin: 75 }
+
+  it('level 1 — an explicit duration silences everything below it', () => {
+    const r = resolveTaskSpec('Interview prep', { durationMin: 90 }, [durPref], HIST, [durRule])
+    expect(r.spec.durationMin).toBe(90)
+    expect(r.applied).toHaveLength(0)
+    expect(r.usual).toBeNull()
+  })
+
+  it('level 2a — a stated rule outranks a learned rule and history', () => {
+    const r = resolveTaskSpec('Interview prep', {}, [durPref], HIST, [durRule])
+    expect(r.spec.durationMin).toBe(45)
+    expect(r.applied).toEqual([durPref])
+    expect(r.usual).toBeNull()
+  })
+
+  it('level 2b — a learned rule outranks history', () => {
+    const r = resolveTaskSpec('Interview prep', {}, [], HIST, [durRule])
+    expect(r.spec.durationMin).toBe(75)
+    expect(r.usual).toBeNull()
+  })
+
+  it('level 3 — with no rule, the real median sizes the block and is credited', () => {
+    const r = resolveTaskSpec('Interview prep — Mira', {}, [], HIST)
+    expect(r.spec.durationMin).toBe(40)
+    expect(r.usual).toEqual({ median: 40, n: 3 })
+  })
+
+  it('level 4 — no signal anywhere leaves the field for the 60-min floor downstream', () => {
+    const r = resolveTaskSpec('Brand new thing', {}, [], HIST)
+    expect(r.spec.durationMin).toBeUndefined()
+    expect(r.usual).toBeNull()
+  })
+
+  it('an explicit end time is an explicit duration — rules and history stay out', () => {
+    const r = resolveTaskSpec('Interview prep', { startMin: 540, endMin: 600 }, [], HIST, [durRule])
+    expect(r.spec.durationMin).toBeUndefined()
+    expect(r.usual).toBeNull()
+  })
+
+  it('n<3 means no map entry means clean fall-through', () => {
+    const r = resolveTaskSpec('Interview prep', {}, [], new Map())
+    expect(r.spec.durationMin).toBeUndefined()
+    expect(r.usual).toBeNull()
+  })
+})
+
+describe('resolveTaskSpec — no rule + no history is byte-identical to the input spec', () => {
+  it('returns the spec untouched with empty/ null metadata', () => {
+    const spec: TaskSpec = { startMin: 9 * 60, durationMin: 60, tag: 'work' }
+    const r = resolveTaskSpec('Brand new thing', spec, [], new Map(), [])
+    expect(r.spec).toEqual(spec)
+    expect(r.applied).toEqual([])
+    expect(r.usual).toBeNull()
+    expect(r.learned).toBeNull()
+    expect(r.credit).toBeNull()
   })
 })
 
@@ -95,45 +231,32 @@ describe('flexOverride — the user’s rule outranks the word heuristic', () =>
   })
 })
 
-describe('duration precedence — explicit > rule > your usual > the floor', () => {
-  const HIST = new Map([['interview prep', { median: 40, n: 3 }]])
-  const durPref = pref({ kind: 'duration-default', match: 'interview prep', value: '45m' })
-
-  it('level 1 — an explicit duration silences everything below it', () => {
-    const r = applyPrefs({ title: 'Interview prep', durationMin: 90 }, [durPref], HIST)
-    expect(r.spec.durationMin).toBe(90)
-    expect(r.applied).toHaveLength(0)
-    expect(r.usual).toBeNull()
+describe('energy-fit standing rules (#321) — stated word outranks the learned profile', () => {
+  const p = (over: Partial<PrefPayload>): PrefPayload => ({
+    kind: 'fact',
+    match: '',
+    value: '',
+    stated: '',
+    ...over,
   })
 
-  it('level 2 — the stored rule outranks history', () => {
-    const r = applyPrefs({ title: 'Interview prep' }, [durPref], HIST)
-    expect(r.spec.durationMin).toBe(45)
-    expect(r.applied).toEqual([durPref])
-    expect(r.usual).toBeNull()
+  it('deepWorkAnytime recognizes the canonical "deep work → anytime" flexibility rule', () => {
+    expect(
+      deepWorkAnytime([p({ kind: 'flexibility', match: 'deep work', value: 'anytime' })])
+    ).toBe(true)
+    // unrelated flexibility rules do not trip it
+    expect(deepWorkAnytime([p({ kind: 'flexibility', match: 'gym', value: 'never moves' })])).toBe(
+      false
+    )
+    expect(deepWorkAnytime([])).toBe(false)
   })
 
-  it('level 3 — with no rule, the real median sizes the block and is credited', () => {
-    const r = applyPrefs({ title: 'Interview prep — Mira' }, [], HIST)
-    expect(r.spec.durationMin).toBe(40)
-    expect(r.usual).toEqual({ median: 40, n: 3 })
-  })
-
-  it('level 4 — no signal anywhere leaves the field for the 60-min floor downstream', () => {
-    const r = applyPrefs({ title: 'Brand new thing' }, [], HIST)
-    expect(r.spec.durationMin).toBeUndefined()
-    expect(r.usual).toBeNull()
-  })
-
-  it('an explicit end time is an explicit duration — history stays out', () => {
-    const r = applyPrefs({ title: 'Interview prep', startMin: 540, endMin: 600 }, [], HIST)
-    expect(r.spec.durationMin).toBeUndefined()
-    expect(r.usual).toBeNull()
-  })
-
-  it('n<3 means no map entry means clean fall-through', () => {
-    const r = applyPrefs({ title: 'Interview prep' }, [], new Map())
-    expect(r.spec.durationMin).toBeUndefined()
-    expect(r.usual).toBeNull()
+  it('batchAdminRule recognizes the canonical "admin → batch" ordering rule', () => {
+    expect(batchAdminRule([p({ kind: 'ordering', match: 'admin', value: 'batch' })])).toBe(true)
+    // an ordinary ordering rule is not a batch instruction
+    expect(
+      batchAdminRule([p({ kind: 'ordering', match: 'review', value: 'before standup' })])
+    ).toBe(false)
+    expect(batchAdminRule([])).toBe(false)
   })
 })

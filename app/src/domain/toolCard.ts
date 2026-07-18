@@ -41,6 +41,13 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? clip(v) : undefined
 }
 
+/** A block-title target, but never a #320 referent sentinel ("@referent",
+    "@after:lunch"): those degrade to the bare verb ("moving it"), which reads
+    right for a referent and keeps the raw sentinel off the card. */
+function namedTarget(v: unknown): string | undefined {
+  return typeof v === 'string' && v.startsWith('@') ? undefined : str(v)
+}
+
 function int(v: unknown): number | undefined {
   return typeof v === 'number' && Number.isFinite(v) ? Math.floor(v) : undefined
 }
@@ -94,12 +101,16 @@ const BASE_VERB: Record<string, string> = {
   clear: 'clearing the time',
   edit: 'reshaping it',
   remove: 'taking it off',
+  listBlocks: 'listing your blocks',
   analyze: 'reading the day',
   findSlot: 'finding a slot',
   suggestSlots: 'finding a slot',
   queryBrain: 'checking what I know',
   remember: 'remembering that',
   undoLast: 'putting it back',
+  resize: 'resizing it',
+  duplicate: 'duplicating it',
+  relativeMove: 'nudging it',
 }
 
 /* One formatter per tool — variation as data: a new tool is a new row here,
@@ -117,9 +128,9 @@ const FORMATTERS: Record<string, (a: Record<string, unknown>) => ToolCardLabel> 
     const more = places.length > 1 ? ` +${places.length - 1} more` : ''
     return { verb: BASE_VERB.plan, target: where ? `${where}${more}` : undefined }
   },
-  complete: (a) => ({ verb: BASE_VERB.complete, target: str(a.query) }),
+  complete: (a) => ({ verb: BASE_VERB.complete, target: namedTarget(a.query) }),
   move: (a) => {
-    const what = str(a.query)
+    const what = namedTarget(a.query)
     const day = dayWord(a.toDayOffset, a.todayKey)
     const at = time(a.toStartMin)
     const to = [day, at].filter(Boolean).join(' ')
@@ -130,8 +141,12 @@ const FORMATTERS: Record<string, (a: Record<string, unknown>) => ToolCardLabel> 
     verb: BASE_VERB.clear,
     target: typeof a.scope === 'string' ? CLEAR_SCOPE[a.scope] : undefined,
   }),
-  edit: (a) => ({ verb: BASE_VERB.edit, target: str(a.query) }),
-  remove: (a) => ({ verb: BASE_VERB.remove, target: str(a.query) }),
+  edit: (a) => ({ verb: BASE_VERB.edit, target: namedTarget(a.query) }),
+  remove: (a) => ({ verb: BASE_VERB.remove, target: namedTarget(a.query) }),
+  listBlocks: (a) => ({
+    verb: BASE_VERB.listBlocks,
+    target: a.day === 'week' ? 'the week' : dayWord(a.day ?? 0, a.todayKey),
+  }),
   analyze: (a) => ({ verb: BASE_VERB.analyze, target: dayWord(a.dayOffset ?? 0, a.todayKey) }),
   findSlot: (a) => {
     const dur = int(a.durationMin)
@@ -154,6 +169,15 @@ const FORMATTERS: Record<string, (a: Record<string, unknown>) => ToolCardLabel> 
     }
   },
   undoLast: () => ({ verb: BASE_VERB.undoLast }),
+  resize: (a) => ({ verb: BASE_VERB.resize, target: namedTarget(a.query) }),
+  duplicate: (a) => {
+    const what = namedTarget(a.query)
+    const day = dayWord(a.toDayOffset, a.todayKey)
+    const at = time(a.toStartMin)
+    const to = [day, at].filter(Boolean).join(' ')
+    return { verb: BASE_VERB.duplicate, target: what ? (to ? `${what} → ${to}` : what) : undefined }
+  },
+  relativeMove: (a) => ({ verb: BASE_VERB.relativeMove, target: namedTarget(a.query) }),
 }
 
 /** One executor invocation → the card's line. Total: every input shape returns

@@ -51,6 +51,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('analyze')
       return `Day shape (offset ${d}).`
     }),
+    listBlocks: vi.fn((day, tag) => {
+      calls.push('listBlocks')
+      return `here's ${day}${tag ? ` tagged ${tag}` : ''}: - 9:00–10:00 deep work [work]`
+    }),
     findSlot: vi.fn((dur, d, nb, na) => {
       calls.push('findSlot')
       return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
@@ -82,6 +86,22 @@ function mockExec(): ToolExecutor & { calls: string[] } {
     undoLast: vi.fn(() => {
       calls.push('undoLast')
       return `Undone — took back the deck block I'd just placed.`
+    }),
+    resize: vi.fn((q) => {
+      calls.push('resize')
+      return `Updated ${q}.`
+    }),
+    duplicate: vi.fn((q) => {
+      calls.push('duplicate')
+      return `Copied ${q}.`
+    }),
+    relativeMove: vi.fn((q) => {
+      calls.push('relativeMove')
+      return `Moved ${q}.`
+    }),
+    giveRoom: vi.fn((fc) => {
+      calls.push('giveRoom')
+      return `Gave your ${fc} blocks room.`
     }),
   }
 }
@@ -123,7 +143,7 @@ describe('rules adapter — converse', () => {
     const reply = await collect(
       createRulesAdapter(NOW).converse([{ role: 'user', text: 'done with the deck' }], ctx, exec)
     )
-    expect(exec.complete).toHaveBeenCalledWith('deck')
+    expect(exec.complete).toHaveBeenCalledWith('deck', undefined)
     expect(reply).toBe('Marked deck done.')
   })
 
@@ -334,6 +354,27 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
       'prod release',
       { durationMin: 45 },
+      undefined,
+      undefined, // #343: no recurring scope on a plain edit
+    ])
+    /* #334: the name+time handle reaches the executor — edit/move/complete each
+       carry `at` (the target block's start time) so a shared title pins one */
+    await runTool('edit_block', { query: 'release', at: '19:45', title: 'v1.2-rc' }, exec)
+    expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[1]).toEqual([
+      'release',
+      { title: 'v1.2-rc' },
+      '19:45',
+      undefined, // #343: scope absent unless the ask made it explicit
+    ])
+    await runTool('complete_task', { query: 'standup', at: '9am' }, exec)
+    expect(exec.complete).toHaveBeenCalledWith('standup', '9am')
+    await runTool('move_task', { query: 'release', at: '19:45', toDayOffset: 2 }, exec)
+    expect((exec.move as ReturnType<typeof vi.fn>).mock.calls.at(-1)).toEqual([
+      'release',
+      2,
+      undefined,
+      undefined,
+      '19:45',
     ])
     expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe(
       'Removed prod release.'

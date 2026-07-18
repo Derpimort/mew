@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCommand } from '../parse'
+import { extractSeriesScope, parseCommand } from '../parse'
 
 // Tuesday, June 9 2026 — the design's canonical day.
 const NOW = new Date(2026, 5, 9, 9, 40)
@@ -117,6 +117,51 @@ describe('talk-to-schedule parser (the no-key floor)', () => {
     it('"make a plan for tomorrow" is NOT an edit', () => {
       const i = parseCommand('make a plan for tomorrow', NOW)
       expect(i.kind).not.toBe('edit')
+    })
+  })
+
+  describe('name + time targeting and rename (#334 — "check name AND timestamp both")', () => {
+    it('"rename the deck to q3 deck" → edit the title', () => {
+      expect(parseCommand('rename the deck to q3 deck', NOW)).toMatchObject({
+        kind: 'edit',
+        query: 'deck',
+        edit: { title: 'q3 deck' },
+      })
+    })
+
+    it('a name+time rename pins the target with `at`', () => {
+      expect(parseCommand('rename release at 19:45 to v1.2-rc', NOW)).toMatchObject({
+        kind: 'edit',
+        query: 'release',
+        at: '19:45',
+        edit: { title: 'v1.2-rc' },
+      })
+    })
+
+    it('a name+time duration edit pins the target', () => {
+      expect(parseCommand('make the release at 19:45 45 min', NOW)).toMatchObject({
+        kind: 'edit',
+        query: 'release',
+        at: '19:45',
+        edit: { durationMin: 45 },
+      })
+    })
+
+    it('"done with the release at 19:45" pins which one is a mew', () => {
+      expect(parseCommand('done with the release at 19:45', NOW)).toMatchObject({
+        kind: 'complete',
+        query: 'release',
+        at: '19:45',
+      })
+    })
+
+    it('a move reads the target time and the destination separately', () => {
+      expect(parseCommand('move the release at 19:45 to friday', NOW)).toMatchObject({
+        kind: 'move',
+        query: 'release',
+        at: '19:45',
+        toDayKey: '3', // Tue → Fri
+      })
     })
   })
 
@@ -264,5 +309,396 @@ describe('show insights — the read-only ask (#287)', () => {
     expect(parseCommand("how's my week looking?", NOW).kind).toBe('chat')
     /* a real task that merely contains the word still captures */
     expect(parseCommand('write up the insights report', NOW).kind).toBe('capture')
+  })
+})
+
+describe('conversational referents — grammar → sentinel (#320)', () => {
+  it('deictic "it/that/this" with no other noun becomes the @referent sentinel', () => {
+    expect(parseCommand('done with it', NOW)).toMatchObject({
+      kind: 'complete',
+      query: '@referent',
+    })
+    expect(parseCommand('delete that', NOW)).toMatchObject({ kind: 'remove', query: '@referent' })
+    expect(parseCommand('drop that one', NOW)).toMatchObject({ kind: 'remove', query: '@referent' })
+  })
+
+  it('relative time shifts move the referent by signed minutes', () => {
+    expect(parseCommand('move it 30 min earlier', NOW)).toEqual({
+      kind: 'move',
+      query: '@referent',
+      relStartMin: -30,
+    })
+    expect(parseCommand('push it back an hour', NOW)).toEqual({
+      kind: 'move',
+      query: '@referent',
+      relStartMin: 60,
+    })
+    expect(parseCommand('move it half an hour later', NOW)).toMatchObject({ relStartMin: 30 })
+    expect(parseCommand('move the deck 15 min later', NOW)).toEqual({
+      kind: 'move',
+      query: 'deck',
+      relStartMin: 15,
+    })
+  })
+
+  it('a placement verb with a direction word stays a plan, never a relative move', () => {
+    expect(parseCommand('block gym an hour later today', NOW).kind).toBe('plan')
+  })
+
+  it('"make it 45" / "make that 90 min" is an absolute duration on the referent', () => {
+    expect(parseCommand('make it 45', NOW)).toEqual({
+      kind: 'edit',
+      query: '@referent',
+      edit: { durationMin: 45 },
+    })
+    expect(parseCommand('make that 90 min', NOW)).toEqual({
+      kind: 'edit',
+      query: '@referent',
+      edit: { durationMin: 90 },
+    })
+  })
+
+  it('relative durations parse against the referent (longer/shorter/another/by)', () => {
+    expect(parseCommand('make it longer', NOW)).toEqual({
+      kind: 'edit',
+      query: '@referent',
+      edit: { relDurationMin: 15 },
+    })
+    expect(parseCommand('make it shorter', NOW)).toMatchObject({ edit: { relDurationMin: -15 } })
+    expect(parseCommand('give it another 30', NOW)).toEqual({
+      kind: 'edit',
+      query: '@referent',
+      edit: { relDurationMin: 30 },
+    })
+    expect(parseCommand('extend it by an hour', NOW)).toMatchObject({
+      edit: { relDurationMin: 60 },
+    })
+    expect(parseCommand('shorten it by 15', NOW)).toMatchObject({ edit: { relDurationMin: -15 } })
+    expect(parseCommand('make it 45 min longer', NOW)).toMatchObject({
+      edit: { relDurationMin: 45 },
+    })
+  })
+
+  it('positional targets encode as @after/@before/@next/@at sentinels', () => {
+    expect(parseCommand('move the block after lunch to 4pm', NOW)).toEqual({
+      kind: 'move',
+      query: '@after:lunch',
+      toDayKey: undefined,
+      toStartMin: 16 * 60,
+    })
+    expect(parseCommand('move the one before the meeting to 2pm', NOW)).toMatchObject({
+      kind: 'move',
+      query: '@before:meeting',
+      toStartMin: 14 * 60,
+    })
+    expect(parseCommand('move my next block to 3pm', NOW)).toMatchObject({
+      kind: 'move',
+      query: '@next',
+      toStartMin: 15 * 60,
+    })
+    expect(parseCommand('move the 3pm to 4pm', NOW)).toMatchObject({
+      kind: 'move',
+      query: '@at:900',
+      toStartMin: 16 * 60,
+    })
+  })
+
+  it('"start it at 2 instead" retimes the referent to an absolute start', () => {
+    expect(parseCommand('start it at 2 instead', NOW)).toEqual({
+      kind: 'move',
+      query: '@referent',
+      toStartMin: 14 * 60,
+    })
+  })
+
+  it('a NAMED target still resolves the ordinary way (no sentinel, no regression)', () => {
+    expect(parseCommand('make the release 45 mins', NOW)).toEqual({
+      kind: 'edit',
+      query: 'release',
+      edit: { durationMin: 45 },
+    })
+    expect(parseCommand('move the deck to thursday at 9', NOW)).toMatchObject({
+      kind: 'move',
+      query: 'deck',
+    })
+    expect(parseCommand('done with the walk', NOW)).toMatchObject({
+      kind: 'complete',
+      query: 'walk',
+    })
+  })
+})
+
+describe('recurring-edit scope words on the keyless floor (#343)', () => {
+  it('lifts the scope word off the top and strips it from the remainder', () => {
+    expect(extractSeriesScope('remove the gym just this one')).toEqual({
+      scope: 'this',
+      text: 'remove the gym',
+    })
+    expect(extractSeriesScope('standup should be 10:00-10:30 this and following')).toEqual({
+      scope: 'following',
+      text: 'standup should be 10:00-10:30',
+    })
+    expect(extractSeriesScope('drop the gym from now on')).toMatchObject({ scope: 'following' })
+    expect(extractSeriesScope('make the gym 45 min across the whole series')).toMatchObject({
+      scope: 'series',
+    })
+  })
+
+  it('leaves a bare "all" alone — the remove grammar already reads it as the series', () => {
+    expect(extractSeriesScope('remove all the gym').scope).toBeUndefined()
+    expect(extractSeriesScope('block thursday for the deck').scope).toBeUndefined()
+  })
+
+  it('attaches seriesScope to a remove intent, with the scope phrase out of the query', () => {
+    const out = parseCommand('remove the gym just this one', NOW)
+    expect(out).toMatchObject({ kind: 'remove', query: 'gym', seriesScope: 'this' })
+    expect(out.query).not.toMatch(/this one/)
+  })
+
+  it('attaches seriesScope to an edit intent and still parses the edit cleanly', () => {
+    const out = parseCommand('standup should be 10:00-10:30 across the whole series', NOW)
+    expect(out).toMatchObject({
+      kind: 'edit',
+      query: 'standup',
+      seriesScope: 'series',
+      edit: { startMin: 10 * 60, endMin: 10 * 60 + 30 },
+    })
+  })
+
+  it('does not attach a scope to a non-edit/remove ask (only edit/remove carry it)', () => {
+    // "just this one" strips but has nowhere to land on a plan ask — no seriesScope
+    expect(parseCommand('block thursday for the deck', NOW).seriesScope).toBeUndefined()
+  })
+})
+
+describe('granular ops — resize / duplicate / relative-move (#335)', () => {
+  describe('resize (duration-only, keeps the start)', () => {
+    it('"make the deck 30 min longer" → a NAMED relative resize (+30), not an absolute edit', () => {
+      // the bug this fixes: durEdit would drop "longer" and set 30 absolute
+      expect(parseCommand('make the deck 30 min longer', NOW)).toMatchObject({
+        kind: 'resize',
+        query: 'deck',
+        resize: { relDurationMin: 30 },
+      })
+    })
+
+    it('bare "make the deck shorter" defaults to −15', () => {
+      expect(parseCommand('make the deck shorter', NOW)).toMatchObject({
+        kind: 'resize',
+        query: 'deck',
+        resize: { relDurationMin: -15 },
+      })
+    })
+
+    it('"shorten the review by 15" / "extend the standup by 20" → signed relative resize', () => {
+      expect(parseCommand('shorten the review by 15', NOW)).toMatchObject({
+        kind: 'resize',
+        query: 'review',
+        resize: { relDurationMin: -15 },
+      })
+      expect(parseCommand('extend the standup by 20', NOW)).toMatchObject({
+        kind: 'resize',
+        query: 'standup',
+        resize: { relDurationMin: 20 },
+      })
+    })
+
+    it('"resize standup to 45" → an absolute resize', () => {
+      expect(parseCommand('resize standup to 45', NOW)).toMatchObject({
+        kind: 'resize',
+        query: 'standup',
+        resize: { durationMin: 45 },
+      })
+    })
+
+    it('a name+time handle pins which one to resize', () => {
+      expect(parseCommand('make the release at 19:45 30 min longer', NOW)).toMatchObject({
+        kind: 'resize',
+        query: 'release',
+        at: '19:45',
+        resize: { relDurationMin: 30 },
+      })
+    })
+
+    it('a scope word carries through to the resize (recurring)', () => {
+      expect(parseCommand('make the gym 15 min longer across the whole series', NOW)).toMatchObject(
+        {
+          kind: 'resize',
+          query: 'gym',
+          seriesScope: 'series',
+          resize: { relDurationMin: 15 },
+        }
+      )
+    })
+
+    it('no regression: referent "make it longer" and absolute "make the release 45 mins" stay edits', () => {
+      expect(parseCommand('make it longer', NOW).kind).toBe('edit')
+      expect(parseCommand('make the release 45 mins', NOW)).toMatchObject({
+        kind: 'edit',
+        query: 'release',
+        edit: { durationMin: 45 },
+      })
+      // "shorten X to N" is absolute → stays an edit, not a resize-by
+      expect(parseCommand('shorten the deck to 30m', NOW)).toMatchObject({
+        kind: 'edit',
+        edit: { durationMin: 30 },
+      })
+    })
+  })
+
+  describe('duplicate (copy to another day/time)', () => {
+    it('"duplicate the deck to friday" → copy with a day offset (Tue→Fri = 3)', () => {
+      expect(parseCommand('duplicate the deck to friday', NOW)).toMatchObject({
+        kind: 'duplicate',
+        query: 'deck',
+        duplicate: { toDayOffset: 3 },
+      })
+    })
+
+    it('"copy the standup to tomorrow" → toDayOffset 1', () => {
+      expect(parseCommand('copy the standup to tomorrow', NOW)).toMatchObject({
+        kind: 'duplicate',
+        query: 'standup',
+        duplicate: { toDayOffset: 1 },
+      })
+    })
+
+    it('a source name+time and a destination time are read separately', () => {
+      expect(parseCommand('clone the release at 19:45 to monday', NOW)).toMatchObject({
+        kind: 'duplicate',
+        query: 'release',
+        at: '19:45',
+        duplicate: { toDayOffset: 6 }, // Tue → next Mon
+      })
+      expect(parseCommand('duplicate the deck to friday at 9', NOW)).toMatchObject({
+        kind: 'duplicate',
+        query: 'deck',
+        duplicate: { toDayOffset: 3, toStartMin: 9 * 60 },
+      })
+    })
+
+    it('"copy the deck" with no destination carries an empty target (executor auto-places)', () => {
+      const out = parseCommand('copy the deck', NOW)
+      expect(out).toMatchObject({ kind: 'duplicate', query: 'deck' })
+      expect(out.duplicate).toEqual({})
+    })
+
+    it('a referent source works too: "duplicate it to friday"', () => {
+      expect(parseCommand('duplicate it to friday', NOW)).toMatchObject({
+        kind: 'duplicate',
+        query: '@referent',
+        duplicate: { toDayOffset: 3 },
+      })
+    })
+  })
+
+  describe('relative-move (no absolute time)', () => {
+    it('bare "push the deck later" → relmove later (no amount)', () => {
+      expect(parseCommand('push the deck later', NOW)).toMatchObject({
+        kind: 'relmove',
+        query: 'deck',
+        relmove: { direction: 'later' },
+      })
+    })
+
+    it('"move it earlier" → relmove earlier on the referent', () => {
+      expect(parseCommand('move it earlier', NOW)).toMatchObject({
+        kind: 'relmove',
+        query: '@referent',
+        relmove: { direction: 'earlier' },
+      })
+    })
+
+    it('"move the deck to the next free slot" → relmove next_free', () => {
+      expect(parseCommand('move the deck to the next free slot', NOW)).toMatchObject({
+        kind: 'relmove',
+        query: 'deck',
+        relmove: { direction: 'next_free' },
+      })
+    })
+
+    it('"push the deck to the next day" / "bump the report a day later" → relmove next_day', () => {
+      expect(parseCommand('push the deck to the next day', NOW)).toMatchObject({
+        kind: 'relmove',
+        query: 'deck',
+        relmove: { direction: 'next_day' },
+      })
+      expect(parseCommand('bump the report a day later', NOW)).toMatchObject({
+        kind: 'relmove',
+        query: 'report',
+        relmove: { direction: 'next_day' },
+      })
+    })
+
+    it('no regression: an amount keeps it a move, an absolute destination stays a move', () => {
+      expect(parseCommand('move the deck 15 min later', NOW)).toMatchObject({
+        kind: 'move',
+        query: 'deck',
+        relStartMin: 15,
+      })
+      expect(parseCommand('move the deck to thursday at 9', NOW).kind).toBe('move')
+    })
+  })
+})
+
+describe('remember — energy-fit standing rules (#321)', () => {
+  it('"remember batch my admin" → the canonical admin-batch ordering rule', () => {
+    expect(parseCommand('remember batch my admin', NOW)).toEqual({
+      kind: 'remember',
+      pref: { kind: 'ordering', match: 'admin', value: 'batch', stated: 'batch my admin' },
+    })
+  })
+
+  it('"remember keep admin quick and dusted" → the same batch rule', () => {
+    expect(parseCommand('remember keep admin quick and dusted', NOW).pref).toMatchObject({
+      kind: 'ordering',
+      match: 'admin',
+      value: 'batch',
+    })
+  })
+
+  it('"remember I do deep work anytime" → the deep-work flexibility rule', () => {
+    expect(parseCommand('remember I do deep work anytime', NOW).pref).toMatchObject({
+      kind: 'flexibility',
+      match: 'deep work',
+      value: 'anytime',
+    })
+  })
+
+  it('"remember don\'t gate my mornings" → the same deep-work flexibility rule', () => {
+    expect(parseCommand("remember don't gate my mornings", NOW).pref).toMatchObject({
+      kind: 'flexibility',
+      match: 'deep work',
+      value: 'anytime',
+    })
+  })
+})
+
+describe('inbox capture lead-ins (#348)', () => {
+  it('“add X to my list/inbox” captures just X', () => {
+    expect(parseCommand('add milk to my list', NOW)).toMatchObject({
+      kind: 'capture',
+      title: 'milk',
+    })
+    expect(parseCommand('add call the bank to my inbox', NOW)).toMatchObject({
+      kind: 'capture',
+      title: 'call the bank',
+    })
+  })
+  it('“remind me to/about X” captures just X (strips the lead-in)', () => {
+    expect(parseCommand('remind me to call the plumber', NOW)).toMatchObject({
+      kind: 'capture',
+      title: 'call the plumber',
+    })
+    expect(parseCommand('remind me about the renewal', NOW)).toMatchObject({
+      kind: 'capture',
+      title: 'renewal', // cleanTitle strips the leading article
+    })
+  })
+  it('never swallows a timed plan or a list readout', () => {
+    // no "…to my list" tail → a timed ask stays the plan path, not the inbox
+    expect(parseCommand('add lunch at 1pm', NOW).kind).not.toBe('capture')
+    // a read-only readout is never a capture
+    expect(parseCommand('list my blocks', NOW).kind).toBe('list')
   })
 })

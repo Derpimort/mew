@@ -73,6 +73,13 @@ describe('#282 — per-tool verbs and targets', () => {
     })
   })
 
+  it('a #320 referent sentinel degrades to the bare verb, never the raw @query', () => {
+    // "@referent" / "@after:lunch" read perfectly as just "moving it" / "reshaping it"
+    expect(toolCardLabel('move', { query: '@referent' })).toEqual({ verb: 'moving it' })
+    expect(toolCardLabel('edit', { query: '@referent' })).toEqual({ verb: 'reshaping it' })
+    expect(toolCardLabel('remove', { query: '@after:lunch' })).toEqual({ verb: 'taking it off' })
+  })
+
   it('move: query → destination day and time', () => {
     expect(
       toolCardLabel('move', { todayKey: TODAY, query: 'deck', toDayOffset: 2, toStartMin: 840 })

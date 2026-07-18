@@ -15,7 +15,10 @@ import {
   dropTarget,
   ghostConflicts,
   isMoved,
+  isResized,
+  resizeTo,
   startDrag,
+  startResize,
 } from './dragGeometry'
 
 /* a press only becomes a drag past this many px — below it a click still pins,
@@ -37,8 +40,10 @@ export interface GridDrag {
   bouncedId: string | null
   /** attach to the grid container — column rects + ghost coords are read from it */
   gridRef: React.RefObject<HTMLDivElement | null>
-  /** call on a block's onMouseDown to arm a potential drag */
+  /** call on a block's onMouseDown to arm a potential drag (move) */
   beginPress: (b: Block, e: React.MouseEvent) => void
+  /** call on an edge handle's onMouseDown to arm a potential resize */
+  beginResize: (b: Block, edge: 'top' | 'bottom', e: React.MouseEvent) => void
   /** true on the click that trails a real drag — the view swallows exactly one */
   consumeSuppressedClick: () => boolean
 }
@@ -73,6 +78,17 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
     onArmRef.current = onArm
   })
 
+  // snapshot every day column's on-screen box now — widths vary (the selected
+  // day is 2.3×), so the day hit-test reads real rects, not a uniform stride
+  const captureColumns = () => {
+    const grid = gridRef.current
+    if (!grid) return
+    colRectsRef.current = [...grid.querySelectorAll<HTMLElement>('[data-daykey]')].map((col) => {
+      const r = col.getBoundingClientRect()
+      return { dayKey: col.dataset.daykey!, left: r.left, right: r.right }
+    })
+  }
+
   const beginPress = (b: Block, e: React.MouseEvent) => {
     /* external (calendar) blocks bounce on drop, but the grab itself is allowed
        so the gesture feels live and chat can explain — acceptance is "returns to
@@ -80,16 +96,18 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
     pressRef.current = { startX: e.clientX, startY: e.clientY, armed: false }
     const el = e.currentTarget as HTMLElement
     const grabOffsetPx = e.clientY - el.getBoundingClientRect().top
-    // snapshot every day column's on-screen box now — widths vary (the selected
-    // day is 2.3×), so the day hit-test reads real rects, not a uniform stride
-    const grid = gridRef.current
-    if (grid) {
-      colRectsRef.current = [...grid.querySelectorAll<HTMLElement>('[data-daykey]')].map((col) => {
-        const r = col.getBoundingClientRect()
-        return { dayKey: col.dataset.daykey!, left: r.left, right: r.right }
-      })
-    }
+    captureColumns()
     pressSeedRef.current = startDrag(b, grabOffsetPx)
+  }
+
+  const beginResize = (b: Block, edge: 'top' | 'bottom', e: React.MouseEvent) => {
+    // the handle sits inside the block — claim the press so it resizes, never
+    // also starting a move (beginPress) or pinning the card underneath
+    e.stopPropagation()
+    if (e.button !== 0) return
+    pressRef.current = { startX: e.clientX, startY: e.clientY, armed: false }
+    captureColumns()
+    pressSeedRef.current = startResize(b, edge)
   }
 
   useEffect(() => {
@@ -108,14 +126,29 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
       if (!grid) return
       const gr = grid.getBoundingClientRect()
       const cur = dragRef.current ?? seed
-      const t = dropTarget(cur, e.clientX, gr.top, e.clientY, H, colRectsRef.current)
-      const next: DragState = { ...cur, toDayKey: t.dayKey, toStartMin: t.startMin }
+      let next: DragState
+      if (cur.mode === 'resize') {
+        // an edge follows the cursor; the day and the anchored edge stay put
+        const r = resizeTo(cur, e.clientY, gr.top, H)
+        next = { ...cur, toStartMin: r.toStartMin, durationMin: r.durationMin }
+      } else {
+        const t = dropTarget(cur, e.clientX, gr.top, e.clientY, H, colRectsRef.current)
+        next = { ...cur, toDayKey: t.dayKey, toStartMin: t.startMin }
+      }
       dragRef.current = next
       setDrag(next)
-      setDragClash(new Set(ghostConflicts(blocksRef.current, next, transparent).map((bl) => bl.id)))
+      /* honest glow: red means the drop WILL bounce. A move bounces only off the
+         blocks it can't schedule around (external/fixed + held); every other
+         overlap is own-flexible work the move drifts (#324), so it stays calm. A
+         resize moves nothing, so any overlap in its new span bounces it. Mirrors
+         the store's gate (moveBlockedBy / conflictsWith) minus prefs. */
+      const overlaps = ghostConflicts(blocksRef.current, next, transparent)
+      const willBounce =
+        next.mode === 'resize' ? overlaps : overlaps.filter((b) => isFixedTime(b) || b.protected)
+      setDragClash(new Set(willBounce.map((bl) => bl.id)))
       // ghost spans the FULL target column (grid-relative) so a multi-lane drop
       // reads as landing across every occupied lane, not just lane 0
-      const col = colRectsRef.current.find((c) => c.dayKey === t.dayKey)
+      const col = colRectsRef.current.find((c) => c.dayKey === next.toDayKey)
       if (col) setGhostBox({ left: col.left - gr.left + 4, width: col.right - col.left - 8 })
     }
     const reset = () => {
@@ -138,8 +171,14 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
       }
       suppressClickRef.current = true // swallow the click that trails a real drag
       reset()
-      if (!isMoved(cur)) return // dropped home → no-op, no chat
-      const outcome = dragMoveRef.current(cur.id, cur.toDayKey, cur.toStartMin)
+      const changed = cur.mode === 'resize' ? isResized(cur) : isMoved(cur)
+      if (!changed) return // dropped home → no-op, no chat
+      // one door for both gestures: a resize passes its new length, a move omits
+      // it (byte-unchanged move behaviour). The store validates + commits.
+      const outcome =
+        cur.mode === 'resize'
+          ? dragMoveRef.current(cur.id, cur.toDayKey, cur.toStartMin, cur.durationMin)
+          : dragMoveRef.current(cur.id, cur.toDayKey, cur.toStartMin)
       if (outcome === 'conflict' || outcome === 'external') {
         // bounce: the store left the week untouched; pulse the origin block
         const bouncedFor = cur.id
@@ -171,5 +210,14 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
     return true
   }
 
-  return { drag, ghostBox, dragClash, bouncedId, gridRef, beginPress, consumeSuppressedClick }
+  return {
+    drag,
+    ghostBox,
+    dragClash,
+    bouncedId,
+    gridRef,
+    beginPress,
+    beginResize,
+    consumeSuppressedClick,
+  }
 }

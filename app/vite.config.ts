@@ -53,12 +53,17 @@ export default defineConfig({
     //            runs, behind a dynamic import('./aiAdapter'); stays off the
     //            keyless/brainless boot path).
     //
-    // codeSplitting stays on (the default) so the existing dynamic import() chunks
-    // — e.g. aiAdapter — remain separate lazy chunks. Priority orders the groups:
-    // a higher-priority group claims its modules first and removes them from lower
-    // ones, so the catch-all `vendor` never swallows the AI SDK. The chunk NAMES
-    // (vendor/ai) are load-bearing — check-bundle-size.mjs categorizes each chunk
-    // by name against its budget (see CONTRIBUTING.md).
+    // codeSplitting stays on (the default) so every dynamic import() lands in its
+    // own named lazy chunk: the lazy AI adapter (aiAdapter), plus the v0.6
+    // first-paint-optional surfaces split off the entry (#340) — onboarding
+    // (OnboardingModal), the plan-mode picker (ScenarioPicker), and the Settings
+    // route (SettingsPage). Shared eager code those pull alongside the entry may
+    // hoist into first-load SIBLING chunks (e.g. Button/rules) rather than the
+    // entry file itself — expected, and still counted under the first-load budget.
+    // Priority orders the groups: a higher-priority group claims its modules first
+    // and removes them from lower ones, so the catch-all `vendor` never swallows
+    // the AI SDK. The chunk NAMES (vendor/ai) are load-bearing — check-bundle-size.mjs
+    // categorizes each chunk by name against its budget (see CONTRIBUTING.md).
     rolldownOptions: {
       output: {
         codeSplitting: {

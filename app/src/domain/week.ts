@@ -167,6 +167,30 @@ export function findFreeSlot(
   return { startMin: cursor, endMin: cursor + durationMin }
 }
 
+/** The soonest genuinely clear window of `durationMin`, scanning `todayKey`
+    (from `fromMin`) forward up to `horizonDays` — the cross-day sibling of
+    findFreeSlot, for a "next free slot" relocation (#335). Fixed and external
+    blocks are obstacles it lands clear of (findFreeSlot's own law, buffer and
+    all); background/optional blocks stay transparent. Returns the day-key +
+    start, or null when nothing fits inside the horizon. Pure: pass the pool
+    already minus the block being relocated so its own slot reads as free. */
+export function nextFreeSlot(
+  blocks: Block[],
+  todayKey: string,
+  fromMin: number,
+  durationMin: number,
+  horizonDays = 13,
+  bufferMin = 0
+): { dayKey: string; startMin: number } | null {
+  for (let off = 0; off <= horizonDays; off++) {
+    const key = addDaysKey(todayKey, off)
+    const windowStart = off === 0 ? Math.max(DAY_START, fromMin) : DAY_START
+    const slot = findFreeSlot(blocks, key, durationMin, windowStart, DAY_END, bufferMin)
+    if (slot) return { dayKey: key, startMin: slot.startMin }
+  }
+  return null
+}
+
 /** Context markers for one block, as the model sees them. 'calendar' =
     synced from a connected calendar (not MEW's to edit or remove). 'fixed' =
     the time owns its slot (schedule around it) — the block itself is still
@@ -559,6 +583,81 @@ export function findAllByQuery(blocks: Block[], query: string): Block[] {
   return [scored[0].b]
 }
 
+/** The outcome of resolving a precise edit/move/remove target (#334). `ok` is
+    the one block to act on; `none` is nothing by that name; `ambiguous` carries
+    the candidate set so the caller asks (offer_choices) rather than guessing. */
+export type TargetResolution =
+  { status: 'ok'; block: Block } | { status: 'none' } | { status: 'ambiguous'; candidates: Block[] }
+
+/** Non-rolled blocks matching `query` at the single best title tier — exact base
+    title → prefix → substring, NO fuzzy. Precise addressing must never widen to
+    a fuzzy guess (that is how the transcript's rename hit the wrong block); the
+    tiers mirror findByQuery so the two agree on what "matches". */
+function titleMatches(blocks: Block[], query: string): Block[] {
+  const q = query.toLowerCase().trim()
+  if (!q) return []
+  const hits = blocks
+    .filter((b) => b.status !== 'rolled' && b.title.toLowerCase().includes(q))
+    .map((b) => {
+      const base = b.title.split('—')[0].trim().toLowerCase()
+      return { b, tier: base === q ? 0 : base.startsWith(q) ? 1 : 2 }
+    })
+  if (!hits.length) return []
+  const best = Math.min(...hits.map((h) => h.tier))
+  return hits.filter((h) => h.tier === best).map((h) => h.b)
+}
+
+/** Keep only the blocks on the SOONEST day present. A name shared across days
+    ("gym" every weekday) then resolves to the next one, while several on the
+    SAME day (the transcript's two evening blocks) stay a real ambiguity to ask
+    about — cross-day proximity is a fair disambiguator, same-day is not. */
+function soonestDay(blocks: Block[]): Block[] {
+  if (blocks.length <= 1) return blocks
+  const day = blocks.reduce((min, b) => (b.dayKey < min ? b.dayKey : min), blocks[0].dayKey)
+  return blocks.filter((b) => b.dayKey === day)
+}
+
+/** Precise targeting (#334) — resolve a title query to exactly ONE block, or
+    report the candidate set so the caller asks instead of silently picking one.
+
+    The user's rule is "check name AND timestamp both": when `at` (a start minute)
+    is given, name and time must BOTH match, which addresses exactly one block; a
+    name that matches only at OTHER times comes back `ambiguous` with those
+    matches, so the caller lists the real times rather than act on a time that
+    isn't there. A bare name (no `at`) that matches several blocks on the soonest
+    day is `ambiguous` too — the set is for offer_choices, never a guess.
+
+    Only today-or-ahead blocks are targetable (a past block isn't what "the
+    release" means now). A done block stays reachable when `includeDone` — a ✓
+    block is still there, so an explicit edit/remove can name it (the mew guard
+    lifts for named single-target intent); a bare name prefers the still-open
+    block, so completing/moving skips finished ones unless nothing open matches. */
+export function findTarget(
+  blocks: Block[],
+  query: string,
+  todayKey: string,
+  opts: { at?: number | null; includeDone?: boolean } = {}
+): TargetResolution {
+  const pool = titleMatches(blocks, query).filter(
+    (b) => b.dayKey >= todayKey && (opts.includeDone || b.status !== 'done')
+  )
+  if (!pool.length) return { status: 'none' }
+
+  if (opts.at != null) {
+    const atHits = soonestDay(pool.filter((b) => b.startMin === opts.at))
+    if (atHits.length === 1) return { status: 'ok', block: atHits[0] }
+    if (atHits.length > 1) return { status: 'ambiguous', candidates: atHits }
+    // the name matched, but not at that time — surface what's really there
+    return { status: 'ambiguous', candidates: soonestDay(pool) }
+  }
+
+  // bare name: prefer the still-open target, then narrow to the soonest day
+  const open = pool.filter((b) => b.status !== 'done')
+  const scope = soonestDay(open.length ? open : pool)
+  if (scope.length === 1) return { status: 'ok', block: scope[0] }
+  return { status: 'ambiguous', candidates: scope }
+}
+
 export interface RemovalOpts {
   /** A clock start time ("22:30", "10am") pinning which of several same-named
       blocks to drop — resolved against the block's startMin, exact minute. */
@@ -597,6 +696,83 @@ export function resolveRemoval(
   return { remove: [], candidates: matches }
 }
 
+/** Conversational referent resolution (#320) — turn a parse.ts sentinel
+    ("@referent", "@next", "@after:lunch", "@before:standup", "@at:900") into a
+    concrete block against the LIVE week. Pure and keyless-first: the SAME
+    function serves the rules floor and any keyed turn, so a referent resolves
+    identically on every path (no drift). A plain title (no "@") is passthrough
+    — the caller resolves it with findByQuery as before. Nothing here reads the
+    clock: the caller passes `nowMin` for "@next". */
+export type ReferentResolution =
+  | { status: 'passthrough' } // not a sentinel — resolve the query normally
+  | { status: 'ok'; block: Block }
+  | { status: 'none' } // a sentinel that matched nothing (ask which block)
+  | { status: 'ambiguous'; candidates: Block[] } // several equally plausible (offer a pick)
+
+export function resolveReferent(
+  blocks: Block[],
+  query: string,
+  referentId: string | null,
+  todayKey: string,
+  nowMin: number
+): ReferentResolution {
+  if (!query.startsWith('@')) return { status: 'passthrough' }
+
+  /* "@referent" — the session's last-touched block, by id. Gone (removed, or a
+     new session) ⇒ none, so "move it" with no referent asks rather than guesses. */
+  if (query === '@referent') {
+    const b = referentId ? blocks.find((x) => x.id === referentId) : undefined
+    return b ? { status: 'ok', block: b } : { status: 'none' }
+  }
+
+  const open = blocks.filter((b) => b.status === 'open')
+
+  /* "@next" — the next open block from now: today at/after nowMin, else the
+     earliest open block on the soonest future day. */
+  if (query === '@next') {
+    const ahead = open
+      .filter((b) => b.dayKey > todayKey || (b.dayKey === todayKey && b.endMin > nowMin))
+      .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+    return ahead.length ? { status: 'ok', block: ahead[0] } : { status: 'none' }
+  }
+
+  /* "@at:<min>" — the block starting at that clock time, soonest from today
+     forward. Two at the same time on the same soonest day is a real ambiguity. */
+  const atM = query.match(/^@at:(\d+)$/)
+  if (atM) {
+    const min = Number(atM[1])
+    const hits = open
+      .filter((b) => b.startMin === min && b.dayKey >= todayKey)
+      .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.title.length - b.title.length)
+    if (!hits.length) return { status: 'none' }
+    if (hits.length > 1 && hits[0].dayKey === hits[1].dayKey)
+      return { status: 'ambiguous', candidates: hits.filter((b) => b.dayKey === hits[0].dayKey) }
+    return { status: 'ok', block: hits[0] }
+  }
+
+  /* "@after:<name>" / "@before:<name>" — adjacency to a named anchor, same day.
+     The anchor is matched with the ordinary fuzzy matcher; adjacency is
+     deterministic (the immediately next/previous open block by start). */
+  const adjM = query.match(/^@(after|before):(.+)$/)
+  if (adjM) {
+    const anchor = findByQuery(blocks, adjM[2], todayKey)
+    if (!anchor) return { status: 'none' }
+    const sameDay = open.filter((b) => b.dayKey === anchor.dayKey && b.id !== anchor.id)
+    if (adjM[1] === 'after') {
+      const next = sameDay
+        .filter((b) => b.startMin >= anchor.endMin)
+        .sort((a, b) => a.startMin - b.startMin)[0]
+      return next ? { status: 'ok', block: next } : { status: 'none' }
+    }
+    const prev = sameDay
+      .filter((b) => b.endMin <= anchor.startMin)
+      .sort((a, b) => b.startMin - a.startMin)[0]
+    return prev ? { status: 'ok', block: prev } : { status: 'none' }
+  }
+
+  return { status: 'none' }
+}
+
 /** Every open block in the same recurring series as `target` (#159) — for a
     "remove all gym sessions" sweep. Matches on recurringBlockId, so deleting
     the series leaves nothing orphaned; a one-off block (no id) returns just
@@ -604,6 +780,32 @@ export function resolveRemoval(
 export function seriesOf(blocks: Block[], target: Block): Block[] {
   if (!target.recurringBlockId) return [target]
   return blocks.filter((b) => b.status === 'open' && b.recurringBlockId === target.recurringBlockId)
+}
+
+/** Where a block sits in its recurring series (#343) — the target-resolution
+    read the store makes right after findTarget lands a block, so it knows a
+    scope choice (just this one / this & following / the whole series) is even
+    worth surfacing. Null for a one-off (no recurringBlockId). `count` is the
+    OPEN occurrences the series still holds (this one included), `position` is
+    where the block falls among them ('only' when it stands alone) — the store
+    offers the three chips only when count > 1, since with a single occurrence
+    the three answers collapse to one. Pure; open-only, mirroring seriesOf. */
+export interface SeriesMembership {
+  recurringBlockId: string
+  position: 'first' | 'middle' | 'last' | 'only'
+  count: number
+}
+
+export function seriesMembership(blocks: Block[], block: Block): SeriesMembership | null {
+  if (!block.recurringBlockId) return null
+  const members = seriesOf(blocks, block).sort(
+    (a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin
+  )
+  const count = members.length
+  if (count <= 1) return { recurringBlockId: block.recurringBlockId, position: 'only', count }
+  const idx = members.findIndex((b) => b.id === block.id)
+  const position = idx <= 0 ? 'first' : idx === count - 1 ? 'last' : 'middle'
+  return { recurringBlockId: block.recurringBlockId, position, count }
 }
 
 /** All of the day's non-rest items are done → the day is clear, rest is earned. */

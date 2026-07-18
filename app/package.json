@@ -21,6 +21,7 @@
     "shoot:overlap": "node scripts/shoot-overlap.mjs",
     "shoot:onboarding": "node scripts/shoot-onboarding.mjs",
     "shoot:ritual": "node scripts/shoot-ritual.mjs",
+    "shoot:scaffold": "node scripts/shoot-scaffold.mjs",
     "prepare": "cd .. && husky || true"
   },
   "dependencies": {

@@ -18,6 +18,7 @@ import {
 } from './week'
 import { matchesPref, parseDurationValue, parseTimeValue } from './prefs'
 import type { MemoryAggregates } from './memory'
+import { focusClassOf, type FocusClass } from './energy'
 
 export interface WeekdayLoad {
   dow: number // 0=Mon … 6=Sun
@@ -234,6 +235,76 @@ export function computeInsights(
     driftBand,
     lines: lines.slice(0, 4),
   }
+}
+
+/* ── estimate correction at plan time, PER TASK-TYPE (#322) ─────────────
+   The insights card's global `estimateFactor` says "your plans run long" in one
+   number; that over-pads batched admin (which the user keeps quick and dusted)
+   to fix deep work (which genuinely runs over). This reads the SAME completion
+   lateness the card does, but split by focus class (energy.ts's deep/admin/
+   health axis, so learning and applying agree on the words), so plan time can
+   give room to exactly the kind that needs it. Pure over local memory; null per
+   class under the floor — no correction claimed from noise. */
+
+export type EstimateFactorByTag = Record<FocusClass, number | null>
+
+/** A class needs this many late-measurable completions before its factor is a
+    claim rather than an anecdote — the global lateness gate (`lateN ≥ 5`) held
+    per class, since one number split three ways must not read a rhythm from a
+    handful of points. */
+export const ESTIMATE_TAG_FLOOR = 5
+/** The factor a class must clear to be worth an offer or a silent pre-size —
+    below this the estimates are honest enough (a ~10% overage is inside the
+    ±30-min the halves voice already rounds away). */
+export const ESTIMATE_PAD_FLOOR = 1.1
+/** The once-per-day dedupe slot for the plan-time offer (#297 nudgeLastFired
+    grammar) — one home, so the store writes it and the guard reads it. */
+export const ESTIMATE_FIRED_KEY = 'estimate'
+
+/** Round a duration up to the factor's honest length: nearest 5 min (the
+    scheduler's granularity), clamped to the resize primitive's 5–720 bounds. */
+export function padDuration(durationMin: number, factor: number): number {
+  return Math.max(5, Math.min(720, Math.round((durationMin * factor) / 5) * 5))
+}
+
+/** The run-long factor per focus class, from completion lateness in the trailing
+    28 days (today excluded — still being lived), same sane caps as the card's
+    global factor (a checked-off-much-later stamp ≠ worked-later). 1.0 = honest,
+    >1 = runs over; null under ESTIMATE_TAG_FLOOR. Deep typically clears the pad
+    floor and admin doesn't — which is the whole point of splitting it. */
+export function estimateFactorByTag(events: MemoryEvent[], today: Date): EstimateFactorByTag {
+  const todayKey = dayKey(today)
+  const floor28 = addDaysKey(todayKey, -28)
+  const acc: Record<FocusClass, { lateSum: number; n: number; planSum: number }> = {
+    deep: { lateSum: 0, n: 0, planSum: 0 },
+    admin: { lateSum: 0, n: 0, planSum: 0 },
+    health: { lateSum: 0, n: 0, planSum: 0 },
+  }
+  for (const e of events) {
+    if (e.dayKey < floor28 || e.dayKey >= todayKey) continue
+    if (e.kind !== 'completed' || e.endMin == null || !e.plannedMin) continue
+    const cls = focusClassOf(e)
+    if (!cls) continue
+    const done = new Date(e.ts)
+    if (dayKey(done) !== e.dayKey) continue
+    const lateness = done.getHours() * 60 + done.getMinutes() - e.endMin
+    if (lateness < -180 || lateness > 300) continue // checked off much later ≠ worked later
+    const a = acc[cls]
+    a.lateSum += lateness
+    a.n++
+    a.planSum += e.plannedMin
+  }
+  const out = {} as EstimateFactorByTag
+  for (const cls of ['deep', 'admin', 'health'] as const) {
+    const a = acc[cls]
+    out[cls] =
+      a.n >= ESTIMATE_TAG_FLOOR && a.planSum > 0
+        ? a.lateSum > 0
+          ? Math.round((1 + a.lateSum / a.planSum) * 100) / 100
+          : 1
+        : null
+  }
+  return out
 }
 
 /* ── the insights card: surfacing, not computing (#287) ────────────────

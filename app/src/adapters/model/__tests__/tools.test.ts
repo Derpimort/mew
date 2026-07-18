@@ -184,3 +184,167 @@ describe('propose_scenarios tool (#293)', () => {
     )
   })
 })
+
+/* list_blocks (#333) — a READ-ONLY tool: schema registration + the runTool
+   dispatch that resolves the loose `day` word/offset and clamps the tag before
+   handing them to the executor's itemized readout. */
+describe('list_blocks tool', () => {
+  it('is registered, read-only, with NO required args (defaults to today)', () => {
+    const tool = MEW_TOOLS.find((t) => t.name === 'list_blocks')
+    expect(tool).toBeDefined()
+    expect((tool!.parameters as { required: string[] }).required).toEqual([])
+    // the description names it read-only and points the model at name+time targeting
+    expect(tool!.description).toMatch(/changes nothing/i)
+    expect(tool!.description).toMatch(/before editing, moving, or removing/i)
+  })
+
+  it("resolves the day word: 'today'→0, 'tomorrow'→1, 'week'→'week', a numeric string→offset", async () => {
+    const listBlocks = vi.fn(() => "here's today: - 9:00–10:00 deep work [work]")
+    const exec = { listBlocks } as unknown as ToolExecutor
+
+    await runTool('list_blocks', { day: 'today' }, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith(0, undefined)
+    await runTool('list_blocks', { day: 'tomorrow' }, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith(1, undefined)
+    await runTool('list_blocks', { day: 'week' }, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith('week', undefined)
+    await runTool('list_blocks', { day: '2' }, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith(2, undefined)
+    // an omitted day defaults to today
+    await runTool('list_blocks', {}, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith(0, undefined)
+  })
+
+  it('passes a valid tag and drops an invalid one', async () => {
+    const listBlocks = vi.fn(() => 'ok')
+    const exec = { listBlocks } as unknown as ToolExecutor
+    await runTool('list_blocks', { day: 'today', tag: 'health' }, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith(0, 'health')
+    await runTool('list_blocks', { day: 'today', tag: 'bogus' }, exec)
+    expect(listBlocks).toHaveBeenLastCalledWith(0, undefined)
+  })
+})
+
+/* Granular calendar ops (#335): resize_block / duplicate_block / move_relative —
+   schema registration + the runTool dispatch that parses/clamps args before
+   handing them to the executor. */
+describe('resize_block tool (#335)', () => {
+  it('is registered with query required and both durationMin + deltaMin', () => {
+    const tool = MEW_TOOLS.find((t) => t.name === 'resize_block')
+    expect(tool).toBeDefined()
+    expect((tool!.parameters as { required: string[] }).required).toEqual(['query'])
+    const props = (tool!.parameters as { properties: Record<string, unknown> }).properties
+    expect(props.durationMin).toBeDefined()
+    expect(props.deltaMin).toBeDefined()
+    expect(tool!.description).toMatch(/keeping its start|start time fixed/i)
+  })
+
+  it('dispatches an absolute duration to exec.resize (clamped)', async () => {
+    const resize = vi.fn(() => 'Updated — deck is now 9:00–10:30 (90 min).')
+    const exec = { resize } as unknown as ToolExecutor
+    await runTool('resize_block', { query: 'deck', durationMin: 90, at: '9:00' }, exec)
+    expect(resize).toHaveBeenCalledWith(
+      'deck',
+      { durationMin: 90, relDurationMin: undefined },
+      '9:00',
+      undefined
+    )
+  })
+
+  it('dispatches a signed delta as relDurationMin, and carries the recurring scope', async () => {
+    const resize = vi.fn(() => 'ok')
+    const exec = { resize } as unknown as ToolExecutor
+    await runTool('resize_block', { query: 'gym', deltaMin: 30, scope: 'series' }, exec)
+    expect(resize).toHaveBeenCalledWith(
+      'gym',
+      { durationMin: undefined, relDurationMin: 30 },
+      undefined,
+      'series'
+    )
+  })
+
+  it('an empty call (no duration, no delta) never reaches the executor', async () => {
+    const resize = vi.fn(() => 'ok')
+    const exec = { resize } as unknown as ToolExecutor
+    const out = await runTool('resize_block', { query: 'deck' }, exec)
+    expect(resize).not.toHaveBeenCalled()
+    expect(out).toMatch(/nothing to resize/)
+  })
+})
+
+describe('duplicate_block tool (#335)', () => {
+  it('is registered with query required and a recurrence schema (DAILY|WEEKLY)', () => {
+    const tool = MEW_TOOLS.find((t) => t.name === 'duplicate_block')
+    expect(tool).toBeDefined()
+    expect((tool!.parameters as { required: string[] }).required).toEqual(['query'])
+    const props = (
+      tool!.parameters as {
+        properties: { recurrence: { properties: { freq: { enum: string[] } } } }
+      }
+    ).properties
+    expect(props.recurrence.properties.freq.enum).toEqual(['DAILY', 'WEEKLY'])
+    expect(tool!.description).toMatch(/original (stays|is untouched|calendar event is untouched)/i)
+  })
+
+  it('dispatches the destination and a parsed recurrence to exec.duplicate', async () => {
+    const duplicate = vi.fn(() => 'Copied — deck now also lives friday at 9:00–10:00.')
+    const exec = { duplicate } as unknown as ToolExecutor
+    await runTool(
+      'duplicate_block',
+      { query: 'deck', at: '9:00', toDayOffset: 3, recurrence: { freq: 'WEEKLY', byday: 'MO,WE' } },
+      exec
+    )
+    expect(duplicate).toHaveBeenCalledWith(
+      'deck',
+      {
+        toDayOffset: 3,
+        toStartMin: undefined,
+        rrule: { freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'] },
+      },
+      '9:00'
+    )
+  })
+
+  it('drops a monthly (unsupported) recurrence while still copying', async () => {
+    const duplicate = vi.fn<ToolExecutor['duplicate']>(() => 'ok')
+    const exec = { duplicate } as unknown as ToolExecutor
+    await runTool(
+      'duplicate_block',
+      { query: 'deck', toDayOffset: 1, recurrence: { freq: 'MONTHLY' } },
+      exec
+    )
+    const args = duplicate.mock.calls[0]
+    expect(args[1].rrule).toBeUndefined()
+    expect(args[1].toDayOffset).toBe(1)
+  })
+})
+
+describe('move_relative tool (#335)', () => {
+  it('is registered with query + direction required (enum of the four nudges)', () => {
+    const tool = MEW_TOOLS.find((t) => t.name === 'move_relative')
+    expect(tool).toBeDefined()
+    expect((tool!.parameters as { required: string[] }).required).toEqual(['query', 'direction'])
+    const dir = (tool!.parameters as { properties: { direction: { enum: string[] } } }).properties
+      .direction
+    expect(dir.enum).toEqual(['earlier', 'later', 'next_day', 'next_free'])
+  })
+
+  it('dispatches a valid direction + amount to exec.relativeMove', async () => {
+    const relativeMove = vi.fn(() => 'Moved — deck now lives today at 8:30.')
+    const exec = { relativeMove } as unknown as ToolExecutor
+    await runTool(
+      'move_relative',
+      { query: 'deck', direction: 'earlier', amountMin: 30, at: '9:00' },
+      exec
+    )
+    expect(relativeMove).toHaveBeenCalledWith('deck', 'earlier', 30, '9:00')
+  })
+
+  it('an invalid direction never reaches the executor', async () => {
+    const relativeMove = vi.fn(() => 'ok')
+    const exec = { relativeMove } as unknown as ToolExecutor
+    const out = await runTool('move_relative', { query: 'deck', direction: 'sideways' }, exec)
+    expect(relativeMove).not.toHaveBeenCalled()
+    expect(out).toMatch(/pass a direction/)
+  })
+})

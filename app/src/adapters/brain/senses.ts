@@ -3,6 +3,7 @@
    as knowledge. Positive voice carries through ("rolled", never "missed"). */
 
 import type { Block, ChatMessage } from '../../domain/types'
+import type { LearnedRule } from '../../domain/prefs'
 import { fmtTime } from '../../domain/time'
 import type { BrainPage, PrefPayload } from './types'
 
@@ -135,6 +136,27 @@ export function prefPage(p: PrefPayload): BrainPage {
     type: 'pref',
     tags: ['mew', 'preference', p.kind],
     body: `${p.match} → ${p.value}\n\nstated: "${p.stated.trim()}"\n\n\`\`\`json\n${JSON.stringify(p)}\n\`\`\`\n`,
+  }
+}
+
+/** A rule confirmed from repetition (#327) becomes one page, so recall and
+    cross-session survival ride the graph. Slug is the match, so re-confirming
+    upserts. Local memory is the always-on floor; this only enriches when a
+    brain is connected. */
+export function learnedRulePage(r: LearnedRule): BrainPage {
+  const dims = [
+    r.durationMin != null ? `${r.durationMin}m` : null,
+    r.tag ?? null,
+    r.window ?? null,
+    r.attention === 'background' ? 'background' : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return {
+    slug: `rule/${slugify(r.match)}`,
+    type: 'pref',
+    tags: ['mew', 'learned', 'rule'],
+    body: `${r.match} → ${dims || 'confirmed'}\n\nlearned from what you repeatedly do, confirmed by you\n\n\`\`\`json\n${JSON.stringify(r)}\n\`\`\`\n`,
   }
 }
 

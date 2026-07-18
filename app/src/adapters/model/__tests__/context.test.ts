@@ -21,10 +21,16 @@ const base: WeekContext = {
 }
 
 describe('contextBlock — brain-recall honesty', () => {
-  it('brain off → an explicit off marker, never a recall block', () => {
+  it('brain off → an explicit off marker framed on-device, never a recall block', () => {
     const out = contextBlock(base)
-    expect(out).toContain('<brain-recall off note="no brain is connected — recall did not run"/>')
+    expect(out).toContain(
+      '<brain-recall off note="no brain connected — running on on-device memory; recall did not run"/>'
+    )
     expect(out).not.toContain('</brain-recall>')
+  })
+
+  it('the off marker frames the floor as on-device, not broken (#329)', () => {
+    expect(contextBlock(base)).toContain('running on on-device memory')
   })
 
   it('brain on with recall → the recall block, no off marker', () => {
@@ -43,11 +49,12 @@ describe('contextBlock — brain-recall honesty', () => {
     expect(out).not.toContain('<brain-recall')
   })
 
-  it("brain on but it didn't answer → an explicit degraded marker (silence ≠ empty history)", () => {
+  it("brain on but it didn't answer → an explicit degraded marker framed on-device (silence ≠ empty history)", () => {
     const out = contextBlock({ ...base, brainOn: true, recallDegraded: true })
     expect(out).toContain(
-      `<brain-recall degraded note="the brain didn't answer this turn — recall is missing, not empty"/>`
+      `<brain-recall degraded note="brain didn't answer this turn — running on on-device memory; recall is missing, not empty"/>`
     )
+    expect(out).toContain('running on on-device memory') // still-helpful, not broken (#329)
     expect(out).not.toContain('<brain-recall off')
   })
 
@@ -89,6 +96,12 @@ describe('patterns framing — on-device history, never "the brain"', () => {
     expect(MEW_VOICE).toContain('<brain-recall degraded/>')
     expect(MEW_VOICE).toMatch(/never an empty history/)
   })
+
+  it('MEW_VOICE reframes off/degraded recall as on-device, not broken (#329)', () => {
+    /* the model must present a silent/absent brain as still-helpful — "running
+       on what you know on-device" — rather than reporting a failure */
+    expect(MEW_VOICE).toMatch(/running on what you know on-device/)
+  })
 })
 
 /* the weekly ritual recipe (#304) — a keyed model must run the same shape the
@@ -109,5 +122,25 @@ describe('the weekly ritual recipe (#304)', () => {
     expect(MEW_VOICE).toMatch(/ONE propose_scenarios call/)
     expect(MEW_VOICE).toMatch(/Generation is read-only/)
     expect(MEW_VOICE).toMatch(/the user's pick is the one apply/)
+  })
+})
+
+/* conversational referents (#320) — the keyed side of parity: naming the
+   last-touched block in the context is what lets a keyed model resolve
+   "it / that / the one after lunch" the SAME way the keyless floor does. */
+describe('conversational referent — the keyed context names it (#320)', () => {
+  it('a referent renders as a <just-touched> line the model can read', () => {
+    const out = contextBlock({ ...base, referent: 'Q3 deck — thu 9:00' })
+    expect(out).toContain('<just-touched')
+    expect(out).toContain('Q3 deck — thu 9:00')
+  })
+
+  it('no referent → no just-touched line (nothing touched yet this session)', () => {
+    expect(contextBlock(base)).not.toContain('<just-touched')
+  })
+
+  it('MEW_VOICE tells the model what <just-touched> means and to ask when unsure', () => {
+    expect(MEW_VOICE).toContain('<just-touched>')
+    expect(MEW_VOICE).toMatch(/wrong-block change breaks trust/i)
   })
 })

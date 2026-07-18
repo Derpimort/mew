@@ -1,16 +1,23 @@
-/* #293 — plan-mode scenario cards in the session log. Same headless render
-   seams as the chips suite (no jsdom): the picker is a pure function of its
-   props — the message plus the list-level `superseded` and turn-level
-   `thinking` flags SessionLog derives — so LogLine renders deterministically
-   under renderToStaticMarkup and the markup is string-pinned. Liveness pins
-   mirror SessionLog.choices.test.tsx line for line: the cards obey the exact
-   chips grammar (#254). Strips draw from STORED places/dayLoad only — render
-   never re-validates (staleness is pick-time truth, pinned in the store
-   suite). */
+/* #293 — plan-mode scenario cards in the session log. The picker is a pure
+   function of its props — the message plus the list-level `superseded` and
+   turn-level `thinking` flags SessionLog derives — so it renders deterministically
+   under renderToStaticMarkup (no jsdom) and the markup is string-pinned. Liveness
+   pins mirror SessionLog.choices.test.tsx line for line: the cards obey the exact
+   chips grammar (#254). Strips draw from STORED places/dayLoad only — render never
+   re-validates (staleness is pick-time truth, pinned in the store suite).
+
+   The picker is lazy-mounted inside LogLine (#340 — off the entry chunk), so under
+   the headless SYNC renderer a LogLine tree renders the picker's Suspense fallback
+   (null), not the cards. The cards' own contract is therefore pinned by rendering
+   the exported ScenarioCards directly with the exact props LogLine feeds it (LogLine
+   mounts a single ScenarioCards carrying every scenario on the message, so the
+   counts map 1:1); LogLine's wiring — the picker rides inside the message article,
+   and a plain mew line mounts none — is pinned on the LogLine render itself. */
 
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { LogLine } from '../SessionLog'
+import { ScenarioCards } from '../ScenarioPicker'
 import { loadClass, stripSummary } from '../scenarioStrip'
 import type { ChatMessage, StoredScenario } from '../../../domain/types'
 
@@ -44,7 +51,7 @@ const PICKER: ChatMessage = {
 
 describe('#293 — scenario cards render as articles with a mini-week strip', () => {
   it('each scenario is an article "plan option — <name>" inside one labeled group', () => {
-    const html = renderToStaticMarkup(<LogLine msg={PICKER} />)
+    const html = renderToStaticMarkup(<ScenarioCards msg={PICKER} />)
     expect(html).toContain('<div class="scn-cards" role="group" aria-label="plan options">')
     expect(html).toContain('aria-label="plan option — protected mornings"')
     expect(html).toContain('aria-label="plan option — spread even"')
@@ -53,7 +60,7 @@ describe('#293 — scenario cards render as articles with a mini-week strip', ()
   })
 
   it('the strip renders exactly seven day columns per card, density as a class', () => {
-    const html = renderToStaticMarkup(<LogLine msg={PICKER} />)
+    const html = renderToStaticMarkup(<ScenarioCards msg={PICKER} />)
     expect(html.match(/class="scn-day /g)).toHaveLength(14) // 7 columns × 2 cards
     // the tint is a discrete, pinnable class from the STORED dayLoad
     expect(html).toContain('scn-day l2') // 120m friday
@@ -66,24 +73,30 @@ describe('#293 — scenario cards render as articles with a mini-week strip', ()
   })
 
   it('the strip speaks its summary — "fri 2h, sat 1h, sun 0.5h"', () => {
-    const html = renderToStaticMarkup(<LogLine msg={PICKER} />)
+    const html = renderToStaticMarkup(<ScenarioCards msg={PICKER} />)
     expect(html.match(/aria-label="fri 2h, sat 1h, sun 0\.5h"/g)).toHaveLength(2)
     expect(stripSummary(SCN())).toBe('fri 2h, sat 1h, sun 0.5h')
     expect(stripSummary(SCN({ places: [], dayLoad: {} }))).toBe('nothing placed this week')
   })
 
   it('pick buttons are real chip-primitive buttons with accessible names, enabled while live', () => {
-    const html = renderToStaticMarkup(<LogLine msg={PICKER} />)
+    const html = renderToStaticMarkup(<ScenarioCards msg={PICKER} />)
     expect(html).toContain('aria-label="pick protected mornings"')
     expect(html).toContain('aria-label="pick spread even"')
     expect(html.match(/class="btn btn-chip btn-sm"/g)).toHaveLength(2)
     expect(html).not.toContain('disabled')
   })
 
-  it('the cards ride INSIDE the message article, so the windowed log carries them per-row (#250)', () => {
+  it('a scenarios message renders as its own article row, the picker mounted inside it (#250, #340)', () => {
+    /* #250: the scenarios ride the message itself (msg.scenarios), so LogLine
+       renders the picker INSIDE the mew line's article — the row carries them
+       wherever windowing puts it. #340: that picker is lazy, so under the headless
+       sync renderer its Suspense fallback (null) stands in for the cards; the row —
+       the observable LogLine behavior — is what's pinned here, while the cards'
+       markup is pinned by the direct ScenarioCards renders above. */
     const html = renderToStaticMarkup(<LogLine msg={PICKER} />)
-    expect(html).toMatch(/data-msg="p1" role="article"[\s\S]*scn-cards/)
-    expect(html).toMatch(/pick the one that feels right\.[\s\S]*scn-cards/)
+    expect(html).toMatch(/data-msg="p1" role="article"/)
+    expect(html).toContain('pick the one that feels right.')
   })
 
   it('a mew line without scenarios renders no picker at all', () => {
@@ -98,21 +111,21 @@ describe('#293 — cards go inert (native disabled) exactly per the chips gramma
       ...PICKER,
       scenarios: PICKER.scenarios!.map((s) => (s.id === 's2' ? { ...s, picked: true } : s)),
     }
-    const html = renderToStaticMarkup(<LogLine msg={picked} />)
+    const html = renderToStaticMarkup(<ScenarioCards msg={picked} />)
     expect(html.match(/disabled=""/g)).toHaveLength(2)
     expect(html).toContain('aria-label="spread even — picked"')
     expect(html).toContain('✓')
   })
 
   it('superseded by a newer user message: disabled, even with nothing picked', () => {
-    const html = renderToStaticMarkup(<LogLine msg={PICKER} superseded />)
+    const html = renderToStaticMarkup(<ScenarioCards msg={PICKER} superseded />)
     expect(html.match(/disabled=""/g)).toHaveLength(2)
   })
 
   it('while a turn is mewing: disabled, re-enabled the moment it settles', () => {
-    const mewing = renderToStaticMarkup(<LogLine msg={PICKER} thinking />)
+    const mewing = renderToStaticMarkup(<ScenarioCards msg={PICKER} thinking />)
     expect(mewing.match(/disabled=""/g)).toHaveLength(2)
-    const settled = renderToStaticMarkup(<LogLine msg={PICKER} thinking={false} />)
+    const settled = renderToStaticMarkup(<ScenarioCards msg={PICKER} thinking={false} />)
     expect(settled).not.toContain('disabled')
   })
 })

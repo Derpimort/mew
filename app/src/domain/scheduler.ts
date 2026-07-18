@@ -8,12 +8,23 @@
    Slice 1 of #80 is this scorer + its tests. The suggest_slots tool, the
    execPlan/execMove rewire to consult it, and rest-block auto-insertion are
    slice 2 — see the ADR's impl plan. */
-import type { Block, PrefPayload, Tag } from './types'
+import type { Block, PrefPayload, Tag, TimeWindow } from './types'
 import { addDaysKey } from './time'
 import { mealAdjacencyPenalty, mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
-import { blocksForDay, DAY_END, DAY_START, freeWindows, isBackground } from './week'
+import {
+  blocksForDay,
+  conflictsWith,
+  DAY_END,
+  DAY_START,
+  duration,
+  freeWindows,
+  isBackground,
+  isFixedTime,
+  move,
+  nextSlotAfter,
+} from './week'
 
-export type TimeWindow = 'morning' | 'afternoon' | 'evening'
+export type { TimeWindow }
 
 export interface SlotQuery {
   title: string
@@ -23,6 +34,11 @@ export interface SlotQuery {
   due?: number
   /** soft time-of-day preference; omit = inferred from tag */
   window?: TimeWindow
+  /** #328: the window is FIRM — a confirmed rule (or an explicit ask) chose it,
+      so off-window candidates collapse like the meal seam, not a 0.25 nudge.
+      Absent/false ⇒ the window stays the soft `timeOfDayScore` term (today's
+      behavior, byte-identical). Ignored when `window` is unset. */
+  windowFirm?: boolean
 }
 
 export interface SlotCandidate {
@@ -149,13 +165,14 @@ function timeOfDayScore(q: SlotQuery, startMin: number): number {
   return windowOf(startMin) === want ? 1 : 0.4
 }
 
-/* ── circadian meal anchors (#298) ────────────────────────────────────
-   A meal-titled query with no stated window anchors to its class windows
-   (domain/sustenance.ts) as a HARD preference: off-window candidates stay
-   listed — a packed day may force one, and the reply names the time — but
-   their total collapses to near-zero, so they are never silently preferred.
-   An explicit q.window means the user already said when: the seam stays out. */
-const MEAL_OFF_WINDOW = 0.05
+/* ── firm time-of-day windows ──────────────────────────────────────────
+   Two seams collapse an off-window candidate to near-zero (listed, so a packed
+   day can still force one and the reply names the time, but never silently
+   preferred): the circadian meal anchors (#298 — a meal-titled query with no
+   stated window) and a CONFIRMED-rule window (#328 — `q.windowFirm`). Both are
+   HARD preferences, not the 0.25 nudge; a soft tag default / stated-but-unfirm
+   window keeps the plain `timeOfDayScore` term. */
+const OFF_WINDOW = 0.05
 
 /** in-window = the whole meal fits inside one of its windows */
 function inMealWindow(
@@ -200,6 +217,10 @@ export function scoreSlots(
      non-meal query takes byte-identical scoring to before the seam. */
   const meal = q.window == null ? mealClassOf(q.title) : null
   const mealWins = meal ? mealWindowFor(meal, prefs, mealBase) : null
+  /* #328: a confirmed-rule window is firm here (the meal seam's twin). The two
+     never overlap — meal anchoring only engages when q.window is unset, and a
+     firm window sets q.window — so at most one collapse applies to a candidate. */
+  const firmWindow = q.window != null && q.windowFirm === true
   const dayEnd = mealWins ? Math.max(DAY_END, ...mealWins.map((w) => w.endMin)) : DAY_END
   return candidateSlots(blocks, q, todayKey, nowMin, horizonDays, dayEnd, bufferMin)
     .map((c) => {
@@ -215,10 +236,14 @@ export function scoreSlots(
       const reasons: string[] = []
       if (meal && mealWins) {
         const adj = mealAdjacencyPenalty(meal, c.startMin, blocksForDay(blocks, c.dayKey))
-        if (!inWin) score *= MEAL_OFF_WINDOW
+        if (!inWin) score *= OFF_WINDOW
         score *= adj
         reasons.push(inWin ? `${meal} window fit` : `outside the usual ${meal} window`)
         if (adj < 1) reasons.push('close to another meal')
+      } else if (firmWindow) {
+        const hit = windowOf(c.startMin) === q.window
+        if (!hit) score *= OFF_WINDOW
+        reasons.push(hit ? `your usual ${q.window}` : `outside your usual ${q.window}`)
       } else if (tod >= 1) {
         reasons.push(`${preferredWindow(q)} fit`)
       }
@@ -363,4 +388,142 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
     kind: 'suggest',
     why: 'a long unbroken stretch with no room for a break',
   }
+}
+
+/* ── own-vs-own collision drift (#324) ─────────────────────────────────
+   When the user lands new explicit-time work over their OWN FLEXIBLE blocks
+   (meals, errands, unpinned work), those blocks are MEW's to move — so they
+   drift clear in the SAME pass the work lands, and the reply names what moved.
+   This is the placement-time sibling of #345's edit-time drift-offer: same
+   principle (an explicit time is the user's judgment; the flexible side
+   yields), resolved now instead of asked-after (the #102 place-then-offer).
+
+   Never moved: EXTERNAL/FIXED blocks (a meeting is a fact — surfaced as an
+   honest overlap note, not a drift) and PROTECTED `rest` blocks (the dedicated
+   protect-rest flow owns sacred rest, with the opposite default — keep the
+   rest, move the work; an unprotected pacing breather is absorbable and drifts
+   like any flexible block). A meal re-anchors through the circadian scorer
+   (#298/#323): a drifted lunch lands back inside its window, gap-respecting.
+   Every other flexible block takes the nearest LATER gap (nextSlotAfter — the
+   same give-way primitive rescue #286 already uses, so evening work never
+   teleports to the morning). A flexible block with nowhere clean to go is
+   returned as `stuck` — the offer_choices fallback, never a silent overlap.
+   Pure: the plan is computed here; the executor applies it. */
+
+export interface FlexDrift {
+  /** the own-flexible block that yields to the new work */
+  block: Block
+  toDayKey: string
+  toStartMin: number
+  toEndMin: number
+  /** re-anchored through the circadian scorer (a meal) vs the nearest gap */
+  viaScorer: boolean
+}
+
+export interface CollisionDrift {
+  /** flexible blocks relocated to a clean slot — apply these, name them */
+  drifts: FlexDrift[]
+  /** external/fixed collisions — never moved, an honest overlap note */
+  fixed: Block[]
+  /** own-flexible blocks with no clean slot — the offer_choices fallback */
+  stuck: Block[]
+}
+
+/** The nearest conflict-free home for one flexible block yielding to `placed`.
+    A meal re-anchors through the circadian scorer (same day — today's lunch is
+    today's), landing at the best in-window slot clear of the new work; every
+    other flexible block takes the nearest later gap. Null = nowhere clean. */
+function driftSlot(
+  blocks: Block[],
+  flex: Block,
+  placed: Block,
+  todayKey: string,
+  nowMin: number,
+  prefs: PrefPayload[]
+): { dayKey: string; startMin: number; viaScorer: boolean } | null {
+  if (mealClassOf(flex.title)) {
+    const q: SlotQuery = { title: flex.title, tag: flex.tag, durationMin: duration(flex) }
+    // free the meal's own slot, keep `placed` so candidates avoid the new work
+    const best = scoreSlots(
+      blocks.filter((b) => b.id !== flex.id),
+      q,
+      todayKey,
+      nowMin,
+      prefs
+    ).find((c) => c.dayKey === placed.dayKey)
+    return best ? { dayKey: best.dayKey, startMin: best.startMin, viaScorer: true } : null
+  }
+  const next = nextSlotAfter(blocks, flex, placed.endMin)
+  return next ? { dayKey: next.dayKey, startMin: next.startMin, viaScorer: false } : null
+}
+
+/** Resolve the collisions a newly-landed explicit block creates against the
+    user's own flexible blocks (see the section note). `blocks` MUST already
+    include `placed`. Deterministic; drifts chain in start order so each later
+    move sees the earlier one's new slot (no re-collision between drifted
+    blocks). A background hold shares the clock, not the slot — it clears
+    nothing. */
+export function driftCollisions(
+  blocks: Block[],
+  placed: Block,
+  todayKey: string,
+  nowMin: number,
+  prefs: PrefPayload[] = []
+): CollisionDrift {
+  const drifts: FlexDrift[] = []
+  const fixed: Block[] = []
+  const stuck: Block[] = []
+  if (isBackground(placed)) return { drifts, fixed, stuck }
+  const clash = conflictsWith(
+    blocks,
+    placed.dayKey,
+    placed.startMin,
+    placed.endMin,
+    placed.id,
+    prefs
+  )
+  let working = blocks
+  for (const c of [...clash].sort((a, b) => a.startMin - b.startMin)) {
+    if (isFixedTime(c, prefs)) {
+      fixed.push(c) // external/fixed: a fact to schedule around, never moved
+      continue
+    }
+    if (c.tag === 'rest' && c.protected) continue // sacred rest → protect-rest, not here
+    const slot = driftSlot(working, c, placed, todayKey, nowMin, prefs)
+    if (!slot) {
+      stuck.push(c)
+      continue
+    }
+    drifts.push({
+      block: c,
+      toDayKey: slot.dayKey,
+      toStartMin: slot.startMin,
+      toEndMin: slot.startMin + duration(c),
+      viaScorer: slot.viaScorer,
+    })
+    working = move(working, c.id, slot.dayKey, slot.startMin)
+  }
+  return { drifts, fixed, stuck }
+}
+
+/* ── direct-manipulation drop validity (#347) ──────────────────────────
+   A drag/keyboard MOVE must never land a block OVER one MEW can't schedule
+   around it: an external/fixed meeting (a fact — the "scheduled around, never
+   over" law) or a block the owner has protected (held — a stray gesture never
+   shoves it). Those are the reasons a drop bounces. Every OTHER conflict is an
+   unprotected own-flexible neighbour, which yields through #324 drift on the
+   commit — so it is NOT a blocker here. Pure; the store gates the commit on a
+   non-empty result. A RESIZE grows in place and moves nothing, so it gates on
+   the stricter week.conflictsWith instead (any occupied minute bounces it). */
+export function moveBlockedBy(
+  blocks: Block[],
+  dayKey: string,
+  startMin: number,
+  endMin: number,
+  movingId: string,
+  prefs: PrefPayload[] = []
+): Block[] {
+  return conflictsWith(blocks, dayKey, startMin, endMin, movingId, prefs).filter(
+    (b) => isFixedTime(b, prefs) || b.protected
+  )
 }

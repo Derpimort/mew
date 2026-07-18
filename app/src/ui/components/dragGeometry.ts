@@ -11,6 +11,10 @@ import { DAY_MIN } from './orbitGeometry'
 /** Drop snaps to this grid (minutes) — Google/Outlook use the same 5-min feel. */
 export const SNAP_MIN = 5
 
+/** A block never resizes below this — the same floor the keyboard (weekKeys)
+    and the edit executor (execEdit) keep, so every resize path shares one min. */
+export const MIN_RESIZE_MIN = 15
+
 /** A column's on-screen box, captured at drag start (variable widths: the
     selected day is 2.3× the others, so we hit-test real rects, not a uniform
     stride). Coordinates are viewport-space (getBoundingClientRect). */
@@ -20,13 +24,19 @@ export interface ColRect {
   right: number
 }
 
-/** Live drag state, held by the view for the duration of one press. */
+/** Live drag state, held by the view for the duration of one press. Covers both
+    gestures: a `move` slides the block to a new day/start; a `resize` drags one
+    edge to change the length, anchoring the opposite edge. */
 export interface DragState {
   id: string
   /** where the block sat when the press began — the bounce-back home */
   fromDayKey: string
   fromStartMin: number
-  /** block length in minutes — preserved across the move */
+  /** the block's end at grab — the resize anchor (a top-edge drag holds it; a
+      bottom-edge drag extends from fromStartMin toward it) */
+  fromEndMin: number
+  /** live length in minutes — constant across a move; the resized length while
+      an edge is dragged */
   durationMin: number
   /** pointer offset inside the block at grab time (px from the block's top),
       so the block doesn't jump its top-edge to the cursor on the first move */
@@ -34,6 +44,10 @@ export interface DragState {
   /** the live candidate drop, recomputed on every mousemove */
   toDayKey: string
   toStartMin: number
+  /** the gesture: slide the whole block, or drag one edge to resize */
+  mode: 'move' | 'resize'
+  /** which edge a resize is dragging (unset for a move) */
+  edge?: 'top' | 'bottom'
 }
 
 /** Snap a clock-minute to the SNAP_MIN grid, clamped to a real day window so a
@@ -130,9 +144,60 @@ export function startDrag(b: Block, grabOffsetPx: number): DragState {
     id: b.id,
     fromDayKey: b.dayKey,
     fromStartMin: b.startMin,
+    fromEndMin: b.endMin,
     durationMin: duration(b),
     grabOffsetPx,
     toDayKey: b.dayKey,
     toStartMin: b.startMin,
+    mode: 'move',
   }
+}
+
+/** Seed a fresh resize from the edge the user grabbed. The candidate span starts
+    at the block's real span, so an immediate mouseup is a no-op (the store rules
+    an unchanged length a click). Resizes never change the day. */
+export function startResize(b: Block, edge: 'top' | 'bottom'): DragState {
+  return {
+    id: b.id,
+    fromDayKey: b.dayKey,
+    fromStartMin: b.startMin,
+    fromEndMin: b.endMin,
+    durationMin: duration(b),
+    grabOffsetPx: 0,
+    toDayKey: b.dayKey,
+    toStartMin: b.startMin,
+    mode: 'resize',
+    edge,
+  }
+}
+
+/** The candidate span for a resize drag: the grabbed edge follows the cursor
+    minute (snapped to the grid), the opposite edge stays anchored. Clamped so
+    the block keeps its MIN_RESIZE_MIN floor and never runs past midnight — the
+    same bounds the keyboard resize and the edit executor hold. Pure — the store
+    decides whether the new length is allowed (a clash still bounces). */
+export function resizeTo(
+  drag: DragState,
+  clientY: number,
+  gridTop: number,
+  H: number
+): { toStartMin: number; durationMin: number } {
+  const edgeMin = Math.round(minFromY(clientY - gridTop, H) / SNAP_MIN) * SNAP_MIN
+  if (drag.edge === 'top') {
+    // the top edge follows the cursor; the block's end stays anchored
+    const start = Math.max(0, Math.min(drag.fromEndMin - MIN_RESIZE_MIN, edgeMin))
+    return { toStartMin: start, durationMin: drag.fromEndMin - start }
+  }
+  // the bottom edge follows the cursor; the block's start stays anchored
+  const end = Math.max(drag.fromStartMin + MIN_RESIZE_MIN, Math.min(DAY_MIN, edgeMin))
+  return { toStartMin: drag.fromStartMin, durationMin: end - drag.fromStartMin }
+}
+
+/** Has a resize actually changed the block's span? A press that lands the edge
+    back where it started is a click, never a mutation. */
+export function isResized(drag: DragState): boolean {
+  return (
+    drag.toStartMin !== drag.fromStartMin ||
+    drag.durationMin !== drag.fromEndMin - drag.fromStartMin
+  )
 }

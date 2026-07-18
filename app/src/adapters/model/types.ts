@@ -11,6 +11,11 @@ export interface WeekContext {
   todayLabel: string // "Tuesday, June 9"
   nowLabel: string // "9:40"
   weekSummary: string[] // one compact line per day
+  /** The conversational referent (#320): the last-touched/last-tapped block,
+      named ("Deck — thu 9:00") so a KEYED model resolves "it / that / the one
+      after lunch" the SAME way the keyless floor does — one slot drives both
+      paths. Optional and absent when nothing has been touched this session. */
+  referent?: string
   realisticBestH: number | null
   mewsToday: number
   /** Local pattern lines — the user's own history, computed on-device
@@ -31,6 +36,12 @@ export interface WeekContext {
       silence as missing recall, never as an empty history (#249). Optional:
       absent reads as false, so hand-built contexts stay valid. */
   recallDegraded?: boolean
+  /** The memory console as plain lines (#330): the keyless "what do you know
+      about me?" reply renders exactly these — the SAME domain presenter the
+      Settings console shows (consoleSummary(memoryConsole(local memory))), so
+      the reply and the card can never drift. Optional: hand-built contexts stay
+      valid; absent reads as the kind "still getting to know you" line. */
+  knownLines?: string[]
   /** Standing preferences — always on, every turn, newest first. */
   prefLines: string[]
   /** The structured rulebook behind prefLines (#304): the keyless ritual
@@ -53,7 +64,20 @@ export interface PlaceSpec {
   tag: Tag
   dayOffset: number
   startMin?: number
+  /** #323: startMin is a clock time the USER stated in their own words this
+      turn ("dinner at 6"), not one the model derived while reshaping. The meal
+      guardrail keeps a stated meal time as-is (naming any tension once) and
+      corrects only derived ones. Absent = derived; the keyless parser sets it
+      whenever it read an explicit time (all of its times are the user's). */
+  startStated?: boolean
   durationMin?: number
+  /** #322: durationMin is a length the USER stated in their own words this turn
+      ("30 min, exactly"), not one the model or a rule derived. Stated word wins:
+      the estimate-correction offer never targets a stated-duration block, and
+      "always" pre-size never touches it. Absent = derived; the keyless parser
+      sets it whenever it read an explicit duration (all of its lengths are the
+      user's). */
+  durationStated?: boolean
   protected?: boolean
   /** background = holds the clock, not the user; never the Focus center */
   attention?: 'focus' | 'background'
@@ -100,8 +124,23 @@ export const CHOICES_POSTED = 'The options are on screen as clickable chips'
     sentence describing what really happened (a tool_result, not a hope). */
 export interface ToolExecutor {
   plan(places: PlaceSpec[], frees: FreeSpec[]): string
-  complete(query: string): string
-  move(query: string, toDayOffset?: number, toStartMin?: number): string
+  /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
+      name AND time must both match, so a shared title resolves to exactly one
+      block. Omit and a bare ambiguous name asks (offer_choices) rather than
+      guessing. */
+  complete(query: string, at?: string): string
+  /** `relStartMin` (#320) is a relative shift for a referent follow-up ("30 min
+      earlier" = −30): the executor computes the absolute start from the
+      resolved block's CURRENT start (today move needs an absolute target). `at`
+      (#334) is the TARGET block's CURRENT start time, pinning which of several
+      same-named blocks to move — distinct from toStartMin (its new start). */
+  move(
+    query: string,
+    toDayOffset?: number,
+    toStartMin?: number,
+    relStartMin?: number,
+    at?: string
+  ): string
   capture(title: string): string
   /** Remove open MEW-placed blocks in scope. Done mews and external calendar
       events are never touched — positive-only, and not ours to delete. */
@@ -110,10 +149,25 @@ export interface ToolExecutor {
       survive). `at` pins which of several same-named blocks to drop (its start
       time); `all` drops every match. With neither and more than one match, the
       executor asks instead of guessing — a block the user didn't name is never
-      removed. */
-  remove(query: string, opts?: { at?: string; all?: boolean }): string
+      removed. A DONE block is not walled off (#334): naming one to remove
+      surfaces a confirm ("it's a mew — remove it anyway?") the user taps; the
+      guard stays only for silent/bulk collateral (clear_blocks).
+      `scope` (#343) picks how a RECURRING block's delete lands: 'this' drops the
+      next occurrence alone, 'following' splits the series and drops from that day
+      forward, 'series' clears the whole linked set (as all:true does). Omit it on
+      a series block and the executor asks with this/following/series chips. */
+  remove(
+    query: string,
+    opts?: { at?: string; all?: boolean; scope?: 'this' | 'following' | 'series' }
+  ): string
   /** Read-only day x-ray: dead gaps, overlong streaks, missing buffers, load. */
   analyze(dayOffset: number): string
+  /** Read-only itemized readout of the live week (#333) — each block's exact
+      title, start–end, tag, status (a ✓ marks done), and the name+time handle
+      the edit/move/remove tools target by. `day` is a 0–13 offset (0 = today)
+      or 'week' for the seven days ahead; `tag` filters to one tag. Never
+      mutates, never snapshots — it is MEW's eyes, not a hand. */
+  listBlocks(day: number | 'week', tag?: import('../../domain/types').Tag): string
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
   findSlot(
@@ -134,18 +188,32 @@ export interface ToolExecutor {
     dueMin?: number,
     window?: 'morning' | 'afternoon' | 'evening'
   ): string
-  /** Change an existing block in place: time, length, title, tag, attention, due. */
+  /** Change an existing block in place: time, length, title, tag, attention, due.
+      Surgical — only the named field(s) of the ONE target change; neighbors are
+      untouched. `at` (#334) is the TARGET block's CURRENT start time, pinning
+      which of several same-named blocks to change (distinct from patch.startMin,
+      a retime). A done block is editable by an explicit named target — a
+      rename/retime keeps its ✓ (it stays a mew).
+      `scope` (#343) picks how a RECURRING block's edit lands: 'this' changes the
+      one occurrence, 'following' splits the series and applies from that day
+      forward, 'series' changes every occurrence. Omit it on a series block and
+      the executor asks with this/following/series chips. */
   edit(
     query: string,
     patch: {
       startMin?: number
       endMin?: number
       durationMin?: number
+      /** #320: a relative length delta ("give it another 30" = +30) applied to
+          the resolved block's CURRENT duration by the executor. */
+      relDurationMin?: number
       title?: string
       tag?: import('../../domain/types').Tag
       attention?: 'focus' | 'background'
       due?: number
-    }
+    },
+    at?: string,
+    scope?: 'this' | 'following' | 'series'
   ): string
   /** Persist a standing rule the user stated. Brain-off it falls back to a
       local MemoryEvent — the feature works single-device; gbrain upgrades it. */
@@ -179,6 +247,52 @@ export interface ToolExecutor {
       Read-only when nothing has changed this turn ("nothing to undo yet"). Chat
       is untouched — the reply about the undone action stays as context. */
   undoLast(): string
+  /** Resize a block in place: change its LENGTH while keeping the start fixed
+      (#335). `durationMin` sets an absolute length; `relDurationMin` a signed
+      delta ("30 min longer" = +30). Only the end moves — the start never does.
+      Shares edit's targeting (`at`), recurring `scope`, external-ownership, and
+      clash note: a duration-only edit is exactly what this is. */
+  resize(
+    query: string,
+    resize: { durationMin?: number; relDurationMin?: number },
+    at?: string,
+    scope?: 'this' | 'following' | 'series'
+  ): string
+  /** Copy a block to another day/time (#335) — the original is untouched; the
+      copy is a NEW independent block with the same title, tag, length, and
+      attention. `toDayOffset`/`toStartMin` place it; absent time keeps the
+      source's clock on the new day, or the next free slot within the same day.
+      `rrule` makes the copy a repeating series, expanded and linked like a
+      planned recurrence (#159). External events copy into an owned block; the
+      calendar original stays. `at` pins which of several same-named sources. */
+  duplicate(
+    query: string,
+    opts: {
+      toDayOffset?: number
+      toStartMin?: number
+      rrule?: import('../../domain/recurrence').Rrule
+    },
+    at?: string
+  ): string
+  /** Move a block relative to where it is now, with no absolute time (#335):
+      'earlier'/'later' shift the start by `amountMin` (default 30) on the same
+      day, 'next_day' moves one day on at the same clock, 'next_free' relocates
+      to the soonest genuinely clear slot from now. Fixed/calendar blocks are
+      never moved and the next free slot always lands clear of them. Shares the
+      move path (drift, clash, ownership); `at` pins which of several. */
+  relativeMove(
+    query: string,
+    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
+    amountMin?: number,
+    at?: string
+  ): string
+  /** Give the just-placed blocks of one focus class room (#322) — resize them
+      LONGER, in place, by the factor the user's OWN completion history shows for
+      that kind (deep work vs admin). This is what the "give them room?" chip
+      runs; call it only in reply to that offer (or when the user asks to size a
+      kind to how it really runs). Blocks whose duration the user stated are
+      never touched. Re-plans through the resize path — tools stay the only door. */
+  giveRoom(focusClass: import('../../domain/energy').FocusClass): string
 }
 
 /** What `converse` yields. A plain string is a reply-text delta (the common
@@ -230,10 +344,15 @@ Pixie reads "healthy" or "run-down", reflecting how sustainably the user works (
 Tools are the only way the week changes; words alone change nothing.
 Act on what the user asked this turn, exactly and completely — an action they didn't ask for breaks trust faster than a missed one.
 When one message asks for several things, count them and carry out every one; a single plan_blocks call can hold the whole list.
-To change an existing block's time, length, or title, call edit_block — editing keeps the block's identity and history.
+To see what a day actually holds before you touch it, call list_blocks — an itemized readout of each block's exact title, start–end, tag, and status (a ✓ marks the done ones). It changes nothing; it is how you get your eyes on the calendar.
+Before editing, moving, or removing a block whose target is at all ambiguous, list_blocks first and target the exact block by its title AND its start time: pass that start time as the "at" argument (edit_block/move_task/complete_task/remove_blocks all take it) so name and time pin exactly one block — never fuzzy-guess by name, and never treat a block as gone just because it's finished: a done block is still there, listed with a ✓. When several blocks share a name and nothing pins one, the executor asks with chips rather than guessing — don't pre-empt it.
+To change an existing block's time, length, or title, call edit_block — it changes ONLY the field you name on the ONE target and leaves its neighbors alone (a rename touches just the title). Editing keeps the block's identity and history, so a rename or retime of a done block is fine — it stays a mew.
+When a follow-up names no block — "move it 30 min earlier", "make that 45", "the one after lunch" — the <just-touched> line in the context is what "it/that/this" means; act on that block (move_task or edit_block by its title), and read its current time from the week context to work out the new one. "The one after/before <name>", "my next block", "the 3pm" point at the live week by position — resolve them against the week you can see. If nothing is just-touched and no block is named, ask which one with offer_choices rather than guess — a wrong-block change breaks trust faster than a question.
 To take specific named blocks off the week, call remove_blocks — it removes only what matches; clear_blocks is the broom for a whole day or week.
 When several blocks share a title and the user singled one out (a time, "the longer one", "the morning one"), pass that block's start time as the remove_blocks "at" so you drop only that one; only an explicit "both/all/every" sets "all" true. With neither, removing one of several would guess — so let the executor ask which they meant rather than dropping a block they didn't name.
+A done block (a mew) is not walled off from an explicit delete — if the user names a finished block to remove, just call remove_blocks for it: the executor surfaces a one-tap confirm ("that block is a mew — remove it anyway?") and the tap deletes it cleanly (undoable). Never tell the user a done block "can't be removed" or "is protected" — that's the old cage; propose the confirm instead. Only clear_blocks (the whole-day/week broom) still skips mews silently — it never sweeps a completion as collateral.
 A recurring habit or meeting ("gym every Monday and Wednesday", "standup every weekday until August") is one plan_blocks place with a recurrence rule (freq DAILY or WEEKLY, optional interval/byday/until/count); MEW expands it into one block per occurrence, all linked — never list one place per day yourself. To clear a whole repeating series, remove_blocks with all:true; a single delete drops just that one occurrence and the rest stay.
+When an edit or delete lands on a REPEATING block and the user didn't say how far it reaches, don't guess: call edit_block/remove_blocks WITHOUT scope and the executor asks "just this one / this & following / the whole series". Pass scope only when the user made it explicit — "just this one" (this), "from now on" / "from Thursday on" (following), "all of them" / "the whole series" (series). "this & following" splits the series at that date: the earlier occurrences keep their old shape, and this one plus every later one take the change.
 Interviews, calls, and meetings are fixed points — schedule around them, never over them. Plain tasks are flexible: they can shift or end early to make room, so when something has to give, move the task.
 A block can run in the background — it holds the clock, not the user (a 3h phone restore): set attention "background" and the center stays on what actually holds them; give it dueMin when the user states a hard deadline and MEW watches the latest start.
 The week context shows each block as start–end with markers. [fixed] means the TIME owns its slot — schedule around it; the block itself is still fully yours to edit, move, or remove. [calendar] means it came from a connected calendar — that one alone is not yours to change. [optional] holds no time. Read both ends before placing anything relative to another block, and verify the gap really exists ("prep before the 14:30 interview" needs free air ending at 14:30, not hope).
@@ -247,8 +366,9 @@ When a remembered ordering rule in <preferences> matches what you're placing ("p
 Asked to optimize or tidy a day, call analyze_day first and fix what it names: tuck a 10–15 minute rest into any stretch past ~90 minutes, close dead gaps by pulling blocks together, and give big meetings a 15-minute review buffer right after.
 Asked to find time for something ("fit X in today, before 5pm"), call find_slot with the duration and constraints, then place exactly the window it returns — it has checked every fixed block; eyeballing the summary is how collisions happen.
 Before placing or moving anything flexible, call suggest_slots with the title and duration — it ranks every conflict-free gap by time-of-day fit, breathing room, and your standing rules, so place the slot it ranks first and you neither overlap nor stack work without a break. To reschedule something that already exists, move_task or edit_block it; a second plan_blocks copy leaves a duplicate, not a move.
-A meal ask (breakfast, lunch, dinner, a snack) carries its natural window — suggest_slots already ranks those hours first, so take its top slot and never invent a late meal while the day still has room.
+A meal ask (breakfast, lunch, dinner, a snack) carries its natural window — suggest_slots already ranks those hours first, so take its top slot and never invent a late meal while the day still has room. When you pack or reshape a day, NEVER hand-place a meal at a startMin you worked out yourself — call suggest_slots for each meal so the circadian window and the gap between meals decide; a meal too soon after another isn't a meal. Only when the USER names a meal's clock time in their own words ("dinner at 6") do you place it at that startMin with startStated true — their time is theirs to keep.
 Reshaping a stretch is one sweep, in order: remove_blocks everything being replaced — the old work blocks AND the breaks placed around them (orphaned breaks become duplicates) — then one plan_blocks call with the whole new shape. After it, re-read the week context once to confirm the stretch holds exactly what you announced.
+A correction — "that's wrong", "dinner should be later", "align dinner better" — is one acknowledgment and one reshape, never a chain. Say you've got it once, in a few words, then make the fix in that single sweep and name what changed ("moved dinner to 20:00 — here's the evening"). Never stack "you're right / fair point / good catch" across several messages, and never re-run find_slot or suggest_slots for the same target more than once in a turn — the first answer is the answer; asking again is the thrash a correction must not become. Own the fix; don't grovel for the miss.
 </acting>
 
 <grounding>
@@ -256,8 +376,8 @@ The tool result is the truth: confirm in one short line built from its facts. A 
 "What is happening now" comes from the week context below, never from memory of earlier turns.
 Asked how the week looks, answer with two or three of the pattern lines — they are the user's own history, computed on-device, never the brain; the Week view already shows the calendar, so spare them the dump.
 When you can't find something or the data isn't there, say so plainly — "I can't see that yet" is a correct MEW answer, and better than a guess.
-A <brain-recall off/> marker means no brain is connected this session: asked about memory or what you recall, say the brain is off or not connected — never imply recall ran. The on-device pattern lines and the live week still answer.
-A <brain-recall degraded/> marker means a brain is connected but didn't answer this turn: asked about memory, say the brain didn't answer just now — its silence is missing recall, never an empty history.
+A <brain-recall off/> marker means no brain is connected this session: asked about memory or what you recall, say you're running on what you know on-device — the pattern lines and the live week still answer, so this is still-helpful, never broken — never imply recall ran.
+A <brain-recall degraded/> marker means a brain is connected but didn't answer this turn: asked about memory, say you're running on what you know on-device this turn — the brain's silence is missing recall, never an empty history.
 When the user corrects you or states a standing rule ("gym is always 7am", "order lunch is an errand, not the meal", "from now on hold fridays light"), call remember with the structured shape (kind, match, value, their words) — being re-taught the same thing twice is a failure, and so is recording a one-off as a rule. The <preferences> block is the standing rulebook; <brain-recall> is history that informs; the live week still decides. A recall line ending "· via <page>" came from another agent's notes — cite that source when the line carries your claim, and never claim recalled facts without one.
 When the user corrects you or states a standing preference ("gym is always 7am", "order lunch is an errand, not the meal"), call remember with one present-tense sentence — being re-taught the same thing twice is a failure. A <brain-recall> block in the context is history that informs; the live week still decides.
 History and entity questions ("how much has X eaten this week", "how were my gym sessions last week", "when did I last meet Y") go through query_brain — its numbers are summed from real blocks of the week the question names, past weeks included, so never estimate them yourself. "What's now/next" needs no tool; the week context already says.
@@ -288,6 +408,14 @@ export function contextBlock(ctx: WeekContext): string {
     `<week>`,
     ...ctx.weekSummary.map((l) => `  ${l}`),
     `</week>`,
+    /* the conversational referent (#320): naming the last-touched block here is
+       what lets a keyed model resolve "it / make that 45 / the one after lunch"
+       identically to the keyless floor — both lean on the same one slot. */
+    ...(ctx.referent
+      ? [
+          `<just-touched note="the block a follow-up like 'it' or 'that' refers to">${ctx.referent}</just-touched>`,
+        ]
+      : []),
     ...(ctx.insightLines.length
       ? [
           `<patterns note="computed on-device from the user's own history — it informs; the live week decides">`,
@@ -314,10 +442,12 @@ export function contextBlock(ctx: WeekContext): string {
           `</brain-recall>`,
         ]
       : !ctx.brainOn
-        ? [`<brain-recall off note="no brain is connected — recall did not run"/>`]
+        ? [
+            `<brain-recall off note="no brain connected — running on on-device memory; recall did not run"/>`,
+          ]
         : ctx.recallDegraded
           ? [
-              `<brain-recall degraded note="the brain didn't answer this turn — recall is missing, not empty"/>`,
+              `<brain-recall degraded note="brain didn't answer this turn — running on on-device memory; recall is missing, not empty"/>`,
             ]
           : []),
   ].join('\n')

@@ -65,6 +65,7 @@ export function FocusOrbit() {
   const blocks = useMew((s) => s.blocks)
   const nowMs = useMew((s) => s.nowMs)
   const setAttention = useMew((s) => s.setAttention)
+  const noteReferent = useMew((s) => s.noteReferent)
   const live = useLive()
 
   /* 1s clock: countdown + the rolling mapping both stay fresh between store ticks */
@@ -104,7 +105,10 @@ export function FocusOrbit() {
 
   /* a click on any item opens its detail card (centred, with actions —
      Start now / Done / Interrupt / Move). The card is where the week changes. */
-  const openCard = (id: string) => setCardId((v) => (v === id ? null : id))
+  const openCard = (id: string) => {
+    setCardId((v) => (v === id ? null : id))
+    noteReferent(id) // tapping a block makes it the conversational "it" (#320)
+  }
   const demote = () => {
     if (focusId) setAttention(focusId, 'background')
     setCardId(null)

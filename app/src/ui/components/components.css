@@ -1196,8 +1196,59 @@
 .wk-grid.dragging .nxb-blk {
   cursor: grabbing;
 }
+/* a live resize is a vertical stretch, not a carry — the whole grid says so */
+.wk-grid.resizing,
+.wk-grid.resizing .nxb-blk,
+.wk-grid.resizing .nxb-resize {
+  cursor: ns-resize;
+}
 .nxb-blk {
   cursor: grab;
+}
+/* resize grips (#347) — thin edge zones; the drag/keyboard both change duration.
+   Transparent at rest so a block reads clean; a faint bar surfaces on hover so
+   the affordance is discoverable. Pointer-only (aria-hidden), so no text for the
+   overlap gate and no extra tab stop — the keyboard Alt+arrows own a11y. */
+.nxb-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+  z-index: 6;
+  cursor: ns-resize;
+}
+.nxb-resize.top {
+  top: 0;
+}
+.nxb-resize.bottom {
+  bottom: 0;
+}
+.nxb-resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 22px;
+  max-width: 60%;
+  height: 3px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.nxb-resize.top::after {
+  top: 1px;
+}
+.nxb-resize.bottom::after {
+  bottom: 1px;
+}
+.nxb-blk:hover .nxb-resize::after {
+  opacity: 0.4;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nxb-resize::after {
+    transition: none;
+  }
 }
 /* the original block, dimmed while its ghost is in flight */
 .nxs1 .nxb-blk.drag-src {
@@ -2115,4 +2166,297 @@
   to {
     opacity: 1;
   }
+}
+
+/* ── weekly review (#346) — the calm end-of-week overlay ───────────────
+   Mirrors the command-palette modal skin: a scrim + a raised panel, tokens
+   only, theme-aware. Positive, restful; the carry list is a plain multi-select. */
+.wkr-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 9vh;
+  background: rgba(4, 5, 6, 0.55);
+  backdrop-filter: blur(3px);
+  animation: cmdk-fade 0.18s ease-out;
+}
+.sys--light .wkr-scrim {
+  background: rgba(40, 30, 10, 0.28);
+}
+.wkr {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: 22px 24px 20px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--ice) 24%, var(--line));
+  border-radius: 16px;
+  box-shadow:
+    0 30px 80px -28px rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+  animation: cmdk-rise 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.sys--light .wkr {
+  box-shadow: 0 30px 80px -32px rgba(60, 45, 15, 0.42);
+}
+.wkr:focus {
+  outline: none;
+}
+.wkr-h {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--ink);
+}
+.wkr-sub {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.wkr-empty,
+.wkr-none {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 12px;
+}
+.wkr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wkr-mew {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 6px;
+  font-size: 13px;
+}
+.wkr-star {
+  color: var(--gold);
+  font-size: 11px;
+}
+.wkr-mew-title {
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wkr-when {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--faint);
+  flex-shrink: 0;
+}
+.wkr-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.wkr-chip {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--ice) 8%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.wkr-chip b {
+  color: var(--ink);
+  font-weight: 600;
+}
+.wkr-carry {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+.wkr-carry:hover {
+  background: color-mix(in srgb, var(--ice) 6%, transparent);
+}
+.wkr-carry.on {
+  background: color-mix(in srgb, var(--ice) 12%, transparent);
+  border-color: var(--ice-bd);
+}
+.wkr-carry-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.wkr-carry-row input {
+  accent-color: var(--ice);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.wkr-carry-title {
+  color: var(--ink);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wkr-tagdot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--teal);
+}
+.wkr-tagdot[data-tag='work'] {
+  background: var(--ice);
+}
+.wkr-acts {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  justify-content: flex-end;
+}
+
+/* ── quick-capture inbox (#348) ──────────────────────────────────────────
+   Its own routed surface: a capture field, the waiting items, and gbrain's
+   fitting-slot offer per item. Monochrome tokens only (the pet accent rides
+   --gold/--ice via the primitives); flex-wrap + gaps everywhere so text runs
+   never collide (the shoot:overlap guard) at any width. Calm, positive — an
+   item WAITS; nothing here reads as overdue. */
+.inbox-page {
+  height: 100%;
+  overflow-y: auto;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 48px 32px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.inbox-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.inbox-title {
+  font-family: var(--font-disp);
+  font-size: 30px;
+  color: var(--ink);
+  margin: 0 0 6px;
+}
+.inbox-sub {
+  color: var(--muted);
+  font-size: 13px;
+  max-width: 46ch;
+  margin: 0;
+  line-height: 1.5;
+}
+.inbox-capture {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.inbox-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 11px 14px;
+  outline: none;
+}
+.inbox-input::placeholder {
+  color: var(--faint);
+}
+.inbox-input:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+  border-color: var(--line2);
+}
+.inbox-empty {
+  color: var(--faint);
+  font-size: 13px;
+  text-align: center;
+  padding: 40px 0;
+  margin: 0;
+}
+.inbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.inbox-item {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.inbox-item-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+}
+.inbox-item-title {
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+}
+.inbox-item-meta {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--faint);
+  text-transform: lowercase;
+}
+.inbox-offer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.inbox-offer-when {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--ink);
+}
+.inbox-offer-why {
+  color: var(--muted);
+  font-size: 12px;
+  flex: 1;
+  min-width: 12ch;
+}
+.inbox-offer-none {
+  color: var(--faint);
+  flex: 1;
+}
+.inbox-item-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
 }

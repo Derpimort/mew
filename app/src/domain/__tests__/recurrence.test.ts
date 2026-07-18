@@ -3,9 +3,12 @@ import {
   describeRrule,
   expandRrule,
   normalizeRrule,
+  RRULE_DEFAULT_WEEKS,
   RRULE_HARD_CAP,
   type Rrule,
+  splitSeriesFrom,
 } from '../recurrence'
+import { addDaysKey } from '../time'
 
 /* RFC 5545 RRULE for user-created blocks — the pure day-key/min expander that
    execPlan turns into linked blocks (#159). Same bounded DAILY/WEEKLY walk and
@@ -163,4 +166,95 @@ describe('describeRrule', () => {
     expect(describeRrule({ freq: 'DAILY', interval: 1 }, MON)).toBe('every day')
     expect(describeRrule({ freq: 'DAILY', interval: 3 }, MON)).toBe('every 3 days')
   })
+})
+
+/* splitSeriesFrom — the "this & following" divide (#343). The head keeps the
+   cadence but ends the day before the split; the tail carries it forward from
+   the split day. Verified by expanding both halves with the same walk the store
+   re-links against, so the split is proven at the occurrence level. */
+describe('splitSeriesFrom — this & following', () => {
+  // gym Mon & Wed, until Aug 31 — the bounded case where head+tail must partition
+  const bounded: Rrule = { freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'], until: '2026-08-31' }
+  const days = (r: Rrule, anchor: string) =>
+    expandRrule(r, anchor, 7 * 60, 60, anchor, ALL).map((o) => o.dayKey)
+
+  it('is null-safe for a one-off block (no rule)', () => {
+    expect(splitSeriesFrom(null, MON)).toBeNull()
+    expect(splitSeriesFrom(undefined, '2026-06-22')).toBeNull()
+  })
+
+  it('bounds the head the day before the split and starts the tail at it', () => {
+    const split = splitSeriesFrom(bounded, '2026-06-22')! // a middle Monday
+    expect(split.head.until).toBe('2026-06-21') // the day before
+    expect(split.tail.until).toBe('2026-08-31') // the rule's own end rides along
+    // cadence is untouched on both halves — a split never changes which days fire
+    expect(split.head.byday).toEqual(['MO', 'WE'])
+    expect(split.tail.byday).toEqual(['MO', 'WE'])
+    expect(split.head.freq).toBe('WEEKLY')
+    expect(split.tail.freq).toBe('WEEKLY')
+  })
+
+  it('head + tail exactly partition the original series (no gap, no overlap)', () => {
+    const FROM = '2026-06-22'
+    const full = days(bounded, MON)
+    const head = days(split(bounded, FROM).head, MON) // head keeps the original anchor
+    const tail = days(split(bounded, FROM).tail, FROM) // tail is anchored at the split
+    expect(head.every((d) => d < FROM)).toBe(true)
+    expect(tail.every((d) => d >= FROM)).toBe(true)
+    expect([...head, ...tail]).toEqual(full) // union, in order, is the whole series
+    expect(head.filter((d) => tail.includes(d))).toHaveLength(0) // disjoint
+  })
+
+  it('splitting at the FIRST occurrence leaves an empty head and the whole tail', () => {
+    const full = days(bounded, MON)
+    const s = split(bounded, MON) // MON is the anchor = first occurrence
+    expect(days(s.head, MON)).toEqual([]) // nothing before the first
+    expect(days(s.tail, MON)).toEqual(full) // the tail is the entire series
+  })
+
+  it('splitting at the LAST occurrence gives all-but-last as head, just it as tail', () => {
+    const full = days(bounded, MON)
+    const last = full[full.length - 1]
+    const s = split(bounded, last)
+    expect(days(s.head, MON)).toEqual(full.slice(0, -1))
+    expect(days(s.tail, last)).toEqual([last])
+  })
+
+  it('splits a DAILY series at a day boundary', () => {
+    const daily: Rrule = { freq: 'DAILY', interval: 1, until: '2026-06-15' }
+    const s = split(daily, '2026-06-11')
+    expect(days(s.head, MON)).toEqual(['2026-06-08', '2026-06-09', '2026-06-10'])
+    expect(days(s.tail, '2026-06-11')).toEqual([
+      '2026-06-11',
+      '2026-06-12',
+      '2026-06-13',
+      '2026-06-14',
+      '2026-06-15',
+    ])
+  })
+
+  it('drops COUNT (unknowable across a split) and lets the open tail lean on the window/cap', () => {
+    const counted: Rrule = { freq: 'WEEKLY', interval: 1, count: 24 } // no until → open-ended tail
+    const FROM = '2026-06-22'
+    const s = split(counted, FROM)
+    expect(s.head.count).toBeUndefined()
+    expect(s.tail.count).toBeUndefined()
+    expect(s.tail.until).toBeUndefined()
+    // no COUNT/UNTIL fights the caller's window: expanded across execPlan's
+    // RRULE_DEFAULT_WEEKS horizon, an open weekly tail fills exactly that window
+    const windowEnd = addDaysKey(FROM, RRULE_DEFAULT_WEEKS * 7)
+    const tail = expandRrule(s.tail, FROM, 9 * 60, 30, FROM, windowEnd)
+    expect(tail.length).toBeLessThanOrEqual(RRULE_DEFAULT_WEEKS + 1)
+    expect(tail[0].dayKey).toBe(FROM)
+    expect(tail.every((o) => o.dayKey <= windowEnd)).toBe(true)
+    // and against an unbounded horizon the day-walk still stops at the hard cap
+    const unbounded = expandRrule(s.tail, FROM, 9 * 60, 30, FROM, '9999-12-31')
+    expect(unbounded.length).toBeLessThan(RRULE_HARD_CAP)
+  })
+
+  function split(r: Rrule, from: string) {
+    const s = splitSeriesFrom(r, from)
+    if (!s) throw new Error('expected a split')
+    return s
+  }
 })

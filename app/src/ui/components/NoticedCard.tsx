@@ -17,7 +17,7 @@ const LABEL: CSSProperties = {
 
 export function NoticedCard({ card }: { card: InsightsCardData | null }) {
   return (
-    <div className="set-card">
+    <div className="set-card" data-card="noticed">
       <h2>{card?.title ?? INSIGHTS_CARD_TITLE}</h2>
       <div className="sub">
         Weekly patterns from your own history — computed on this device, nothing sent anywhere.

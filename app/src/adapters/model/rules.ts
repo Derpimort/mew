@@ -8,7 +8,7 @@ import { inferTag, parseCommand as ruleParse } from '../../domain/parse'
 import { normalizeRrule } from '../../domain/recurrence'
 import { parseSplitAsk, type SplitAsk } from '../../domain/rescue'
 import { weekdayOffset } from '../../domain/time'
-import type { PlanMode, ScheduleIntent } from '../../domain/types'
+import type { PlanMode, ScheduleIntent, Tag } from '../../domain/types'
 import {
   CHOICES_POSTED,
   type ChatTurn,
@@ -18,6 +18,17 @@ import {
 } from './types'
 
 const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
+  [
+    /* "what do you know about me?" (#330) — the memory console, spoken. The
+       SAME domain presenter the Settings console renders (store threads it in
+       as knownLines), so keyless the reply and the card are one summary. Placed
+       ahead of the generic "what do you know" line so the about-me ask wins. */
+    /what (?:do you|does mew|have you|did you) (?:know|learned?|remember|picked? ?up)\b[^?.!]*\babout (?:me|my)\b/i,
+    (ctx) =>
+      ctx.knownLines?.length
+        ? ctx.knownLines.join('\n')
+        : `still getting to know you — I'll pick things up as we go.`,
+  ],
   [
     /how('s| is| does| did| was) (my |the )?(week|day|today)|what (do you|does mew) know|insights?|patterns?/i,
     (ctx) =>
@@ -33,6 +44,14 @@ const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
   ],
   [/^(ok(ay)?|cool|nice|great|good)\b/i, () => `Good. Mewing away.`],
 ]
+
+/** A tool result that already posted its own chips (#254 · offer_choices,
+    #334 · which-block / done-block confirm) leads with CHOICES_POSTED: for the
+    keyless floor the chips ARE the reply, so yield nothing. One helper, every
+    tool that can ask, so no path leaks the sentinel into chat as prose. */
+function quietIfChoices(out: string): string {
+  return out.startsWith(CHOICES_POSTED) ? '' : out
+}
 
 /** Apply a parsed intent through the executor; returns the reply text.
     Shared by the rules and Ollama adapters. */
@@ -71,7 +90,7 @@ export function runIntent(
         /* the executor may have posted the picker (#254 pattern): its result
            then addresses a model — the floor stays quiet, the cards ARE the
            reply. A fall-through line (single shape, nothing fits) speaks. */
-        return out.startsWith(CHOICES_POSTED) ? '' : out
+        return quietIfChoices(out)
       }
       return exec.plan(
         places.map((p) => ({
@@ -79,7 +98,13 @@ export function runIntent(
           tag: p.tag,
           dayOffset: p.dayOffset ?? 0,
           startMin: p.startMin,
+          // #323: the deterministic parser only ever reads a time the user typed
+          // ("dinner at 6") — never a reshape — so an explicit time here is stated
+          startStated: p.startMin != null || undefined,
           durationMin: p.durationMin,
+          // #322: same logic for length — a parsed duration is always the user's
+          // own words, so it's stated (and stated word wins: never auto-padded)
+          durationStated: p.durationMin != null || undefined,
           protected: p.protected,
           attention: p.attention,
           due: p.due,
@@ -93,32 +118,73 @@ export function runIntent(
       )
     }
     case 'complete':
-      return exec.complete(intent.query ?? '')
+      /* an ambiguous name (#334) posts chips and returns CHOICES_POSTED — the
+         floor then stays quiet, the chips ARE the reply (the remove precedent) */
+      return quietIfChoices(exec.complete(intent.query ?? '', intent.at))
     case 'move':
-      return exec.move(
-        intent.query ?? '',
-        intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
-          ? Number(intent.toDayKey)
-          : undefined,
-        intent.toStartMin
+      return quietIfChoices(
+        exec.move(
+          intent.query ?? '',
+          intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
+            ? Number(intent.toDayKey)
+            : undefined,
+          intent.toStartMin,
+          intent.relStartMin, // #320: a relative shift ("30 min earlier") the executor applies
+          intent.at // #334: the target block's current start, pinning which of several
+        )
       )
     case 'capture':
       return exec.capture(intent.title ?? '')
     case 'clear':
       return exec.clear(intent.scope ?? 'upcoming')
     case 'edit':
-      return exec.edit(intent.query ?? '', intent.edit ?? {})
+      // #343: a scope word ("just this one", "from now on") the parser lifted off
+      // rides through; absent on a series block, the executor asks with chips.
+      return quietIfChoices(
+        exec.edit(intent.query ?? '', intent.edit ?? {}, intent.at, intent.seriesScope)
+      )
+    case 'resize':
+      /* #335: a duration-only change keeping the start — routes through the same
+         executor edit path, so an ambiguous name or a series block asks with
+         chips (CHOICES_POSTED) exactly as edit does. */
+      return quietIfChoices(
+        exec.resize(intent.query ?? '', intent.resize ?? {}, intent.at, intent.seriesScope)
+      )
+    case 'duplicate':
+      /* #335: copy to another day/time — an ambiguous source name asks with
+         chips; the keyless floor stays quiet and the chips ARE the reply. */
+      return quietIfChoices(exec.duplicate(intent.query ?? '', intent.duplicate ?? {}, intent.at))
+    case 'relmove':
+      /* #335: a relative nudge (earlier/later/next_day/next_free) — same chip
+         behavior on an ambiguous name as a move. */
+      return quietIfChoices(
+        exec.relativeMove(
+          intent.query ?? '',
+          intent.relmove?.direction ?? 'later',
+          intent.relmove?.amountMin,
+          intent.at
+        )
+      )
+    case 'giveRoom':
+      /* #322: the "give them room" chip — resize the just-placed blocks of one
+         focus class up to how the kind really runs. Same executor the keyed
+         give_room tool calls, so both floors answer the offer identically. */
+      return exec.giveRoom(intent.focusClass ?? 'deep')
     case 'remember':
       return intent.pref
         ? exec.remember(intent.pref)
         : 'nothing to remember — the rule needs a subject and a value'
-    case 'remove': {
-      const out = exec.remove(intent.query ?? '', intent.remove ?? {})
-      /* the executor may have asked "which one?" as clickable chips (#254);
-         its result then addresses a model, not the user — the floor stays
-         quiet and the chips message IS the reply (empty yields never post). */
-      return out.startsWith(CHOICES_POSTED) ? '' : out
-    }
+    case 'remove':
+      /* the executor may have asked "which one?" as clickable chips (#254), or
+         surfaced a done-block removal confirm (#334), or (with no scope on a
+         series block) the this/following/series scope chips (#343) — the floor
+         stays quiet and the chips/confirm message IS the reply. */
+      return quietIfChoices(
+        exec.remove(intent.query ?? '', {
+          ...(intent.remove ?? {}),
+          ...(intent.seriesScope ? { scope: intent.seriesScope } : {}),
+        })
+      )
     case 'chat': {
       if (intent.reply) return intent.reply
       const hit = CHAT_REPLIES.find(([re]) => re.test(rawText))
@@ -135,6 +201,12 @@ export function runIntent(
         ? [card.title, ...card.rows.map((r) => `${r.label}: ${r.value}`)].join('\n')
         : `still learning your week — check back friday`
     }
+    case 'list':
+      /* read-only sight (#333): the SAME itemized readout the keyed tool
+         returns — one executor path, so keyless and keyed can't drift. The
+         executor's listBlocks never mutates and never snapshots; the readout
+         string is the reply the floor yields verbatim. */
+      return exec.listBlocks(intent.list?.day ?? 0, intent.list?.tag)
   }
 }
 
@@ -154,8 +226,10 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
         : (weekdayOffset(ask.dayWord, now) ?? 0)
   const shrunk = exec.edit(ask.query, { endMin: ask.gapStartMin })
   /* execEdit's miss shape is stable ("I couldn't find …") and pinned in tests:
-     with no block to shrink, placing a stray tail would double time — stop. */
-  if (shrunk.startsWith(`I couldn't find`)) return shrunk
+     with no block to shrink, placing a stray tail would double time — stop. An
+     ambiguous target (#334) posts chips and returns CHOICES_POSTED; the split is
+     off until the user picks, so bail there too rather than place a lone tail. */
+  if (shrunk.startsWith(`I couldn't find`) || shrunk.startsWith(CHOICES_POSTED)) return shrunk
   const placed = exec.plan(
     [
       {
@@ -259,19 +333,32 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
     if (!okPlaces.length && !okFrees.length) return null
     return { kind: 'plan', places: okPlaces, frees: okFrees }
   }
-  if (kind === 'complete' && typeof o.query === 'string') return { kind, query: o.query }
+  const atOf = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
+  /* #343: a recurring-edit scope a weak model may hang on the intent — honored
+     as-is for edit/remove, ignored elsewhere. */
+  const scopeOf = (v: unknown): 'this' | 'following' | 'series' | undefined =>
+    v === 'this' || v === 'following' || v === 'series' ? v : undefined
+  if (kind === 'complete' && typeof o.query === 'string')
+    return { kind, query: o.query, ...(atOf(o.at) ? { at: atOf(o.at) } : {}) }
   if (kind === 'move' && typeof o.query === 'string')
     return {
       kind,
       query: o.query,
       toDayKey: o.toDayOffset != null ? String(clampInt(o.toDayOffset, 0, 13, 0)) : undefined,
       toStartMin: optInt(o.toStartMin, 0, 1439),
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
     }
   if (kind === 'capture' && typeof o.title === 'string') return { kind, title: o.title }
   if (kind === 'remove' && typeof o.query === 'string' && o.query.trim()) {
     const at = typeof o.at === 'string' && o.at.trim() ? o.at.trim() : undefined
     const all = o.all === true
-    return { kind, query: o.query, ...(at || all ? { remove: { at, all } } : {}) }
+    const scope = scopeOf(o.scope ?? o.seriesScope)
+    return {
+      kind,
+      query: o.query,
+      ...(at || all ? { remove: { at, all } } : {}),
+      ...(scope ? { seriesScope: scope } : {}),
+    }
   }
   if (kind === 'edit' && typeof o.query === 'string') {
     const e = (o.edit && typeof o.edit === 'object' ? o.edit : {}) as Record<string, unknown>
@@ -287,7 +374,65 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
     const due = optInt(e.dueMin ?? e.due, 0, 1439)
     if (due != null) edit.due = due
     if (!Object.keys(edit).length) return null
-    return { kind, query: o.query, edit }
+    const scope = scopeOf(o.scope ?? o.seriesScope)
+    return {
+      kind,
+      query: o.query,
+      edit,
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+      ...(scope ? { seriesScope: scope } : {}),
+    }
+  }
+  if (kind === 'resize' && typeof o.query === 'string' && o.query.trim()) {
+    // #335: a duration-only change keeping the start — durationMin (absolute) or
+    // deltaMin/relDurationMin (signed). No usable amount ⇒ drop (nothing to do).
+    const r = (o.resize && typeof o.resize === 'object' ? o.resize : o) as Record<string, unknown>
+    const durationMin = optInt(r.durationMin, 5, 720)
+    const relDurationMin = optInt(r.relDurationMin ?? r.deltaMin, -600, 600)
+    if (durationMin == null && relDurationMin == null) return null
+    const scope = scopeOf(o.scope ?? o.seriesScope)
+    return {
+      kind,
+      query: o.query,
+      resize: { durationMin, relDurationMin },
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+      ...(scope ? { seriesScope: scope } : {}),
+    }
+  }
+  if (kind === 'duplicate' && typeof o.query === 'string' && o.query.trim()) {
+    // #335: copy the block; a loose model may nest the destination or hang it top-level.
+    const d = (o.duplicate && typeof o.duplicate === 'object' ? o.duplicate : o) as Record<
+      string,
+      unknown
+    >
+    return {
+      kind,
+      query: o.query,
+      duplicate: {
+        toDayOffset: optInt(d.toDayOffset, 0, 13),
+        toStartMin: optInt(d.toStartMin, 0, 1439),
+        rrule: normalizeRrule(d.recurrence ?? d.rrule) ?? undefined,
+      },
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+    }
+  }
+  if (kind === 'relmove' && typeof o.query === 'string' && o.query.trim()) {
+    // #335: a relative nudge — a valid direction is required, else drop.
+    const rm = (o.relmove && typeof o.relmove === 'object' ? o.relmove : o) as Record<
+      string,
+      unknown
+    >
+    const dirs = ['earlier', 'later', 'next_day', 'next_free'] as const
+    if (!dirs.includes(rm.direction as never)) return null
+    return {
+      kind,
+      query: o.query,
+      relmove: {
+        direction: rm.direction as (typeof dirs)[number],
+        amountMin: optInt(rm.amountMin, 5, 600),
+      },
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+    }
   }
   if (kind === 'clear') {
     const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
@@ -314,12 +459,39 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
   }
   if (kind === 'chat') return { kind, reply: typeof o.reply === 'string' ? o.reply : undefined }
   if (kind === 'insights') return { kind } // read-only; carries no fields
+  if (kind === 'list') {
+    /* read-only (#333). A weak model may nest the args or hang them at top
+       level, and name the day or the offset — parseListDay takes either. */
+    const l = (o.list && typeof o.list === 'object' ? o.list : o) as Record<string, unknown>
+    const tag = (['work', 'private', 'health', 'rest'] as const).includes(l.tag as never)
+      ? (l.tag as Tag)
+      : undefined
+    return { kind, list: { day: parseListDay(l.day), ...(tag ? { tag } : {}) } }
+  }
   return null
 }
 
 export function clampInt(v: unknown, min: number, max: number, dflt: number): number {
   const n = typeof v === 'number' ? Math.round(v) : Number.NaN
   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : dflt
+}
+
+/** A list_blocks `day` arg (from a tool call or a model intent) → the scope
+    execListBlocks reads: a 0–13 day offset, or the whole week ahead. 'week' →
+    the week; 'today'/'' → 0; 'tomorrow' → 1; a number (or numeric string) is a
+    day offset; anything unrecognized falls to today (#333). */
+export function parseListDay(v: unknown): number | 'week' {
+  if (v === 'week') return 'week'
+  if (typeof v === 'number') return clampInt(v, 0, 13, 0)
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    if (s === 'week' || s === 'this week') return 'week'
+    if (s === '' || s === 'today') return 0
+    if (s === 'tomorrow') return 1
+    const n = Number(s)
+    if (Number.isFinite(n)) return clampInt(n, 0, 13, 0)
+  }
+  return 0
 }
 export function optInt(v: unknown, min: number, max: number): number | undefined {
   const n = typeof v === 'number' ? Math.round(v) : Number.NaN

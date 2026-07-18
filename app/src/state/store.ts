@@ -16,6 +16,7 @@ import {
   type PrefPayload,
   type Settings,
   type StoredScenario,
+  type Tag,
   type ToolCardState,
   type VisibleTag,
 } from '../domain/types'
@@ -47,7 +48,12 @@ import {
 } from '../domain/time'
 import * as week from '../domain/week'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
-import { describeRrule, expandRrule, RRULE_DEFAULT_WEEKS } from '../domain/recurrence'
+import {
+  describeRrule,
+  expandRrule,
+  RRULE_DEFAULT_WEEKS,
+  splitSeriesFrom,
+} from '../domain/recurrence'
 import { liveNow } from '../domain/liveNow'
 import { aggregates, consolidate, interruptionsLastHour } from '../domain/memory'
 import {
@@ -55,15 +61,30 @@ import {
   dayLoadAssessment,
   dayLoadFiredKey,
   dayThroughputMin,
+  estimateFactorByTag,
+  ESTIMATE_FIRED_KEY,
+  ESTIMATE_PAD_FLOOR,
+  padDuration,
   proposeKinderPlan,
   taskDurations,
   trimMove,
   type TaskDuration,
 } from '../domain/insights'
+import { consoleSummary, memoryConsole } from '../domain/console'
+import { isRollCandidate, weeklyReview, type WeeklyReview } from '../domain/review'
+import { composeReviewOffer, shouldOfferReview } from '../domain/nudges/review'
 import { pixieInputs } from '../domain/pixie'
 import { dayShape } from '../domain/dayShape'
-import { restInsertion, scoreSlots, type SlotQuery, type TimeWindow } from '../domain/scheduler'
-import { mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
+import { listReadout } from '../domain/listing'
+import {
+  driftCollisions,
+  moveBlockedBy,
+  restInsertion,
+  scoreSlots,
+  type SlotQuery,
+  type TimeWindow,
+} from '../domain/scheduler'
+import { correctMeal, mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { coalesceNudges } from '../domain/nudges/queue'
@@ -79,6 +100,7 @@ import {
   condensedChatSlug,
   debriefPage,
   knownProjectsFrom,
+  learnedRulePage,
   makeChatBatcher,
   peopleFrom,
   prefPage,
@@ -93,7 +115,29 @@ import {
   sidecarStatus,
   type SidecarStatus,
 } from '../adapters/brain/sidecar'
-import { applyPrefs } from '../domain/prefs'
+import {
+  batchAdminRule,
+  deepWorkAnytime,
+  parseTimeValue,
+  resolveTaskSpec,
+  type LearnedRule,
+} from '../domain/prefs'
+import {
+  energyProfile,
+  focusClassOfTask,
+  FOCUS_CLASS_LABEL,
+  type FocusClass,
+} from '../domain/energy'
+import { DEFAULT_DURATION_MIN, fitOffers, type InboxOffer, offerBody } from '../domain/inbox'
+import {
+  candidateToRule,
+  confirmedRulesFrom,
+  detectTaskRules,
+  dismissedMatchesFrom,
+  offerPhrase,
+  parseLearnedRule,
+  type RuleCandidate,
+} from '../domain/learn'
 import {
   applyUpdate,
   brainEndpoint,
@@ -124,7 +168,13 @@ import {
   type ToolExecutor,
   type WeekContext,
 } from '../adapters/model'
-import { generateScenarios, validateScenario, type ScenarioTask } from '../domain/scenarios'
+import {
+  generateScenarios,
+  validateScenario,
+  type ScenarioPlace,
+  type ScenarioTask,
+} from '../domain/scenarios'
+import { weekScaffold } from '../domain/scaffold'
 import { choicesActive, scenariosActive } from '../domain/choices'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -248,7 +298,7 @@ export interface MewState {
   memory: import('../domain/types').MemoryEvent[]
   settings: Settings
 
-  page: 'week' | 'settings'
+  page: 'week' | 'settings' | 'inbox'
   view: 'focus' | 'week'
   /** Non-persisted first-run cursor (#306). `hasSeenOnboarding` is the gate that
       decides whether the modal shows at all; this says WHERE inside it we are:
@@ -275,6 +325,14 @@ export interface MewState {
       composer never locks). One slot, not a FIFO: a second Enter merges into
       it, so the drain in speak's finally sends exactly one combined turn. */
   queuedSpeak: string | null
+  /** Non-persisted conversational referent (#320): the block a turn's executor
+      last touched (single-block plan / move / edit / complete) or the user last
+      tapped. "move it", "make that 45", "30 min earlier" resolve against it on
+      every path — keyless included. Session context, never week state: not
+      persisted, cleared on day rollover. One slot covers the vast majority; a
+      wrong-block mutation is worse than a kind "which one?", so an absent or
+      removed referent asks rather than guesses. */
+  lastReferent: { blockId: string; ts: number } | null
   /** Non-persisted: the desktop sidecar brain's lifecycle, live from the
       shell's mew://brain-status beats ('off' on the web, or before the first
       beat). Settings renders it so a dead built-in brain is visibly dead —
@@ -305,6 +363,12 @@ export interface MewState {
      and the tray's quick-capture route (#283) must agree on it. */
   commandPaletteOpen: boolean
   commandPaletteMode: 'command' | 'search' | 'capture'
+
+  /* weekly review (#346): a UI-only overlay flag, same discipline as the
+     command palette — the offer's "show me", the command palette, and a dev
+     seam all open it through openWeeklyReview(); Esc / "leave them" close it.
+     The surface reads the pure presenter live, so a roll re-renders it. */
+  weeklyReviewOpen: boolean
 
   /** The OS refused the global capture hotkey (#284) — owned by another app.
       Non-persisted, re-derived on every registration attempt; the Settings
@@ -347,7 +411,59 @@ export interface MewState {
       mutates — chat is where the reply lands, via the tool. */
   queryBrain(question: string): Promise<string>
   toggleComplete(blockId: string): void
+  /** Record the conversational referent (#320) — the block the user just
+      tapped (the detail card already knows its id). Keeps "it/that/this"
+      resolving to what they're looking at, the same slot the executors set
+      when they act, so a tap-then-"move it earlier" lands on the right block. */
+  noteReferent(blockId: string): void
   nudgeAction(msgId: string, actionId: string): void
+  /* ── memory console (#330) — see & correct what MEW knows. Edits go through
+     the same append-only memory the learn/remember paths write; a forget is
+     honest (the rule is really gone from what applies, and recorded so it
+     won't instantly re-learn). No brain/key needed — the local floor is the
+     source of truth for what applies. */
+  /** Confirm a learned task rule — a pending offer accepted, or an edited rule
+      saved. Appends it to memory (newest per match wins) and mirrors to the
+      brain when on; #328's resolver then applies it silently. */
+  confirmTaskRule(rule: LearnedRule): void
+  /** Forget a task rule for `match`: delete its learned_rule event(s) so it
+      stops applying, and record a dismissal so repetition won't re-offer it at
+      once. Covers a confirmed rule (deletes + dismisses) and a pending offer
+      declined (dismisses only). */
+  forgetRule(match: string): void
+  /** Re-enable a dismissed/forgotten pattern: drop the dismissal so MEW may
+      notice and offer it again. */
+  reEnableRule(match: string): void
+  /** Save a standing rule (stated preference) — the same remember path a typed
+      rule takes; newest per kind+match wins. */
+  saveStandingPref(pref: PrefPayload): void
+  /** Forget a standing rule: delete its preference event(s) so it stops
+      applying (and refresh the brain-backed cache). */
+  forgetStandingPref(pref: PrefPayload): void
+  /** Open the weekly review (#346) and return its data — a READ-ONLY presenter,
+      like the memory console: it computes weeklyReview() over the local week +
+      memory (no key, no I/O, no mutation) and flips the surface open. The offer
+      chip, the command palette, and a dev seam all route here. */
+  openWeeklyReview(): WeeklyReview
+  /** Close the weekly review surface ("leave them" / Esc). */
+  closeWeeklyReview(): void
+  /** Roll the owner-SELECTED carried blocks forward into `targetWeekKey`, through
+      the executor (the normal plan path) — never a direct mutation. Only ids that
+      pass isRollCandidate move (own + flexible + open): a mew, an external event,
+      or a fixed-time block handed in is refused at the gate, so nothing rolls
+      that the owner didn't pick from a legitimate carried set. Human-in-the-loop
+      by construction. */
+  rollForward(blockIds: string[], targetWeekKey: string): void
+  /** Draft the owner's learned week-shape for `targetWeekKey` (#349) — confirmed
+      rules, their recurrences, and learned energy bands, laid AROUND existing/
+      external events by weekScaffold (pure, keyless). Presented as a plan-mode
+      scenario the owner previews and accepts/tweaks/discards: proposing mutates
+      NOTHING; only pickScenario places, through the executor. Empty signal ⇒ an
+      honest "I don't know your week yet" line, never a guessed week. Default
+      target is the coming week; the offer nudge and the command palette both
+      route here. Returns whether a draft was posted (false = the honest-empty
+      line, or the week already holds the shape). */
+  proposeScaffold(targetWeekKey?: string): boolean
   /** Pick an option chip (#254): mark it picked, then post its reply as an
       ordinary user turn — the same speak() path as typing, so the model sees
       a normal message and the week still changes only via tools. Inert by
@@ -364,7 +480,7 @@ export interface MewState {
       one deterministic executor call, never a model round-trip (#102). */
   pickScenario(msgId: string, scenarioId: string): void
   focusDay(key: string | null): void
-  setPage(page: 'week' | 'settings'): void
+  setPage(page: 'week' | 'settings' | 'inbox'): void
   setView(view: 'focus' | 'week'): void
   /** Mark first-run onboarding as seen and persist it — one-way, fired when the
       user skips-all, completes the last guided step, or closes the modal. Resets
@@ -405,6 +521,12 @@ export interface MewState {
     durationMin?: number
   ): 'moved' | 'resized' | 'external' | 'conflict' | 'noop'
   toggleProtected(blockId: string): void
+  /** Delete a block outright from its detail card (#334) — the block-card remove
+      affordance. Shares the chat proposal's confirm path (removeBlocksConfirmed):
+      a DONE block's completion event goes too (never resurrects it as open), and
+      it's undoable ("undo that"). The card owns the one-line confirm before it
+      calls this; external (calendar) blocks aren't offered it (not ours). */
+  removeBlock(blockId: string): void
   /** Promotion/demotion from the Focus orbit — the click writes attention;
       the center swap falls out of liveNow. Quiet: the swap IS the feedback. */
   setAttention(blockId: string, attention: 'focus' | 'background'): void
@@ -465,6 +587,38 @@ export interface MewState {
     title: string,
     autoPlace?: boolean
   ): { kind: 'open' | 'placed' | 'empty'; message: string }
+  /* ── quick-capture inbox (#348) — capture holds no time; gbrain OFFERS a
+     fitting slot the owner confirms; placement routes through the executor.
+     The inbox IS the open-capture queue (#171 substrate), enriched. ───────── */
+  /** Capture an intent that holds NO time — an open inbox item, no chat turn,
+      no when-where interrupt (capture-now, place-later). Optional hints size a
+      later offer. Returns the item so a surface can toast it. Never touches the
+      week (MEW law: optional/unscheduled events hold no time). */
+  capture(
+    text: string,
+    opts?: { tag?: Tag; durationMin?: number; energy?: 'deep' | 'admin' | 'health' }
+  ): { kind: 'open' | 'empty'; item?: Capture; message: string }
+  /** The owner CONFIRMS a slot for a waiting item → the executor places it (the
+      same one-mutation path when-where accept and the rail use), marks it placed
+      and links its block. Only the owner's confirm calls this — gbrain never
+      auto-schedules. Returns false if the item is gone/placed or the day filled. */
+  placeFromInbox(
+    itemId: string,
+    slot: { dayKey: string; startMin: number; durationMin?: number }
+  ): boolean
+  /** "not now" on an offer — keep the item WAITING (still open) and mark it
+      offered today so the proactive offer doesn't nag again the same day. */
+  dismissInboxOffer(itemId: string): void
+  /** Drop a waiting item from the inbox for good (the surface's ×). */
+  removeInboxItem(itemId: string): void
+  /** The fitting-slot offers for the waiting items right now — pure fitOffers
+      over the live week + local memory, keyless. Read-only: the surface renders
+      them; a placement happens only on the owner's confirm. */
+  inboxOffers(): InboxOffer[]
+  /** Surface ONE proactive placement offer as a nudge the owner confirms — the
+      top waiting item not already offered today. A store ritual (rides the
+      tick, once per item per day), never an auto-schedule. */
+  offerNextInboxPlacement(): void
   /** Jump to a block from a search hit: focus its day and surface its week so
       the card is on screen. Read-only navigation — no mutation. */
   revealBlock(blockId: string): void
@@ -477,6 +631,87 @@ export interface MewState {
 
 function mewMsg(body: string, observation?: string): ChatMessage {
   return { id: uid(), role: 'mew', body, ts: nowFn(), ...(observation ? { observation } : {}) }
+}
+
+/* #325 — the acknowledgment vocabulary of a correction ("you're right", "good
+   catch", "sorry"), longest-first so a phrase always wins over its own suffix
+   ("right you are" before a bare match). Only correction/apology openers live
+   here — not generic affirmations — so the classifier stays narrow. */
+const ACK_PHRASES = [
+  "you're absolutely right",
+  'you are absolutely right',
+  "you're totally right",
+  "you're so right",
+  "you're right about that",
+  "you're right",
+  'you are right',
+  'right you are',
+  "you're correct",
+  'you are correct',
+  'fair point',
+  'fair enough',
+  "that's fair",
+  'good point',
+  'good catch',
+  'nice catch',
+  'great catch',
+  'my apologies',
+  'my mistake',
+  'my bad',
+  'my fault',
+  'apologies',
+  'sorry about that',
+  'so sorry',
+  'sorry',
+  'oops',
+  'understood',
+  'noted',
+  'got it',
+  'gotcha',
+  'you got it',
+  'i hear you',
+].sort((a, b) => b.length - a.length)
+
+/* #325 — is this streamed reply row nothing but acknowledgment? A correction
+   should land as one "got it" plus one reshape, never a chain of "you're
+   right / fair point / good catch". A row is acknowledgment-only when, after
+   peeling the known ack phrases and the punctuation/fillers that join them,
+   nothing is left AND at least one real phrase was peeled: the fix line
+   ("moved dinner to 20:00 — here's the evening") always leaves a remainder, so
+   it is never mistaken for grovel. Pure and exported for the guardrail's tests. */
+export function isAcknowledgmentOnly(body: string): boolean {
+  const trimEdges = (t: string) => t.replace(/^[\s,.!?;:—–-]+|[\s,.!?;:—–-]+$/g, '')
+  let s = trimEdges(
+    body
+      .toLowerCase()
+      .replace(/[*_`~#>]/g, ' ') // strip light-markdown emphasis
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
+  if (!s) return false
+  let peeledPhrase = false
+  let changed = true
+  while (changed && s) {
+    changed = false
+    /* a leading connective that joins two acks ("and sorry", "oh, you're right") */
+    const defiller = s.replace(/^(and|but|also|so|oh|well|really|truly|again|totally|just)\b/, '')
+    if (defiller !== s) {
+      s = trimEdges(defiller)
+      changed = true
+      continue
+    }
+    for (const p of ACK_PHRASES) {
+      const rest = s.slice(p.length)
+      /* match only on a word/punctuation boundary — never chop "rightly" at "right" */
+      if (s.startsWith(p) && (rest === '' || /^[\s,.!?;:—–-]/.test(rest))) {
+        s = trimEdges(rest)
+        peeledPhrase = true
+        changed = true
+        break
+      }
+    }
+  }
+  return peeledPhrase && s.length === 0
 }
 
 /** The #254 chips message shape — one home, shared by the offer_choices
@@ -493,6 +728,51 @@ function choicesMsg(body: string, choices: ChatChoice[]): ChatMessage {
     the plan executor. */
 function scenariosMsg(body: string, scenarios: StoredScenario[]): ChatMessage {
   return { id: uid(), role: 'mew', body, ts: nowFn(), scenarios }
+}
+
+/** The learn-from-doing offer (#327): ONE nudge carrying the candidate rule and
+    two chips. The pick resolves DETERMINISTICALLY in nudgeAction — confirm
+    stores the rule, dismiss records a dismissal — so the loop is identical
+    keyless (no model reconstructs the rule from prose). The rule rides `payload`
+    as JSON; `match` lets the pass see the pattern was already offered. */
+function learnOfferMsg(c: RuleCandidate): ChatMessage {
+  return {
+    id: uid(),
+    role: 'nudge',
+    body: offerPhrase(c),
+    ts: nowFn(),
+    nudgeType: 'learn-offer',
+    actions: [
+      { id: 'confirm', label: 'yes, always', kind: 'primary' },
+      { id: 'dismiss', label: 'not a rule', kind: 'secondary' },
+    ],
+    payload: { match: c.match, rule: JSON.stringify(candidateToRule(c)) },
+  }
+}
+
+/** The inbox placement offer (#348): ONE nudge carrying the fitting slot and two
+    chips — gbrain OFFERS, the owner confirms. `place` resolves DETERMINISTICALLY
+    in nudgeAction (placeFromInbox → the executor's one mutation path); `notnow`
+    keeps the item waiting (dismissInboxOffer). The slot rides `payload` so a
+    keyless confirm is identical — no model reconstructs it, nothing auto-places. */
+function inboxOfferMsg(title: string, offer: InboxOffer, todayKey: string): ChatMessage {
+  return {
+    id: uid(),
+    role: 'nudge',
+    body: offerBody(title, offer, todayKey),
+    ts: nowFn(),
+    nudgeType: 'inbox-offer',
+    actions: [
+      { id: 'place', label: 'place it', kind: 'primary' },
+      { id: 'notnow', label: 'not now', kind: 'secondary' },
+    ],
+    payload: {
+      captureId: offer.itemId,
+      dayKey: offer.dayKey,
+      startMin: offer.startMin,
+      durationMin: offer.durationMin,
+    },
+  }
 }
 
 /** The per-chunk paint path for ONE streaming mew reply (#281): the first delta
@@ -691,6 +971,50 @@ function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   return ` — note: it overlaps ${parts.join(' and ')}`
 }
 
+/** #324 own-vs-own collision drift — the placement-time sibling of #345's
+    edit-time drift-offer. New explicit-time WORK landing on the user's own
+    flexible blocks clears them out of its way in the SAME pass (meals re-anchor
+    through the circadian scorer, everything else takes the nearest later gap)
+    and the reply names what moved — no place-then-ask (#102 reversed). External
+    and fixed blocks are never moved (the honest overlap note); a flexible block
+    with no clean slot becomes an offer (offer_choices is the fallback, never a
+    silent overlap). `blocks` MUST already include `placed`; returns the reshaped
+    blocks, the reply fragment, and the drifted ids (for touched-day tracking). */
+function driftReply(
+  blocks: Block[],
+  placed: Block,
+  todayKey: string,
+  nowMin: number,
+  prefs: PrefPayload[]
+): { blocks: Block[]; note: string; driftedIds: string[] } {
+  const res = driftCollisions(blocks, placed, todayKey, nowMin, prefs)
+  let next = blocks
+  const driftedIds: string[] = []
+  const moved: string[] = []
+  const placedBase = placed.title.split('—')[0].trim()
+  for (const d of res.drifts) {
+    next = week.move(next, d.block.id, d.toDayKey, d.toStartMin)
+    driftedIds.push(d.block.id)
+    const name = d.block.title.split('—')[0].trim()
+    const where =
+      d.toDayKey === placed.dayKey
+        ? ''
+        : `${d.toDayKey === todayKey ? 'today' : fmtDowLong(d.toDayKey)} `
+    moved.push(`${name} to ${where}${fmtTime(d.toStartMin)}`)
+  }
+  const driftPart = moved.length ? ` — moved ${moved.join(', ')} to clear ${placedBase}` : ''
+  // external/fixed never move — the same honest note clashNote has always given
+  const fixedPart = clashNote(res.fixed, prefs)
+  const stuckPart = res.stuck.length
+    ? ` — note: ${res.stuck
+        .map((b) => b.title.split('—')[0].trim())
+        .join(
+          ' and '
+        )} still overlaps ${placedBase} with no clean slot to drift to — offer to shift the work, drop it, or keep the overlap (don't leave it unasked)`
+    : ''
+  return { blocks: next, note: `${driftPart}${fixedPart}${stuckPart}`, driftedIds }
+}
+
 function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = false): WeekContext {
   const now = new Date(s.nowMs)
   const todayKey = dayKey(now)
@@ -710,17 +1034,35 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
     summary.push(`${i === 0 ? 'today' : fmtDowLong(key)} (${key}): ${items}`)
   }
   const insights = computeInsights(s.memory, agg, now)
+  /* the conversational referent (#320), named for the keyed model so it
+     resolves "it/that/the one after lunch" the SAME way the keyless floor does
+     — one slot drives both paths, no drift. Only a live block qualifies (a
+     removed referent names nothing). */
+  const refBlock = s.lastReferent
+    ? s.blocks.find((b) => b.id === s.lastReferent!.blockId)
+    : undefined
+  const referent = refBlock
+    ? `${refBlock.title.split('—')[0].trim()} — ${refBlock.dayKey === todayKey ? 'today' : fmtDowLong(refBlock.dayKey)} ${fmtTime(refBlock.startMin)}`
+    : undefined
   return {
     todayKey,
     todayLabel: fmtLongDate(now),
     nowLabel: fmtTime(minOfDay(now)),
     weekSummary: summary,
+    ...(referent ? { referent } : {}),
     realisticBestH: agg.realisticBestH,
     mewsToday: live.mewsToday,
     insightLines: insights.lines,
     /* the full set rides along so the rules floor's `show insights` renders
        the same presenter rows as the Settings card (#287) */
     insights,
+    /* the memory console, spoken (#330): the keyless "what do you know about
+       me?" reply renders these — the SAME presenter the Settings console
+       shows, over LOCAL memory (brain-off by law), so reply and card are one
+       summary. Computed here so runIntent stays a pure render of ctx. */
+    knownLines: consoleSummary(
+      memoryConsole({ events: s.memory, prefs: activePrefsFrom(s.memory, null), insights })
+    ),
     recallLines,
     recallDegraded,
     brainOn: brainOn(),
@@ -1392,6 +1734,119 @@ export const useMew = create<MewState>((set, get) => {
     return spoke
   }
 
+  /* Estimate correction at plan time (#322, ask mode): after a plan places
+     under-booked work of a kind the user's OWN history shows runs long, ONE
+     choicesMsg (the #296 shape) offers to give it room — kindly, once per day,
+     their choice. Per task-type (deep runs long; batched admin usually doesn't),
+     so admin is never over-padded to fix deep. `pendingEstimatePad` remembers
+     the EXACT blocks the offer is about, so the pad chip resizes those and no
+     others (like the day-load guard's parked chips, it's store-held guard state
+     — the pick reads it back through execGiveRoom).
+
+     THE ONE-VOICE COORDINATION (#301 precedent): the day-load meter runs first
+     and returns `guarded` (the days it spoke for). If it spoke at all for this
+     placement, the estimate offer stays silent AND does not burn its key — one
+     guard voice per placement, and the offer waits for a turn the meter is quiet
+     on. Under the ask setting, under the pad floor, or with a stated duration,
+     this says nothing. */
+  let pendingEstimateMsgs: ChatMessage[] = []
+  let pendingEstimatePad: { ids: string[]; factor: number; focusClass: FocusClass } | null = null
+  function offerEstimateGuard(
+    placed: { id: string; focusClass: FocusClass }[],
+    guarded: Set<string>,
+    todayKey: string
+  ) {
+    if (get().settings.estimateAutosize !== 'ask') return // off / always never offer
+    if (!placed.length) return
+    /* one guard voice per placement: the day-load meter already spoke this turn
+       — defer without burning the key, so the offer still gets its one shot on a
+       later turn the meter is quiet on */
+    if (guarded.size > 0) return
+    const s = get()
+    const lastFired = { ...s.engine.lastFired }
+    if (lastFired[ESTIMATE_FIRED_KEY]?.key === todayKey) return // once per calendar day
+    const factors = estimateFactorByTag(s.memory, new Date(s.nowMs))
+    /* group the just-placed, non-stated blocks by kind, keep only kinds whose
+       demonstrated factor clears the pad floor — this is where admin (factor ≈ 1)
+       drops out and deep (factor > 1.1) stays */
+    const byClass = new Map<FocusClass, string[]>()
+    for (const p of placed) {
+      const f = factors[p.focusClass]
+      if (f != null && f >= ESTIMATE_PAD_FLOOR) {
+        const ids = byClass.get(p.focusClass) ?? []
+        ids.push(p.id)
+        byClass.set(p.focusClass, ids)
+      }
+    }
+    if (!byClass.size) return
+    /* one message: the kind that runs longest leads (deterministic tie-break by
+       clock order of the classes is irrelevant — factor decides) */
+    const [focusClass, ids] = [...byClass.entries()].sort(
+      (a, b) => factors[b[0]]! - factors[a[0]]!
+    )[0]
+    const factor = factors[focusClass]!
+    const pct = Math.round((factor - 1) * 100)
+    const label = FOCUS_CLASS_LABEL[focusClass]
+    pendingEstimatePad = { ids, factor, focusClass }
+    const msg = choicesMsg(
+      `your ${label} blocks tend to run ~${pct}% long — want me to give them room?`,
+      [
+        { id: 'pad', label: 'give them room', reply: `give my ${label} blocks room` },
+        { id: 'leave', label: 'leave as-is', reply: 'ok, leave them as they are' },
+      ]
+    )
+    lastFired[ESTIMATE_FIRED_KEY] = { ts: s.nowMs, key: todayKey }
+    set((st) => ({
+      engine: { ...st.engine, lastFired },
+      /* persisted like the rituals' keys (#297) — "offered today" holds across a
+         restart so the offer never repeats on reload */
+      settings: { ...st.settings, nudgeLastFired: lastFired },
+    }))
+    persistSettings(get().settings)
+    if (turnInFlight) pendingEstimateMsgs.push(msg)
+    else queueMicrotask(() => post([msg]))
+  }
+
+  /* The "give them room" chip / give_room tool (#322): resize the EXACT blocks
+     the last offer was about (pendingEstimatePad) up to how the kind really runs,
+     through the resize edit path — tools stay the only mutation door. Skips any
+     that have since been completed, removed, or moved behind the clock; a stated
+     duration was never in the set to begin with. No matching offer on record ⇒
+     a gentle no-op (a cold or stale call never mass-resizes the week). */
+  function execGiveRoom(focusClass: FocusClass): string {
+    const pad = pendingEstimatePad
+    if (!pad || pad.focusClass !== focusClass) {
+      return `nothing to give room right now — I only pad the blocks I just offered on.`
+    }
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const nowMin = minOfDay(now)
+    const targets = s.blocks.filter(
+      (b) =>
+        pad.ids.includes(b.id) &&
+        b.status === 'open' &&
+        !b.external &&
+        (b.dayKey > todayKey || (b.dayKey === todayKey && b.startMin >= nowMin))
+    )
+    if (!targets.length) {
+      pendingEstimatePad = null
+      return `those blocks have already moved on — nothing to give room.`
+    }
+    const grown = new Set(targets.map((b) => b.id))
+    const next = s.blocks.map((b) =>
+      grown.has(b.id)
+        ? applyEditPatch(b, { durationMin: padDuration(week.duration(b), pad.factor) })
+        : b
+    )
+    setBlocks(next)
+    pendingEstimatePad = null // one pad per offer
+    const label = FOCUS_CLASS_LABEL[focusClass]
+    const n = targets.length
+    const pct = Math.round((pad.factor - 1) * 100)
+    return `Gave your ${label} block${n === 1 ? '' : 's'} room — ${n} now run${n === 1 ? 's' : ''} about ${pct}% longer, sized to how they really go.`
+  }
+
   /* task→person link snapshot for the delegate nudge — fetched once per
      week, on the first tick inside the fresh-start window (the only moment
      the nudge can use it). The engine stays pure: it reads pairs as data.
@@ -1526,6 +1981,7 @@ export const useMew = create<MewState>((set, get) => {
     if (s.engine.lastFired.sustenance?.key === todayKey) return
     const specs = scaffoldDay(s.blocks, todayKey, {
       prefs: activePrefsFrom(s.memory, brainOn() ? brainPrefs : null),
+      learned: learnedRules(s), // #328: a confirmed rule can size the meal
       meals: s.settings.sustenanceMeals,
       nowMin,
     })
@@ -1535,8 +1991,217 @@ export const useMew = create<MewState>((set, get) => {
     post([mewMsg(scaffoldLine(specs))])
   }
 
-  function runTickEngine() {
+  /* ── the learn-from-doing pass (#327, gbrain Pillar 1) ─────────────
+     Rides the tick like the rituals: detectTaskRules is pure over local
+     memory, and this surfaces ONE fresh candidate as a single offer. Gated
+     three ways so it offers-once-then-stays-silent (never nags): at most one
+     offer per calendar day (the key burns only when an offer actually posts),
+     never a pattern already confirmed (a rule in force) or dismissed
+     (detectTaskRules skips both), and never one already offered in the log.
+     Confirm/dismiss resolve deterministically in nudgeAction. */
+  function burnLearnKey(todayKey: string, nowMs: number) {
+    set((s) => {
+      const lastFired = { ...s.engine.lastFired, 'learn-offer': { ts: nowMs, key: todayKey } }
+      return {
+        engine: { ...s.engine, lastFired },
+        settings: { ...s.settings, nudgeLastFired: lastFired },
+      }
+    })
+    persistSettings(get().settings)
+  }
+
+  function runLearnPass() {
+    const s = get()
+    if (!s.hydrated) return
+    const todayKey = dayKey(new Date(s.nowMs))
+    if (s.engine.lastFired['learn-offer']?.key === todayKey) return // one offer/day
+    const covered = [
+      ...confirmedRulesFrom(s.memory).map((r) => r.match),
+      ...activePrefsFrom(s.memory, brainOn() ? brainPrefs : null).map((p) => p.match),
+    ]
+    const dismissed = dismissedMatchesFrom(s.memory)
+    const candidate = detectTaskRules(s.memory, covered, dismissed).find(
+      (c) => !s.chat.some((m) => m.nudgeType === 'learn-offer' && m.payload?.match === c.match)
+    )
+    if (!candidate) return
+    post([learnOfferMsg(candidate)])
+    burnLearnKey(todayKey, s.nowMs)
+  }
+
+  /* the fitting-slot offers for the WAITING items — pure fitOffers over the live
+     week + local memory (keyless, the energyFit gear honored). One home for the
+     surface's inline offers and the proactive pass below. */
+  function computeInboxOffers(s: MewState): InboxOffer[] {
+    const open = s.captures.filter((c) => c.status === 'open')
+    if (!open.length) return []
+    return fitOffers(open, s.blocks, s.memory, new Date(s.nowMs), {
+      energyFit: s.settings.energyFit !== 'off',
+    })
+  }
+
+  /* burn the once-per-day offer marker onto the item — "not now" and the
+     proactive pass share it, so neither re-nags today. Persisted with the
+     capture, so the dedupe survives a reload. */
+  function markInboxOffered(itemId: string, todayKey: string) {
+    let updated: Capture | undefined
+    set((st) => ({
+      captures: st.captures.map((c) => {
+        if (c.id !== itemId) return c
+        updated = { ...c, lastOfferedDay: todayKey }
+        return updated
+      }),
+    }))
+    if (updated) persistCaptures([updated])
+  }
+
+  /* ── the inbox placement offer (#348, gbrain OFFERS) ─────────────────
+     Rides the tick like the learn offer: fitOffers is pure over the live week +
+     local memory, and this surfaces ONE fitting slot as a single nudge the owner
+     confirms. Gated so it offers-once-then-stays-quiet: at most one offer per
+     item per day (lastOfferedDay burns only when an offer posts), never one
+     already live in the log. gbrain NEVER auto-schedules — place/notnow resolve
+     deterministically in nudgeAction. Silent with no waiting item, no fitting
+     slot, or an item already covered today. */
+  function runInboxOfferPass() {
+    const s = get()
+    if (!s.hydrated) return
+    const todayKey = dayKey(new Date(s.nowMs))
+    const offer = computeInboxOffers(s).find((o) => {
+      const item = s.captures.find((c) => c.id === o.itemId)
+      return (
+        item != null &&
+        item.lastOfferedDay !== todayKey &&
+        !s.chat.some((m) => m.nudgeType === 'inbox-offer' && m.payload?.captureId === o.itemId)
+      )
+    })
+    if (!offer) return
+    const item = s.captures.find((c) => c.id === offer.itemId)
+    if (!item) return
+    post([inboxOfferMsg(item.title, offer, todayKey)])
+    markInboxOffered(offer.itemId, todayKey)
+  }
+
+  /* ── the weekly-review offer (#346) ─────────────────────────────────
+     The once-a-week invite to close the week kindly. Same ritual shape as the
+     learn offer: the pure trigger + copy live in domain/nudges/review.ts, and
+     the dedup key ('weekly-review') rides the persisted nudgeLastFired map keyed
+     on the ISO weekKey — so it offers at most once per week and survives a
+     restart, the weekly-ritual law. The invite OPENS the review; it never rolls
+     anything (the owner selects inside). An empty week burns the key and stays
+     silent — checked once, no theater (the sustenance pattern). */
+  function reviewOfferMsg(review: WeeklyReview): ChatMessage {
+    return {
+      id: uid(),
+      role: 'nudge',
+      body: composeReviewOffer(review).body,
+      ts: nowFn(),
+      nudgeType: 'weekly-review',
+      actions: [
+        { id: 'open', label: 'show me', kind: 'primary' },
+        { id: 'later', label: 'not now', kind: 'secondary' },
+      ],
+    }
+  }
+
+  function burnReviewKey(wk: string, nowMs: number) {
+    set((s) => {
+      const lastFired = { ...s.engine.lastFired, 'weekly-review': { ts: nowMs, key: wk } }
+      return {
+        engine: { ...s.engine, lastFired },
+        settings: { ...s.settings, nudgeLastFired: lastFired },
+      }
+    })
+    persistSettings(get().settings)
+  }
+
+  function runReviewOfferPass() {
+    const s = get()
+    if (!s.hydrated) return
+    const now = new Date(s.nowMs)
+    const wk = weekKey(now)
+    if (s.engine.lastFired['weekly-review']?.key === wk) return // one offer per ISO week
+    const dowMon0 = (fromDayKey(dayKey(now)).getDay() + 6) % 7
+    if (!shouldOfferReview(dowMon0, minOfDay(now), s.settings.wrapMin)) return
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const review = weeklyReview(s.blocks, s.memory, wk, prefs)
+    burnReviewKey(wk, s.nowMs) // burn whether or not the week had anything — once per week either way
+    if (review.empty) return // nothing to celebrate or carry: stay silent
+    post([reviewOfferMsg(review)])
+  }
+
+  /* ── the week-scaffold offer (#349, the gbrain marquee at week scale) ─
+     Offers ONCE per coming week to rough it out the owner's usual way — the
+     "empty/new week" trigger. Same ritual shape as the review offer: the pure
+     draft lives in domain/scaffold.ts (weekScaffold), the dedup key
+     ('scaffold-week', keyed on the coming week's key) rides the persisted
+     nudgeLastFired map so it survives a restart and never nags. It INVITES; the
+     chip runs proposeScaffold, which posts a preview the owner accepts/tweaks —
+     nothing commits from the offer. "Empty" ignores recurrences and synced
+     events (a week that's only your standing shape is still unshaped); a week
+     the owner has already planned is left alone, unburned. No learned shape yet
+     ⇒ burn the key and stay silent (an honest nothing, the sustenance pattern). */
+  function scaffoldOfferMsg(target: string): ChatMessage {
+    return {
+      id: uid(),
+      role: 'nudge',
+      body: 'want me to rough out next week the way your weeks usually go? nothing lands until you say so.',
+      ts: nowFn(),
+      nudgeType: 'scaffold-week',
+      actions: [
+        { id: 'draft', label: 'rough it out', kind: 'primary' },
+        { id: 'later', label: 'not now', kind: 'secondary' },
+      ],
+      payload: { weekKey: target },
+    }
+  }
+
+  function burnScaffoldKey(target: string, nowMs: number) {
+    set((s) => {
+      const lastFired = { ...s.engine.lastFired, 'scaffold-week': { ts: nowMs, key: target } }
+      return {
+        engine: { ...s.engine, lastFired },
+        settings: { ...s.settings, nudgeLastFired: lastFired },
+      }
+    })
+    persistSettings(get().settings)
+  }
+
+  function runScaffoldOfferPass() {
+    const s = get()
+    if (!s.hydrated) return
+    const now = new Date(s.nowMs)
+    const target = weekKey(new Date(s.nowMs + 7 * 24 * 60 * 60 * 1000)) // the coming week
+    if (s.engine.lastFired['scaffold-week']?.key === target) return // one offer per coming week
+    /* an owner-planned week is already shaped — leave it, and DON'T burn: if they
+       clear it later, the empty week can still be offered. Recurrences and synced
+       events don't count as "planned" (a week that's only your standing shape is
+       a blank canvas for the week's real work). */
+    const targetDays = new Set(weekKeys(now, 1))
+    const ownerPlanned = s.blocks.some(
+      (b) => targetDays.has(b.dayKey) && b.status === 'open' && !b.external && !b.recurringBlockId
+    )
+    if (ownerPlanned) return
+    /* no learned shape yet ⇒ an honest silence, and the key stays UNBURNED so a
+       rhythm learned later this same week can still earn the one offer (the
+       learn-offer pattern: the key burns only when an offer actually posts). */
+    if (!weekScaffold(s.memory, s.blocks, target, now).length) return
+    post([scaffoldOfferMsg(target)])
+    burnScaffoldKey(target, s.nowMs)
+  }
+
+  function runTickEngine(opts?: { skipLearn?: boolean }) {
     runSustenancePass()
+    /* the learn offer waits for a regular tick — the boot tick belongs to the
+       morning brief (#285); a gentle offer never front-loads the launch. */
+    if (!opts?.skipLearn) runLearnPass()
+    /* the weekly-review offer rides the same tick, once per ISO week (#346) */
+    runReviewOfferPass()
+    /* the week-scaffold offer rides the same tick, once per coming week (#349) */
+    runScaffoldOfferPass()
+    /* the inbox placement offer rides the same tick — a fitting slot for a
+       waiting item, once per item per day; skipped on the boot tick like the
+       learn offer, so a gentle offer never front-loads the launch (#348) */
+    if (!opts?.skipLearn) runInboxOfferPass()
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -1654,6 +2319,14 @@ export const useMew = create<MewState>((set, get) => {
       pendingDayLoadMsgs = []
       post(msgs)
     }
+    /* the estimate offer's parked chips (#322) ride the same beat, last — the
+       day-load meter has already yielded to it (or vice versa), so at most one
+       guard voice reaches this point for a given placement */
+    if (pendingEstimateMsgs.length) {
+      const msgs = pendingEstimateMsgs
+      pendingEstimateMsgs = []
+      post(msgs)
+    }
   }
 
   function setBlocks(blocks: Block[]) {
@@ -1678,20 +2351,86 @@ export const useMew = create<MewState>((set, get) => {
     return histCache.map
   }
 
+  /* The confirmed task rules the resolver applies (gbrain Pillar 2, #328).
+     Pillar 1 (#327, the learn side) forms these from repetition and the learn
+     pass below confirms them into the append-only memory; this reads them back
+     — the always-on floor, pure over local memory so keyless is identical. No
+     confirmed rule ⇒ [], so resolveTaskSpec stays byte-identical to before. */
+  function learnedRules(s: MewState): LearnedRule[] {
+    return confirmedRulesFrom(s.memory)
+  }
+
   function execPlan(places: PlaceSpec[], frees: FreeSpec[]): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
     let blocks = s.blocks
     const lines: string[] = []
+    const mealNotes: string[] = [] // #323: one aside per meal the guardrail moved or named
     let placedDeep: Block | null = null
     const touchedDays = new Set<string>() // days a rest-pacing pass should re-check (#103)
+    /* #322: blocks this run newly PLACED without a stated duration, by focus
+       class — the estimate offer's candidate set (moves keep their length, so
+       they're never in here; a stated duration is the "stated word wins" veto) */
+    const placedForEstimate: { id: string; focusClass: FocusClass }[] = []
+    const trackForEstimate = (b: Block, stated: boolean | undefined) => {
+      if (stated) return
+      const fc = focusClassOfTask({ tag: b.tag, durationMin: week.duration(b) })
+      if (fc) placedForEstimate.push({ id: b.id, focusClass: fc })
+    }
+    const targetedIds: string[] = [] // #320: the user's own blocks this run placed/moved
 
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const hist = histDurations(s)
+    const learned = learnedRules(s) // #328: confirmed rules, once #327 lands
     const bufferMin = s.settings.meetingBufferMin ?? 0 // #302
+
+    /* #324: a WORK block landing on the user's own flexible blocks drifts them
+       clear in this same pass and names what moved (external/fixed stay put, an
+       honest note); every other placement keeps the place-then-offer note
+       (#102). `blocks` must already hold `landed`. Mutates blocks + touchedDays. */
+    const collisionNote = (landed: Block, key: string): string => {
+      if (landed.tag === 'work' && !week.isBackground(landed)) {
+        const d = driftReply(blocks, landed, todayKey, minOfDay(now), prefs)
+        blocks = d.blocks
+        for (const id of d.driftedIds) {
+          const b = blocks.find((x) => x.id === id)
+          if (b && b.tag === 'work' && !week.isBackground(b)) touchedDays.add(b.dayKey)
+        }
+        return d.note
+      }
+      const clash = week.isBackground(landed)
+        ? []
+        : week.conflictsWith(blocks, key, landed.startMin, landed.endMin, landed.id, prefs)
+      return clashNote(clash, prefs)
+    }
     for (const p of places) {
       const key = addDaysKey(todayKey, p.dayOffset)
+      /* deterministic apply (#328): one resolver fills every field the user left
+         open this message — their explicit words this turn always win over any
+         confirmed rule or history. Seeded with everything a place may leave
+         open so a confirmed rule can fill duration, tag, window, attention,
+         protected, or recurrence; every branch below reads the filled spec. */
+      const {
+        spec: prefd,
+        applied,
+        usual,
+        credit,
+      } = resolveTaskSpec(
+        p.title,
+        {
+          startMin: p.startMin,
+          durationMin: p.durationMin,
+          tag: p.tag,
+          attention: p.attention,
+          protected: p.protected,
+          rrule: p.rrule,
+        },
+        prefs,
+        hist,
+        learned
+      )
+      const tag = prefd.tag ?? p.tag
       /* recurring block (#159): a rule expands into one block per occurrence,
          all linked by a shared recurringBlockId, before any one-off logic. The
          expansion reuses the same bounded DAILY/WEEKLY walk (and 800-cap) the
@@ -1699,67 +2438,54 @@ export const useMew = create<MewState>((set, get) => {
          wall-clock start. Window = anchor day → +52 weeks (UNTIL/COUNT cut it
          shorter). Recurrence is MEW's: these land as ordinary dated blocks, so
          the calendar push projects each one individually and never sees an
-         RRULE (sync.ts has no rrule field by design). */
-      if (p.rrule) {
-        const { spec: prefd, applied: rApplied } = applyPrefs(
-          { title: p.title, startMin: p.startMin, durationMin: p.durationMin },
-          prefs,
-          hist
-        )
-        const anchorStart = prefd.startMin ?? p.startMin ?? week.DAY_START
+         RRULE (sync.ts has no rrule field by design). A confirmed rule may
+         supply the recurrence itself (#328), routed here like an explicit one. */
+      if (prefd.rrule) {
+        const anchorStart = prefd.startMin ?? week.DAY_START
         const durationMin = prefd.durationMin ?? 60
         const windowEnd = addDaysKey(key, RRULE_DEFAULT_WEEKS * 7)
-        const occs = expandRrule(p.rrule, key, anchorStart, durationMin, key, windowEnd)
+        const occs = expandRrule(prefd.rrule, key, anchorStart, durationMin, key, windowEnd)
         if (!occs.length) {
           lines.push(`couldn't place "${p.title}" — that recurrence has no dates in the next year`)
           continue
         }
         const seriesId = uid()
-        const microRest = p.tag === 'rest' && durationMin <= 20
+        const microRest = tag === 'rest' && durationMin <= 20
         for (const occ of occs) {
           const made = week.place(blocks, {
             title: p.title,
-            tag: p.tag,
+            tag,
             dayKey: occ.dayKey,
             startMin: occ.startMin,
             endMin: occ.endMin,
-            protected: p.protected ?? !microRest,
-            attention: p.attention,
+            protected: prefd.protected ?? !microRest,
+            attention: prefd.attention,
             due: p.due,
             recurringBlockId: seriesId,
-            rrule: p.rrule,
+            rrule: prefd.rrule,
           })
           if (!made) continue // that day is full — skip just this occurrence, keep the series
           blocks = [...blocks, made]
+          targetedIds.push(made.id) // a series is many blocks → no single referent (#320)
           if (made.tag === 'work' && !week.isBackground(made)) touchedDays.add(occ.dayKey)
+          if (!week.isBackground(made)) trackForEstimate(made, p.durationStated) // #322
         }
         const placedCount = blocks.filter((b) => b.recurringBlockId === seriesId).length
         if (!placedCount) {
           lines.push(`couldn't place "${p.title}" — every day in that recurrence is already full`)
           continue
         }
-        const cadence = describeRrule(p.rrule, key)
+        const cadence = describeRrule(prefd.rrule, key)
         const through = occs[occs.length - 1].dayKey
         lines.push(
-          `${p.title} repeats ${cadence} ${fmtTime(anchorStart)}–${fmtTime(anchorStart + durationMin)} — ${placedCount} block${placedCount === 1 ? '' : 's'} through ${fmtShortDate(through)}${rApplied.length ? ' (your standing rule)' : ''}`
+          `${p.title} repeats ${cadence} ${fmtTime(anchorStart)}–${fmtTime(anchorStart + durationMin)} — ${placedCount} block${placedCount === 1 ? '' : 's'} through ${fmtShortDate(through)}${credit ? ` — ${credit}` : applied.length ? ' (your standing rule)' : ''}`
         )
         continue
       }
-      /* the standing rulebook fills what the user left open this message —
-         their explicit times/durations always win over their own rules */
-      const {
-        spec: prefd,
-        applied,
-        usual,
-      } = applyPrefs(
-        { title: p.title, startMin: p.startMin, durationMin: p.durationMin },
-        prefs,
-        hist
-      )
       /* short rests are pacing, not sacred rest: leave them unprotected so a
          reshape can absorb them instead of tripping protect-rest every move */
-      const microRest = p.tag === 'rest' && (prefd.durationMin ?? 60) <= 20
-      const bg = p.attention === 'background'
+      const microRest = tag === 'rest' && (prefd.durationMin ?? 60) <= 20
+      const bg = prefd.attention === 'background'
       /* a background block doesn't contend for the slot, so auto-placement
          doesn't hunt for free air — it starts now-ish (today) or at day
          start, and runs over whatever else holds the clock. A standing rule
@@ -1796,9 +2522,13 @@ export const useMew = create<MewState>((set, get) => {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
         const q: SlotQuery = {
           title: p.title,
-          tag: p.tag,
+          tag,
           durationMin: prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
+          /* #328: a confirmed window is FIRM here — the scorer collapses
+             off-window, so "deck → mornings" lands in the morning. No confirmed
+             window ⇒ unset ⇒ today's soft tag-default scoring, byte-identical. */
+          ...(prefd.window != null ? { window: prefd.window, windowFirm: prefd.windowFirm } : {}),
         }
         const best = scoreSlots(
           occupied,
@@ -1813,42 +2543,71 @@ export const useMew = create<MewState>((set, get) => {
         ).find((c) => c.dayKey === key)
         if (best) start = best.startMin
       }
+      /* #323 the meal guardrail: the circadian window + inter-meal gap engage
+         through the SCORER above, so an EXPLICIT meal time (a plan_blocks
+         reshape, never the auto floor) bypasses them and the model's own meal
+         arithmetic lands uncorrected. Check any meal-classified block placed
+         at a model-derived time and pull it to the nearest sane slot; a time
+         in the USER's own words (startStated) is kept, named once. Pure
+         domain, so keyed and keyless behave identically. */
+      if (start != null && !bg && p.startMin != null && mealClassOf(p.title)) {
+        const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
+        const durationMin = existing
+          ? existing.endMin - existing.startMin
+          : (prefd.durationMin ?? 60)
+        const fix = correctMeal(
+          occupied,
+          key,
+          todayKey,
+          minOfDay(now),
+          { title: p.title, tag, startMin: start, durationMin, stated: p.startStated === true },
+          prefs
+        )
+        if (fix.kind === 'shift') {
+          start = fix.startMin
+          mealNotes.push(fix.reason)
+        } else if (fix.kind === 'warn') {
+          mealNotes.push(fix.reason)
+        }
+      }
       if (existing) {
         const landStart = start ?? existing.startMin
         blocks = week.move(blocks, existing.id, key, landStart)
         const moved = blocks.find((b) => b.id === existing.id)!
-        const clash = week.conflictsWith(blocks, key, moved.startMin, moved.endMin, moved.id, prefs)
+        targetedIds.push(moved.id) // #320
         if (week.isDeep(moved)) placedDeep = moved
         if (moved.tag === 'work' && !week.isBackground(moved)) touchedDays.add(key)
+        const clashPart = collisionNote(moved, key)
         lines.push(
-          `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashNote(clash, prefs)}`
+          `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashPart}`
         )
         continue
       }
       const placed = week.place(blocks, {
         title: p.title,
-        tag: p.tag,
+        tag,
         dayKey: key,
         startMin: start,
         durationMin: prefd.durationMin,
-        protected: p.protected ?? !microRest,
-        attention: p.attention,
+        protected: prefd.protected ?? !microRest,
+        attention: prefd.attention,
         due: p.due,
       })
       if (!placed) {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
         continue
       }
-      /* background holds the clock, not the slot — placing one over a meeting
-         (or vice versa) is the point, never a collision to warn about */
-      const clash = week.isBackground(placed)
-        ? []
-        : week.conflictsWith(blocks, key, placed.startMin, placed.endMin, placed.id, prefs)
       blocks = [...blocks, placed]
+      targetedIds.push(placed.id) // #320
       if (week.isDeep(placed)) placedDeep = placed
       if (placed.tag === 'work' && !week.isBackground(placed)) touchedDays.add(key)
+      if (!week.isBackground(placed)) trackForEstimate(placed, p.durationStated) // #322
+      /* background holds the clock, not the slot — placing one over a meeting
+         (or vice versa) is the point, never a collision to warn about; a work
+         placement over own flexible blocks drifts them clear (#324) */
+      const clashPart = collisionNote(placed, key)
       lines.push(
-        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashNote(clash, prefs)}`
+        `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${credit ? ` — ${credit}` : applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashPart}`
       )
     }
     for (const f of frees) {
@@ -1904,10 +2663,22 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(blocks)
 
+    /* referent (#320): a single-block plan is the one unambiguous "it" — set it.
+       A multi-block plan or a kept-free window is ambiguous by construction, so
+       clear rather than let "it" point at a stale block. */
+    if (targetedIds.length === 1 && !frees.length) noteReferentId(targetedIds[0])
+    else clearReferent()
+
     /* the day-load meter (#301): every day this run placed work on gets one
        look against the demonstrated line — the guard posts (or parks) its own
        chips message and burns the per-day key */
     const guarded = offerDayLoadGuard(touchedDays, todayKey)
+
+    /* the estimate offer (#322, ask mode): runs AFTER the meter and yields to it
+       — `guarded` non-empty means the meter already spoke for this placement, so
+       the offer stays silent (one guard voice per placement). Chat-only; never
+       touches the blocks this run placed, so off/always stay byte-identical. */
+    offerEstimateGuard(placedForEstimate, guarded, todayKey)
 
     /* one contextual observation, from the user's own numbers */
     let observation = ''
@@ -1936,7 +2707,14 @@ export const useMew = create<MewState>((set, get) => {
       const joined = joinHuman(restNotes)
       pacing = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
     }
-    return `Done — ${joinHuman(lines)}.${observation}${pacing}`
+    /* #323: the meal guardrail's asides — a moved or kept meal named once, in
+       the same positive voice as the pacing note above */
+    let mealAside = ''
+    if (mealNotes.length) {
+      const joined = joinHuman(mealNotes)
+      mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
+    }
+    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}`
   }
 
   /* completions through CHAT celebrate in the reply itself — the celebrate
@@ -1983,11 +2761,260 @@ export const useMew = create<MewState>((set, get) => {
     preMutationSnapshot = { blocks: s.blocks, captures: s.captures, memory: s.memory }
   }
 
-  function execComplete(query: string): string {
+  /* ── conversational referents (#320) ────────────────────────────────────
+     The session's last-touched (or last-tapped) block, so a follow-up that
+     names nothing — "move it", "make that 45", "the one after lunch" — lands on
+     the right block on EVERY path, keyless included. The executors set it when
+     they touch one specific block; resolveTarget turns a parse.ts sentinel into
+     a concrete target through the one shared resolver. */
+  function noteReferentId(id: string) {
+    set({ lastReferent: { blockId: id, ts: nowFn() } })
+  }
+  function clearReferent() {
+    if (get().lastReferent) set({ lastReferent: null })
+  }
+
+  /** Resolve a tool query that MAY be a referent sentinel (#320) to a concrete
+      block. A plain title returns { passthrough } so each executor keeps its
+      own findByQuery + miss copy, unchanged. A sentinel resolves against the
+      live week + the session referent (week.resolveReferent — the SAME resolver
+      a keyed turn would reach, so no path drifts): a hit returns the block;
+      absent/ambiguous returns a kind, positive-voice clarifier the caller hands
+      straight back — never a wrong-block mutation. op:'move' carries the
+      external law: a vague referent landing on a calendar event refuses to move
+      it (an explicitly named move still takes ownership — "it" must not). */
+  function resolveTarget(
+    query: string,
+    op: 'move' | 'edit' | 'complete' | 'remove'
+  ): { passthrough: true } | { block: Block } | { reply: string } {
+    if (!query.startsWith('@')) return { passthrough: true }
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
-    const target = week.findByQuery(s.blocks, query, todayKey)
+    const r = week.resolveReferent(
+      s.blocks,
+      query,
+      s.lastReferent?.blockId ?? null,
+      todayKey,
+      minOfDay(new Date(s.nowMs))
+    )
+    if (r.status === 'ok') {
+      if (op === 'move' && r.block.external)
+        return {
+          reply: `${r.block.title.split('—')[0].trim()} came in from a connected calendar — it's not mine to move. Open it there, or name a block of your own to shift.`,
+        }
+      return { block: r.block }
+    }
+    if (r.status === 'ambiguous') {
+      const when = (b: Block) =>
+        `${b.title.split('—')[0].trim()}${b.dayKey === todayKey ? '' : ` ${fmtDowLong(b.dayKey)}`} at ${fmtTime(b.startMin)}`
+      const list = r.candidates.map(when)
+      const tail =
+        list.length === 2
+          ? `${list[0]} or ${list[1]}`
+          : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
+      return {
+        reply: `A couple could be the one — ${tail}? Name which and I'll take it from there.`,
+      }
+    }
+    return {
+      reply:
+        query === '@referent'
+          ? `Which block do you mean? Tap it, or name it, and I'll take it from there.`
+          : `I can't tell which block that points to — tap the one you mean, or name it.`,
+    }
+  }
+
+  /* ── precise name+time targeting + done-block confirm (#334) ─────────────
+     findTarget addresses ONE block by name AND (optional) start time; an
+     ambiguous bare name surfaces as offer_choices chips rather than a silent
+     wrong pick (the transcript's rename hit 21:30 instead of 19:45). A DONE
+     block is not walled off from an EXPLICIT named delete — the mew guard lifts
+     for single-target intent — but deleting a mew is consequential, so it goes
+     through a one-tap confirm (chat chips or the block card, one shared path):
+     the confirm deletes the block AND its completion event cleanly (never
+     un-completes), and it is undoable. clear_blocks stays the silent-collateral
+     guard: it never sweeps a mew, only surfaces the ones it kept as selectable. */
+
+  /** A query's human base title — em-dash detail and a leading article dropped. */
+  function baseOf(text: string): string {
+    return (
+      text
+        .split('—')[0]
+        .replace(/^\s*(the|my|a|an)\s+/i, '')
+        .trim() || text.trim()
+    )
+  }
+
+  /** Resolve a plain-title target precisely (#334): the `at` clock string pins
+      name AND time. `ok` → the block; `ambiguous` → post name+time chips (each a
+      time-pinned re-issue of the SAME op) and return CHOICES_POSTED; `none` → a
+      kind miss line the caller returns. Referent sentinels are handled upstream
+      by resolveTarget; this owns the plain-title path the executors shared. */
+  function resolvePrecise(
+    query: string,
+    op: 'complete' | 'move' | 'edit' | 'duplicate',
+    at: string | undefined,
+    includeDone: boolean,
+    reissue: (b: Block) => string
+  ): { block: Block } | { reply: string } {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const atMin = at ? parseTimeValue(at) : null
+    const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone })
+    if (r.status === 'ok') return { block: r.block }
+    if (r.status === 'ambiguous') {
+      const base = baseOf(query)
+      const times = r.candidates.map((b) => fmtTime(b.startMin))
+      const tail =
+        times.length === 2
+          ? `${times[0]} or ${times[1]}`
+          : `${times.slice(0, -1).join(', ')}, or ${times[times.length - 1]}`
+      return {
+        reply: execOfferChoices(
+          `${spell(r.candidates.length)} "${base}" blocks — ${tail}? Which one?`,
+          r.candidates.slice(0, 5).map((b) => ({
+            label: `the ${fmtTime(b.startMin)}${b.dayKey === todayKey ? '' : ` (${fmtDowLong(b.dayKey)})`}`,
+            reply: reissue(b),
+          }))
+        ),
+      }
+    }
+    const verb =
+      op === 'complete'
+        ? 'in the week'
+        : op === 'move'
+          ? 'to move'
+          : op === 'duplicate'
+            ? 'to duplicate'
+            : 'to change'
+    return {
+      reply: `I couldn't find "${query}"${at ? ` at ${at}` : ''} ${verb} — say it another way?`,
+    }
+  }
+
+  /** Propose deleting done block(s) an explicit ask named — a one-tap confirm,
+      never a refusal (#334 refinement). One done block → remove-it / keep-it;
+      several → a selectable list (each time, plus all / keep). The tap runs
+      through nudgeAction → removeBlocksConfirmed (the block-card's path too), so
+      the confirm is deterministic and shares one door. Returns CHOICES_POSTED:
+      the ask is on screen, the model ends its turn, the keyless floor stays
+      quiet — the tap does the rest. */
+  function proposeDoneRemoval(base: string, dones: Block[], todayKey: string): string {
+    const ids = dones.map((b) => b.id).join(',')
+    const span = (b: Block) =>
+      `${fmtTime(b.startMin)}–${fmtTime(b.endMin)}${b.dayKey === todayKey ? '' : ` ${fmtDowLong(b.dayKey)}`}`
+    if (dones.length === 1) {
+      const b = dones[0]
+      post([
+        {
+          id: uid(),
+          role: 'nudge',
+          body: `that ${baseOf(b.title)} block (${span(b)}) is a mew — it's done. Remove it anyway? That deletes the block and its completion, and it's undoable.`,
+          ts: nowFn(),
+          nudgeType: 'remove-done',
+          actions: [
+            { id: `rm-done:${b.id}`, label: 'remove it', kind: 'primary' },
+            { id: 'keep-done', label: 'keep it', kind: 'secondary' },
+          ],
+          payload: { doneIds: ids },
+        },
+      ])
+    } else {
+      const actions: NudgeAction[] = dones.slice(0, 4).map((b) => ({
+        id: `rm-done:${b.id}`,
+        label: `the ${fmtTime(b.startMin)}`,
+        kind: 'secondary',
+      }))
+      actions.push({ id: 'rm-done:all', label: 'all of them', kind: 'primary' })
+      actions.push({ id: 'keep-done', label: 'keep them', kind: 'secondary' })
+      post([
+        {
+          id: uid(),
+          role: 'nudge',
+          body: `${spell(dones.length)} "${base}" blocks are done (mews) — which to remove? Removing one deletes the block and its completion (undoable).`,
+          ts: nowFn(),
+          nudgeType: 'remove-done',
+          actions,
+          payload: { doneIds: ids },
+        },
+      ])
+    }
+    return `${CHOICES_POSTED}: a done-block removal confirm is on screen. Say nothing more and END your turn — the tap does the rest.`
+  }
+
+  /** Delete blocks the user explicitly confirmed removing (chat chip or block
+      card, one path) — including DONE ones, whose completion event is dropped
+      too so history stays honest and mews-today (derived) recounts. Snapshots
+      for undo and holds it across the next typed turn (the pickScenario pattern),
+      so "undo that" restores the block AND its mew. Runs outside a chat turn. */
+  function removeBlocksConfirmed(ids: string[]): void {
+    const s = get()
+    const targets = s.blocks.filter((b) => ids.includes(b.id))
+    if (!targets.length) return
+    snapshotForUndo()
+    pickSnapshotHolds = true // survive the next turn's fresh-exchange reset, so "undo that" reaches it
+    const todayKey = dayKey(new Date(s.nowMs))
+    /* drop each removed DONE block's completion event — one per block, matched
+       the way toggleComplete's un-complete does (dayKey + planned length), each
+       used once so several same-shaped mews don't collapse to one drop */
+    const usedEv = new Set<string>()
+    const dropEv = new Set<string>()
+    for (const b of targets.filter((x) => x.status === 'done')) {
+      const ev = [...s.memory]
+        .reverse()
+        .find(
+          (e) =>
+            e.kind === 'completed' &&
+            e.dayKey === b.dayKey &&
+            e.plannedMin === week.duration(b) &&
+            !usedEv.has(e.id)
+        )
+      if (ev) {
+        usedEv.add(ev.id)
+        dropEv.add(ev.id)
+      }
+    }
+    const keep = new Set(ids)
+    const kept = s.blocks.filter((b) => !keep.has(b.id))
+    set({
+      blocks: kept,
+      memory: dropEv.size ? s.memory.filter((e) => !dropEv.has(e.id)) : s.memory,
+      nowMs: nowFn(),
+    })
+    persistBlocks(kept)
+    storage.deleteBlocks(ids).catch(() => {})
+    if (dropEv.size) persistDeleteMemory([...dropEv])
+    dismissExternal(targets) // an external we deleted stays gone across a re-sync
+    if (targets.some((b) => b.id === get().lastReferent?.blockId)) clearReferent()
+    const names = targets
+      .map(
+        (b) =>
+          `${baseOf(b.title)} (${b.dayKey === todayKey ? 'today' : fmtDowLong(b.dayKey)} ${fmtTime(b.startMin)})`
+      )
+      .join(', ')
+    post([mewMsg(`Removed — ${names}. Its mew is off the count; say "undo that" and it's back.`)])
+  }
+
+  function execComplete(query: string, at?: string): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const res = resolveTarget(query, 'complete')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const r = resolvePrecise(
+        query,
+        'complete',
+        at,
+        true,
+        (b) => `done with ${baseOf(query)} at ${fmtTime(b.startMin)}`
+      )
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
     if (!target) return `I couldn't find "${query}" in the week — say it another way?`
+    noteReferentId(target.id) // the turn touched one block — "it" now points here
     const base = target.title.split('—')[0].trim()
     if (target.status === 'done') return `${base} was already done — it counted.`
     chatCompletion = true
@@ -2007,24 +3034,81 @@ export const useMew = create<MewState>((set, get) => {
     return `Marked ${base} done — that's a mew, ${spell(live.mewsToday)} today.${tail}`
   }
 
-  function execMove(query: string, toDayOffset?: number, toStartMin?: number): string {
+  function execMove(
+    query: string,
+    toDayOffset?: number,
+    toStartMin?: number,
+    /* #320: a relative start shift ("30 min earlier" = −30) — the referent's
+       CURRENT start + delta, on the same day, clamped inside the day. Read here
+       (not in parse.ts, which is pure) because only the live block knows its
+       current start; today move needs an absolute target, so the math lives at
+       resolution. */
+    relStartMin?: number,
+    /* #334: the TARGET block's current start time, pinning which of several
+       same-named blocks to move — distinct from toStartMin (its new start). */
+    at?: string
+  ): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
-    const target = week.findByQuery(s.blocks, query, todayKey)
+    const res = resolveTarget(query, 'move')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const dest =
+        toStartMin != null
+          ? `to ${fmtTime(toStartMin)}`
+          : toDayOffset != null
+            ? `to ${toDayOffset === 0 ? 'today' : toDayOffset === 1 ? 'tomorrow' : fmtDowLong(addDaysKey(todayKey, toDayOffset))}`
+            : 'to the next free slot'
+      const r = resolvePrecise(
+        query,
+        'move',
+        at,
+        false, // a done block isn't moved — it's in the past, completed
+        (b) => `move ${baseOf(query)} at ${fmtTime(b.startMin)} ${dest}`
+      )
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
     if (!target) return `I couldn't find "${query}" to move — say it another way?`
+    const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
+    return moveResolved(target, toKey, toStartMin, relStartMin)
+  }
+
+  /** Move an already-resolved block to (toKey, start) — the shared tail of
+      execMove and execRelativeMove (#335), so both take ownership of an external
+      (detach + tombstone), auto-slot the same way (#80/#302), drift own flexible
+      work (#324), and word the clash identically. `toStartMin` places it exactly;
+      `relStartMin` shifts against its current start (clamped to the day); neither
+      ⇒ the scoring oracle picks the conflict-free, rest-aware slot on toKey. */
+  function moveResolved(
+    target: Block,
+    toKey: string,
+    toStartMin?: number,
+    relStartMin?: number
+  ): string {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
     /* an imported event CAN be moved — moving it takes ownership: detach from
-       the source and tombstone it so a re-sync leaves your placement alone */
+       the source and tombstone it so a re-sync leaves your placement alone (a
+       VAGUE referent onto an external event already refused, upstream) */
     let blocks = s.blocks
     if (target.external) {
       dismissExternal([target])
       blocks = detachExternal(blocks, target.id)
     }
-    const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
     /* same rulebook as plan/edit — a move's collision wording must not
        contradict its siblings about whether the other side can shift */
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     let start = toStartMin
+    /* relative shift against the block's current start, clamped to the day so
+       "an hour earlier" can't push it below midnight or past its end (#320) */
+    if (start == null && relStartMin != null) {
+      start = Math.max(0, Math.min(24 * 60 - week.duration(target), target.startMin + relStartMin))
+    }
     if (start == null) {
       /* the scoring oracle picks the destination — rest-aware and conflict-free
          — instead of the first open hole; fall back to first-fit if it finds
@@ -2063,16 +3147,265 @@ export const useMew = create<MewState>((set, get) => {
         start = slot.startMin
       }
     }
-    const landed = week.conflictsWith(
-      blocks,
-      toKey,
-      start,
-      start + week.duration(target),
-      target.id,
-      prefs
+    let moved = week.move(blocks, target.id, toKey, start)
+    const landedBlock = moved.find((b) => b.id === target.id)!
+    /* #324: an explicit-time move of WORK onto the user's own flexible blocks
+       drifts them clear in the same pass and names what moved; other moves keep
+       the honest place-then-offer note. External/fixed are never moved. */
+    let clashPart: string
+    if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
+      const d = driftReply(moved, landedBlock, todayKey, minOfDay(now), prefs)
+      moved = d.blocks
+      clashPart = d.note
+    } else {
+      const landed = week.conflictsWith(
+        moved,
+        toKey,
+        start,
+        start + week.duration(target),
+        target.id,
+        prefs
+      )
+      clashPart = clashNote(landed, prefs)
+    }
+    setBlocks(moved)
+    noteReferentId(target.id) // the turn touched one block — "it" now points here
+    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}`
+  }
+
+  /* ── granular calendar ops (#335) ────────────────────────────────────────
+     resize / duplicate / relative-move — three cohesive single-target commands
+     on the standing "more every RC" surface, each a first-class tool + keyless
+     route flowing through the ONE mutation path (setBlocks). They REUSE the
+     targeting shipped in #345 (resolveTarget/resolvePrecise), the recurring
+     scope of #343/#350, and the move/edit tails above — no second door, no
+     re-implemented targeting. External/fixed blocks are respected by all three:
+     resize never touches a neighbor, the copy is a fresh owned block (the
+     original stays), and the next free slot lands clear of them. */
+
+  /** Resize a block's LENGTH keeping its start (#335). A duration-only edit is
+      exactly what execEdit already does, so route through it — targeting,
+      recurring scope, external ownership, and the clash note come for free, and
+      the start never moves (applyEditPatch/execEdit keep it when only the
+      duration changes). durationMin sets an absolute length; relDurationMin a
+      signed delta ("30 min longer"). */
+  function execResize(
+    query: string,
+    resize: { durationMin?: number; relDurationMin?: number },
+    at?: string,
+    scope?: RecurScope
+  ): string {
+    return execEdit(
+      query,
+      { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
+      at,
+      scope
     )
-    setBlocks(week.move(blocks, target.id, toKey, start))
-    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashNote(landed, prefs)}`
+  }
+
+  /** Copy a block to another day/time (#335) — the original is untouched and the
+      copy is a NEW independent block (fresh id, same title/tag/length/attention/
+      due). Placed with week.place + setBlocks (the one mutation path); NO execPlan
+      de-dup (#89), because a duplicate is deliberately a twin, not a re-plan that
+      would MOVE the original. Cross-day keeps the source's clock; same-day with no
+      time lands in the next free slot (never on top of the original). An rrule
+      makes the copy a repeating series, expanded and linked like a planned
+      recurrence (#159). An external source copies into an owned block; the
+      calendar original is never moved or detached. */
+  function execDuplicate(
+    query: string,
+    opts: {
+      toDayOffset?: number
+      toStartMin?: number
+      rrule?: import('../domain/recurrence').Rrule
+    },
+    at?: string
+  ): string {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const destKey = opts.toDayOffset != null ? addDaysKey(todayKey, opts.toDayOffset) : null
+    const destPhrase =
+      opts.toStartMin != null
+        ? ` to ${fmtTime(opts.toStartMin)}`
+        : destKey
+          ? ` to ${destKey === todayKey ? 'today' : fmtDowLong(destKey)}`
+          : ''
+    /* op 'edit' (not 'move'): a referent onto a calendar event resolves here —
+       copying an external is allowed (only MOVING it is refused). */
+    const res = resolveTarget(query, 'edit')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const r = resolvePrecise(
+        query,
+        'duplicate',
+        at,
+        true, // a done block is copyable — the copy is a fresh open block
+        (b) => `duplicate ${baseOf(query)} at ${fmtTime(b.startMin)}${destPhrase}`
+      )
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
+    if (!target) return `I couldn't find "${query}" to duplicate — say it another way?`
+
+    const base = target.title.split('—')[0].trim()
+    const dur = week.duration(target)
+    const toKey = destKey ?? target.dayKey
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const bufferMin = s.settings.meetingBufferMin ?? 0
+
+    /* recurrence (#159): the copy seeds a NEW series — the same bounded DAILY/
+       WEEKLY walk execPlan uses, linked under a fresh id. The original stays
+       exactly as it is (its own one-off or series untouched). */
+    if (opts.rrule) {
+      const anchorStart = opts.toStartMin ?? target.startMin
+      const windowEnd = addDaysKey(toKey, RRULE_DEFAULT_WEEKS * 7)
+      const occs = expandRrule(opts.rrule, toKey, anchorStart, dur, toKey, windowEnd)
+      if (!occs.length) return `that cadence has no dates in the next year — pick another?`
+      const seriesId = uid()
+      let blocks = s.blocks
+      for (const occ of occs) {
+        const made = week.place(blocks, {
+          title: target.title,
+          tag: target.tag,
+          dayKey: occ.dayKey,
+          startMin: occ.startMin,
+          endMin: occ.endMin,
+          protected: target.protected,
+          attention: target.attention,
+          due: target.due,
+          recurringBlockId: seriesId,
+          rrule: opts.rrule,
+        })
+        if (!made) continue // that day is full — skip the occurrence, keep the series
+        blocks = [...blocks, made]
+      }
+      const placed = blocks.filter((b) => b.recurringBlockId === seriesId).length
+      if (!placed) return `couldn't place the copy — every day in that cadence is already full`
+      setBlocks(blocks)
+      const cadence = describeRrule(opts.rrule, toKey)
+      const through = occs[occs.length - 1].dayKey
+      return `Copied — ${base} now repeats ${cadence} ${fmtTime(anchorStart)}–${fmtTime(anchorStart + dur)}, ${placed} block${placed === 1 ? '' : 's'} through ${fmtShortDate(through)}.`
+    }
+
+    /* single copy: the source's clock on another day, or the next free slot when
+       copying within the same day (a copy never lands on top of its original). */
+    let startMin = opts.toStartMin
+    if (startMin == null) {
+      if (toKey === target.dayKey) {
+        const slot = week.findFreeSlot(
+          s.blocks,
+          toKey,
+          dur,
+          toKey === todayKey ? minOfDay(now) + 15 : undefined,
+          undefined,
+          bufferMin
+        )
+        if (!slot)
+          return `${toKey === todayKey ? 'today' : fmtDowLong(toKey)} has no free ${dur}-min slot for a copy — name a time?`
+        startMin = slot.startMin
+      } else {
+        startMin = target.startMin
+      }
+    }
+    const made = week.place(s.blocks, {
+      title: target.title,
+      tag: target.tag,
+      dayKey: toKey,
+      startMin,
+      endMin: startMin + dur,
+      protected: target.protected,
+      attention: target.attention,
+      due: target.due,
+    })
+    if (!made)
+      return `${toKey === todayKey ? 'today' : fmtDowLong(toKey)} can't hold the copy — want a different day?`
+    let blocks = [...s.blocks, made]
+    /* the copy is a placement, so it drifts own flexible work and words fixed/
+       external clashes exactly like plan/move (#324) — never moving a neighbor. */
+    let note: string
+    if (made.tag === 'work' && !week.isBackground(made)) {
+      const d = driftReply(blocks, made, todayKey, minOfDay(now), prefs)
+      blocks = d.blocks
+      note = d.note
+    } else {
+      const clash = week.isBackground(made)
+        ? []
+        : week.conflictsWith(blocks, toKey, made.startMin, made.endMin, made.id, prefs)
+      note = clashNote(clash, prefs)
+    }
+    setBlocks(blocks)
+    noteReferentId(made.id) // the fresh copy is now "it"
+    const when = toKey === todayKey ? 'today' : fmtDowLong(toKey)
+    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}`
+  }
+
+  /** Move a block relative to where it is now, with no absolute time (#335).
+      earlier/later delegate straight to moveResolved's relative shift; next_day
+      keeps the clock one day on; next_free relocates to the soonest genuinely
+      clear slot from now (week.nextFreeSlot, which lands clear of fixed/external
+      by construction). One resolution (reusing #345 targeting), then the shared
+      move tail — drift, clash, and ownership are never re-implemented. */
+  function execRelativeMove(
+    query: string,
+    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
+    amountMin?: number,
+    at?: string
+  ): string {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const res = resolveTarget(query, 'move')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const destPhrase =
+        direction === 'earlier'
+          ? 'earlier'
+          : direction === 'later'
+            ? 'later'
+            : direction === 'next_day'
+              ? 'to the next day'
+              : 'to the next free slot'
+      const r = resolvePrecise(
+        query,
+        'move',
+        at,
+        false, // a done block isn't nudged — it's in the past
+        (b) => `move ${baseOf(query)} at ${fmtTime(b.startMin)} ${destPhrase}`
+      )
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
+    if (!target) return `I couldn't find "${query}" to move — say it another way?`
+    if (direction === 'earlier' || direction === 'later') {
+      const amt = amountMin ?? 30
+      return moveResolved(target, target.dayKey, undefined, direction === 'earlier' ? -amt : amt)
+    }
+    if (direction === 'next_day') {
+      return moveResolved(target, addDaysKey(target.dayKey, 1), target.startMin)
+    }
+    /* next_free: the earliest clear slot from now across the horizon, target's
+       own slot excluded so its current position reads as free. */
+    const bufferMin = s.settings.meetingBufferMin ?? 0
+    const fromMin = Math.ceil(minOfDay(now) / 5) * 5 + 15
+    const durMin = week.duration(target)
+    const slot = week.nextFreeSlot(
+      s.blocks.filter((b) => b.id !== target!.id),
+      todayKey,
+      fromMin,
+      durMin,
+      13,
+      bufferMin
+    )
+    if (!slot)
+      return `I couldn't find a clear ${durMin}-min slot in the next two weeks — want me to make room?`
+    if (slot.dayKey === target.dayKey && slot.startMin === target.startMin)
+      return `${target.title.split('—')[0].trim()} already sits in the earliest open slot — nothing to move.`
+    return moveResolved(target, slot.dayKey, slot.startMin)
   }
 
   function execCapture(title: string): string {
@@ -2085,29 +3418,256 @@ export const useMew = create<MewState>((set, get) => {
     return `Captured "${clean}". (The when-&-where nudge with a proposed slot is already posted — don't propose another time yourself.)`
   }
 
+  /* ── recurring-edit scope (#343) ─────────────────────────────────────────
+     Every calendar app asks scope when you touch a repeating event: just this
+     one / this & following / the whole series. MEW handled the ends (a single
+     delete drops one occurrence; all:true/seriesOf drops the series); this adds
+     the middle (split from a date forward) and surfaces the choice as chips when
+     an edit/delete lands on a series block and the ask named no scope. Every
+     chip re-issues the SAME op with an explicit scope word, so the pick routes
+     back through the executor (tools-only, positive voice) and never repeats. */
+  type RecurScope = 'this' | 'following' | 'series'
+  type EditPatch = {
+    startMin?: number
+    endMin?: number
+    durationMin?: number
+    /** #320: a relative length delta ("give it another 30" = +30, "make it
+        shorter" = −15) — applied to the block's CURRENT duration here, since
+        only the live block knows it and parse.ts stays pure. */
+    relDurationMin?: number
+    title?: string
+    tag?: import('../domain/types').Tag
+    attention?: 'focus' | 'background'
+    due?: number
+  }
+
+  /** The scope word each chip's re-issued ask carries — parsed back by the
+      keyless floor (extractSeriesScope) and understood by the keyed model, so a
+      pick applies the scope without re-triggering the offer. */
+  function scopeWord(scope: RecurScope): string {
+    return scope === 'this'
+      ? 'just this one'
+      : scope === 'following'
+        ? 'this and following'
+        : 'across the whole series'
+  }
+
+  /** Post the this / following / series chips — a calm question, one message,
+      chat-only. `reissue(scope)` builds each chip's complete ask; the pick
+      arrives as an ordinary user turn and routes through the executor. */
+  function offerRecurringScope(base: string, reissue: (scope: RecurScope) => string): string {
+    return execOfferChoices(`"${base}" repeats — which do you mean?`, [
+      { label: 'just this one', reply: reissue('this') },
+      { label: 'this & the ones after', reply: reissue('following') },
+      { label: 'the whole series', reply: reissue('series') },
+    ])
+  }
+
+  /** The soonest OPEN occurrence of a single shared series among `pool`, when the
+      series still holds more than one occurrence (so the three scope answers
+      actually differ) — else null. Guards the offer: a mixed match, a one-off, or
+      a lone-occurrence series never raises a scope question. */
+  function recurringSeriesTarget(pool: Block[]): Block | null {
+    const id = pool[0]?.recurringBlockId
+    if (!id || !pool.every((b) => b.recurringBlockId === id)) return null
+    const soonest = [...pool].sort(
+      (a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin
+    )[0]
+    const m = week.seriesMembership(get().blocks, soonest)
+    return m && m.count > 1 ? soonest : null
+  }
+
+  /** Apply an edit patch to ONE block — the same field math execEdit runs on its
+      single target, factored so a series/following scope applies it per
+      occurrence. Retime keeps length; a relative length clamps to 5–720. */
+  function applyEditPatch(b: Block, patch: EditPatch): Block {
+    const startMin = patch.startMin ?? b.startMin
+    let endMin = patch.endMin ?? b.endMin
+    if (patch.durationMin != null) endMin = startMin + patch.durationMin
+    if (patch.relDurationMin != null)
+      endMin = startMin + Math.max(5, Math.min(720, week.duration(b) + patch.relDurationMin))
+    if (
+      patch.startMin != null &&
+      patch.endMin == null &&
+      patch.durationMin == null &&
+      patch.relDurationMin == null
+    )
+      endMin = startMin + week.duration(b) // retime keeps length
+    if (endMin <= startMin) endMin = startMin + 15
+    return {
+      ...b,
+      startMin,
+      endMin,
+      ...(b.external ? { external: undefined } : {}),
+      ...(patch.title ? { title: patch.title } : {}),
+      ...(patch.tag ? { tag: patch.tag } : {}),
+      ...(patch.attention ? { attention: patch.attention } : {}),
+      ...(patch.due != null ? { due: patch.due } : {}),
+    }
+  }
+
+  /** Rebuild an edit as a complete ask a chip re-issues with a scope word —
+      pinned by the target's name + current start so the pick lands on the same
+      occurrence. Mirrors the keyless edit grammar (rename / range / duration) so
+      a keyless pick parses it back identically; times are canonical HH:MM. */
+  function editReissue(base: string, target: Block, patch: EditPatch, scope: RecurScope): string {
+    const at = fmtTime(target.startMin)
+    const w = scopeWord(scope)
+    if (patch.title != null) return `rename ${base} at ${at} to ${patch.title} ${w}`
+    if (patch.startMin != null && patch.endMin != null)
+      return `${base} at ${at} should be ${fmtTime(patch.startMin)}-${fmtTime(patch.endMin)} ${w}`
+    if (patch.startMin != null)
+      return `${base} at ${at} should be ${fmtTime(patch.startMin)}-${fmtTime(patch.startMin + week.duration(target))} ${w}`
+    if (patch.durationMin != null) return `make ${base} at ${at} ${patch.durationMin} min ${w}`
+    if (patch.relDurationMin != null)
+      return `make ${base} at ${at} ${Math.max(5, Math.min(720, week.duration(target) + patch.relDurationMin))} min ${w}`
+    return `${base} at ${at} ${w}`
+  }
+
+  /** Apply an edit to a whole series ('series') or from the target's day forward
+      ('following'). `following` splits: the tail occurrences re-time/rename in
+      place and re-link under a fresh id carrying the bounded tail rule, while the
+      earlier ones keep their old shape under the bounded head rule
+      (splitSeriesFrom). Re-links existing occurrences rather than re-expanding,
+      so a previously-deleted occurrence stays deleted and no external event is
+      ever recreated. */
+  function applyEditScope(target: Block, patch: EditPatch, scope: 'following' | 'series'): string {
+    const s = get()
+    const rid = target.recurringBlockId
+    const split = scope === 'following' ? splitSeriesFrom(target.rrule, target.dayKey) : null
+    const affected =
+      scope === 'series'
+        ? s.blocks.filter((b) => b.recurringBlockId === rid && b.status === 'open')
+        : s.blocks.filter(
+            (b) => b.recurringBlockId === rid && b.status === 'open' && b.dayKey >= target.dayKey
+          )
+    const newId = scope === 'following' ? uid() : null
+    const patched = new Map(
+      affected.map((b) => {
+        let nb = applyEditPatch(b, patch)
+        if (scope === 'following')
+          nb = { ...nb, recurringBlockId: newId!, ...(split?.tail ? { rrule: split.tail } : {}) }
+        return [b.id, nb] as const
+      })
+    )
+    const next = s.blocks.map((b) => {
+      if (patched.has(b.id)) return patched.get(b.id)!
+      if (
+        scope === 'following' &&
+        split?.head &&
+        b.recurringBlockId === rid &&
+        b.status !== 'rolled' &&
+        b.dayKey < target.dayKey
+      )
+        return { ...b, rrule: split.head } // bound the surviving head to where it now ends
+      return b
+    })
+    setBlocks(next)
+    const base = (patch.title ?? target.title).split('—')[0].trim()
+    const n = patched.size
+    const when = target.dayKey === dayKey(new Date(s.nowMs)) ? 'today' : fmtDowLong(target.dayKey)
+    return scope === 'series'
+      ? `Updated — ${base} across the whole series (${n} block${n === 1 ? '' : 's'}).`
+      : `Updated — ${base} from ${when} on (${n} block${n === 1 ? '' : 's'}); the earlier ones keep their old shape.`
+  }
+
+  /** Delete a series from the target's day forward ('this & following' delete) —
+      the tail occurrences come off, the earlier ones stay under a bounded head
+      rule. A DONE occurrence never falls here: a done target routes to
+      proposeDoneRemoval upstream, and the tail is today-or-ahead (open only), so
+      the mew-consent gate is never bypassed. */
+  function removeSeriesFollowing(target: Block, todayKey: string): string {
+    const s = get()
+    const rid = target.recurringBlockId
+    const split = splitSeriesFrom(target.rrule, target.dayKey)
+    const tail = s.blocks.filter(
+      (b) => b.recurringBlockId === rid && b.status === 'open' && b.dayKey >= target.dayKey
+    )
+    const drop = new Set(tail.map((b) => b.id))
+    if (tail.some((b) => b.id === get().lastReferent?.blockId)) clearReferent()
+    dismissExternal(tail)
+    const kept = s.blocks
+      .filter((b) => !drop.has(b.id))
+      .map((b) =>
+        split?.head &&
+        b.recurringBlockId === rid &&
+        b.status !== 'rolled' &&
+        b.dayKey < target.dayKey
+          ? { ...b, rrule: split.head }
+          : b
+      )
+    set({ blocks: kept, nowMs: nowFn() })
+    persistBlocks(kept)
+    storage.deleteBlocks([...drop]).catch(() => {})
+    const base = target.title.split('—')[0].trim()
+    const when = target.dayKey === todayKey ? 'today' : fmtDowLong(target.dayKey)
+    return `Removed — ${base} from ${when} on (${tail.length} block${tail.length === 1 ? '' : 's'}); the earlier ones stay.`
+  }
+
   function execEdit(
     query: string,
-    patch: {
-      startMin?: number
-      endMin?: number
-      durationMin?: number
-      title?: string
-      tag?: import('../domain/types').Tag
-      attention?: 'focus' | 'background'
-      due?: number
-    }
+    patch: EditPatch,
+    /* #334: the TARGET block's current start time, pinning which of several
+       same-named blocks to change — distinct from patch.startMin (a retime). */
+    at?: string,
+    /* #343: the recurring-edit scope for a series block — absent asks (chips). */
+    scope?: RecurScope
   ): string {
     const s = get()
-    const todayKey = dayKey(new Date(s.nowMs))
-    const target = week.findByQuery(s.blocks, query, todayKey)
+    const res = resolveTarget(query, 'edit')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const r = resolvePrecise(query, 'edit', at, true, (b) => {
+        const t = fmtTime(b.startMin)
+        const base = baseOf(query)
+        if (patch.title) return `rename ${base} at ${t} to ${patch.title}`
+        if (patch.durationMin != null) return `make ${base} at ${t} ${patch.durationMin} min`
+        if (patch.startMin != null && patch.endMin != null)
+          return `${base} at ${t} should be ${fmtTime(patch.startMin)}-${fmtTime(patch.endMin)}`
+        return `${base} at ${t}` // retag/attention/due-only — the keyed model re-issues with at
+      })
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
     if (!target) return `I couldn't find "${query}" to change — say it another way?`
+    noteReferentId(target.id) // the turn touched one block — "it" now points here
+    /* #343: the edit landed on a live series. With no scope, ask (chips) rather
+       than silently editing one; an explicit series/following applies across the
+       set. A retag/attention/due-only edit skips the CHIP offer (the keyless
+       floor can't reconstruct that ask), but still honors an explicit scope. */
+    const membership = week.seriesMembership(s.blocks, target)
+    if (membership && membership.count > 1 && target.status === 'open') {
+      const reissuable =
+        patch.title != null ||
+        patch.startMin != null ||
+        patch.endMin != null ||
+        patch.durationMin != null ||
+        patch.relDurationMin != null
+      if (!scope && reissuable) {
+        const base = baseOf(query)
+        return offerRecurringScope(base, (sc) => editReissue(base, target!, patch, sc))
+      }
+      if (scope === 'series' || scope === 'following') return applyEditScope(target, patch, scope)
+    }
     /* editing an imported event takes ownership (detach + tombstone) so the
        change survives a re-sync */
     if (target.external) dismissExternal([target])
     const startMin = patch.startMin ?? target.startMin
     let endMin = patch.endMin ?? target.endMin
     if (patch.durationMin != null) endMin = startMin + patch.durationMin
-    if (patch.startMin != null && patch.endMin == null && patch.durationMin == null) {
+    /* relative length against the current duration, clamped to the same 5–720
+       bounds the absolute edit tool takes (#320) */
+    if (patch.relDurationMin != null) {
+      endMin = startMin + Math.max(5, Math.min(720, week.duration(target) + patch.relDurationMin))
+    }
+    if (
+      patch.startMin != null &&
+      patch.endMin == null &&
+      patch.durationMin == null &&
+      patch.relDurationMin == null
+    ) {
       endMin = startMin + week.duration(target) // retime keeps length
     }
     if (endMin <= startMin) endMin = startMin + 15
@@ -2122,9 +3682,14 @@ export const useMew = create<MewState>((set, get) => {
       ...(patch.due != null ? { due: patch.due } : {}),
     }
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
-    const clash = week.isBackground(next)
-      ? []
-      : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id, prefs)
+    /* only a real retime can create an overlap — a pure rename/retag/attention
+       edit keeps the block's span, so it never warns about a pre-existing
+       neighbor it didn't disturb (#334: a rename touches only the title). */
+    const timesChanged = startMin !== target.startMin || endMin !== target.endMin
+    const clash =
+      !timesChanged || week.isBackground(next)
+        ? []
+        : week.conflictsWith(s.blocks, target.dayKey, startMin, endMin, target.id, prefs)
     setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
     return `Updated — ${next.title.split('—')[0].trim()} is now ${fmtTime(startMin)}–${fmtTime(endMin)} (${endMin - startMin} min)${patch.tag ? `, tagged ${patch.tag}` : ''}${patch.attention ? `, ${patch.attention === 'background' ? 'running in the background' : 'holding your focus'}` : ''}${patch.due != null ? `, due ${fmtTime(patch.due)}` : ''}.${clashNote(clash, prefs)}`
   }
@@ -2260,7 +3825,7 @@ export const useMew = create<MewState>((set, get) => {
     const brainChecked = brainOn() && brainAnswered ? ' or the brain' : ''
     const brainSilent =
       brainOn() && !brainAnswered
-        ? ` The brain didn't answer just now — it may know more; worth asking again in a moment.`
+        ? ` I'm running on what I know on-device — the brain didn't answer just now, so it may know more; worth asking again in a moment.`
         : ''
     if (offset < 0)
       return `I can't see ${name ?? 'that'} ${label} — nothing in that week's blocks${brainChecked} mentions it.${brainSilent}`
@@ -2296,32 +3861,56 @@ export const useMew = create<MewState>((set, get) => {
   /** Plan mode's propose half (#293): classify → generate → post ONE picker
       message. Mutates NOTHING (the #254 offer_choices precedent) — scenarios
       are chat-only data until pickScenario applies one through the plan
-      executor. Durations fill exactly as execPlan would fill them (standing
-      rules, then the user's own medians, then the 60-min floor), so a preview
-      is sized the way the apply will be. Every scenario is validated against
-      the live week at post time — the engine is conflict-free by construction,
-      and the gate keeps that a checked fact rather than a hope. */
+      executor. The resolver (#328) fills exactly as execPlan would (explicit >
+      confirmed rule > medians > the 60-min floor; a confirmed window rides
+      along), so a preview is sized and windowed the way the apply will be.
+      Every scenario is validated against the live week at post time — the
+      engine is conflict-free by construction, the gate keeps that checked. */
   function execProposeScenarios(prompt: string, specs: ScenarioTaskSpec[]): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const hist = histDurations(s)
+    const learned = learnedRules(s) // #328
     const tasks: ScenarioTask[] = specs
       .filter((t) => t.title.trim())
-      .map((t) => ({
-        title: t.title.trim(),
-        tag: t.tag,
-        durationMin:
-          t.durationMin ??
-          applyPrefs({ title: t.title.trim(), durationMin: t.durationMin }, prefs, hist).spec
-            .durationMin ??
-          60,
-        ...(t.due != null ? { due: t.due } : {}),
-        ...(t.window ? { window: t.window } : {}),
-      }))
+      .map((t) => {
+        const r = resolveTaskSpec(
+          t.title.trim(),
+          { durationMin: t.durationMin, window: t.window },
+          prefs,
+          hist,
+          learned
+        )
+        return {
+          title: t.title.trim(),
+          tag: t.tag,
+          durationMin: r.spec.durationMin ?? 60,
+          ...(t.due != null ? { due: t.due } : {}),
+          // a stated window, else a confirmed rule's — the engine honors both
+          ...(r.spec.window ? { window: r.spec.window } : {}),
+          // #322: a length in the ask is the user's word — "always" leaves it be
+          ...(t.durationMin != null ? { durationStated: true } : {}),
+        }
+      })
     if (!tasks.length) return 'nothing to propose — name the tasks and I will lay out the week.'
-    const insights = computeInsights(s.memory, aggregates(s.memory, now), now)
+    const agg = aggregates(s.memory, now)
+    const insights = computeInsights(s.memory, agg, now)
+    /* #321: energy-fit joins the set only when the toggle allows AND either a
+       learned rhythm exists (energyProfile past the data floor) or a stated
+       rule forces it. Off, or a fresh profile with no rule, ⇒ these are all
+       absent and the scenario set stays byte-identical to today. Stated word
+       wins: a "deep work anytime" rule overrides a peak-leaning profile. */
+    const energyOn = s.settings.energyFit !== 'off'
+    const profile = energyOn ? energyProfile(s.memory, agg, now) : null
+    const batchAdmin = energyOn && batchAdminRule(prefs)
+    const deepFlexible = energyOn && deepWorkAnytime(prefs)
+    /* #322 "always": pre-size the whole picker to demonstrated durations, so the
+       preview AND the applied quote both carry honest lengths. off/ask ⇒ absent
+       ⇒ scenarios are byte-identical to today. */
+    const estimateFactor =
+      s.settings.estimateAutosize === 'always' ? estimateFactorByTag(s.memory, now) : undefined
     const all = generateScenarios(s.blocks, tasks, {
       nowMin: minOfDay(now),
       todayKey,
@@ -2329,6 +3918,10 @@ export const useMew = create<MewState>((set, get) => {
       ...(insights.bestBand ? { bestWindow: BAND_WINDOW[insights.bestBand.band] } : {}),
       prefs,
       bufferMin: s.settings.meetingBufferMin ?? 0, // #302: scenarios inherit the seam
+      ...(profile ? { energyProfile: profile } : {}), // #321
+      ...(batchAdmin ? { batchAdmin: true } : {}),
+      ...(deepFlexible ? { deepFlexible: true } : {}),
+      ...(estimateFactor ? { estimateFactor } : {}), // #322
       ids: uid,
     })
     /* a scenario placing nothing is nothing to pick — it only ever narrates
@@ -2360,10 +3953,66 @@ export const useMew = create<MewState>((set, get) => {
     return `${CHOICES_POSTED}: ${scenarios.map((sc) => `"${sc.name}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
   }
 
-  function execRemove(query: string, opts: { at?: string; all?: boolean } = {}): string {
+  function execRemove(
+    query: string,
+    opts: { at?: string; all?: boolean; scope?: RecurScope } = {}
+  ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
-    const { remove: matches, candidates } = week.resolveRemoval(s.blocks, query, opts, todayKey)
+    /* #343: "the whole series" (scope:'series') sweeps the linked set exactly as
+       an explicit all does — both flow through seriesOf below. */
+    const scope = opts.scope
+    const wholeSeries = opts.all || scope === 'series'
+    /* a referent/positional sentinel points at ONE concrete block (#320): the
+       clarifier owns absent/ambiguous, and a hit drops exactly that one (no
+       at/all pinning). A plain title keeps resolveRemoval's own matching —
+       start-time pins, whole-series sweeps, and the ask-which-one path. */
+    let matches: Block[] = []
+    let candidates: Block[] = []
+    let doneProposal: Block[] = []
+    const ref = resolveTarget(query, 'remove')
+    if ('reply' in ref) return ref.reply
+    if ('block' in ref) {
+      // a tapped/last-touched done block is named explicitly → propose, not drop
+      if (ref.block.status === 'done') doneProposal = [ref.block]
+      else matches = [ref.block]
+    } else {
+      ;({ remove: matches, candidates } = week.resolveRemoval(
+        s.blocks,
+        query,
+        { at: opts.at, all: wholeSeries },
+        todayKey
+      ))
+      /* no OPEN target by that name — it may name DONE block(s). The cage lifts
+         for explicit single-target intent (#334): propose a one-tap confirm
+         rather than refusing ("mews are protected"). clear_blocks keeps the
+         silent-collateral guard; this is the named-intent exception. */
+      if (!matches.length && !candidates.length) {
+        const atMin = opts.at ? parseTimeValue(opts.at) : null
+        const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone: true })
+        const hits = r.status === 'ok' ? [r.block] : r.status === 'ambiguous' ? r.candidates : []
+        doneProposal = hits.filter((b) => b.status === 'done')
+      }
+    }
+    if (doneProposal.length) return proposeDoneRemoval(baseOf(query), doneProposal, todayKey)
+    /* #343 recurring-edit scope: the delete landed on ONE live series and the ask
+       named no scope → offer this / following / series, rather than a per-
+       occurrence time list or a silent single drop. An explicit scope/all skips
+       it: 'following' splits, 'this' drops the next occurrence alone, and
+       series/all fall through to the whole-series sweep below. */
+    const seriesTarget = recurringSeriesTarget(matches.length ? matches : candidates)
+    if (seriesTarget && !scope && !wholeSeries) {
+      const base = baseOf(query)
+      const at = fmtTime(seriesTarget.startMin)
+      return offerRecurringScope(base, (sc) =>
+        sc === 'series' ? `remove all ${base}` : `remove ${base} at ${at} ${scopeWord(sc)}`
+      )
+    }
+    if (seriesTarget && scope === 'following') return removeSeriesFollowing(seriesTarget, todayKey)
+    if (seriesTarget && scope === 'this') {
+      matches = [seriesTarget] // "just this one" = the next occurrence, dropped alone
+      candidates = []
+    }
     /* several share the title and nothing singled one out — name them with
        their times and ask, rather than dropping a block they didn't mean */
     if (!matches.length && candidates.length > 1) {
@@ -2409,10 +4058,13 @@ export const useMew = create<MewState>((set, get) => {
        occurrence: the rule and the rest of the series live on. */
     const removeSet = new Map<string, Block>()
     for (const m of matches) {
-      const group = opts.all ? week.seriesOf(s.blocks, m) : [m]
+      const group = wholeSeries ? week.seriesOf(s.blocks, m) : [m]
       for (const b of group) removeSet.set(b.id, b)
     }
     const removed = [...removeSet.values()]
+    /* the touched block is gone — a dangling "it" would resolve to nothing, so
+       clear it (subsequent "it" then asks, never guesses) (#320) */
+    if (removed.some((b) => b.id === get().lastReferent?.blockId)) clearReferent()
     /* imported events CAN be removed now — tombstone them so a re-sync won't
        resurrect them; everything else just deletes */
     dismissExternal(removed)
@@ -2436,16 +4088,35 @@ export const useMew = create<MewState>((set, get) => {
     return `Removed — ${names}.${fromCal ? ` (${fromCal} from a connected calendar — won't come back on the next sync.)` : ''}`
   }
 
-  /** ONE home for "a capture becomes a 30-min block": place, mark, announce.
-      Used by the when-where accept and the thread rail's place action. */
-  function placeCaptureAt(cap: Capture, toDayKey: string, startMin: number): boolean {
+  /** ONE home for "a capture becomes a block": place, mark, announce. Used by
+      the when-where accept, the thread rail's place, and the #348 inbox confirm.
+      The user already chose the slot, so start stands; `durationMin` is the
+      caller's (the 30-min quick-slot default, or the inbox offer's sized hint),
+      and the resolver (#328) fills the softer spec a confirmed rule may know —
+      the tag, attention, protection — so a captured "deck" lands as its usual
+      kind. No rule ⇒ the work-tagged default, byte-identical to before. */
+  function placeCaptureAt(
+    cap: Capture,
+    toDayKey: string,
+    startMin: number,
+    durationMin = DEFAULT_DURATION_MIN
+  ): boolean {
     const s = get()
+    const { spec: prefd } = resolveTaskSpec(
+      cap.title,
+      {},
+      activePrefsFrom(s.memory, brainOn() ? brainPrefs : null),
+      undefined, // duration is the caller's (the quick-slot default or the inbox offer)
+      learnedRules(s)
+    )
     const placed = week.place(s.blocks, {
       title: cap.title,
-      tag: 'work',
+      tag: prefd.tag ?? 'work',
       dayKey: toDayKey,
       startMin,
-      durationMin: 30,
+      durationMin,
+      ...(prefd.protected != null ? { protected: prefd.protected } : {}),
+      ...(prefd.attention != null ? { attention: prefd.attention } : {}),
     })
     if (!placed) return false
     setBlocks([...s.blocks, placed])
@@ -2475,6 +4146,19 @@ export const useMew = create<MewState>((set, get) => {
         : ''
     const label = key === todayKey ? 'today' : fmtDowLong(key)
     return `Day shape (${label}, from ${fmtTime(fromMin)}): ${shape.lines.join(' · ')}${load}`
+  }
+
+  /* list_blocks (#333): MEW's eyes on the calendar — the itemized, addressable
+     readout analyze lacks. Read-only like execAnalyze: reads the live week and
+     hands it to the pure formatter, mutating nothing and taking no snapshot. */
+  function execListBlocks(day: number | 'week', tag?: import('../domain/types').Tag): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const dayKeys =
+      day === 'week'
+        ? Array.from({ length: 7 }, (_, i) => addDaysKey(todayKey, i))
+        : [addDaysKey(todayKey, day)]
+    return listReadout(s.blocks, { dayKeys, todayKey, tag })
   }
 
   function execFindSlot(
@@ -2567,8 +4251,9 @@ export const useMew = create<MewState>((set, get) => {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const weekEnd = addDaysKey(todayKey, 6 - ((new Date(s.nowMs).getDay() + 6) % 7))
-    const inScope = (b: Block) => {
-      if (b.status !== 'open' || b.external) return false
+    /* the day-window this scope covers — the broom's reach; open/done is decided
+       on top of it so both share one definition of "in scope" */
+    const inDayScope = (b: Block) => {
       switch (scope) {
         case 'today':
           return b.dayKey === todayKey
@@ -2580,16 +4265,22 @@ export const useMew = create<MewState>((set, get) => {
           return b.dayKey >= todayKey
       }
     }
+    const inScope = (b: Block) => b.status === 'open' && !b.external && inDayScope(b)
     const removed = s.blocks.filter(inScope)
-    if (!removed.length)
+    /* the mews the broom keeps (the silent-collateral guard holds): never swept,
+       but no longer walled off — surfaced as a selectable removal offer (#334) */
+    const doneInScope = s.blocks.filter((b) => b.status === 'done' && !b.external && inDayScope(b))
+    if (!removed.length && !doneInScope.length)
       return `Nothing to clear ${scope === 'upcoming' ? 'ahead' : scope} — it's already a blank page.`
     const kept = s.blocks.filter((b) => !inScope(b))
     const keptExternal = s.blocks.filter(
       (b) => b.external && b.status === 'open' && b.dayKey >= todayKey
     ).length
-    set({ blocks: kept })
-    persistBlocks(kept)
-    storage.deleteBlocks(removed.map((b) => b.id)).catch(() => {})
+    if (removed.length) {
+      set({ blocks: kept })
+      persistBlocks(kept)
+      storage.deleteBlocks(removed.map((b) => b.id)).catch(() => {})
+    }
     const scopeLabel =
       scope === 'today'
         ? 'today'
@@ -2598,9 +4289,16 @@ export const useMew = create<MewState>((set, get) => {
           : scope === 'week'
             ? 'this week'
             : 'ahead'
-    /* a deliberate blank page is a temporal landmark — offer the fresh start */
-    setTimeout(() => fireEventNudges({ justCleared: { scope, count: removed.length } }), 0)
-    return `Cleared — ${removed.length} open block${removed.length === 1 ? '' : 's'} ${scopeLabel} removed. Your mews stay counted${keptExternal ? `, and ${keptExternal} synced calendar event${keptExternal === 1 ? '' : 's'} stay (not mine to delete)` : ''}. A blank page — say the word and we'll shape it.`
+    /* a deliberate blank page is a temporal landmark — offer the fresh start.
+       Surface any kept mews as selectable removals too, so "clear my evening"
+       that hit three done blocks proposes them instead of walling them off. */
+    setTimeout(() => {
+      if (removed.length) fireEventNudges({ justCleared: { scope, count: removed.length } })
+      if (doneInScope.length) proposeDoneRemoval(`${scopeLabel} done`, doneInScope, todayKey)
+    }, 0)
+    if (!removed.length)
+      return `Nothing open to clear ${scopeLabel} — but ${spell(doneInScope.length)} completed block${doneInScope.length === 1 ? '' : 's'} sit there. They're mews, so they stay by default; I've offered them for removal if you want the slate truly blank.`
+    return `Cleared — ${removed.length} open block${removed.length === 1 ? '' : 's'} ${scopeLabel} removed. Your mews stay counted${keptExternal ? `, and ${keptExternal} synced calendar event${keptExternal === 1 ? '' : 's'} stay (not mine to delete)` : ''}${doneInScope.length ? `. ${spell(doneInScope.length)} completed block${doneInScope.length === 1 ? '' : 's'} stayed — I've offered ${doneInScope.length === 1 ? 'it' : 'them'} for removal if you want` : ''}. A blank page — say the word and we'll shape it.`
   }
 
   /* undo_last_action (#162): reverse the turn's most recent mutating tool by
@@ -2629,14 +4327,20 @@ export const useMew = create<MewState>((set, get) => {
       .filter((c) => !snap.captures.some((p) => p.id === c.id))
       .map((c) => c.id)
     const snapMemIds = new Set(snap.memory.map((e) => e.id))
-    const droppedMemIds = s.memory.filter((e) => !snapMemIds.has(e.id)).map((e) => e.id) // notes this call logged
+    const liveMemIds = new Set(s.memory.map((e) => e.id))
+    const droppedMemIds = [...liveMemIds].filter((id) => !snapMemIds.has(id)) // notes this call logged → drop
+    /* events the call DELETED (a done-block removal drops its completion, #334)
+       must be re-put, not just restored in state — else undo brings the mew back
+       on screen but a reload loses it again. */
+    const restoredMem = snap.memory.filter((e) => !liveMemIds.has(e.id))
 
     if (
       !added.length &&
       !removed.length &&
       !changed.length &&
       !addedCaptureIds.length &&
-      !droppedMemIds.length
+      !droppedMemIds.length &&
+      !restoredMem.length
     ) {
       preMutationSnapshot = null
       return `nothing to undo — the last step changed nothing.`
@@ -2650,6 +4354,7 @@ export const useMew = create<MewState>((set, get) => {
     if (snap.captures.length) persistCaptures(snap.captures)
     persistDeleteCaptures(addedCaptureIds)
     persistDeleteMemory(droppedMemIds)
+    if (restoredMem.length) persistMemory(restoredMem) // bring back a deleted completion event (#334)
     /* a reversed `remember` must leave the standing rulebook as it was — the
        local memory event is already gone above; refresh the brain-backed cache
        too (the brain's own copy is append-only and not ours to retract here). */
@@ -2712,6 +4417,7 @@ export const useMew = create<MewState>((set, get) => {
     workingStatus: null,
     promptDraft: '',
     queuedSpeak: null,
+    lastReferent: null,
     brainSidecar: 'off',
 
     engine: { lastFired: {}, lastDriftBlockId: null },
@@ -2729,6 +4435,7 @@ export const useMew = create<MewState>((set, get) => {
 
     commandPaletteOpen: false,
     commandPaletteMode: 'command',
+    weeklyReviewOpen: false,
     hotkeyCollision: false,
 
     queryBrain(question: string) {
@@ -2855,7 +4562,7 @@ export const useMew = create<MewState>((set, get) => {
          after a restore re-hydrates (#284); null keeps the OS untouched
          beyond releasing whatever this session held */
       if (isTauri()) void syncCaptureHotkey(get().settings.globalCaptureHotkey)
-      runTickEngine()
+      runTickEngine({ skipLearn: true })
       /* an update announced during boot waits for chat to exist */
       if (stagedUpdateVersion) {
         offerUpdate(stagedUpdateVersion)
@@ -2922,6 +4629,7 @@ export const useMew = create<MewState>((set, get) => {
           }
         }
         set({ lastTickDay: todayKey, guardUntilMin: null, guardDayKey: null })
+        clearReferent() // a new day: yesterday's "it" no longer means anything (#320)
       }
 
       /* quiet hours over → flush the queue into chat (morning catch-up) */
@@ -2980,6 +4688,37 @@ export const useMew = create<MewState>((set, get) => {
       /* the live attempt's stream row — assigned per adapter in the loop below;
          the tool wrappers reach it through here to keep the log chronological */
       let reply: ReturnType<typeof streamedReply> | null = null
+      /* #325 — the store is the behavior net for a flailed correction, because
+         the model can't be trusted to obey MEW_VOICE alone (the live bug: five
+         "you're right" messages + repeated find_slot — Dinner to move one
+         block). Both guardrails are turn-scoped — they live in speak(), so a
+         fresh turn starts clean. */
+      const readOnlyTurnCache = new Map<string, string>()
+      let apologyPosted = false
+      /* a read-only slot query the model repeats for the SAME target this turn
+         returns the first answer verbatim — no second executor run, no
+         duplicate card. The executor already has the answer; re-asking is the
+         flail. Keyed by tool+args, so a genuinely different query still runs. */
+      const dedupReadOnly = (key: string, run: () => string): string => {
+        const hit = readOnlyTurnCache.get(key)
+        if (hit !== undefined) return hit
+        const out = run()
+        readOnlyTurnCache.set(key, out)
+        return out
+      }
+      /* a committed streamed row whose whole body is acknowledgment is kept the
+         first time and dropped after — the reshape and its one crisp line carry
+         the correction. Substantive rows (the fix itself) never match, so they
+         always stay. Returns true when it dropped the row. */
+      const coalesceApology = (msg: ChatMessage): boolean => {
+        if (!isAcknowledgmentOnly(msg.body)) return false
+        if (apologyPosted) {
+          set((s) => ({ chat: s.chat.filter((m) => m.id !== msg.id) }))
+          return true
+        }
+        apologyPosted = true
+        return false
+      }
       /* mid-turn ordering (#282): a card is about to land — when reply text has
          already begun, close the live streamed row first, so post-tool deltas
          open a NEW mew row (text → card → text). The closed row is final:
@@ -2988,13 +4727,14 @@ export const useMew = create<MewState>((set, get) => {
       const closeStreamRow = () => {
         const closed = reply?.closeRow()
         if (!closed) return
-        if (closed.body.trim()) {
-          spoke = true
-          persistChat([closed])
-          if (brainOn()) chatBatcher.add(closed, dayKey(new Date(get().nowMs)))
-        } else {
+        if (!closed.body.trim()) {
           set((s) => ({ chat: s.chat.filter((m) => m.id !== closed.id) }))
+          return
         }
+        if (coalesceApology(closed)) return // #325: a repeated apology row is dropped
+        spoke = true
+        persistChat([closed])
+        if (brainOn()) chatBatcher.add(closed, dayKey(new Date(get().nowMs)))
       }
       /* one short, positive label per tool — what MEW is doing right now. The
          thinking row shows it while `thinking`; speak's finally clears it. */
@@ -3014,20 +4754,20 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('plan', { places, frees }, () => execPlan(places, frees))
         },
-        complete: (q) => {
+        complete: (q, at) => {
           acted = true
           snapshotForUndo()
           working('marking it done…')
           closeStreamRow()
-          return runToolWithCard('complete', { query: q }, () => execComplete(q))
+          return runToolWithCard('complete', { query: q }, () => execComplete(q, at))
         },
-        move: (q, d, t) => {
+        move: (q, d, t, rel, at) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
           return runToolWithCard('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
-            execMove(q, d, t)
+            execMove(q, d, t, rel, at)
           )
         },
         capture: (t) => {
@@ -3044,12 +4784,12 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('clear', { scope }, () => execClear(scope))
         },
-        edit: (q, patch) => {
+        edit: (q, patch, at, scope) => {
           acted = true
           snapshotForUndo()
           working('reshaping it…')
           closeStreamRow()
-          return runToolWithCard('edit', { query: q }, () => execEdit(q, patch))
+          return runToolWithCard('edit', { query: q }, () => execEdit(q, patch, at, scope))
         },
         remove: (q, opts) => {
           acted = true
@@ -3063,24 +4803,36 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('analyze', { dayOffset: d }, () => execAnalyze(d)) // read-only: not an action
         },
-        findSlot: (dur, d, nb, na) => {
-          working('finding a slot…')
+        listBlocks: (day, tag) => {
+          working('listing your blocks…')
           closeStreamRow()
-          return runToolWithCard(
-            'findSlot',
-            { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na },
-            () => execFindSlot(dur, d, nb, na) // read-only
-          )
+          // read-only: not an action — no acted flag, no undo snapshot
+          return runToolWithCard('listBlocks', { day, tag }, () => execListBlocks(day, tag))
         },
-        suggestSlots: (t, tag, dur, due, win) => {
-          working('finding a slot…')
-          closeStreamRow()
-          return runToolWithCard(
-            'suggestSlots',
-            { title: t, durationMin: dur },
-            () => execSuggestSlots(t, tag, dur, due, win) // read-only
-          )
-        },
+        findSlot: (dur, d, nb, na) =>
+          /* #325: an identical slot query this turn returns the cached answer —
+             no second run, no duplicate card */
+          dedupReadOnly(`findSlot:${dur}:${d}:${nb ?? ''}:${na ?? ''}`, () => {
+            working('finding a slot…')
+            closeStreamRow()
+            return runToolWithCard(
+              'findSlot',
+              { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na },
+              () => execFindSlot(dur, d, nb, na) // read-only
+            )
+          }),
+        suggestSlots: (t, tag, dur, due, win) =>
+          /* #325: the same target twice this turn collapses — the ranking
+             already ran; the second call is the flail, not a new question */
+          dedupReadOnly(`suggestSlots:${t}:${tag}:${dur}:${due ?? ''}:${win ?? ''}`, () => {
+            working('finding a slot…')
+            closeStreamRow()
+            return runToolWithCard(
+              'suggestSlots',
+              { title: t, durationMin: dur },
+              () => execSuggestSlots(t, tag, dur, due, win) // read-only
+            )
+          }),
         queryBrain: (q) => {
           working('checking what I know…')
           closeStreamRow()
@@ -3124,6 +4876,40 @@ export const useMew = create<MewState>((set, get) => {
           working('putting that back…')
           closeStreamRow()
           return runToolWithCard('undoLast', undefined, () => execUndo())
+        },
+        resize: (q, resize, at, scope) => {
+          acted = true
+          snapshotForUndo()
+          working('resizing it…')
+          closeStreamRow()
+          return runToolWithCard('resize', { query: q }, () => execResize(q, resize, at, scope))
+        },
+        duplicate: (q, opts, at) => {
+          acted = true
+          snapshotForUndo()
+          working('duplicating it…')
+          closeStreamRow()
+          return runToolWithCard(
+            'duplicate',
+            { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
+            () => execDuplicate(q, opts, at)
+          )
+        },
+        relativeMove: (q, direction, amountMin, at) => {
+          acted = true
+          snapshotForUndo()
+          working('nudging it…')
+          closeStreamRow()
+          return runToolWithCard('relativeMove', { query: q }, () =>
+            execRelativeMove(q, direction, amountMin, at)
+          )
+        },
+        giveRoom: (focusClass) => {
+          acted = true
+          snapshotForUndo()
+          working('giving them room…')
+          closeStreamRow()
+          return runToolWithCard('giveRoom', { focusClass }, () => execGiveRoom(focusClass))
         },
       }
 
@@ -3182,12 +4968,17 @@ export const useMew = create<MewState>((set, get) => {
             }
             if (live.msgId) {
               const final = get().chat.find((m) => m.id === live.msgId)
-              if (final?.body.trim()) {
+              if (final && !final.body.trim())
+                set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
+              /* #325: a repeated apology tail is dropped — one acknowledgment
+                 stands for the turn (the catch path stays as-is: an error is not
+                 the flail, and a hiccuped turn keeps whatever streamed) */
+              else if (final && !coalesceApology(final)) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
                 if (brainOn()) chatBatcher.add(final, dayKey(new Date(get().nowMs)))
-              } else if (final) set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
+              }
             }
             if (failed.length && adapter.id === 'rules') {
               /* an upstream adapter threw and we've landed on the rules floor.
@@ -3315,6 +5106,13 @@ export const useMew = create<MewState>((set, get) => {
       turnAbort?.abort()
     },
 
+    noteReferent(blockId: string) {
+      /* a tap on a block's detail card makes it the conversational "it" (#320)
+         — the same slot the executors set when they act, so tap-then-"move it
+         earlier" lands here. Ignore an unknown id (a stale card). */
+      if (get().blocks.some((b) => b.id === blockId)) noteReferentId(blockId)
+    },
+
     toggleComplete(blockId: string) {
       const s = get()
       const target = s.blocks.find((b) => b.id === blockId)
@@ -3346,11 +5144,19 @@ export const useMew = create<MewState>((set, get) => {
         title: target.title,
         startMin: target.startMin,
         endMin: target.endMin,
+        ...(target.attention ? { attention: target.attention } : {}), // #327 detection fuel
         ts: nowMs,
       })
       set({ celebratePulse: nowMs })
       const done = { ...target, status: 'done' as const, completedAt: nowMs }
       fireEventNudges({ justCompleted: done })
+    },
+
+    removeBlock(blockId: string) {
+      /* the block-card remove affordance (#334): the card confirmed already; this
+         is the same door the chat proposal's "remove it" chip runs, so a done
+         block's completion event drops with it and the whole thing is undoable. */
+      if (get().blocks.some((b) => b.id === blockId)) removeBlocksConfirmed([blockId])
     },
 
     async pickChoice(msgId: string, choiceId: string) {
@@ -3455,6 +5261,77 @@ export const useMew = create<MewState>((set, get) => {
       }
     },
 
+    proposeScaffold(targetWeekKey?: string): boolean {
+      const s = get()
+      const now = new Date(s.nowMs)
+      const todayKey = dayKey(now)
+      /* default target = the coming week: "rough out NEXT week the way your weeks
+         usually go." A caller may name any week. */
+      const target = targetWeekKey ?? weekKey(new Date(s.nowMs + 7 * 24 * 60 * 60 * 1000))
+      /* the whole draft is one pure, keyless call — confirmed rules + their
+         recurrences + learned bands, laid around what already sits in the week
+         (external events included). Nothing here mutates the week. */
+      const specs = weekScaffold(s.memory, s.blocks, target, now)
+      /* dayOffsets count from todayKey (the scenario contract); drop any place
+         already behind us (a mid-week look at the current week), so a preview is
+         always appliable and never lands in the past. */
+      const dayOffsetOf = (key: string): number =>
+        Math.round((fromDayKey(key).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000)
+      const places: ScenarioPlace[] = specs
+        .filter((p) => p.dayKey >= todayKey && p.startMin != null && p.endMin != null)
+        .map((p) => ({
+          title: p.title,
+          tag: p.tag,
+          dayOffset: dayOffsetOf(p.dayKey),
+          startMin: p.startMin!,
+          durationMin: p.endMin! - p.startMin!,
+          ...(p.due != null ? { due: p.due } : {}),
+        }))
+      if (!places.length) {
+        /* honest empty: no learned shape yet (the data floor), or the week
+           already holds it — an "I don't know your week" than a guessed week
+           (the sustenance/review pattern: checked once, no theater). */
+        post([
+          mewMsg(
+            "I don't know your week yet — once I've picked up a few of your rhythms, I'll rough one out for you to tweak."
+          ),
+        ])
+        return false
+      }
+      const dayLoad: Record<string, number> = {}
+      for (const p of places) {
+        const key = addDaysKey(todayKey, p.dayOffset)
+        dayLoad[key] = (dayLoad[key] ?? 0) + p.durationMin
+      }
+      const n = places.length
+      const scenario: StoredScenario = {
+        id: uid(),
+        name: 'your usual week',
+        line: `${spell(n)} block${n === 1 ? '' : 's'} the way your weeks usually go — laid around what's already there`,
+        todayKey,
+        places,
+        dayLoad,
+      }
+      /* the same post-time gate the picker uses (#293): every stored place still
+         lands conflict-free against the LIVE week. weekScaffold already fits
+         around it, so this is belt-and-braces — a moved week just re-offers. */
+      if (!validateScenario(s.blocks, scenario)) {
+        post([mewMsg('your week is already shaped — nothing to rough out right now.')])
+        return false
+      }
+      /* one picker message — chat-only data, exactly like propose_scenarios.
+         Accept (pick) places it through the executor; tell them anything to
+         change flows as an ordinary turn; leaving it settles like any offer.
+         NOTHING commits here. */
+      post([
+        scenariosMsg(
+          "here's next week, roughed out your usual way — accept it, tell me what to change, or leave it for now.",
+          [scenario]
+        ),
+      ])
+      return true
+    },
+
     nudgeAction(msgId: string, actionId: string) {
       const s = get()
       const msg = s.chat.find((m) => m.id === msgId)
@@ -3494,7 +5371,73 @@ export const useMew = create<MewState>((set, get) => {
         return
       }
 
+      /* done-block removal confirm (#334): the explicit-delete cage-lift. One tap
+         removes the named mew(s) through removeBlocksConfirmed (the block card's
+         path too) — deterministic, so it deletes exactly the confirmed block(s)
+         and their completion events, undoable; "keep" just closes the offer. */
+      if (msg.nudgeType === 'remove-done') {
+        if (actionId === 'keep-done') {
+          resolveNudge(msgId, label)
+          return
+        }
+        if (actionId.startsWith('rm-done:')) {
+          const which = actionId.slice('rm-done:'.length)
+          const listed = typeof payload.doneIds === 'string' ? payload.doneIds.split(',') : []
+          const ids = which === 'all' ? listed : [which]
+          removeBlocksConfirmed(ids)
+          resolveNudge(msgId, label)
+          return
+        }
+      }
+
       switch (`${msg.nudgeType}:${actionId}`) {
+        case 'learn-offer:confirm': {
+          /* confirm = "remember this" (tools-only law: the confirm stores a
+             pref, placement stays the executor's). The rule lands in the
+             append-only memory — the always-on floor, survives restart — and
+             ingests to gbrain when on, so #328's resolver applies it silently
+             forever. Deterministic here, so keyless confirms identically. */
+          const rule = parseLearnedRule(typeof payload.rule === 'string' ? payload.rule : '')
+          if (rule) {
+            logMemory({ kind: 'learned_rule', dayKey: todayKey, rule })
+            if (brainOn()) void brain.ingest(learnedRulePage(rule))
+            post([mewMsg("Got it — I'll just do that from now on.")])
+          }
+          resolveNudge(msgId, 'yes, always')
+          break
+        }
+        case 'learn-offer:dismiss': {
+          /* dismiss = "not a rule": a persisted dismissal so this pattern is
+             never offered again (detectTaskRules skips it). No week change. */
+          const match = typeof payload.match === 'string' ? payload.match : ''
+          if (match) logMemory({ kind: 'dismissed_rule', dayKey: todayKey, rule: { match } })
+          resolveNudge(msgId, 'not a rule')
+          break
+        }
+        case 'inbox-offer:place': {
+          /* the owner CONFIRMED the slot → the executor places it (placeFromInbox
+             → placeCaptureAt, the one mutation path), sized by the offered
+             duration. gbrain never reaches here on its own — only a confirm, so
+             nothing is ever auto-scheduled (human-in-the-loop). */
+          const capId = String(payload.captureId)
+          const cap = s.captures.find((c) => c.id === capId)
+          if (cap && cap.status === 'open') {
+            get().placeFromInbox(capId, {
+              dayKey: String(payload.dayKey),
+              startMin: Number(payload.startMin),
+              durationMin: payload.durationMin != null ? Number(payload.durationMin) : undefined,
+            })
+          }
+          accept()
+          break
+        }
+        case 'inbox-offer:notnow': {
+          /* "not now" keeps the item WAITING and dedupes today's offer — the
+             intent is never lost, never re-nagged the same day. */
+          get().dismissInboxOffer(String(payload.captureId))
+          decline()
+          break
+        }
         case 'drift:still': {
           set({ lastActivityMs: nowFn() })
           accept()
@@ -3945,6 +5888,29 @@ export const useMew = create<MewState>((set, get) => {
           void get().speak('plan my week')
           break
         }
+        /* the weekly-review offer (#346): "show me" opens the read-only review
+           surface (the owner selects what to roll inside — the offer itself
+           moves nothing); "not now" dismisses it, offered again next week. */
+        case 'weekly-review:open': {
+          accept()
+          get().openWeeklyReview()
+          break
+        }
+        case 'weekly-review:later':
+          decline()
+          break
+        /* the week-scaffold offer (#349): "rough it out" runs proposeScaffold,
+           which posts the plan-mode preview the owner accepts/tweaks — the offer
+           itself places NOTHING (human-in-the-loop). "not now" dismisses it,
+           offered again for a future coming week. */
+        case 'scaffold-week:draft': {
+          accept()
+          get().proposeScaffold(typeof payload.weekKey === 'string' ? payload.weekKey : undefined)
+          break
+        }
+        case 'scaffold-week:later':
+          decline()
+          break
         default:
           decline()
       }
@@ -4093,7 +6059,9 @@ export const useMew = create<MewState>((set, get) => {
       if (!target) return 'noop'
       /* a synced calendar event is never MEW's to move (product law) — the drag
          is silently dropped and chat explains, the same voice as every other
-         "not mine to touch" path. The block bounces back in the view. */
+         "not mine to touch" path. The block bounces back in the view. A typed
+         "move my 1:1" still takes ownership through execMove; the GESTURE does
+         not, so the drop bounces here before it can reach the move executor. */
       if (target.external) {
         post([
           mewMsg(
@@ -4102,27 +6070,44 @@ export const useMew = create<MewState>((set, get) => {
         ])
         return 'external'
       }
-      const todayKey = dayKey(new Date(s.nowMs))
-      const dur = durationMin ?? week.duration(target)
-      const resized = dur !== week.duration(target)
-      /* dropped exactly where it already sits, at its own length → a click */
-      if (toDayKey === target.dayKey && toStartMin === target.startMin && !resized) return 'noop'
-      /* authoritative conflict gate (the view shows the same set live): a drop
-         onto a time-holding open block is bounced, never silently stacked —
-         MEW's "never silent" law. Optional/background blocks are transparent,
-         exactly as conflictsWith treats them everywhere else. */
-      const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+      const curDur = week.duration(target)
+      const dur = durationMin ?? curDur
       const endMin = toStartMin + dur
-      const clash = week.conflictsWith(s.blocks, toDayKey, toStartMin, endMin, target.id, prefs)
-      if (clash.length) return 'conflict'
-      setBlocks(week.move(s.blocks, blockId, toDayKey, toStartMin, dur))
-      post([
-        mewMsg(
-          resized
-            ? `Resized — ${target.title.split('—')[0].trim()} now runs ${fmtTime(toStartMin)}–${fmtTime(endMin)} (${dur} min).`
-            : `Moved — ${target.title.split('—')[0].trim()} now lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(toStartMin)}.`
-        ),
-      ])
+      const resized = durationMin != null && dur !== curDur
+      const moved = toDayKey !== target.dayKey || toStartMin !== target.startMin
+      /* dropped exactly where it already sits, at its own length → a click */
+      if (!moved && !resized) return 'noop'
+      const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+      /* Validity gate (#347), the "never over fixed-time" law made pre-commit.
+         A MOVE bounces only off blocks it can't schedule around — external/fixed
+         meetings and the owner's held (protected) blocks; every other conflict
+         is unprotected own-flexible work the move executor drifts (#324). A
+         RESIZE grows in place and shifts nothing, so ANY occupied minute in its
+         new span bounces it. Either way the week is left untouched and the view
+         snaps the block home. */
+      const blocked = resized
+        ? week.conflictsWith(s.blocks, toDayKey, toStartMin, endMin, target.id, prefs)
+        : moveBlockedBy(s.blocks, toDayKey, toStartMin, endMin, target.id, prefs)
+      if (blocked.length) return 'conflict'
+      /* the gesture IS the owner's intent: snapshot so undo_last_action ("undo
+         that") can take it back, and hold that snapshot across the next turn's
+         fresh-exchange reset exactly as a scenario pick does (#293) — the drag
+         commits outside any turn. Then route through the SAME merged executor a
+         chat command uses: a move through moveResolved (#335, its #324 drift and
+         clash note come free), a resize through applyEditPatch (#335, execEdit's
+         own field math) — no second mutation door. */
+      snapshotForUndo()
+      let reply: string
+      if (resized) {
+        const next = applyEditPatch(target, { startMin: toStartMin, endMin })
+        setBlocks(s.blocks.map((b) => (b.id === target.id ? next : b)))
+        noteReferentId(target.id)
+        reply = `Resized — ${target.title.split('—')[0].trim()} now runs ${fmtTime(next.startMin)}–${fmtTime(next.endMin)} (${next.endMin - next.startMin} min).`
+      } else {
+        reply = moveResolved(target, toDayKey, toStartMin)
+      }
+      pickSnapshotHolds = true
+      post([mewMsg(reply)])
       return resized ? 'resized' : 'moved'
     },
     setAttention(blockId, attention) {
@@ -4164,6 +6149,122 @@ export const useMew = create<MewState>((set, get) => {
     },
     clearScroll() {
       set({ scrollToMsgId: null })
+    },
+
+    /* ── memory console edits (#330) — every one goes through the append-only
+       memory the learn/remember paths already write, so keyless and keyed
+       behave identically and the console stays tools-only. */
+    confirmTaskRule(rule) {
+      logMemory({ kind: 'learned_rule', dayKey: dayKey(new Date(get().nowMs)), rule })
+      if (brainOn()) void brain.ingest(learnedRulePage(rule))
+    },
+    forgetRule(match) {
+      const drop = get()
+        .memory.filter((e) => e.kind === 'learned_rule' && e.rule?.match === match)
+        .map((e) => e.id)
+      if (drop.length) {
+        const gone = new Set(drop)
+        set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
+        persistDeleteMemory(drop)
+      }
+      /* record the dismissal so detectTaskRules won't re-offer it at once. The
+         brain's copy is append-only and not ours to retract (as with undo of a
+         remember); applying reads confirmedRulesFrom(local memory) only, so the
+         rule truly stops applying regardless of the brain. */
+      logMemory({ kind: 'dismissed_rule', dayKey: dayKey(new Date(get().nowMs)), rule: { match } })
+    },
+    reEnableRule(match) {
+      const drop = get()
+        .memory.filter((e) => e.kind === 'dismissed_rule' && e.rule?.match === match)
+        .map((e) => e.id)
+      if (!drop.length) return
+      const gone = new Set(drop)
+      set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
+      persistDeleteMemory(drop)
+    },
+    saveStandingPref(pref) {
+      /* the same remember path a typed rule takes (append + mirror to brain);
+         the console re-renders from memory, so no chat confirmation is posted. */
+      execRemember(pref)
+    },
+    forgetStandingPref(pref) {
+      const key = `${pref.kind}:${pref.match.toLowerCase()}`
+      const drop = get()
+        .memory.filter(
+          (e) =>
+            e.kind === 'preference' &&
+            e.pref &&
+            `${e.pref.kind}:${e.pref.match.toLowerCase()}` === key
+        )
+        .map((e) => e.id)
+      if (!drop.length) return
+      const gone = new Set(drop)
+      set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
+      persistDeleteMemory(drop)
+      /* local removal is authoritative for what applies; mirror it into the
+         brain-backed pref cache too (the brain's copy is append-only, as undo). */
+      refreshBrainPrefs()
+    },
+
+    /* ── weekly review (#346) ──────────────────────────────────────────
+       A read-only presenter over the LOCAL week + memory (no key, no I/O), the
+       memory-console discipline: openWeeklyReview computes and returns the shape
+       AND flips the surface open; the UI re-derives it live so a roll re-renders.
+       rollForward is the ONLY write, and it never mutates directly — it re-places
+       the owner-selected blocks through the executor's plan path. */
+    openWeeklyReview() {
+      const s = get()
+      const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+      const review = weeklyReview(s.blocks, s.memory, weekKey(new Date(s.nowMs)), prefs)
+      set({ weeklyReviewOpen: true })
+      return review
+    },
+    closeWeeklyReview() {
+      set({ weeklyReviewOpen: false })
+    },
+    rollForward(blockIds, targetWeekKey) {
+      const s = get()
+      const now = new Date(s.nowMs)
+      const todayKey = dayKey(now)
+      const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+      /* the human-in-the-loop gate, enforced in code: only the ids the owner
+         selected AND that pass isRollCandidate (own + flexible + open) can move.
+         A mew, an external event, or a fixed-time block handed in — even by a
+         buggy caller — is refused here, so nothing rolls that wasn't a real,
+         owner-picked carried block. External events are never moved (law). */
+      const want = new Set(blockIds)
+      const picked = s.blocks.filter((b) => want.has(b.id) && isRollCandidate(b, prefs))
+      if (!picked.length) return
+
+      /* re-place each pick on its SAME weekday in the target week and let the
+         executor's scorer time it — meals re-anchor via the circadian oracle,
+         everything else lands rest-aware and conflict-free (no startMin means
+         "you pick the slot"). This goes through execPlan, the normal plan path:
+         tools are the only mutation door, so a tool card records the roll and
+         undo reaches it, exactly like a typed plan. */
+      const places: PlaceSpec[] = picked.map((b) => {
+        const weekdayIdx = (fromDayKey(b.dayKey).getDay() + 6) % 7 // Mon=0 … Sun=6
+        const targetDay = addDaysKey(targetWeekKey, weekdayIdx)
+        const dayOffset = Math.round(
+          (fromDayKey(targetDay).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000
+        )
+        return {
+          title: b.title,
+          tag: b.tag,
+          dayOffset,
+          durationMin: week.duration(b),
+          protected: b.protected,
+          ...(b.attention ? { attention: b.attention } : {}),
+        }
+      })
+      runToolWithCard('plan', { places, frees: [] }, () => execPlan(places, []))
+
+      const names = picked.map((b) => b.title.split('—')[0].trim())
+      post([
+        mewMsg(
+          `Rolled forward — ${joinHuman(names)} now ${picked.length === 1 ? 'lives' : 'live'} in next week. Nothing else moved.`
+        ),
+      ])
     },
 
     updateSettings(patch) {
@@ -4544,6 +6645,65 @@ export const useMew = create<MewState>((set, get) => {
       return { kind: 'open' as const, message: `Captured: ${clean}` }
     },
 
+    capture(text, opts) {
+      const clean = text.trim().slice(0, 120) // Block.title constraint (#171)
+      if (!clean)
+        return { kind: 'empty' as const, message: 'Nothing to capture yet — type a few words.' }
+      const item: Capture = {
+        id: uid(),
+        title: clean,
+        createdAt: nowFn(),
+        status: 'open',
+        ...(opts?.tag ? { tag: opts.tag } : {}),
+        ...(opts?.durationMin != null ? { durationMin: opts.durationMin } : {}),
+        ...(opts?.energy ? { energy: opts.energy } : {}),
+      }
+      set((st) => ({ captures: [...st.captures, item] }))
+      persistCaptures([item])
+      /* holds NO time: no block, no when-where interrupt — it waits in the inbox
+         until the owner places it (capture-now, place-later; MEW law). */
+      return { kind: 'open' as const, item, message: `Added to your inbox: ${clean}` }
+    },
+
+    placeFromInbox(itemId, slot) {
+      const s = get()
+      const item = s.captures.find((c) => c.id === itemId)
+      if (!item || item.status !== 'open') return false
+      /* the owner CONFIRMED a slot → the executor places it (placeCaptureAt: the
+         one mutation path the when-where accept + rail use), sized by the offer's
+         duration hint. gbrain never reaches here on its own — only a confirm, so
+         nothing is ever auto-scheduled. */
+      return placeCaptureAt(
+        item,
+        slot.dayKey,
+        slot.startMin,
+        slot.durationMin ?? item.durationMin ?? DEFAULT_DURATION_MIN
+      )
+    },
+
+    dismissInboxOffer(itemId) {
+      const s = get()
+      const item = s.captures.find((c) => c.id === itemId)
+      if (!item || item.status !== 'open') return
+      /* keep it WAITING (still open); mark it offered today so the proactive
+         offer doesn't nag again the same day (#348 offer-once dedupe). */
+      markInboxOffered(itemId, dayKey(new Date(s.nowMs)))
+    },
+
+    removeInboxItem(itemId) {
+      if (!get().captures.some((c) => c.id === itemId)) return
+      set((st) => ({ captures: st.captures.filter((c) => c.id !== itemId) }))
+      persistDeleteCaptures([itemId])
+    },
+
+    inboxOffers() {
+      return computeInboxOffers(get())
+    },
+
+    offerNextInboxPlacement() {
+      runInboxOfferPass()
+    },
+
     revealBlock(blockId: string) {
       const s = get()
       const target = s.blocks.find((b) => b.id === blockId)
@@ -4666,6 +6826,13 @@ declare global {
         optional?: boolean
       }[]
     ) => void
+    /** Dev/scenario helper (#346): open the weekly-review surface directly, the
+        way the offer's "show me" chip does — for a deterministic UI proof shot. */
+    __mewOpenReview?: () => void
+    /** Dev/scenario helper (#349): confirm a learned rule into local memory, so
+        the week-scaffold offer/preview has a rhythm to draft from — the same
+        append-only path the learn-offer's "yes, always" writes. Keyless. */
+    __mewConfirmRule?: (rule: LearnedRule) => void
   }
 }
 if (typeof window !== 'undefined') {
@@ -4748,5 +6915,11 @@ if (typeof window !== 'undefined') {
     useMew.getState().memory.map((e) => ({ kind: e.kind, dayKey: e.dayKey }))
   window.__mewSimulatePull = (events) => {
     useMew.getState().simulatePull(events)
+  }
+  window.__mewOpenReview = () => {
+    useMew.getState().openWeeklyReview()
+  }
+  window.__mewConfirmRule = (rule) => {
+    useMew.getState().confirmTaskRule(rule)
   }
 }

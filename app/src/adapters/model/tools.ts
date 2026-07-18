@@ -5,7 +5,7 @@
 import type { ToolExecutor } from './types'
 import { normalizeRrule, type Rrule } from '../../domain/recurrence'
 import type { PlanMode } from '../../domain/types'
-import { clampInt, optInt } from './rules'
+import { clampInt, optInt, parseListDay } from './rules'
 
 /** A model's loose `recurrence` arg → a clean Rrule, or undefined. The byday
     arrives as a CSV ("MO,WE") here; normalizeRrule wants an array, so split
@@ -18,6 +18,19 @@ function parseRecurrence(raw: unknown): Rrule | undefined {
   return normalizeRrule({ ...o, byday }) ?? undefined
 }
 
+/** A model's `at` arg (a target block's start time) → a trimmed string or
+    undefined. The executor's own clock parser (prefs.parseTimeValue) is the
+    single authority on the value; here we only reject empties (#334). */
+function atArg(raw: unknown): string | undefined {
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : undefined
+}
+
+/** A model's recurring-edit `scope` arg (#343) → one of the three scope words,
+    or undefined (the executor then asks with chips on a series block). */
+function recurScope(raw: unknown): 'this' | 'following' | 'series' | undefined {
+  return raw === 'this' || raw === 'following' || raw === 'series' ? raw : undefined
+}
+
 export interface NeutralTool {
   name: string
   description: string
@@ -25,6 +38,17 @@ export interface NeutralTool {
 }
 
 const TAG_SCHEMA = { type: 'string', enum: ['work', 'private', 'health', 'rest'] } as const
+
+/** #343: the recurring-edit scope for edit_block/remove_blocks. Pass it only
+    when the user's ask makes the scope explicit ("just this one", "from now on",
+    "all of them"); omit it on a repeating block and the executor asks with
+    this/following/series chips rather than guessing. */
+const SCOPE_SCHEMA = {
+  type: 'string',
+  enum: ['this', 'following', 'series'],
+  description:
+    "For a recurring block only — how far the change reaches: 'this' = the one occurrence, 'following' = this and every later one (splits the series), 'series' = all of them. Omit unless the user made the scope explicit; the executor asks with chips otherwise.",
+} as const
 
 /** The plan-mode tool (#293), parameterized on the auto-offer floor: 'auto'
     offers the picker at three or more items, 'always' already at two (the
@@ -119,10 +143,20 @@ export const MEW_TOOLS: NeutralTool[] = [
                 description:
                   'Start in minutes from midnight (9:00 = 540). Omit to auto-place in the first free slot.',
               },
+              startStated: {
+                type: 'boolean',
+                description:
+                  'True ONLY when startMin is a clock time the USER stated in their own words this turn ("dinner at 6"). Omit for a time YOU derived while packing or reshaping — MEW keeps derived meal times inside their healthy window and gap.',
+              },
               durationMin: {
                 type: 'integer',
                 description:
                   'Duration in minutes. Default 60; "morning" = startMin 540, durationMin 180 unless the user says otherwise; "afternoon" ≈ 240 from 780.',
+              },
+              durationStated: {
+                type: 'boolean',
+                description:
+                  'True ONLY when durationMin is a length the USER stated in their own words this turn ("30 min, exactly", "a two-hour block"). Omit for a length YOU chose or a default — MEW may then offer to size it to how the kind really runs, and a stated length is never touched.',
               },
               protected: {
                 type: 'boolean',
@@ -202,11 +236,16 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'complete_task',
     description:
-      'Mark an existing block done (a mew) when the user says they finished, did, or completed something. The query is matched fuzzily against block titles.',
+      'Mark an existing block done (a mew) when the user says they finished, did, or completed something. The query is matched against block titles; when several share a title, pass `at` (its start time) to mark the right one.',
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'A few words from the block title, e.g. "deck"' },
+        at: {
+          type: 'string',
+          description:
+            'Start time of the intended block ("9:00", "9am") — pins which when several share the title',
+        },
       },
       required: ['query'],
       additionalProperties: false,
@@ -222,6 +261,11 @@ export const MEW_TOOLS: NeutralTool[] = [
         query: { type: 'string', description: 'A few words from the block title' },
         toDayOffset: { type: 'integer', description: 'Target day, days from today' },
         toStartMin: { type: 'integer', description: 'Target start in minutes from midnight' },
+        at: {
+          type: 'string',
+          description:
+            "The block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to move. Distinct from toStartMin (its new start).",
+        },
       },
       required: ['query'],
       additionalProperties: false,
@@ -243,11 +287,16 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'edit_block',
     description:
-      "Change an existing block in place — its start/end time, duration, title, tag, attention, or due — when the user asks to resize, shorten, extend, retime ('wake should be 6:00–6:30', 'make the release 45 minutes'), rename, retag, demote to background ('let it run'), or set a deadline. Editing keeps the block's identity and history, so prefer it over re-creating. Events from connected calendars stay as they are; they belong to the calendar, so tell the user that instead.",
+      "Change an existing block in place — its start/end time, duration, title, tag, attention, or due — when the user asks to resize, shorten, extend, retime ('wake should be 6:00–6:30', 'make the release 45 minutes'), rename, retag, demote to background ('let it run'), or set a deadline. It changes ONLY the field(s) you pass on the ONE target and never disturbs neighbors (a rename touches just the title). Editing keeps the block's identity and history, so prefer it over re-creating; a rename or retime of a done block is fine and keeps its ✓. Events from connected calendars are taken over when edited (they detach from the calendar). For a REPEATING block, pass `scope` only if the user made the reach explicit ('just this one', 'from now on', 'all of them'); otherwise omit it and the executor asks just this one / this & following / the whole series.",
     parameters: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'A few words from the block title' },
+        at: {
+          type: 'string',
+          description:
+            "The TARGET block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to change. Distinct from startMin (its new start).",
+        },
         startMin: { type: 'integer', description: 'New start, minutes from midnight' },
         endMin: { type: 'integer', description: 'New end, minutes from midnight' },
         durationMin: { type: 'integer', description: 'New duration in minutes (keeps the start)' },
@@ -262,6 +311,7 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'integer',
           description: 'Hard deadline, minutes from midnight — independent of the end time',
         },
+        scope: SCOPE_SCHEMA,
       },
       required: ['query'],
       additionalProperties: false,
@@ -334,7 +384,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'remove_blocks',
     description:
-      'Take a specific block off the week — when the user asks to drop, remove, delete, or cancel a named one ("drop the prod release"). By default this removes the single intended block. When several blocks share that title, pass `at` (its start time) to identify which one — resolve "the larger/earlier/morning one" to a clock time from the week context you already see. Set `all:true` ONLY when the user explicitly says "both/all/every" ("drop both prod release blocks"); for a recurring block, `all:true` also clears the whole repeating series ("cancel all my gym sessions"), while a single delete leaves the rest of the series in place. For wiping a whole day or week, clear_blocks is the broom.',
+      'Take a specific block off the week — when the user asks to drop, remove, delete, or cancel a named one ("drop the prod release"). By default this removes the single intended block. When several blocks share that title, pass `at` (its start time) to identify which one — resolve "the larger/earlier/morning one" to a clock time from the week context you already see. Set `all:true` ONLY when the user explicitly says "both/all/every" ("drop both prod release blocks"); for a recurring block, `all:true` also clears the whole repeating series ("cancel all my gym sessions"), while a single delete leaves the rest of the series in place. For a REPEATING block where the user did NOT say how far the delete reaches, omit `scope` — the executor asks just this one / this & following / the whole series; pass `scope` ("this"/"following"/"series") only when they made it explicit. For wiping a whole day or week, clear_blocks is the broom.',
     parameters: {
       type: 'object',
       properties: {
@@ -349,6 +399,7 @@ export const MEW_TOOLS: NeutralTool[] = [
           description:
             'Remove every match, not just one. Default false; set true only on an explicit "both/all".',
         },
+        scope: SCOPE_SCHEMA,
       },
       required: ['query'],
       additionalProperties: false,
@@ -464,6 +515,146 @@ export const MEW_TOOLS: NeutralTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'list_blocks',
+    description:
+      'See a day\'s (or the whole week\'s) blocks as an itemized list — each block\'s exact title, start–end, tag, and status, with a ✓ on the ones already done (a done block is still there, just finished — never gone). Read-only: it changes nothing. Call it whenever the user asks what\'s on ("show me today", "what\'s on this week", "what do I have at 3?"), and BEFORE editing, moving, or removing a block whose target is at all ambiguous: the exact title and start time it returns are what edit_block, move_task, and remove_blocks target by, so listing first is how you act on the right block instead of guessing by name.',
+    parameters: {
+      type: 'object',
+      properties: {
+        day: {
+          type: 'string',
+          description:
+            "Which day to list: 'today' (default), 'tomorrow', 'week' for the seven days ahead, or a day offset as a string ('2' = two days out). Omit for today.",
+        },
+        tag: {
+          ...TAG_SCHEMA,
+          description: 'Optional filter — list only blocks of this tag.',
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'resize_block',
+    description:
+      "Change an existing block's LENGTH while keeping its start time fixed — the dedicated resize. Reach for it when the user wants a block longer or shorter without retiming it ('make the deck 30 min longer', 'give the review another 15', 'resize standup to 45'). Pass durationMin for an absolute length, or deltaMin for a relative change (+30 = longer, −15 = shorter). The start never moves; only the end shifts, so this is cleaner than edit_block when only the duration changes. For a REPEATING block, pass scope only when the user made the reach explicit ('just this one', 'from now on', 'all of them'); otherwise omit it and the executor asks this one / this & following / the whole series. Target by a few words of the title, plus `at` (its current start) when several share the title.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few words from the block title' },
+        at: {
+          type: 'string',
+          description:
+            "The TARGET block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to resize",
+        },
+        durationMin: {
+          type: 'integer',
+          description: 'New absolute length in minutes (keeps the start)',
+        },
+        deltaMin: {
+          type: 'integer',
+          description:
+            'Relative change in minutes, signed: +30 makes it 30 min longer, −15 makes it 15 min shorter',
+        },
+        scope: SCOPE_SCHEMA,
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'duplicate_block',
+    description:
+      "Copy an existing block to another day and/or time — the original stays exactly where it is; the copy is a NEW, independent block with the same title, tag, length, and attention. Use it for 'duplicate the deck to friday', 'same as monday but on wednesday', 'put another standup at 4pm'. Give toDayOffset and/or toStartMin for where the copy lands; omit the time to keep the source's clock on the new day (or the next free slot when copying within the same day). Pass recurrence to make the copy a repeating series ('every weekday'), expanded and linked like a planned recurrence. Events from a connected calendar can be duplicated — the copy is yours to shape; the original calendar event is untouched. To RESCHEDULE something that already exists, use move_task or move_relative — this leaves a second block on purpose.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few words from the SOURCE block title' },
+        at: {
+          type: 'string',
+          description:
+            "The SOURCE block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to copy",
+        },
+        toDayOffset: {
+          type: 'integer',
+          description:
+            'Target day for the copy, days from today (0 = today). Omit to keep the source day.',
+        },
+        toStartMin: {
+          type: 'integer',
+          description:
+            'Target start for the copy, minutes from midnight. Omit to keep the source clock time (or auto-place within the same day).',
+        },
+        recurrence: {
+          type: 'object',
+          description:
+            "Make the copy a repeating block ('duplicate it every weekday', 'copy to mondays until August'). DAILY/WEEKLY only; MEW expands and links the occurrences itself — do NOT add one call per day.",
+          properties: {
+            freq: { type: 'string', enum: ['DAILY', 'WEEKLY'] },
+            interval: { type: 'integer', description: 'Every N days/weeks (default 1)' },
+            until: { type: 'string', description: 'Inclusive last date YYYY-MM-DD' },
+            count: { type: 'integer', description: 'Stop after this many occurrences' },
+            byday: {
+              type: 'string',
+              description: 'WEEKLY only: comma-separated weekdays MO,TU,WE,TH,FR,SA,SU',
+            },
+          },
+          required: ['freq'],
+          additionalProperties: false,
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'move_relative',
+    description:
+      "Nudge an existing block without naming an absolute time — 'a bit earlier', 'push it later', 'move it to the next day', 'find it the next free slot'. Set direction: 'earlier'/'later' shift the start on the SAME day by amountMin (default 30); 'next_day' moves it one day later at the same clock time; 'next_free' relocates it to the soonest genuinely clear slot from now. When the user DOES give an absolute target ('move it to 3pm', 'to friday'), use move_task instead. Fixed and calendar events are never moved, and the next free slot always lands clear of them. Target by a few words of the title, plus `at` (its current start) when several share the title.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few words from the block title' },
+        direction: {
+          type: 'string',
+          enum: ['earlier', 'later', 'next_day', 'next_free'],
+          description:
+            'earlier/later = shift the start on the same day; next_day = one day later, same time; next_free = the soonest clear slot from now',
+        },
+        amountMin: {
+          type: 'integer',
+          description: 'For earlier/later only: how many minutes to shift (default 30)',
+        },
+        at: {
+          type: 'string',
+          description:
+            "The TARGET block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to nudge",
+        },
+      },
+      required: ['query', 'direction'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'give_room',
+    description:
+      "Give the just-placed blocks of one kind ROOM — resize them longer, in place, by the factor the user's OWN completion history shows for that kind (deep work runs over; batched admin usually doesn't). Call this ONLY to answer MEW's own 'your deep-work blocks tend to run long — give them room?' offer (the user tapped 'give them room' or typed 'give my deep-work blocks room'), or when the user explicitly asks to size a kind to how it really runs. Do NOT volunteer it. Blocks whose length the user stated are never touched.",
+    parameters: {
+      type: 'object',
+      properties: {
+        focusClass: {
+          type: 'string',
+          enum: ['deep', 'admin', 'health'],
+          description:
+            "Which kind to give room: 'deep' (deep work), 'admin' (low-focus/errand/quick), or 'health'. Match the kind named in the offer.",
+        },
+      },
+      required: ['focusClass'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 /** The advertised registry under a planMode gear (#293): 'auto' is MEW_TOOLS
@@ -491,7 +682,9 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
             : ('work' as const),
           dayOffset: clampInt(p.dayOffset, 0, 13, 0),
           startMin: optInt(p.startMin, 0, 1439),
+          startStated: p.startStated === true ? true : undefined,
           durationMin: optInt(p.durationMin, 15, 600),
+          durationStated: p.durationStated === true ? true : undefined,
           protected: typeof p.protected === 'boolean' ? p.protected : undefined,
           attention: p.attention === 'background' ? ('background' as const) : undefined,
           due: optInt(p.dueMin, 0, 1439),
@@ -508,12 +701,14 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       return exec.plan(places, frees)
     }
     case 'complete_task':
-      return exec.complete(String(o.query ?? ''))
+      return exec.complete(String(o.query ?? ''), atArg(o.at))
     case 'move_task':
       return exec.move(
         String(o.query ?? ''),
         optInt(o.toDayOffset, 0, 13),
-        optInt(o.toStartMin, 0, 1439)
+        optInt(o.toStartMin, 0, 1439),
+        undefined, // relStartMin: a keyed tool call always sends an absolute target
+        atArg(o.at)
       )
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))
@@ -531,7 +726,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (o.attention === 'background' || o.attention === 'focus') patch.attention = o.attention
       const due = optInt(o.dueMin, 0, 1439)
       if (due != null) patch.due = due
-      return exec.edit(String(o.query ?? ''), patch)
+      return exec.edit(String(o.query ?? ''), patch, atArg(o.at), recurScope(o.scope))
     }
     case 'find_slot':
       return exec.findSlot(
@@ -558,9 +753,10 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
     case 'remove_blocks': {
-      const at = typeof o.at === 'string' && o.at.trim() ? o.at.trim() : undefined
+      const at = atArg(o.at)
       const all = o.all === true
-      return exec.remove(String(o.query ?? ''), { at, all })
+      const scope = recurScope(o.scope)
+      return exec.remove(String(o.query ?? ''), { at, all, ...(scope ? { scope } : {}) })
     }
     case 'clear_blocks': {
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
@@ -623,6 +819,56 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
     }
     case 'undo_last_action':
       return exec.undoLast()
+    case 'list_blocks': {
+      const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
+        ? (o.tag as 'work')
+        : undefined
+      return exec.listBlocks(parseListDay(o.day), tag)
+    }
+    case 'resize_block': {
+      const durationMin = optInt(o.durationMin, 5, 720)
+      const relDurationMin = optInt(o.deltaMin, -600, 600)
+      if (durationMin == null && relDurationMin == null)
+        return 'nothing to resize — pass a durationMin or a deltaMin'
+      return exec.resize(
+        String(o.query ?? ''),
+        { durationMin, relDurationMin },
+        atArg(o.at),
+        recurScope(o.scope)
+      )
+    }
+    case 'duplicate_block':
+      return exec.duplicate(
+        String(o.query ?? ''),
+        {
+          toDayOffset: optInt(o.toDayOffset, 0, 13),
+          toStartMin: optInt(o.toStartMin, 0, 1439),
+          rrule: parseRecurrence(o.recurrence),
+        },
+        atArg(o.at)
+      )
+    case 'move_relative': {
+      const dirs = ['earlier', 'later', 'next_day', 'next_free'] as const
+      const direction = dirs.includes(o.direction as never)
+        ? (o.direction as (typeof dirs)[number])
+        : null
+      if (!direction)
+        return 'nothing to move — pass a direction (earlier, later, next_day, next_free)'
+      return exec.relativeMove(
+        String(o.query ?? ''),
+        direction,
+        optInt(o.amountMin, 5, 600),
+        atArg(o.at)
+      )
+    }
+    case 'give_room': {
+      const classes = ['deep', 'admin', 'health'] as const
+      const focusClass = classes.includes(o.focusClass as never)
+        ? (o.focusClass as (typeof classes)[number])
+        : null
+      if (!focusClass) return 'nothing to size — name the kind (deep, admin, or health)'
+      return exec.giveRoom(focusClass)
+    }
     default:
       return `unknown tool: ${name}`
   }
