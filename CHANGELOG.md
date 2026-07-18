@@ -12,6 +12,42 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-07-18
+
+**gbrain, working.** v0.5 made MEW the daily companion; v0.6 makes the memory earn its keep —
+it learns you and stops making you repeat yourself — and grows a full calendar command surface
+and a weekly rhythm around it. Every new capability offers first and waits for your yes.
+
+### gbrain, working
+- Learns your task rules from repetition and offers once, then remembers forever.
+- A confirmed rule resolves the full task spec deterministically on every placement path — keyless too.
+- On-device memory is the always-on floor; the brain sidecar self-heals and reports its status honestly.
+- A memory console to see — and correct or forget — everything MEW knows about you.
+
+### The weekly rhythm
+- Energy-aware scheduling learned from what you actually finish (never a textbook curve); admin batched; your stated rules always win.
+- Estimate correction: MEW notices the kinds of work you book short and offers to give them room — one calm voice per placement.
+- A weekly review that celebrates your mews and rolls the unfinished flexible work *you pick* into next week.
+- Week-scaffolding: MEW drafts next week the way your weeks usually go — a proposal you accept, tweak, or discard, never auto-filled.
+
+### Calendar command surface
+- Read-only `list_blocks` — MEW's eyes on the calendar.
+- Surgical single-block edits by name + time, and propose-then-confirm deletion of done blocks instead of refusing.
+- Recurring-edit scope — just this one / this & following / the whole series.
+- Granular ops: resize, duplicate, relative-move.
+- Drag-to-reschedule on the week grid — move and edge-resize, routed through the executor.
+- Quick-capture inbox: capture intents that hold no time; gbrain offers to place them when a slot fits.
+- Conversational context across turns — referents, positional and relative edits, keyless too.
+
+### Calmer under real use
+- Meals stay sane when a reshape places them at an explicit time.
+- Your own flexible blocks drift out of the way of new explicit work in the same pass.
+- A correction is one acknowledgment and one reshape sweep — no flailing.
+- The protect-rest nudge reads clean and fires once.
+
+### Under the hood
+- Onboarding, the plan picker, Settings, and the inbox lazy-load off the entry chunk.
+
 ## [0.5.0] — 2026-07-17
 
 **The daily companion.** v0.3 made MEW smart; v0.4 made it trustworthy; v0.5 makes it the
