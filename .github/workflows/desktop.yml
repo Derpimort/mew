@@ -41,6 +41,12 @@ jobs:
         with: { version: 9 }
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      # Release-version guard (#360): a v*-rc → main promotion must carry a clean
+      # release version — installers are stamped from tauri.conf.json, not the tag.
+      # Fires only on the actual promotion PR (head = v*-rc).
+      - name: Guard the release version (promotion)
+        if: startsWith(github.head_ref, 'v') && endsWith(github.head_ref, '-rc')
+        run: node desktop/scripts/check-release-version.mjs --promotion
       - run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -196,6 +202,11 @@ jobs:
         with: { version: 9 }
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      # Release-version guard (#360): the tag MUST match tauri.conf.json, or the
+      # installers + updater manifest ship mislabeled. Fails before the build.
+      - name: Guard the release version (tag matches config)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node desktop/scripts/check-release-version.mjs --tag ${{ github.ref_name }}
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y $APT_DEPS
       - uses: dtolnay/rust-toolchain@stable
