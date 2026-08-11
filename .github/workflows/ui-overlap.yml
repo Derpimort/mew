@@ -34,8 +34,9 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
-      # version-matched chromium for playwright-core (ephemeral npx — no dep added)
-      - run: npx -y playwright@1.60.0 install --with-deps chromium
+      # version-matched chromium for playwright-core (ephemeral npx — no dep added;
+      # keep this pin in lockstep with app/package.json's playwright-core)
+      - run: npx -y playwright@1.62.1 install --with-deps chromium
       - run: pnpm build
       - name: serve + detect
         run: |

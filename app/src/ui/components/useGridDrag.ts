@@ -93,8 +93,16 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
     /* external (calendar) blocks bounce on drop, but the grab itself is allowed
        so the gesture feels live and chat can explain — acceptance is "returns to
        origin", not "can't pick up". A plain click still works for every block. */
-    pressRef.current = { startX: e.clientX, startY: e.clientY, armed: false }
+    /* claim the press for the gesture: without this a grid press can start a
+       text selection, and a later press over selected tile text starts a
+       NATIVE drag session — mousemove/mouseup stop mid-gesture and the drag
+       freezes armed (seen on CI runners; onDragStart below is the backstop).
+       preventDefault also suppresses mousedown's click-to-focus, so restore
+       it by hand — the roving tab stop (#303) must still follow a click. */
+    e.preventDefault()
     const el = e.currentTarget as HTMLElement
+    el.focus({ preventScroll: true })
+    pressRef.current = { startX: e.clientX, startY: e.clientY, armed: false }
     const grabOffsetPx = e.clientY - el.getBoundingClientRect().top
     captureColumns()
     pressSeedRef.current = startDrag(b, grabOffsetPx)
@@ -105,6 +113,11 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
     // also starting a move (beginPress) or pinning the card underneath
     e.stopPropagation()
     if (e.button !== 0) return
+    e.preventDefault() // same claim as beginPress — an edge drag must not select text
+    // the handle isn't focusable; hand focus to its tile like the default would have
+    ;(e.currentTarget as HTMLElement).closest<HTMLElement>('.nxb-blk')?.focus({
+      preventScroll: true,
+    })
     pressRef.current = { startX: e.clientX, startY: e.clientY, armed: false }
     captureColumns()
     pressSeedRef.current = startResize(b, edge)
@@ -194,13 +207,21 @@ export function useGridDrag(H: number, onArm: () => void): GridDrag {
         reset()
       }
     }
+    const onDragStart = (e: DragEvent) => {
+      // backstop: a native drag (pre-existing selection, an image under the
+      // press) would swallow mousemove/mouseup mid-gesture — the grid press
+      // owns this pointer sequence
+      if (pressRef.current) e.preventDefault()
+    }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     window.addEventListener('keydown', onKey)
+    window.addEventListener('dragstart', onDragStart)
     return () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
       window.removeEventListener('keydown', onKey)
+      window.removeEventListener('dragstart', onDragStart)
     }
   }, [H])
 

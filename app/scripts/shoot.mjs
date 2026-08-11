@@ -39,7 +39,12 @@ if (servedEntry !== localEntry) {
 }
 console.log('build identity:', localEntry)
 
-const browser = await chromium.launch({ executablePath: exe })
+/* --disable-gpu: new-headless drives rAF off real compositor frames; on CI
+   runner images with degraded GL that loop can near-stall, which starves
+   every animation-frame-paced thing this gate relies on (the pill's smooth
+   scroll, coalesced pointer-move dispatch). Software compositing ticks
+   reliably everywhere. */
+const browser = await chromium.launch({ executablePath: exe, args: ['--disable-gpu'] })
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 840 } })
 const page = await ctx.newPage()
 page.on('console', (m) => {
@@ -158,6 +163,21 @@ console.log('task:', await page.textContent('.nx-task'))
   await page.waitForTimeout(150)
   console.log('a11y keyboard: moved focus', JSON.stringify({ before, after }))
 }
+/* frame-pulse probe: when this gate reds on a runner, this one line says
+   whether the page had a working frame loop at all — near-zero here means
+   every rAF-paced wait below is doomed regardless of its timeout */
+const rafPulse = await page.evaluate(
+  () =>
+    new Promise((resolve) => {
+      let n = 0
+      const t0 = performance.now()
+      const tick = () =>
+        performance.now() - t0 > 1200 ? resolve(n) : (n++, requestAnimationFrame(tick))
+      requestAnimationFrame(tick)
+    })
+)
+console.log(`raf pulse: ${rafPulse} frames / 1.2s`)
+
 phase = 'dial-shots'
 await page.screenshot({ path: `${outDir}/1-focus-rest.png` })
 await page.hover('.nx-stage')
@@ -191,12 +211,27 @@ await page.screenshot({ path: `${outDir}/2-focus-reveal.png` })
     el.scrollTop = el.scrollHeight
   })
   await page.waitForTimeout(300)
+  /* re-pin after the growth settles: the warm-up's late renders can land
+     under the in-loop pin and leave the reader outside the 80px stick band
+     before the follow check even starts (seen on runners — gap 400px+) */
+  await page.evaluate(() => {
+    const el = document.querySelector('.session-scroll')
+    el.scrollTop = el.scrollHeight
+  })
+  await page.waitForTimeout(150)
   const pinnedBefore = await scrollState()
   for (let i = 1; i <= 3; i++) {
     await page.evaluate((n) => window.__mewSay?.(`follow line ${n} — the log stays with you`), i)
     await page.waitForTimeout(120)
   }
-  const pinned = await scrollState()
+  /* the re-stick rides the ResizeObserver a beat behind the append — poll
+     briefly instead of reading the very next tick (same rhythm as the
+     roving-tabindex poll above) */
+  let pinned = await scrollState()
+  for (const t0 = Date.now(); pinned.gap > 1 && Date.now() - t0 < 1500;) {
+    await page.waitForTimeout(100)
+    pinned = await scrollState()
+  }
   assert(pinned.gap <= 1, `pinned reader did not follow appends (gap ${pinned.gap}px)`)
   assert(
     pinned.top > pinnedBefore.top,
@@ -235,8 +270,9 @@ await page.screenshot({ path: `${outDir}/2-focus-reveal.png` })
     /* 15s, not 5: the pill's smooth-scroll ride down a long log is animation-
        frame-paced, and a cold CI runner can spend >5s on it — seen live on the
        v0.4.0 promotion PR. The invariant (bottom reached, pill unmounted) is
-       unchanged; only the patience grew. */
-    { timeout: 15000 }
+       unchanged; only the patience grew. Interval polling, not rAF: on a
+       frame-starved runner the default rAF poll can't even observe arrival. */
+    { timeout: 15000, polling: 250 }
   )
 }
 
@@ -647,23 +683,66 @@ phase = 'drag-reschedule'
   const tileSel = '.nxb-blk[aria-label*="drag demo" i]'
   await page.waitForSelector(tileSel, { timeout: 6000 })
 
+  /* count what the page actually receives — when this gate reds on a runner,
+     the probe line says whether the drag's events reached the window at all
+     (browser input pipeline) or arrived and the app declined (product) */
+  await page.evaluate(() => {
+    window.__dragProbe = { move: 0, up: 0, cmove: 0, cup: 0, dragstart: 0, sel: 0, last: null }
+    const p = window.__dragProbe
+    window.addEventListener('mousemove', (e) => {
+      p.move++
+      p.last = [Math.round(e.clientX), Math.round(e.clientY)]
+    })
+    window.addEventListener('mouseup', () => p.up++)
+    /* capture-phase twins: if these count while the bubble pair stays flat,
+       something mid-tree is stopping propagation; if BOTH stay flat while
+       dragstart ticks, a native drag session has eaten the pointer stream */
+    window.addEventListener('mousemove', () => p.cmove++, { capture: true })
+    window.addEventListener('mouseup', () => p.cup++, { capture: true })
+    window.addEventListener('dragstart', () => p.dragstart++, { capture: true })
+    document.addEventListener(
+      'selectionchange',
+      () => (p.sel = (window.getSelection()?.toString() ?? '').length)
+    )
+  })
   const drag = async (fromX, fromY, toX, toY) => {
     await page.mouse.move(fromX, fromY)
     await page.mouse.down()
     await page.mouse.move(fromX, fromY + 6) // arm past the 4px threshold
-    await page.mouse.move((fromX + toX) / 2, (fromY + toY) / 2, { steps: 8 })
-    await page.mouse.move(toX, toY, { steps: 8 })
+    /* paced, not burst: coalescing folds a same-tick flood of interpolated
+       moves; spaced singles give the renderer a frame per waypoint */
+    for (let i = 1; i <= 12; i++) {
+      await page.mouse.move(
+        fromX + ((toX - fromX) * i) / 12,
+        fromY + 6 + ((toY - fromY - 6) * i) / 12
+      )
+      await page.waitForTimeout(40)
+    }
     await page.mouse.up()
     await page.waitForTimeout(450)
+    console.log('drag probe:', JSON.stringify(await page.evaluate(() => window.__dragProbe)))
   }
   const sessionText = () =>
     page.evaluate(() => document.querySelector('.session-scroll')?.textContent ?? '')
+  /* the executor line lands async after pointer-up — poll for it instead of
+     trusting a fixed sleep (slow CI runners lose that race); the assert after
+     a timed-out poll still owns the canonical failure line */
+  const sessionSettled = (pattern) =>
+    page
+      .waitForFunction(
+        (src) =>
+          new RegExp(src, 'i').test(document.querySelector('.session-scroll')?.textContent ?? ''),
+        pattern,
+        { timeout: 8000, polling: 250 }
+      )
+      .catch(() => {})
 
   // RESIZE — grab the bottom grip and stretch the duration down into the void
   const handle = await page.waitForSelector(`${tileSel} .nxb-resize.bottom`, { timeout: 5000 })
   const hb = await handle.boundingBox()
   await drag(hb.x + hb.width / 2, hb.y + hb.height / 2, hb.x + hb.width / 2, hb.y + 48)
   await page.waitForSelector(tileSel, { timeout: 5000 })
+  await sessionSettled('Resized — drag demo')
   assert(
     /Resized — drag demo/i.test(await sessionText()),
     'a pointer edge-drag did not commit a resize through the executor'
@@ -685,6 +764,7 @@ phase = 'drag-reschedule'
   const midY = box.y + box.height / 2
   await drag(tileCx, midY, target.cx, midY)
   await page.waitForSelector(tileSel, { timeout: 5000 })
+  await sessionSettled('Moved — drag demo')
   assert(
     /Moved — drag demo/i.test(await sessionText()),
     'a pointer drag did not commit a move through the executor'

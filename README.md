@@ -125,11 +125,13 @@ threat model, not an afterthought. Two controls run continuously
 (OWASP A06:2021, *Vulnerable and Outdated Components*):
 
 - **Auditing in CI** (`.github/workflows/audit.yml`). Every PR, every push to
-  `main`, and a weekly cron run `pnpm audit --prod` over both pnpm workspaces
-  (`app/`, `desktop/`) and `cargo audit` over the Rust shell. **High/critical
-  advisories block the merge**; moderate/low log a warning. `--prod` scopes the
-  gate to what actually ships to users. The same high/critical check also guards
-  the desktop build job, so no PR reaches a release with a known serious CVE.
+  `main`, and a weekly cron scan both pnpm lockfiles (`app/`, `desktop/`) with
+  Google's OSV scanner, plus `cargo audit` over the Rust shell. **Any known JS
+  advisory blocks the merge** (dev deps included — strictly stronger than the
+  old prod-only high/critical tier); a finding that must ship anyway needs an
+  explicit, justified ignore in `osv-scanner.toml`, never a removed gate. The
+  same check guards the desktop build job, so no PR reaches a release with a
+  known serious CVE.
 - **Dependabot** (`.github/dependabot.yml`) opens PRs for new CVEs across npm,
   Cargo, and the GitHub Actions themselves — typically within 24h of disclosure.
   Patch/minor bumps of the security-sensitive packages (crypto + AI SDKs +
