@@ -8,6 +8,17 @@ Local-first, research-backed, yours.
 **Positive only.** A completed task is *a mew* — the only thing MEW ever counts. No streaks,
 no shame, no guilt mechanics. Care, not blame; suggest, don't seize: MEW proposes, you decide.
 
+## New in v0.6 — *gbrain, working*
+
+MEW now **learns you and stops making you repeat yourself.** Memory forms rules from what you
+actually *do* (not just what you say) and applies them at placement — offer once, then it just
+does it. Around that: a full **calendar command surface** (surgical name+time edits, recurring-edit
+scope, resize/duplicate/relative-move, drag-to-reschedule on the grid, a quick-capture inbox, and
+propose-then-confirm deletion of done blocks) and a **weekly rhythm** (energy-aware scheduling
+learned from what you finish, estimate correction, a weekly review that rolls unfinished work
+forward, and gbrain drafting next week your usual way). Every new capability offers first and
+waits for your yes. Ships as **desktop apps** (macOS · Windows · Linux) alongside the web build.
+
 ## What it does
 
 - **One week, two views.** A 12-hour focus dial for today (PM outer ring, AM inner);
@@ -18,9 +29,12 @@ no shame, no guilt mechanics. Care, not blame; suggest, don't seize: MEW propose
 - **Scheduling that understands time.** Interviews, calls, and meetings are *fixed points*;
   tasks are *flexible* and give way. Collisions are named in the tool results, so the model
   fixes them in the same turn.
-- **GBrain — a brain that learns you.** Append-only memory feeds pattern analyses: your
-  realistic best (trailing median, not hope), follow-through by time of day, chronic
-  rollers, lateness bias, drift clusters. History informs; the live week decides.
+- **GBrain — a brain that learns you, and acts on it.** Append-only memory forms task rules
+  from repetition and applies the full spec at placement (keyless too) — offer once, then it
+  just does it, undo one tap away. It still feeds the pattern analyses (realistic best — trailing
+  median, not hope; follow-through by time of day; chronic rollers; lateness bias; drift clusters)
+  and now a *"what I know about you"* console you can see, correct, and forget. Local-first: the
+  graph enriches, it never gates.
 - **Research-backed nudges, not nagging.** Thirteen cited entries — right-sizing (planning
   fallacy, Buehler 1994), drift check-ins (attention residue, Leroy 2009), micro-breaks
   (Albulescu 2022), post-meeting buffers (Microsoft HFL 2021), protected rest (WHO ICD-11),
