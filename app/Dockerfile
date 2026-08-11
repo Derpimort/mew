@@ -31,7 +31,7 @@ CMD ["pnpm", "dev", "--host", "0.0.0.0"]
 FROM nginxinc/nginx-unprivileged:1.27-alpine AS runtime
 LABEL org.opencontainers.image.title="MEW" \
       org.opencontainers.image.description="My Entire Week — an AI companion that runs your week with you" \
-      org.opencontainers.image.source="https://github.com/AISquare-Studio/mew"
+      org.opencontainers.image.source="https://github.com/Derpimort/mew"
 COPY docker/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY docker/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html

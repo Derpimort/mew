@@ -59,7 +59,7 @@ describe('peopleFrom — deliberate patterns only', () => {
   })
 
   it('reads colon-separated sync lists with separators', () => {
-    expect(peopleFrom('sync: jordan/remy')).toEqual(['person/jatin', 'person/remy'])
+    expect(peopleFrom('sync: jordan/remy')).toEqual(['person/jordan', 'person/remy'])
     expect(peopleFrom('Meeting: dana, sam and lee')).toEqual([
       'person/dana',
       'person/sam',

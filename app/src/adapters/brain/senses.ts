@@ -23,7 +23,7 @@ const STOP_NAMES = new Set(['the', 'a', 'an', 'team', 'everyone', 'all', 'me', '
 /** People a title names. Deliberate patterns only — guessing wrong people
     into the graph is worse than missing one:
     "interview — mira"          → mira
-    "sync: jordan/remy"         → jatin, remy
+    "sync: jordan/remy"         → jordan, remy
     "1:1 with dana"               → dana                                   */
 export function peopleFrom(title: string): string[] {
   const out = new Set<string>()

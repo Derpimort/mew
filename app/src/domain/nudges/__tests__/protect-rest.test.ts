@@ -4,7 +4,7 @@ import type { Block } from '../../types'
 import type { MemoryAggregates } from '../../memory'
 
 /* The live bug (#326): the rest-encroachment nudge composed a doubled-title
-   run-on — "…lands on your grocery pickup for meal prep. the grocery pickup for
+   run-on — "…lands on your order groceries for meal prep. the order groceries for
    meal prep is yours — keep it?" — and it re-fired on every placement in a
    burst. These pin the fix against the transcript's own block names. */
 
@@ -12,7 +12,7 @@ const D = '2026-06-09' // a Tuesday — no Monday fresh-start to outrank protect
 
 // the transcript's block names, verbatim
 const WORK = 'stabilize and push v1.2-rc (main release rc)'
-const ERRAND = 'grocery pickup for meal prep'
+const ERRAND = 'order groceries for meal prep'
 
 function mk(over: Partial<Block>): Block {
   return {

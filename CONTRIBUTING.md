@@ -114,9 +114,13 @@ Two checks guard it:
 
 **Budgets** (uncompressed; the targets to keep):
 
-- **main (entry) chunk < 370 KB** — first paint depends on it; keep it tightest.
-  (Raised from 330 KB for v0.5's eager UI; first-load total still well under 1200 KB.
-  Lazy-loading onboarding/picker to reclaim it is a tracked follow-up.)
+- **main (entry) chunk < 340 KB** — first paint depends on it; keep it tightest.
+  (Lowered from 370 KB for v0.6 (#340): onboarding, the plan-mode picker, and the
+  Settings route now lazy-load, so ~52 KB of first-paint-optional UI left the eager
+  graph. The budget bounds the eager app code the entry carries (~309 KB = first-load
+  minus vendor); rolldown may hoist that shared eager code into first-load sibling
+  chunks, so the entry file itself can read smaller — 340 is the ceiling on the eager
+  app either way. First-load total still well under 1200 KB.)
 - **vendor chunk < 460 KB** — react, react-dom, zustand, dexie, lucide + the motion family
   (motion 12.41+ ships a non-dissolvable re-export shim, so framer-motion/motion-dom ride here).
 - **lazy chunks < 300 KB** by default. The known-heavy lazy families have their own

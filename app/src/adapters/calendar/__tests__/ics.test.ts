@@ -5,9 +5,7 @@ const WS = new Date(2026, 5, 8) // Mon Jun 8 2026 (local)
 const WE = new Date(2026, 5, 29)
 
 function ics(body: string): string {
-  return ['BEGIN:VCALENDAR', 'X-WR-CALNAME:mew@example.com', body, 'END:VCALENDAR'].join(
-    '\r\n'
-  )
+  return ['BEGIN:VCALENDAR', 'X-WR-CALNAME:mew@example.com', body, 'END:VCALENDAR'].join('\r\n')
 }
 
 describe('ICS parsing — the shapes real Google exports use', () => {
