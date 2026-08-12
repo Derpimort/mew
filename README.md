@@ -3,6 +3,13 @@
 A calm AI companion that runs your week *with* you — and keeps you well while you run it.
 Local-first, research-backed, yours.
 
+<p align="center">
+  <img src="app/shots/1-focus-rest.png" alt="MEW's focus dial — a 12-hour ring showing the current block, time remaining, and the day's shape at rest" width="920">
+</p>
+<p align="center">
+  <img src="app/shots/4-week.png" alt="The week view — time-true columns, the live day highlighted, and MEW suggesting a right-size with its research citation in chat" width="920">
+</p>
+
 > block thursday morning for the deck, keep friday afternoon free
 
 **Positive only.** A completed task is *a mew* — the only thing MEW ever counts. No streaks,
