@@ -4,6 +4,7 @@
    Usage: OPENAI_API_KEY=… node scripts/journey.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
+import { findChromium } from './lib/chromium.mjs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -14,7 +15,7 @@ if (!key) {
   process.exit(1)
 }
 const model = process.env.OPENAI_MODEL ?? 'gpt-4o-mini'
-const exe = path.join(os.homedir(), '.cache/ms-playwright/chromium-1223/chrome-linux64/chrome')
+const exe = findChromium()
 
 const browser = await chromium.launch({ executablePath: exe })
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 840 } })).newPage()

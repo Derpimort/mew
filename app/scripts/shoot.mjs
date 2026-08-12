@@ -184,98 +184,6 @@ await page.hover('.nx-stage')
 await page.waitForTimeout(700)
 await page.screenshot({ path: `${outDir}/2-focus-reveal.png` })
 
-/* 1b · the session log follows its own growth (#250). The log is windowed and
-   the shell re-sticks via a ResizeObserver on the [role=log] node — prove both
-   live contracts: pinned at the bottom, appended lines re-stick the view
-   (scrollTop advances, gap returns to ~0 — three appends together outgrow the
-   80px stick band, so a dead follow can't hide inside it); scrolled up, the
-   same append surfaces the "↓ new" pill and never yanks the reading position.
-   __mewSay is the dev seam: a plain chat append, exactly how a turn grows the
-   log. */
-{
-  const scrollState = () =>
-    page.evaluate(() => {
-      const el = document.querySelector('.session-scroll')
-      return {
-        top: el.scrollTop,
-        gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
-      }
-    })
-  // grow the log past its viewport so "scrolled up" is a reachable state
-  await page.evaluate(async () => {
-    const el = document.querySelector('.session-scroll')
-    for (let i = 1; el.scrollHeight <= el.clientHeight + 160 && i <= 24; i++) {
-      window.__mewSay?.(`warm-up line ${i} — filling the session for the follow check`)
-      await new Promise((r) => setTimeout(r, 15))
-    }
-    el.scrollTop = el.scrollHeight
-  })
-  await page.waitForTimeout(300)
-  /* re-pin after the growth settles: the warm-up's late renders can land
-     under the in-loop pin and leave the reader outside the 80px stick band
-     before the follow check even starts (seen on runners — gap 400px+) */
-  await page.evaluate(() => {
-    const el = document.querySelector('.session-scroll')
-    el.scrollTop = el.scrollHeight
-  })
-  await page.waitForTimeout(150)
-  const pinnedBefore = await scrollState()
-  for (let i = 1; i <= 3; i++) {
-    await page.evaluate((n) => window.__mewSay?.(`follow line ${n} — the log stays with you`), i)
-    await page.waitForTimeout(120)
-  }
-  /* the re-stick rides the ResizeObserver a beat behind the append — poll
-     briefly instead of reading the very next tick (same rhythm as the
-     roving-tabindex poll above) */
-  let pinned = await scrollState()
-  for (const t0 = Date.now(); pinned.gap > 1 && Date.now() - t0 < 1500;) {
-    await page.waitForTimeout(100)
-    pinned = await scrollState()
-  }
-  assert(pinned.gap <= 1, `pinned reader did not follow appends (gap ${pinned.gap}px)`)
-  assert(
-    pinned.top > pinnedBefore.top,
-    `scrollTop did not advance with the log (${pinnedBefore.top} → ${pinned.top})`
-  )
-  assert(!(await page.$('.scroll-new')), 'pinned at the bottom, no "↓ new" pill')
-  // scrolled up, an append must announce, never yank
-  await page.evaluate(() => (document.querySelector('.session-scroll').scrollTop = 0))
-  await page.waitForTimeout(200)
-  await page.evaluate(() => window.__mewSay?.('a line landing while the reader is up in history'))
-  await page.waitForSelector('.scroll-new', { timeout: 3000 })
-  /* the yank invariant is about the bottom: the reader must NOT be dragged
-     back down to the live edge (absolute scrollTop may shift if paging
-     prepends rows above — that shift IS the position being preserved) */
-  const up = await scrollState()
-  assert(up.gap > 80, `reader was yanked back to the live bottom (gap ${up.gap}px)`)
-  console.log(
-    'follow:',
-    JSON.stringify({
-      pinnedGap: pinned.gap,
-      scrollTop: `${pinnedBefore.top}→${pinned.top}`,
-      scrolledUp: `pill shown, gap ${up.gap}px`,
-    })
-  )
-  // return to the live bottom the way a reader would — through the pill
-  await page.click('.scroll-new')
-  await page.waitForFunction(
-    () => {
-      const el = document.querySelector('.session-scroll')
-      return (
-        el.scrollHeight - el.scrollTop - el.clientHeight <= 80 &&
-        !document.querySelector('.scroll-new')
-      )
-    },
-    null,
-    /* 15s, not 5: the pill's smooth-scroll ride down a long log is animation-
-       frame-paced, and a cold CI runner can spend >5s on it — seen live on the
-       v0.4.0 promotion PR. The invariant (bottom reached, pill unmounted) is
-       unchanged; only the patience grew. Interval polling, not rAF: on a
-       frame-starved runner the default rAF poll can't even observe arrival. */
-    { timeout: 15000, polling: 250 }
-  )
-}
-
 /* 2 · block detail card from an arc (fat invisible hit-targets) */
 phase = 'detail-card'
 const hits = await page.$$('path[stroke="transparent"]')
@@ -628,6 +536,98 @@ phase = 'plan-picker'
   )
   await page.waitForTimeout(300)
   await page.screenshot({ path: `${outDir}/10-plan-picker.png` })
+}
+
+/* 1b · the session log follows its own growth (#250). The log is windowed and
+   the shell re-sticks via a ResizeObserver on the [role=log] node — prove both
+   live contracts: pinned at the bottom, appended lines re-stick the view
+   (scrollTop advances, gap returns to ~0 — three appends together outgrow the
+   80px stick band, so a dead follow can't hide inside it); scrolled up, the
+   same append surfaces the "↓ new" pill and never yanks the reading position.
+   __mewSay is the dev seam: a plain chat append, exactly how a turn grows the
+   log. */
+{
+  const scrollState = () =>
+    page.evaluate(() => {
+      const el = document.querySelector('.session-scroll')
+      return {
+        top: el.scrollTop,
+        gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
+      }
+    })
+  // grow the log past its viewport so "scrolled up" is a reachable state
+  await page.evaluate(async () => {
+    const el = document.querySelector('.session-scroll')
+    for (let i = 1; el.scrollHeight <= el.clientHeight + 160 && i <= 24; i++) {
+      window.__mewSay?.(`warm-up line ${i} — filling the session for the follow check`)
+      await new Promise((r) => setTimeout(r, 15))
+    }
+    el.scrollTop = el.scrollHeight
+  })
+  await page.waitForTimeout(300)
+  /* re-pin after the growth settles: the warm-up's late renders can land
+     under the in-loop pin and leave the reader outside the 80px stick band
+     before the follow check even starts (seen on runners — gap 400px+) */
+  await page.evaluate(() => {
+    const el = document.querySelector('.session-scroll')
+    el.scrollTop = el.scrollHeight
+  })
+  await page.waitForTimeout(150)
+  const pinnedBefore = await scrollState()
+  for (let i = 1; i <= 3; i++) {
+    await page.evaluate((n) => window.__mewSay?.(`follow line ${n} — the log stays with you`), i)
+    await page.waitForTimeout(120)
+  }
+  /* the re-stick rides the ResizeObserver a beat behind the append — poll
+     briefly instead of reading the very next tick (same rhythm as the
+     roving-tabindex poll above) */
+  let pinned = await scrollState()
+  for (const t0 = Date.now(); pinned.gap > 1 && Date.now() - t0 < 1500;) {
+    await page.waitForTimeout(100)
+    pinned = await scrollState()
+  }
+  assert(pinned.gap <= 1, `pinned reader did not follow appends (gap ${pinned.gap}px)`)
+  assert(
+    pinned.top > pinnedBefore.top,
+    `scrollTop did not advance with the log (${pinnedBefore.top} → ${pinned.top})`
+  )
+  assert(!(await page.$('.scroll-new')), 'pinned at the bottom, no "↓ new" pill')
+  // scrolled up, an append must announce, never yank
+  await page.evaluate(() => (document.querySelector('.session-scroll').scrollTop = 0))
+  await page.waitForTimeout(200)
+  await page.evaluate(() => window.__mewSay?.('a line landing while the reader is up in history'))
+  await page.waitForSelector('.scroll-new', { timeout: 3000 })
+  /* the yank invariant is about the bottom: the reader must NOT be dragged
+     back down to the live edge (absolute scrollTop may shift if paging
+     prepends rows above — that shift IS the position being preserved) */
+  const up = await scrollState()
+  assert(up.gap > 80, `reader was yanked back to the live bottom (gap ${up.gap}px)`)
+  console.log(
+    'follow:',
+    JSON.stringify({
+      pinnedGap: pinned.gap,
+      scrollTop: `${pinnedBefore.top}→${pinned.top}`,
+      scrolledUp: `pill shown, gap ${up.gap}px`,
+    })
+  )
+  // return to the live bottom the way a reader would — through the pill
+  await page.click('.scroll-new')
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector('.session-scroll')
+      return (
+        el.scrollHeight - el.scrollTop - el.clientHeight <= 80 &&
+        !document.querySelector('.scroll-new')
+      )
+    },
+    null,
+    /* 15s, not 5: the pill's smooth-scroll ride down a long log is animation-
+       frame-paced, and a cold CI runner can spend >5s on it — seen live on the
+       v0.4.0 promotion PR. The invariant (bottom reached, pill unmounted) is
+       unchanged; only the patience grew. Interval polling, not rAF: on a
+       frame-starved runner the default rAF poll can't even observe arrival. */
+    { timeout: 15000, polling: 250 }
+  )
 }
 
 /* 4e · the block-card remove affordance + done-block confirm (#334). A done

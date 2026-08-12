@@ -5,12 +5,13 @@
    fires through the stub. Usage: node scripts/shoot-desktop.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
+import { findChromium } from './lib/chromium.mjs'
 import { mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
 const base = process.argv[2] ?? 'http://localhost:5251'
-const exe = path.join(os.homedir(), '.cache/ms-playwright/chromium-1223/chrome-linux64/chrome')
+const exe = findChromium()
 const outDir = path.resolve('shots')
 mkdirSync(outDir, { recursive: true })
 
