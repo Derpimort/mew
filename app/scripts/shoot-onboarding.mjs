@@ -8,6 +8,7 @@
    Usage: node scripts/shoot-onboarding.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
+import { findChromium } from './lib/chromium.mjs'
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
