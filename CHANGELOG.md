@@ -12,6 +12,35 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-08-12
+
+**Calm connections.** The first release cut from the open repo. The connected calendar
+stops stealing attention: nothing opens your browser except your own click, a paused sync
+says so kindly, and the pixels you see — in the app and in this repo — are the current truth.
+
+### A calmer Google connection
+- Silent re-auth never opens the system browser again. When the desktop sign-in expires,
+  sync pauses honestly — one kind line in chat, a `sync paused — google needs a fresh
+  sign-in` state in Settings — and resumes the moment you click **reconnect**. The browser
+  opens only as the direct result of that click.
+- Disconnecting a calendar while signed out no longer pops a browser either; the cleanup
+  waits politely and the events stay safe on the remote calendar.
+
+### Steadier under the pointer
+- A week-grid press now claims the pointer properly: a stray text selection can no longer
+  hijack drag-to-reschedule mid-gesture (the drag used to freeze armed), and click-to-focus
+  for the keyboard's roving tab stop is preserved.
+
+### The open house
+- MEW is open source (MIT). The repo's public face was rebuilt for it: README with live
+  screenshots, an agent operating guide (AGENTS.md/CLAUDE.md), and a history scrubbed for
+  publication.
+- Supply chain trued up: all OSV advisories cleared from the lockfile, the playwright
+  toolchain aligned end to end, Rust security patches landed, and the CI gates run green
+  from a cold public clone — keylessly.
+- The screenshot canon is current-UI only: the living set regenerates deterministically,
+  the sync-pause state is pinned visually in the gate, and every retired shot left the tree.
+
 ## [0.6.0] — 2026-07-18
 
 **gbrain, working.** v0.5 made MEW the daily companion; v0.6 makes the memory earn its keep —
