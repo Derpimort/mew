@@ -1,8 +1,10 @@
 /* Google auth, desktop branch — the loopback replaces only HOW the token
    arrives; shape, caching, and the no-secret law are asserted here. The web
-   GIS path is untouched (isTauri() === false short-circuits before it). */
+   GIS path is untouched (isTauri() === false short-circuits before it).
+   Silent paths NEVER reach the loopback (#25): no valid token + interactive
+   =false pauses with ReauthRequiredError instead of opening a browser. */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const desktopFake = {
   tauri: true,
@@ -19,11 +21,16 @@ vi.mock('../../desktop', () => ({
 }))
 
 import { googleAccount } from '../google'
+import { ReauthRequiredError } from '../types'
 
 beforeEach(() => {
   desktopFake.tauri = true
   desktopFake.redirect = ''
   desktopFake.calls = []
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 /* googleAccount memoizes one account (and its token) per client id — every
@@ -55,10 +62,24 @@ describe('google authorize via loopback', () => {
     expect(desktopFake.calls).toHaveLength(1)
   })
 
-  it('silent refresh omits the consent prompt', async () => {
+  it('silent authorize with no token pauses — ReauthRequiredError, browser never opens (#25)', async () => {
+    await expect(googleAccount(freshId()).authorize(false)).rejects.toBeInstanceOf(
+      ReauthRequiredError
+    )
+    expect(desktopFake.calls).toHaveLength(0)
+  })
+
+  it('a 401 mid-call surfaces the pause instead of popping the browser (#25)', async () => {
     desktopFake.redirect = 'http://localhost:17893/?access_token=tok&expires_in=3599'
-    await googleAccount(freshId()).authorize(false)
-    expect(new URL(desktopFake.calls[0]).searchParams.get('prompt')).toBeNull()
+    const acct = googleAccount(freshId())
+    await acct.authorize(true) // deliberate click seeds the token
+    expect(desktopFake.calls).toHaveLength(1)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('expired', { status: 401 }))
+    )
+    await expect(acct.listCalendars()).rejects.toBeInstanceOf(ReauthRequiredError)
+    expect(desktopFake.calls).toHaveLength(1) // the silent retry opened nothing
   })
 
   it('reads a fragment-style redirect too (defense against unforwarded hashes)', async () => {

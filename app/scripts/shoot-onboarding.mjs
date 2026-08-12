@@ -8,32 +8,16 @@
    Usage: node scripts/shoot-onboarding.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
-import os from 'node:os'
+import { findChromium } from './lib/chromium.mjs'
+import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots/onboarding')
 mkdirSync(outDir, { recursive: true })
 
-function findChromium() {
-  if (process.env.PW_CHROMIUM && existsSync(process.env.PW_CHROMIUM)) return process.env.PW_CHROMIUM
-  const root = path.join(os.homedir(), '.cache/ms-playwright')
-  try {
-    const dir = readdirSync(root)
-      .filter((d) => d.startsWith('chromium-'))
-      .sort()
-      .reverse()[0]
-    for (const rel of ['chrome-linux64/chrome', 'chrome-linux/chrome']) {
-      const p = dir && path.join(root, dir, rel)
-      if (p && existsSync(p)) return p
-    }
-  } catch {
-    /* fall through */
-  }
-  return path.join(root, 'chromium-1223/chrome-linux64/chrome')
-}
-
+/* this file's inline resolver moved to lib/chromium.mjs (shared seam) —
+   the shoot scripts must all pick the same browser */
 const browser = await chromium.launch({ executablePath: findChromium() })
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 840 } })).newPage()
 page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))

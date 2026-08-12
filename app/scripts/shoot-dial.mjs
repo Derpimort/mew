@@ -1,6 +1,7 @@
 /* Tight, high-res capture of just the focus dial — to verify the 2-ring layout
    and the bottom readout. Usage: node scripts/shoot-dial.mjs [baseUrl] */
 import { chromium } from 'playwright-core'
+import { findChromium } from './lib/chromium.mjs'
 import { mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -8,7 +9,7 @@ import path from 'node:path'
 const base = process.argv[2] ?? 'http://localhost:5199'
 const t = process.argv[3] ?? '9:55'
 const tag = t.replace(':', '')
-const exe = path.join(os.homedir(), '.cache/ms-playwright/chromium-1223/chrome-linux64/chrome')
+const exe = findChromium()
 const outDir = path.resolve('shots')
 mkdirSync(outDir, { recursive: true })
 

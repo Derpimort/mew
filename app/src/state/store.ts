@@ -182,6 +182,7 @@ import { googleAccount } from '../adapters/calendar/google'
 import { adoptOrphanedExternals, mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
 import { icsToRemoteEvents } from '../adapters/calendar/ics'
 import type { RemoteCalendar } from '../adapters/calendar/types'
+import { ReauthRequiredError } from '../adapters/calendar/types'
 import { seed } from './seed'
 
 const storage: StoragePort = createDexieStorage()
@@ -352,6 +353,9 @@ export interface MewState {
   syncing: boolean
   lastSyncAt: number
   syncError: string | null
+  /** Desktop pause (#25): google needs a fresh sign-in and the browser may
+      only open on a deliberate click — Settings shows `reconnect` while true. */
+  needsReconnect: boolean
 
   /* power-user surface (#169/#170/#171): the command palette is a UI-only
      overlay; its open flag lives here so any shortcut (Cmd/Ctrl+K) and any
@@ -544,6 +548,9 @@ export interface MewState {
   /** Restore a backup, then re-hydrate the live store from storage. */
   importData(json: string): Promise<void>
   connectGoogle(): Promise<void>
+  /** The deliberate click that ends a `needsReconnect` pause: interactive
+      sign-in, then an immediate catch-up sync. The ONLY silent-path exit. */
+  reconnectGoogle(): Promise<void>
   addGoogleCalendar(cal: RemoteCalendar): void
   dismissPicker(): void
   disconnectCalendar(calId: string): void
@@ -4432,6 +4439,7 @@ export const useMew = create<MewState>((set, get) => {
     syncing: false,
     lastSyncAt: 0,
     syncError: null,
+    needsReconnect: false,
 
     commandPaletteOpen: false,
     commandPaletteMode: 'command',
@@ -6407,7 +6415,24 @@ export const useMew = create<MewState>((set, get) => {
         await acct.authorize(true)
         const all = await acct.listCalendars()
         const connected = new Set(s.settings.calendars.map((c) => c.id))
-        set({ googlePicker: all.filter((c) => !connected.has(c.id)) })
+        set({ googlePicker: all.filter((c) => !connected.has(c.id)), needsReconnect: false })
+      } catch (e) {
+        set({ syncError: e instanceof Error ? e.message : 'sign-in failed' })
+      } finally {
+        set({ connecting: false })
+      }
+    },
+
+    async reconnectGoogle() {
+      const s = get()
+      if (!s.settings.googleClientId.trim()) return
+      set({ connecting: true, syncError: null })
+      try {
+        /* same memoized account (and so the same token slot) connectGoogle
+           uses — the click is the consent, so interactive is honest here */
+        await googleAccount(s.settings.googleClientId.trim()).authorize(true)
+        set({ needsReconnect: false })
+        void get().syncNow() // catch the week up right away
       } catch (e) {
         set({ syncError: e instanceof Error ? e.message : 'sign-in failed' })
       } finally {
@@ -6457,7 +6482,9 @@ export const useMew = create<MewState>((set, get) => {
       /* drop this calendar's inbound blocks from the week */
       const removed = s.blocks.filter((b) => b.external?.calId === calId).map((b) => b.id)
       const blocks = s.blocks.filter((b) => b.external?.calId !== calId)
-      set({ settings, blocks })
+      /* no live google left ⇒ nothing to reconnect to — the pause dies with it */
+      const liveLeft = settings.calendars.some((c) => c.kind === 'live' && c.provider === 'google')
+      set({ settings, blocks, ...(liveLeft ? {} : { needsReconnect: false }) })
       persistSettings(settings)
       if (removed.length) storage.deleteBlocks(removed).catch(() => {})
       persistBlocks(blocks)
@@ -6515,14 +6542,29 @@ export const useMew = create<MewState>((set, get) => {
           ])
         }
       } catch (e) {
-        /* swallowed to state (syncError drives honest Settings copy), but logged
-           with structure so a token/CORS/API cause is diagnosable in devtools —
-           the calendar count is safe context; the error is redacted on the way out */
-        log.error('calendar/sync', { calendars: live.length }, e)
-        set({
-          lastSyncAt: nowFn(), // back off; don't hammer a failing API every tick
-          syncError: e instanceof Error ? e.message : 'sync failed',
-        })
+        if (e instanceof ReauthRequiredError) {
+          /* honest pause (#25): no browser opened, none will until the owner
+             clicks reconnect. Ticks keep landing here every backoff window —
+             the chat line posts once per episode, on the false→true edge. */
+          const firstOfEpisode = !get().needsReconnect
+          set({ lastSyncAt: nowFn(), needsReconnect: true, syncError: null })
+          if (firstOfEpisode) {
+            post([
+              mewMsg(
+                `your google sign-in expired, so calendar sync is paused — hit reconnect in settings when you're ready and I'll catch the week up.`
+              ),
+            ])
+          }
+        } else {
+          /* swallowed to state (syncError drives honest Settings copy), but logged
+             with structure so a token/CORS/API cause is diagnosable in devtools —
+             the calendar count is safe context; the error is redacted on the way out */
+          log.error('calendar/sync', { calendars: live.length }, e)
+          set({
+            lastSyncAt: nowFn(), // back off; don't hammer a failing API every tick
+            syncError: e instanceof Error ? e.message : 'sync failed',
+          })
+        }
       } finally {
         /* rescues ride even a failed push — a landed pull is a real landing
            (#286); on success this posts right after the arrival line */
@@ -6772,6 +6814,10 @@ declare global {
     __mewReset?: () => Promise<void>
     /** Dev/scenario helper: patch settings programmatically (e.g. inject a test key). */
     __mewConfigure?: (patch: Partial<Settings>) => void
+    /** Dev/scenario helper: force the #25 sync pause so the paused/reconnect
+        Settings state is shootable keylessly (the real trigger is a dead
+        desktop token, which no keyless CI lane can produce). */
+    __mewPauseSync?: () => void
     /** Dev/scenario helper: push a mew reply into the log (visual/markdown proofs). */
     __mewSay?: (body: string, role?: ChatMessage['role']) => void
     /** Dev/scenario helper (E2E): stream a scripted mew reply chunk-by-chunk,
@@ -6842,6 +6888,9 @@ if (typeof window !== 'undefined') {
   }
   window.__mewConfigure = (patch) => {
     useMew.getState().updateSettings(patch)
+  }
+  window.__mewPauseSync = () => {
+    useMew.setState({ needsReconnect: true })
   }
   window.__mewSay = (body, role = 'mew') => {
     useMew.setState((s) => ({ chat: [...s.chat, { id: uid(), role, body, ts: Date.now() }] }))
