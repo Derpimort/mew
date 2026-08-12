@@ -419,6 +419,8 @@ function CalendarsCard() {
   const updateSettings = useMew((s) => s.updateSettings)
   const googlePicker = useMew((s) => s.googlePicker)
   const connecting = useMew((s) => s.connecting)
+  const needsReconnect = useMew((s) => s.needsReconnect)
+  const reconnectGoogle = useMew((s) => s.reconnectGoogle)
   const syncing = useMew((s) => s.syncing)
   const lastSyncAt = useMew((s) => s.lastSyncAt)
   const syncError = useMew((s) => s.syncError)
@@ -765,15 +767,32 @@ function CalendarsCard() {
           · google (live) · .ics snapshot · outlook (soon)
         </span>
         {hasLive && (
-          <span style={{ marginLeft: 'auto', color: syncError ? 'var(--ice)' : 'var(--faint)' }}>
+          <span
+            style={{
+              marginLeft: 'auto',
+              color: needsReconnect || syncError ? 'var(--ice)' : 'var(--faint)',
+            }}
+          >
             {syncing
               ? 'syncing…'
-              : syncError
-                ? `sync hiccup: ${syncError.slice(0, 40)}`
-                : lastSyncAt
-                  ? `synced ${fmtTime(minOfDay(new Date(lastSyncAt)))}`
-                  : 'sync pending…'}
+              : needsReconnect
+                ? 'sync paused — google needs a fresh sign-in'
+                : syncError
+                  ? `sync hiccup: ${syncError.slice(0, 40)}`
+                  : lastSyncAt
+                    ? `synced ${fmtTime(minOfDay(new Date(lastSyncAt)))}`
+                    : 'sync pending…'}
           </span>
+        )}
+        {hasLive && needsReconnect && !syncing && (
+          <Button
+            variant="ghost"
+            size="md"
+            disabled={connecting}
+            onClick={() => void reconnectGoogle()}
+          >
+            {connecting ? 'opening google sign-in…' : 'reconnect'}
+          </Button>
         )}
       </div>
     </div>

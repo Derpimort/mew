@@ -30,8 +30,20 @@ export interface PushEventBody {
   mewBlockId: string
 }
 
+/** Desktop-only pause signal (#25): silent re-auth would need the system
+    browser, and the app must never open one without a same-turn user click —
+    the caller pauses sync and the owner reconnects deliberately in Settings. */
+export class ReauthRequiredError extends Error {
+  constructor() {
+    super('google sign-in expired — sync is paused until you reconnect')
+    this.name = 'ReauthRequiredError'
+  }
+}
+
 export interface CalendarAccount {
-  /** Interactive=true may open a consent popup; false attempts silent reuse. */
+  /** Interactive=true may open a consent popup; false attempts silent reuse.
+      On the desktop shell, false never opens a browser — it throws
+      ReauthRequiredError instead when no valid token is in memory. */
   authorize(interactive: boolean): Promise<void>
   listCalendars(): Promise<RemoteCalendar[]>
   listEvents(calId: string, timeMinISO: string, timeMaxISO: string): Promise<RemoteEvent[]>

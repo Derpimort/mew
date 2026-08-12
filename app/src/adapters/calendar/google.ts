@@ -7,6 +7,7 @@
 import { dayKey, fromDayKey, minOfDay } from '../../domain/time'
 import { isTauri, oauthLoopback } from '../desktop'
 import type { CalendarAccount, PushEventBody, RemoteCalendar, RemoteEvent } from './types'
+import { ReauthRequiredError } from './types'
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client'
 const AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth'
@@ -89,10 +90,14 @@ export class GoogleAccount implements CalendarAccount {
     if (this.token && this.token.expiresAt > Date.now() + 60_000) return
     /* the desktop shell can't run the GIS popup (Google rejects embedded
        webviews with disallowed_useragent) — same implicit grant, but through
-       the system browser and a localhost loopback. Token handling below is
-       byte-identical either way. */
+       the system browser and a localhost loopback. The loopback is reachable
+       ONLY interactively (#25): a silent path must never yank focus by
+       opening the browser, so with no valid token it pauses instead — the
+       store surfaces `reconnect` and the click re-enters here with
+       interactive=true. Token handling below is byte-identical either way. */
     if (isTauri()) {
-      this.token = await this.authorizeViaLoopback(interactive)
+      if (!interactive) throw new ReauthRequiredError()
+      this.token = await this.authorizeViaLoopback()
       return
     }
     const oauth2 = await loadGis()
@@ -117,10 +122,10 @@ export class GoogleAccount implements CalendarAccount {
   }
 
   /** System-browser sign-in: auth URL → loopback redirect → token from the
-      forwarded fragment. No client secret exists anywhere in this flow. */
-  private async authorizeViaLoopback(
-    interactive: boolean
-  ): Promise<{ value: string; expiresAt: number }> {
+      forwarded fragment. No client secret exists anywhere in this flow.
+      Interactive-only by construction (#25) — every caller arrived from a
+      deliberate click, so consent is always prompted. */
+  private async authorizeViaLoopback(): Promise<{ value: string; expiresAt: number }> {
     const redirect = await oauthLoopback((port) => {
       const q = new URLSearchParams({
         client_id: this.clientId,
@@ -128,7 +133,7 @@ export class GoogleAccount implements CalendarAccount {
         response_type: 'token',
         scope: SCOPES,
         include_granted_scopes: 'true',
-        ...(interactive ? { prompt: 'consent' } : {}),
+        prompt: 'consent',
       })
       return `${AUTH_ENDPOINT}?${q.toString()}`
     })
