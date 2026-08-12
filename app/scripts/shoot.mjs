@@ -795,6 +795,56 @@ phase = 'settings'
 await page.click('text=settings')
 await page.waitForSelector('.set-card h2')
 await page.screenshot({ path: `${outDir}/6-settings.png` })
+
+/* 5b · the sync pause (#25): a live calendar whose sign-in expired shows an
+   honest paused line and a deliberate reconnect control — the browser must
+   never open on its own, so the exit is a click that lives right here. */
+{
+  phase = 'sync-paused'
+  await page.evaluate(() => {
+    window.__mewConfigure?.({
+      googleClientId: 'shoot-cid',
+      calendars: [
+        {
+          id: 'cal@shoot',
+          name: 'Google · Work',
+          who: 'live · two-way',
+          provider: 'google',
+          kind: 'live',
+          defaultTag: 'work',
+          readOnly: false,
+        },
+      ],
+      matrix: { 'cal@shoot': { work: 'details', private: 'hidden', health: 'hidden' } },
+    })
+    window.__mewPauseSync?.()
+  })
+  await page.waitForSelector('text=sync paused — google needs a fresh sign-in', {
+    timeout: 4000,
+  })
+  const reconnectBtn = await page.$('button:has-text("reconnect")')
+  assert(reconnectBtn, 'paused sync did not offer a reconnect control')
+  assert(
+    !(await page.$('text=sync hiccup')),
+    'the pause must read as its own honest state, not a hiccup'
+  )
+  // the calendar section lives below the settings fold — bring the paused
+  // row into frame so the canon shot actually shows the state it pins
+  await page.$eval('text=sync paused — google needs a fresh sign-in', (el) =>
+    el.scrollIntoView({ block: 'center' })
+  )
+  await page.waitForTimeout(250)
+  await page.screenshot({ path: `${outDir}/8-sync-paused.png` })
+  console.log('sync-paused: honest pause + deliberate reconnect rendered')
+  // put settings back the way the canon shots expect them; the flag itself
+  // may linger, but every consumer gates on a live calendar existing, so
+  // with none connected the pause is invisible everywhere by construction
+  await page.evaluate(() => {
+    window.__mewConfigure?.({ googleClientId: '', calendars: [], matrix: {} })
+  })
+  await page.waitForTimeout(200)
+}
+phase = 'settings'
 await page.click('.petopt:has-text("Fox")')
 await page.click('.segc button:has-text("Pet white")')
 await page.waitForTimeout(400)
