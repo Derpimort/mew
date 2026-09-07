@@ -25,12 +25,12 @@
     "prepare": "cd .. && husky || true"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^4.0.37",
-    "@ai-sdk/openai": "^4.0.37",
-    "@ai-sdk/openai-compatible": "^3.0.29",
-    "@noble/ciphers": "^2.3.0",
-    "@noble/post-quantum": "^0.6.1",
-    "ai": "^7.0.59",
+    "@ai-sdk/anthropic": "^4.0.49",
+    "@ai-sdk/openai": "^4.0.58",
+    "@ai-sdk/openai-compatible": "^3.0.43",
+    "@noble/ciphers": "^2.4.0",
+    "@noble/post-quantum": "^0.7.1",
+    "ai": "^7.0.92",
     "clsx": "^2.1.1",
     "dexie": "^4.4.4",
     "hash-wasm": "^4.12.0",

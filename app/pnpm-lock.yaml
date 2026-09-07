@@ -9,23 +9,23 @@ importers:
   .:
     dependencies:
       '@ai-sdk/anthropic':
-        specifier: ^4.0.37
-        version: 4.0.37(zod@4.4.3)
+        specifier: ^4.0.49
+        version: 4.0.49(zod@4.4.3)
       '@ai-sdk/openai':
-        specifier: ^4.0.37
-        version: 4.0.37(zod@4.4.3)
+        specifier: ^4.0.58
+        version: 4.0.58(zod@4.4.3)
       '@ai-sdk/openai-compatible':
-        specifier: ^3.0.29
-        version: 3.0.29(zod@4.4.3)
+        specifier: ^3.0.43
+        version: 3.0.43(zod@4.4.3)
       '@noble/ciphers':
-        specifier: ^2.3.0
-        version: 2.3.0
+        specifier: ^2.4.0
+        version: 2.4.0
       '@noble/post-quantum':
-        specifier: ^0.6.1
-        version: 0.6.1
+        specifier: ^0.7.1
+        version: 0.7.1
       ai:
-        specifier: ^7.0.59
-        version: 7.0.59(zod@4.4.3)
+        specifier: ^7.0.92
+        version: 7.0.92(zod@4.4.3)
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
@@ -123,38 +123,38 @@ importers:
 
 packages:
 
-  '@ai-sdk/anthropic@4.0.37':
-    resolution: {integrity: sha512-3JVFoPkuVyW/TkUrsNpugQDwJa5RUnExK/J3LKhKece+qFv7MRR33URvmLbND/5yg2qXZ9rf+Wf97adGMltn0g==}
+  '@ai-sdk/anthropic@4.0.49':
+    resolution: {integrity: sha512-fzy2sLrs3vNsliIgx65fuovsa6a7OTXd6DllKUgLuVmPyqLnvoZCv9NlKgq+krzDzSxLb9d0zTaJJpsjBVLNyA==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/gateway@4.0.47':
-    resolution: {integrity: sha512-BuWWlA8atWEnEJzN4eamCpGZWkoK9V3TCyNaMwgRIazhqkgWkA1Wp36si3j2JeVYzlvlEAOWrJ92dr92j/Vkqg==}
+  '@ai-sdk/gateway@4.0.74':
+    resolution: {integrity: sha512-6hpLUtAD162KLyyj9LN2OuEyze7lzq4wwj7PyQPYdMmA8PBYwyMbmvmu1C7OzfexLSPltZK29pX8R6hrJsqBqA==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai-compatible@3.0.29':
-    resolution: {integrity: sha512-mkTkrdpfkV93ihTV3cRIhLpYxQ+cXzBGnrGXXfuQj4wfesCZxYbbyPnCsxYv1ssDt7pGDnrz8RQmpeOqDlAy0g==}
+  '@ai-sdk/openai-compatible@3.0.43':
+    resolution: {integrity: sha512-QurboftQF0jGshbNM5KHNNpttp7huKSV7rN+C7ylcT5XsLZPud1eCMqyX0zlYFxm6pE4MEc/1PgFX12tm85yqg==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@4.0.37':
-    resolution: {integrity: sha512-rQIdkvqHaqyu94zMJKkhucRwsyTpYUmI+vrH/Dm1Erc6ypURikOV+9e51Pni6RL8IxFlu2bv6y8hA1ghzCy7Gw==}
+  '@ai-sdk/openai@4.0.58':
+    resolution: {integrity: sha512-oO3vH0e8lhN3OrANukokI2rvUJV+RVwTwJ2y+eSK+IiKlauFza2Yyl/7hjErqkjOt/eMOobhNijo+CFsFt8T+g==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider-utils@5.0.26':
-    resolution: {integrity: sha512-0mqhqx+Dcv+msI84+zkbLXmnCHb/mpkYJ9DU3HBvB1px+UjFQss4lLZqRCSzJ0w3NxwQk4Ishk7cP0r8wEQD5w==}
+  '@ai-sdk/provider-utils@5.0.36':
+    resolution: {integrity: sha512-MFXBn6XDyf37PNQAge/HTatPJE8Vmg/g/w4WPtjSV53jq8FKAzoaN5+43hsdQa9bqgN+/13jxug9ChvsG+godQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider@4.0.7':
-    resolution: {integrity: sha512-6or44XprPzKbr8zkmzosowSE0pxkvJcoojBL+mCZvPUt3kvXp3XSNqeVun9golb1acEfSo6yaEBRT18h2VU+1Q==}
+  '@ai-sdk/provider@4.0.10':
+    resolution: {integrity: sha512-fX2ENAc7iDpZ+Wp4+Rk06Usn/Ys7dI9uAkGv0jlF6XVrW13NkRWx5Ou+U6lIM2E1fTLkCs16GGrUAaVvroag7A==}
     engines: {node: '>=22'}
 
   '@babel/code-frame@7.29.7':
@@ -303,24 +303,20 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@noble/ciphers@2.2.0':
-    resolution: {integrity: sha512-Z6pjIZ/8IJcCGzb2S/0Px5J81yij85xASuk1teLNeg75bfT07MV3a/O2Mtn1I2se43k3lkVEcFaR10N4cgQcZA==}
+  '@noble/ciphers@2.4.0':
+    resolution: {integrity: sha512-AnjFn0Jv92laAkvMrghlFZq4qQCIN/4DxFV/eooqtC2YTjB7kBeLMS2T9KJX4Dn+ZVXLOwK0lSgqDtx9gvxtiw==}
     engines: {node: '>= 20.19.0'}
 
-  '@noble/ciphers@2.3.0':
-    resolution: {integrity: sha512-Clu/xdfgVTf9o7ngLOURaxePwR0j8sjclKEtVij10/jGulwFsPWCvvRgG/XjUVf8Nei+jLG6uwyXzUTGY1DQrw==}
+  '@noble/curves@2.4.0':
+    resolution: {integrity: sha512-P4/62zrgfH33CneE3Dn4WhJVA22YUU0eR51wKIan4NVRvwsA0YnPTwWGpNbpuacSujmSFLvyzpyuR30+fbq2Ew==}
     engines: {node: '>= 20.19.0'}
 
-  '@noble/curves@2.2.0':
-    resolution: {integrity: sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ==}
+  '@noble/hashes@2.4.0':
+    resolution: {integrity: sha512-X5XaVWZIBCT7HHZGm5I7ZQXDwLG+bGXuSrMQAW+7Zvl87h1kmc1ZB1VSRJcpUfoUrGQp4Fkoxm5kZ+Ms+aW+eA==}
     engines: {node: '>= 20.19.0'}
 
-  '@noble/hashes@2.2.0':
-    resolution: {integrity: sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg==}
-    engines: {node: '>= 20.19.0'}
-
-  '@noble/post-quantum@0.6.1':
-    resolution: {integrity: sha512-+pormrDZwjRw05U8ADK4JpHejo87+gBd+muRBB/ozztH5yhDLMDF4jHQWN3NQQAsu1zBNPWTG0ZwVI0CR29H0A==}
+  '@noble/post-quantum@0.7.1':
+    resolution: {integrity: sha512-+P9981IiAnVh+rmcubozzVwrEy3XsN/tMhTnvsjV9VDaYpOnNCqWqKo2FLWxbu92YHfjGIlE5XnW175UK+ln+Q==}
     engines: {node: '>= 20.19.0'}
 
   '@opentelemetry/api@1.9.1':
@@ -668,8 +664,8 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  ai@7.0.59:
-    resolution: {integrity: sha512-p10cqg8KvLIZi7Gk+XsQjoYoLENoDdEYvehP0rSo6Wg15nbCmP+nwIy1rOIX+WGIDWGdI+jmhjVx5fXShBVC3w==}
+  ai@7.0.92:
+    resolution: {integrity: sha512-9xb8Xo6aw7YMxuROznR02q4Hpne1DJ7JbKurpcOsabSSY3sd3xGoTANSqEs4gYLRpIz27MmT3IMfH8X3+oK1CQ==}
     engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -1370,8 +1366,8 @@ packages:
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
-  undici@7.29.0:
-    resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
+  undici@7.29.1:
+    resolution: {integrity: sha512-RYONW2MeafgYlkVOKYKkA/Ag7BmXqgIWCa8t1m0JcxrQg9pI9lEqRhAOruOBCbAohOa/gkCF+iPi9hrgvTzu6Q==}
     engines: {node: '>=20.18.1'}
 
   update-browserslist-db@1.3.1:
@@ -1527,41 +1523,41 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/anthropic@4.0.37(zod@4.4.3)':
+  '@ai-sdk/anthropic@4.0.49(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider': 4.0.7
-      '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.10
+      '@ai-sdk/provider-utils': 5.0.36(zod@4.4.3)
       zod: 4.4.3
 
-  '@ai-sdk/gateway@4.0.47(zod@4.4.3)':
+  '@ai-sdk/gateway@4.0.74(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider': 4.0.7
-      '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.10
+      '@ai-sdk/provider-utils': 5.0.36(zod@4.4.3)
       '@vercel/oidc': 3.2.0
       zod: 4.4.3
 
-  '@ai-sdk/openai-compatible@3.0.29(zod@4.4.3)':
+  '@ai-sdk/openai-compatible@3.0.43(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider': 4.0.7
-      '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.10
+      '@ai-sdk/provider-utils': 5.0.36(zod@4.4.3)
       zod: 4.4.3
 
-  '@ai-sdk/openai@4.0.37(zod@4.4.3)':
+  '@ai-sdk/openai@4.0.58(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider': 4.0.7
-      '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.10
+      '@ai-sdk/provider-utils': 5.0.36(zod@4.4.3)
       zod: 4.4.3
 
-  '@ai-sdk/provider-utils@5.0.26(zod@4.4.3)':
+  '@ai-sdk/provider-utils@5.0.36(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/provider': 4.0.7
+      '@ai-sdk/provider': 4.0.10
       '@standard-schema/spec': 1.1.0
       '@workflow/serde': 4.1.0
       eventsource-parser: 3.1.1
-      undici: 7.29.0
+      undici: 7.29.1
       zod: 4.4.3
 
-  '@ai-sdk/provider@4.0.7':
+  '@ai-sdk/provider@4.0.10':
     dependencies:
       json-schema: 0.4.0
 
@@ -1736,21 +1732,19 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@noble/ciphers@2.2.0': {}
+  '@noble/ciphers@2.4.0': {}
 
-  '@noble/ciphers@2.3.0': {}
-
-  '@noble/curves@2.2.0':
+  '@noble/curves@2.4.0':
     dependencies:
-      '@noble/hashes': 2.2.0
+      '@noble/hashes': 2.4.0
 
-  '@noble/hashes@2.2.0': {}
+  '@noble/hashes@2.4.0': {}
 
-  '@noble/post-quantum@0.6.1':
+  '@noble/post-quantum@0.7.1':
     dependencies:
-      '@noble/ciphers': 2.2.0
-      '@noble/curves': 2.2.0
-      '@noble/hashes': 2.2.0
+      '@noble/ciphers': 2.4.0
+      '@noble/curves': 2.4.0
+      '@noble/hashes': 2.4.0
 
   '@opentelemetry/api@1.9.1':
     optional: true
@@ -2061,11 +2055,11 @@ snapshots:
 
   acorn@8.18.0: {}
 
-  ai@7.0.59(zod@4.4.3):
+  ai@7.0.92(zod@4.4.3):
     dependencies:
-      '@ai-sdk/gateway': 4.0.47(zod@4.4.3)
-      '@ai-sdk/provider': 4.0.7
-      '@ai-sdk/provider-utils': 5.0.26(zod@4.4.3)
+      '@ai-sdk/gateway': 4.0.74(zod@4.4.3)
+      '@ai-sdk/provider': 4.0.10
+      '@ai-sdk/provider-utils': 5.0.36(zod@4.4.3)
       zod: 4.4.3
 
   ajv@6.15.0:
@@ -2650,7 +2644,7 @@ snapshots:
 
   undici-types@8.3.0: {}
 
-  undici@7.29.0: {}
+  undici@7.29.1: {}
 
   update-browserslist-db@1.3.1(browserslist@4.28.8):
     dependencies:
