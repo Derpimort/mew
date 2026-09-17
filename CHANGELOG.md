@@ -53,6 +53,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   quarter that still fits, and every placement path stays on the five-minute grid. Times you name
   yourself are kept exactly.
 
+### Placing from your inbox leaves a receipt
+- When you place something from your inbox or the loose-threads rail, the conversation now shows its
+  receipt like any other placement, and "undo that" right after takes the block back and returns
+  the item to your inbox. Where it lands is exactly as before.
+
 ### Your stated lengths hold through the plan picker
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly
   that length when you pick a plan from the picker. MEW only offers to give room to the blocks you
@@ -213,6 +218,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   it came from.
 - MEW opens on about 43 KB less code: the connected-model instructions and the class-merging helper
   used by Settings now load only when those are used, not with every start.
+- The release notes guard themselves: a check in CI fails any change that repeats a section or a
+  bullet in these notes, so what you read here is written once.
 - Three more midnight details are held by tests: a choice picked in the first seconds after
   midnight, before MEW's clock catches up, checks against the new day, a choice that lengthens a
   block checks its day too, and a "done" choice keeps pointing at the block it was offered for even

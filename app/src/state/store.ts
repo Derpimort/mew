@@ -5044,16 +5044,39 @@ export const useMew = create<MewState>((set, get) => {
       ...(prefd.attention != null ? { attention: prefd.attention } : {}),
     })
     if (!placed) return false
-    setBlocks([...s.blocks, placed])
-    const updated: Capture = { ...cap, status: 'placed', placedBlockId: placed.id }
-    set((st) => ({ captures: st.captures.map((c) => (c.id === cap.id ? updated : c)) }))
-    persistCaptures([updated])
     const todayKey = dayKey(new Date(s.nowMs))
-    post([
-      mewMsg(
-        `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`
-      ),
-    ])
+    /* #21: the tool path every placement takes — a receipt card in the log and
+       ONE undo. A capture is placed by a tap, outside any chat turn, so the
+       snapshot holds across the owner's next message ("undo that"), exactly as a
+       scenario pick's does (#293); undo returns the capture to the inbox. */
+    snapshotForUndo()
+    pickSnapshotHolds = true
+    const utcDay = (k: string) => {
+      const [y, m, d] = k.split('-').map(Number)
+      return Date.UTC(y, m - 1, d) / 86_400_000
+    }
+    runToolWithCard(
+      'plan',
+      {
+        places: [
+          {
+            title: cap.title,
+            dayOffset: utcDay(toDayKey) - utcDay(todayKey),
+            startMin,
+            durationMin,
+          },
+        ],
+      },
+      () => {
+        setBlocks([...get().blocks, placed])
+        const updated: Capture = { ...cap, status: 'placed', placedBlockId: placed.id }
+        set((st) => ({ captures: st.captures.map((c) => (c.id === cap.id ? updated : c)) }))
+        persistCaptures([updated])
+        const line = `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`
+        post([mewMsg(line)])
+        return line
+      }
+    )
     return true
   }
 
@@ -5973,8 +5996,10 @@ export const useMew = create<MewState>((set, get) => {
                 set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
               /* #325: a repeated apology tail is dropped — one acknowledgment
                  stands for the turn (the catch path stays as-is: an error is not
-                 the flail, and a hiccuped turn keeps whatever streamed) */
-              else if (final && !coalesceApology(final)) {
+                 the flail, and a hiccuped turn keeps whatever streamed) */ else if (
+                final &&
+                !coalesceApology(final)
+              ) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
