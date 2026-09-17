@@ -365,3 +365,96 @@ describe('#62 review — a model dayOffset out of range is ignored, never clampe
     expect(lunchIds()).toEqual(['tue', 'wed'])
   })
 })
+
+/* #72 — a day phrase is the day, not the title: "this thursday", "thursday's" and
+   "next thursday" used to leave "lunch this" / "'s lunch" / "lunch next" as the
+   query, so nothing was found and nothing removed. Through the real store,
+   keyless, asked on Tuesday. */
+describe('#72 — remove by a day phrase finds the block', () => {
+  it('"remove the lunch this thursday at 12:00" removes exactly Thursday\'s Lunch', async () => {
+    await fresh(threeLunches())
+    await say('remove the lunch this thursday at 12:00')
+    await settle()
+    expect(lunchIds()).toEqual(['tue', 'wed'])
+    expect(chat()[chat().length - 1].body).toMatch(/^Removed — /)
+    expect(chipMsgs()).toHaveLength(0)
+  })
+
+  it('"remove thursday\'s lunch" removes the one Thursday Lunch', async () => {
+    await fresh(threeLunches())
+    await say("remove thursday's lunch")
+    await settle()
+    expect(lunchIds()).toEqual(['tue', 'wed'])
+    expect(chat()[chat().length - 1].body).toMatch(/^Removed — /)
+  })
+
+  it('"remove thursday\'s lunch" with two Lunches that Thursday asks which, and removes nothing', async () => {
+    await fresh([
+      ...threeLunches(),
+      lunch('thu-late', THU, { startMin: 19 * 60, endMin: 19 * 60 + 45 }),
+    ])
+    await say("remove thursday's lunch")
+    await settle()
+    expect(lunchIds()).toEqual(['thu', 'thu-late', 'tue', 'wed'])
+    const ask = chipMsgs()
+    expect(ask).toHaveLength(1)
+    // only Thursday's two are offered — the other days' Lunches never appear
+    expect(ask[0].body).toMatch(/^2 "lunch" blocks ahead/)
+  })
+
+  it('"remove the lunch next thursday at 12:00" finds the title and asks with day chips', async () => {
+    await fresh(threeLunches())
+    await say('remove the lunch next thursday at 12:00')
+    await settle()
+    expect(lunchIds()).toEqual(['thu', 'tue', 'wed']) // unpinned: nothing goes before a pick
+    const ask = chipMsgs()
+    expect(ask).toHaveLength(1)
+    expect(ask[0].choices!.map((c) => c.label)).toEqual([
+      'today 12:00',
+      'tomorrow 12:00',
+      'thursday 12:00',
+      'all of them',
+    ])
+  })
+})
+
+/* peer review of #82 (coderpa): Lunch on Tue, Wed, Thu AND next Thursday. An
+   unpinned "next <weekday>" must never turn a bulk remove into a sweep of every
+   day — the P1 class #66 fixed. Keyless, asked on Tuesday. */
+describe('#72 review — "next <weekday>" never widens a bulk remove', () => {
+  const NEXT_THU = '2026-06-18'
+  const fourLunches = () => [...threeLunches(), lunch('next-thu', NEXT_THU)]
+
+  it.each(['remove all lunch next thursday', 'remove every lunch next thursday'])(
+    '"%s" removes nothing and asks with day chips',
+    async (said) => {
+      await fresh(fourLunches())
+      await say(said)
+      await settle()
+      expect(lunchIds()).toEqual(['next-thu', 'thu', 'tue', 'wed'])
+      expect(chipMsgs()).toHaveLength(1)
+    }
+  )
+
+  it('"remove next thursday\'s lunch" never takes this Thursday\'s', async () => {
+    await fresh(fourLunches())
+    await say("remove next thursday's lunch")
+    await settle()
+    expect(lunchIds()).toEqual(['next-thu', 'thu', 'tue', 'wed'])
+  })
+
+  it('"remove all review next week" stays a safe miss — "next week" is not a day phrase', async () => {
+    await fresh([
+      lunch('rev-tue', TODAY, { title: 'Review', startMin: 15 * 60, endMin: 16 * 60 }),
+      lunch('rev-wed', WED, { title: 'Review', startMin: 15 * 60, endMin: 16 * 60 }),
+    ])
+    await say('remove all review next week')
+    await settle()
+    const left = useMew
+      .getState()
+      .blocks.filter((b) => b.title === 'Review')
+      .map((b) => b.id)
+      .sort()
+    expect(left).toEqual(['rev-tue', 'rev-wed'])
+  })
+})

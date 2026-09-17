@@ -169,6 +169,10 @@ const rollLive = await page.evaluate(() => {
   return { disabled: b?.disabled ?? true, label: b?.textContent ?? '' }
 })
 assert(!rollLive.disabled, 'roll must become live once a block is picked')
+const pickedLabel = await page.$eval(
+  '.wkr-carry input[type="checkbox"]',
+  (el) => el.getAttribute('aria-label') ?? ''
+)
 await page.screenshot({ path: `${outDir}/15-review-selected.png` }) // gitignored — proof
 const planCardsBefore = (await page.$$('.tool-card')).length
 await page.click('.wkr-roll')
@@ -193,6 +197,24 @@ console.log(
     planCards: `${planCardsBefore}→${planCardsAfter}`,
     confirmed: /rolled forward/i.test(session),
   })
+)
+
+/* 4 · #19: the rolled block moved on. The reopened review no longer carries
+   it, so it can never roll twice, and every other carried block is still there */
+phase = 'reopen'
+await page.evaluate(() => window.__mewOpenReview?.())
+await page.waitForSelector('.wkr', { timeout: 5000 })
+const reopened = await page.$$eval('.wkr-carry input[type="checkbox"]', (els) =>
+  els.map((el) => el.getAttribute('aria-label') ?? '')
+)
+assert(!reopened.includes(pickedLabel), `the rolled block is still carried: ${pickedLabel}`)
+assert(
+  reopened.length === surface.carried - 1,
+  `carried went ${surface.carried}→${reopened.length}, expected exactly one fewer`
+)
+console.log(
+  'reopen:',
+  JSON.stringify({ carried: `${surface.carried}→${reopened.length}`, rolledGone: true })
 )
 
 await browser.close()

@@ -24,8 +24,8 @@ updater keeps ordering releases correctly (`2026.9.0` > `0.7.0`).
 
 | Piece | Shape | Example: first release of September 2026 |
 |---|---|---|
-| RC branch | `vYYYY.MM-rcN` — month zero-padded, `N` counts the RCs | `v2026.09-rc1` |
-| `version` in `desktop/src-tauri/tauri.conf.json` on the RC | `YYYY.M.PATCH-rc.N` | `2026.9.0-rc.1` |
+| RC branch | `vYYYY.MM-rcN` — month zero-padded; `N` counts the month's release cycles (the second September release is `v2026.09-rc2`) | `v2026.09-rc1` |
+| `version` in `desktop/src-tauri/tauri.conf.json` on the RC | `YYYY.M.PATCH-rc.N` — `N` counts the candidate builds within that cycle (a re-spun candidate is `-rc.2`; the branch stays) | `2026.9.0-rc.1` |
 | `version` after the promotion PR (on `main`) | `YYYY.M.PATCH` | `2026.9.0` |
 | Release tag | `vYYYY.M.PATCH`, must equal the config | `v2026.9.0` |
 | `bundle.windows.wix.version` (the MSI's version) | `(YYYY-2000).M.PATCH`, prerelease dropped | `26.9.0` |
@@ -40,17 +40,20 @@ updater keeps ordering releases correctly (`2026.9.0` > `0.7.0`).
 - **The MSI needs its own version.** WiX's ProductVersion caps the major and minor at 255, so a
   bare `2026` fails the Windows build. `bundle.windows.wix.version` overrides it with
   `(YYYY-2000).M.PATCH`. NSIS, deb and dmg take the full CalVer version.
-- **When a new month's RC is cut**, set `version` = `YYYY.M.PATCH-rc.1` **and**
-  `bundle.windows.wix.version` = `(YYYY-2000).M.PATCH` together (the guard fails on a mismatch).
+- **When an RC is cut** — a new month's `-rc1` or a same-month PATCH like `v2026.09-rc2` — set
+  `version` = `YYYY.M.PATCH-rc.1` **and** `bundle.windows.wix.version` = `(YYYY-2000).M.PATCH`
+  together (the guard fails on a mismatch); a PATCH moves the MSI version too (`26.9.1`).
   Both stay through the RC; the promotion PR only strips `-rc.N` from `version` — the MSI
   version already has no prerelease, so it does not move at promotion.
 
 `desktop/scripts/check-release-version.mjs` enforces all of it, and every mode first checks the
-CalVer shape + the MSI mapping: `--shape` runs in ci.yml's `release-guard` job on every PR that
+CalVer shape + the MSI mapping: `--shape` runs in the `release-guard` workflow
+(`.github/workflows/release-guard.yml`, its own so a desktop-only change skips the app's gates) on every PR that
 touches `tauri.conf.json`, `desktop/package.json` or the guard (together with the guard's own
 cases), and before every desktop build (tag or dry-run); `--promotion` on the `v*-rc*` → `main` PR
 (also rejects a prerelease); `--tag vYYYY.M.PATCH` on the tag push (also requires a well-formed tag
-equal to the config). Its cases live in `desktop/scripts/__tests__/check-release-version.test.mjs`
+equal to the config, and on a mismatch names both fixes: re-tag from the config, or bump the
+config to the tag). Its cases live in `desktop/scripts/__tests__/check-release-version.test.mjs`
 (`pnpm --dir desktop test`).
 
 Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and changelog sections stand.
