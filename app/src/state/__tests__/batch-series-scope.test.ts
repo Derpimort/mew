@@ -288,12 +288,18 @@ describe('#75 slice 3 — a sweep over a repeating block asks first', () => {
     await say('push all health after 4pm today later by 30 min')
     await settle()
     await pick('the whole series')
-    /* the answer widens the list, so the wide-change confirm still guards it */
+    /* the answer widens the list, so the wide-change confirm still guards it —
+       and since this is the first plan whose list crosses days (#150 review),
+       every row names its own day and the change claims none (a "today" there
+       would have described a change that moved Wednesday's and Thursday's too) */
     const offer = chipMsgs().at(-1)!.body
-    expect(offer).toMatch(/^move 4 blocks 30 min later today\?/)
-    expect(offer).toContain('Gym 18:00→18:30')
+    expect(offer).toBe(
+      'move 4 blocks 30 min later? Deck today 17:00→17:30 · Gym today 18:00→18:30 · Gym tomorrow 18:00→18:30 · Gym Thursday 18:00→18:30.'
+    )
     await pick('do it')
-    expect(lastMew()).toMatch(/^Moved 4 blocks 30 min later today — /)
+    expect(lastMew()).toBe(
+      'Moved 4 blocks 30 min later — Deck today 17:00→17:30 · Gym today 18:00→18:30 · Gym tomorrow 18:00→18:30 · Gym Thursday 18:00→18:30.'
+    )
     expect(at('g-tue')).toEqual([TODAY, 18 * 60 + 30])
     expect(at('g-wed')).toEqual([WED, 18 * 60 + 30])
     expect(at('g-thu')).toEqual([THU, 18 * 60 + 30])
@@ -329,6 +335,30 @@ describe('#75 slice 3 — a sweep over a repeating block asks first', () => {
     expect(at('g-tue')).toEqual([TODAY, 18 * 60])
     expect(at('deck')).toEqual([TODAY, 17 * 60 + 30])
   })
+})
+
+it('a row that stays put names its day too, so the list can be checked afterwards', async () => {
+  /* the same ambiguity as the moves list, on the other half of the sentence:
+       a fixed call on Wednesday keeps that occurrence where it is, and without
+       its day "Gym 18:00" reads as the one the sweep started from */
+  await fresh([
+    ...gymSeries(),
+    block({
+      id: 'call',
+      title: 'Client call',
+      dayKey: WED,
+      startMin: 18 * 60 + 30,
+      endMin: 19 * 60,
+    }),
+  ])
+  await say('push all health after 4pm today later by 30 min')
+  await settle()
+  await pick('the whole series')
+  const offer = chipMsgs().at(-1)!.body
+  expect(offer).toContain('Gym today 18:00→18:30 · Gym Thursday 18:00→18:30.')
+  expect(offer).toContain(
+    'Gym tomorrow 18:00 (would sit over Client call 18:30–19:00) stays where it is.'
+  )
 })
 
 describe('#75 slice 3 — a move onto one day says what does work', () => {

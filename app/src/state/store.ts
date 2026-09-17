@@ -4055,6 +4055,16 @@ export const useMew = create<MewState>((set, get) => {
 
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const plan = planBatch(s.blocks, sel, op, prefs, scope)
+    /* #75 slice 3 review: an answered series is the first plan whose list can
+       cross days, and a sweep's offer is the sentence the owner says yes to — so
+       when it does, every row names its own day and the change drops the day
+       claim it can no longer make. A move onto one day is not this case: its own
+       wording already names both days, and every row lands on the target. A
+       single-day sweep reads exactly as it did before. */
+    const spansDays =
+      op.kind !== 'moveToDay' &&
+      new Set([...plan.moves.map((m) => m.dayKey), ...plan.skipped.map((sk) => sk.block.dayKey)])
+        .size > 1
     const what = [
       sel.titleQuery ? `"${sel.titleQuery}"` : sel.tag ? `your ${sel.tag} blocks` : 'everything',
       /* both edges read as one window (#75 slice 2) */
@@ -4071,11 +4081,12 @@ export const useMew = create<MewState>((set, get) => {
       .join(' ')
     /* every offer and receipt names its day, so the day a yes acts on is on
        screen before the yes */
+    const onDayOf = (k: string) => (spansDays ? '' : ` ${onDay(k)}`)
     const change =
       op.kind === 'shift'
-        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'} ${onDay(sel.dayKey)}`
+        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'}${onDayOf(sel.dayKey)}`
         : op.kind === 'setTag'
-          ? `as ${op.tag} ${onDay(sel.dayKey)}`
+          ? `as ${op.tag}${onDayOf(sel.dayKey)}`
           : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
     const why = (sk: BatchSkip): string =>
       sk.reason === 'calendar'
@@ -4097,8 +4108,12 @@ export const useMew = create<MewState>((set, get) => {
                   : sk.reason === 'already'
                     ? `already ${op.kind === 'setTag' ? op.tag : ''}`
                     : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+    /* a row's own day, once the list crosses days: "Gym Wednesday 18:00→18:30"
+       reads as one thing the owner can check against the week afterwards */
+    const rowDay = (k: string) => (spansDays ? ` ${dayName(k)}` : '')
     const stays = plan.skipped.map(
-      (sk) => `${baseOf(sk.block.title)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
+      (sk) =>
+        `${baseOf(sk.block.title)}${rowDay(sk.block.dayKey)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
     )
     const staysLine = !stays.length
       ? ''
@@ -4176,8 +4191,8 @@ export const useMew = create<MewState>((set, get) => {
     const n = plan.moves.length
     const line = (m: (typeof plan.moves)[number]) =>
       op.kind === 'shift'
-        ? `${baseOf(m.block.title)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
-        : `${baseOf(m.block.title)} ${fmtTime(m.startMin)}`
+        ? `${baseOf(m.block.title)}${rowDay(m.dayKey)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
+        : `${baseOf(m.block.title)}${rowDay(m.dayKey)} ${fmtTime(m.startMin)}`
     const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
     const next = s.blocks.map((b) => {
       const m = byId.get(b.id)
