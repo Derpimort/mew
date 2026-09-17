@@ -272,20 +272,36 @@ export function parseIcs(text: string, ownerEmail?: string): IcsParseResult {
 /* ── RRULE expansion within a window ──────────────────────────────── */
 
 const BYDAY: Record<string, number> = { MO: 0, TU: 1, WE: 2, TH: 3, FR: 4, SA: 5, SU: 6 }
-const DAY_MS = 86400000
+/** How far before a date's UTC midnight any zone's midnight of that date can
+    fall (UTC+14 is the earliest zone on Earth). */
+const EARLIEST_MIDNIGHT_MS = 14 * 3600000
 
 function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): number[] {
   const r = ev.rrule!
   const interval = Math.max(1, +(r.INTERVAL ?? 1) || 1)
   const count = r.COUNT ? +r.COUNT : null
+  const tzid = ev.startProp.params.TZID
+  const base = parseDtValue(ev.startProp.value)!
+  const baseParts = base.parts
+  const baseUtcFlag = base.utc
+  /* a wall-clock date + time in the series' own zone (its TZID, UTC for a Z
+     start, the device for a floating or date-only start) → the instant */
+  const inZone = (parts: DtParts) => partsToEpoch(parts, tzid, baseUtcFlag)
+
   let untilMs = Infinity
   if (r.UNTIL) {
     const dv = parseDtValue(r.UNTIL)
-    if (dv) untilMs = partsToEpoch(dv.parts, undefined, dv.utc || !dv.dateOnly === false)
+    if (dv) {
+      /* a date-only UNTIL names a DAY, inclusive: the series runs through its
+         end in the series' own zone (RFC 5545) — read as UTC midnight it cut
+         the last occurrence anywhere west of UTC */
+      untilMs = dv.dateOnly
+        ? inZone({ ...dv.parts, h: 23, mi: 59, s: 59 })
+        : dv.utc
+          ? partsToEpoch(dv.parts, undefined, true)
+          : inZone(dv.parts)
+    }
   }
-  const tzid = ev.startProp.params.TZID
-  const baseParts = parseDtValue(ev.startProp.value)!.parts
-  const baseUtcFlag = parseDtValue(ev.startProp.value)!.utc
 
   const days =
     r.FREQ === 'WEEKLY'
@@ -296,19 +312,26 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
         : null
       : null
 
-  const startDay = new Date(ev.start)
-  startDay.setHours(0, 0, 0, 0)
-  const baseDow = (new Date(ev.start).getDay() + 6) % 7
+  /* the walk steps CALENDAR dates from the series' own start date: its
+     weekdays (BYDAY, the start weekday, INTERVAL weeks from the start's week)
+     belong to its zone, never the device's — a Kiritimati Monday is a UTC
+     Sunday. UTC date arithmetic is only a DST-free calendar here, so a step is
+     exactly one date (24h steps repeated a date on a fall-back night). */
+  const dateAt = (i: number) => new Date(Date.UTC(baseParts.y, baseParts.mo - 1, baseParts.d + i))
+  const baseDow = (dateAt(0).getUTCDay() + 6) % 7
   const wanted = days && days.length ? days : [baseDow]
 
   const out: number[] = []
   let occIndex = 0
   const hardStop = 800 // bounded walk (~2.2 years of days)
   for (let i = 0; i < hardStop; i++) {
-    const dayMs = startDay.getTime() + i * DAY_MS
-    if (dayMs > windowEndMs && (count == null || occIndex >= count)) break
-    const d = new Date(dayMs)
-    const dow = (d.getDay() + 6) % 7
+    const date = dateAt(i)
+    /* past the window once even the earliest zone's midnight (UTC+14) of this
+       date is — a cheap bound, no zone lookup per walked day */
+    if (date.getTime() - EARLIEST_MIDNIGHT_MS > windowEndMs && (count == null || occIndex >= count))
+      break
+    const ymd = { y: date.getUTCFullYear(), mo: date.getUTCMonth() + 1, d: date.getUTCDate() }
+    const dow = (date.getUTCDay() + 6) % 7
 
     let hit: boolean
     if (r.FREQ === 'DAILY') {
@@ -320,11 +343,7 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
     if (!hit) continue
 
     /* occurrence keeps the series' wall-clock time in its own zone (DST-safe) */
-    const occEpoch = partsToEpoch(
-      { ...baseParts, y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate() },
-      tzid,
-      baseUtcFlag
-    )
+    const occEpoch = inZone({ ...baseParts, ...ymd })
     if (occEpoch < ev.start - 60000) continue
     if (occEpoch > untilMs) break
     occIndex++
