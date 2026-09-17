@@ -1064,7 +1064,7 @@ export function dayEndMin(blocks: Block[], dayKey: string): number {
 export interface LooseThreads {
   /** background blocks actually started and inside their window right now */
   running: Block[]
-  /** focus commitments whose window passed today without completion */
+  /** the owner's own focus commitments whose window passed today without completion */
   slipped: Block[]
   /** interrupt follow-ups: open blocks some rolled block points at (rolledToId) */
   paused: Block[]
@@ -1073,9 +1073,10 @@ export interface LooseThreads {
 }
 
 /** A pure derived query — nothing here is persisted, so it can never go
-    stale. Optional invites never slip (they hold no commitment), and the
-    groups may overlap by design: membership is per-definition, not a
-    partition. */
+    stale. Optional invites never slip (they hold no commitment), nor does the
+    scaffolding MEW placed itself (a seeded meal, a pacing breather: #123) —
+    the rail is the owner's own loose ends, never MEW's. The groups may overlap
+    by design: membership is per-definition, not a partition. */
 export function looseThreads(
   blocks: Block[],
   captures: Capture[],
@@ -1093,7 +1094,12 @@ export function looseThreads(
   )
   const slipped = day.filter(
     (b) =>
-      b.status === 'open' && !isBackground(b) && !b.optional && !isAllDay(b) && b.endMin < nowMin
+      b.status === 'open' &&
+      !isBackground(b) &&
+      !b.optional &&
+      !isAllDay(b) &&
+      !b.placedBy &&
+      b.endMin < nowMin
   )
   const rolledTargets = new Set(blocks.map((b) => b.rolledToId).filter((id): id is string => !!id))
   const paused = blocks.filter((b) => b.status === 'open' && rolledTargets.has(b.id))

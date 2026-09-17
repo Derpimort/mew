@@ -62,6 +62,14 @@ the others re-sync with a keep-both, which once re-introduced seven whole sectio
 PR that touches `CHANGELOG.md`; a duplicate fails the PR before promotion turns `[Unreleased]` into the
 release body. Its cases live beside the version guard's (`pnpm --dir desktop test`).
 
+That file is **hand-edited, never formatted.** `pnpm format:check` is `prettier . --check` run from
+`app/`, so the root `CHANGELOG.md` sits outside the format gate on purpose. Running prettier over it
+rewrites the whole file — a blank line after every heading, `*emphasis*` into `_emphasis_`, re-wrapped
+continuation lines — which collides with every other open PR's bullet and, worse, edits the sections
+of releases that already shipped. Their text is what every audit of these notes rests on, so it stays
+byte-identical once a version is cut. Match the surrounding style by hand (a `###` heading followed
+straight by its bullets) and check the edit with `node desktop/scripts/check-changelog.mjs CHANGELOG.md`.
+
 Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and changelog sections stand.
 
 ## Cutting a release (maintainer)

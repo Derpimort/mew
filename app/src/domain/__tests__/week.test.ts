@@ -96,6 +96,31 @@ describe('week model', () => {
     })
   })
 
+  it('a day holding only MEW’s own scaffolding is not clear (#144 review M4)', () => {
+    /* the scaffolding is filtered out of the day's items, so what keeps an
+       all-scaffolding day from reading "clear, rest earned" is the length guard */
+    const lunch = mk({
+      title: 'Lunch',
+      tag: 'private',
+      startMin: 12 * 60,
+      endMin: 12 * 60 + 45,
+      placedBy: 'sustenance',
+    })
+    const dinner = mk({
+      title: 'Dinner',
+      tag: 'private',
+      startMin: 18 * 60 + 30,
+      endMin: 19 * 60 + 30,
+      placedBy: 'sustenance',
+    })
+    expect(dayClear([lunch, dinner], D)).toBe(false)
+    /* with one of the owner's own blocks, done, the day is clear even though
+       the seeded meals are still open */
+    const own = mk({ startMin: 9 * 60, endMin: 10 * 60 })
+    expect(dayClear(complete([own, lunch, dinner], own.id, 0), D)).toBe(true)
+    expect(dayClear([own, lunch, dinner], D)).toBe(false)
+  })
+
   it('dayClear ignores rest blocks and needs every task done', () => {
     const t1 = mk({})
     const t2 = mk({ startMin: 11 * 60, endMin: 12 * 60 })
