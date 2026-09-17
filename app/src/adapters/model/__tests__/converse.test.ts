@@ -103,6 +103,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('giveRoom')
       return `Gave your ${fc} blocks room.`
     }),
+    split: vi.fn((q) => {
+      calls.push('split')
+      return `Split ${q}.`
+    }),
   }
 }
 
@@ -161,8 +165,8 @@ describe('rules adapter — converse', () => {
   })
 })
 
-describe('rules adapter — the rescue split ask (#286)', () => {
-  it('composes the two existing tools: shrink to the gap, place the kept tail', async () => {
+describe('rules adapter — the rescue split ask (#286), through the one split executor (#73)', () => {
+  it("runs exec.split once with the chip's exact gap and kept length — no second tool call", async () => {
     const exec = mockExec()
     const reply = await collect(
       createRulesAdapter(NOW).converse(
@@ -171,20 +175,16 @@ describe('rules adapter — the rescue split ask (#286)', () => {
         exec
       )
     )
-    expect(exec.calls).toEqual(['edit', 'plan'])
-    expect(exec.edit).toHaveBeenCalledWith('deck', { endMin: 13 * 60 })
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(places[0]).toMatchObject({
-      title: 'deck (part 2)',
-      tag: 'work',
-      dayOffset: 0,
-      startMin: 13 * 60 + 45,
-      durationMin: 45,
-    })
-    expect(reply).toBe('Updated deck. Done — placed 1, freed 0.')
+    expect(exec.calls).toEqual(['split'])
+    expect(exec.split).toHaveBeenCalledWith(
+      'deck',
+      { startMin: 13 * 60, endMin: 13 * 60 + 45 },
+      { tailMin: 45, dayOffset: 0 }
+    )
+    expect(reply).toBe('Split deck.')
   })
 
-  it('a future-day split carries its day into the placement', async () => {
+  it('a future-day split carries its day', async () => {
     const exec = mockExec()
     await collect(
       createRulesAdapter(NOW).converse(
@@ -193,24 +193,25 @@ describe('rules adapter — the rescue split ask (#286)', () => {
         exec
       )
     )
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(places[0]).toMatchObject({ dayOffset: 3, startMin: 825 }) // Tue → Friday
+    const [, gap, opts] = (exec.split as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(gap).toEqual({ startMin: 780, endMin: 825 })
+    expect(opts).toMatchObject({ tailMin: 45, dayOffset: 3 }) // Tue → Friday
   })
 
-  it('a missed block stops the split — no stray tail is ever placed', async () => {
+  it("a which-block chip re-asks with the target's time, and it pins the target", async () => {
     const exec = mockExec()
-    ;(exec.edit as ReturnType<typeof vi.fn>).mockReturnValueOnce(
-      `I couldn't find "deck" to change — say it another way?`
-    )
-    const reply = await collect(
+    await collect(
       createRulesAdapter(NOW).converse(
-        [{ role: 'user', text: 'split the deck around 13:00-13:45, keep 45m after' }],
+        [{ role: 'user', text: 'split the deck at 12:00 around 13:00-13:45, keep 45m after' }],
         ctx,
         exec
       )
     )
-    expect(exec.plan).not.toHaveBeenCalled()
-    expect(reply).toMatch(/couldn't find/)
+    expect(exec.split).toHaveBeenCalledWith(
+      'deck',
+      { startMin: 780, endMin: 825 },
+      { tailMin: 45, dayOffset: 0, at: '12:00' }
+    )
   })
 })
 

@@ -4,7 +4,7 @@
 
 import { insightsCard } from '../../domain/insights'
 import { ritualTasks } from '../../domain/nudges/weekly'
-import { inferTag, parseCommand as ruleParse } from '../../domain/parse'
+import { parseCommand as ruleParse } from '../../domain/parse'
 import { normalizeRrule } from '../../domain/recurrence'
 import { parseSplitAsk, type SplitAsk } from '../../domain/rescue'
 import { RITUAL_ASK } from '../../domain/chipEffect' // #94: one home with the chip resolver
@@ -150,6 +150,24 @@ export function runIntent(
       /* #335: copy to another day/time — an ambiguous source name asks with
          chips; the keyless floor stays quiet and the chips ARE the reply. */
       return quietIfChoices(exec.duplicate(intent.query ?? '', intent.duplicate ?? {}, intent.at))
+    case 'split': {
+      /* #73: split a block around a clock range or another block. The same
+         executor the rescue chip's split runs, so an ambiguous name or a series
+         block asks with chips (CHOICES_POSTED) exactly as edit does. */
+      const sp = intent.split ?? {}
+      const around =
+        sp.gapStartMin != null && sp.gapEndMin != null
+          ? { startMin: sp.gapStartMin, endMin: sp.gapEndMin }
+          : { query: sp.aroundQuery ?? '', ...(sp.aroundAt ? { at: sp.aroundAt } : {}) }
+      return quietIfChoices(
+        exec.split(intent.query ?? '', around, {
+          at: intent.at,
+          tailMin: sp.tailMin,
+          dayOffset: sp.dayOffset,
+          scope: intent.seriesScope,
+        })
+      )
+    }
     case 'relmove':
       /* #335: a relative nudge (earlier/later/next_day/next_free) — same chip
          behavior on an ambiguous name as a move. */
@@ -206,13 +224,13 @@ export function runIntent(
   }
 }
 
-/** Execute a rescue split ask (#286) by composing the two EXISTING tools —
-    shrink the block to end where the gap opens (edit), then place the kept
-    tail after it (plan) — the same two calls a keyed model makes from the
-    same words. No new mutation path: the executor's tools stay the only way
-    the week changes. The tail gets a distinct base title because execPlan
-    de-dups on exact base (#89) and would otherwise MOVE the piece just
-    shrunk instead of placing a second one. */
+/** Execute a rescue split ask (#286): "split the deck around 13:00-13:45, keep
+    45m after". It runs the one split executor (#73) with the chip's exact
+    numbers (the gap to vacate, the length to keep after it, the day), the same
+    door a typed "split the deck around the 1pm call" and the keyed split_block
+    tool use, so the three can never drift apart. The executor never places a
+    second piece unless the first was found and split, and an ambiguous name or
+    a series block posts chips (the floor stays quiet; the chips ARE the reply). */
 export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
   const dayOffset =
     ask.dayWord == null
@@ -220,26 +238,15 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
       : ask.dayWord === 'tomorrow'
         ? 1
         : (weekdayOffset(ask.dayWord, now) ?? 0)
-  const shrunk = exec.edit(ask.query, { endMin: ask.gapStartMin })
-  /* execEdit's miss shape is stable ("I couldn't find …") and pinned in tests:
-     with no block to shrink, placing a stray tail would double time — stop. An
-     ambiguous target (#334) posts chips and returns CHOICES_POSTED; the split is
-     off until the user picks, so bail there too rather than place a lone tail. */
-  if (shrunk.startsWith(`I couldn't find`) || shrunk.startsWith(CHOICES_POSTED)) return shrunk
-  const placed = exec.plan(
-    [
-      {
-        title: `${ask.query} (part 2)`,
-        tag: inferTag(ask.query),
-        dayOffset,
-        startMin: ask.gapEndMin,
-        durationMin: ask.tailMin,
-        protected: true,
-      },
-    ],
-    []
+  /* a which-block chip re-asks with the target's time ("the Deck polish at 9:00") */
+  const pinned = ask.query.match(/^(.+?)\s+at\s+(\d{1,2}:\d{2})$/)
+  return quietIfChoices(
+    exec.split(
+      pinned ? pinned[1] : ask.query,
+      { startMin: ask.gapStartMin, endMin: ask.gapEndMin },
+      { tailMin: ask.tailMin, dayOffset, ...(pinned ? { at: pinned[2] } : {}) }
+    )
   )
-  return `${shrunk} ${placed}`
 }
 
 /* "plan my week" / "plan the week" — the weekly ritual's ask (#304), typed or

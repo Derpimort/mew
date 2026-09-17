@@ -72,6 +72,15 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   that time. Meetings, calls and calendar events are still never covered: MEW names them and asks
   for another time.
 
+### Split a block around a meeting
+- Say "split the deck around the 1pm call" (or give the time, "around 13:00-13:45") and the block
+  becomes two with that time free between them, keeping its whole length: the first part ends as
+  the call starts and part 2 picks up when it ends. A calendar event is never split itself, a
+  repeating block asks this one, the ones after or the whole series first, and part 2 lands only
+  where it fits: a fixed or protected block there leaves everything as it is, and MEW names it.
+- The "split around it" choice MEW offers when a meeting lands on your work now runs the same
+  split, and part 2 keeps the block's own flexibility.
+
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
   now asks with up to three tappable choices: move the work to its next clean slot, drop the

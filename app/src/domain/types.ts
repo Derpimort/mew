@@ -485,6 +485,7 @@ export interface ScheduleIntent {
     | 'resize'
     | 'duplicate'
     | 'relmove'
+    | 'split'
     | 'remember'
     | 'chat'
     | 'insights'
@@ -567,6 +568,22 @@ export interface ScheduleIntent {
       one day on at the same clock, 'next_free' relocates to the soonest clear
       slot from now. The target is the `query` (+ `at`). */
   relmove?: { direction: 'earlier' | 'later' | 'next_day' | 'next_free'; amountMin?: number }
+  /** split (#73): split the `query` block (+ `at`/`seriesScope` like edit) into
+      two around a gap. The gap is a clock range (gapStartMin/gapEndMin) or
+      another block to split around (aroundQuery + aroundAt, e.g. "the 1pm
+      call"). dayOffset pins the day when the ask names one. The first piece
+      ends where the gap opens; the second picks up where it closes and keeps
+      the rest of the length. */
+  split?: {
+    gapStartMin?: number
+    gapEndMin?: number
+    aroundQuery?: string
+    aroundAt?: string
+    dayOffset?: number
+    /** the rescue chip's explicit length to keep after the gap ("keep 45m after"),
+        carried when a split chip re-asks; absent ⇒ the rest of the block's length */
+    tailMin?: number
+  }
   /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
       blocks of this focus class up to how the kind really runs. The union is
       spelled inline (not imported from energy) to keep types.ts a leaf. */
