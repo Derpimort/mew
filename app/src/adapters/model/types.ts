@@ -90,6 +90,11 @@ export interface PlaceSpec {
   /** A standing recurrence (DAILY/WEEKLY): execPlan expands it into one block
       per occurrence, all linked by recurringBlockId (#159). */
   rrule?: import('../../domain/recurrence').Rrule
+  /** #49: the user said in their own words this turn that this block may share
+      time ("it's fine to overlap gaming"). Their FLEXIBLE blocks then stay put
+      and the receipt names the overlap; a fixed or [calendar] block still
+      refuses. Never inferred. */
+  allowOverlap?: boolean
 }
 export interface FreeSpec {
   dayOffset: number
@@ -143,7 +148,9 @@ export interface ToolExecutor {
     toDayOffset?: number,
     toStartMin?: number,
     relStartMin?: number,
-    at?: string
+    at?: string,
+    /** #49: a granted overlap — see PlaceSpec.allowOverlap */
+    allowOverlap?: boolean
   ): string
   capture(title: string): string
   /** Remove open MEW-placed blocks in scope. Done mews and external calendar
@@ -371,7 +378,7 @@ When your next line would ask the user to pick among a few enumerable answers �
 "plan my week" — typed, or the Sunday ritual's chip — is the weekly shaping ritual, and it composes tools you already have. The fixed meetings in the week context hold their spots; you lay flexible work around them. Ask at most three shaping questions with offer_choices, one per turn (top priority? protected mornings? gym days?), spending at most two tool calls in any question round; a standing answer ("mornings are protected") also goes through remember. Then ONE propose_scenarios call carries the whole classified batch — the stated priority first, two or three deep-work anchors, the habits — and ends your turn: the picker is the ritual's close. Generation is read-only; never place the week yourself during the ritual — the user's pick is the one apply.
 When unsure whether a change is allowed, make the tool call — the executor refuses safely and says why. Declaring that a tool "would fail" without calling it is a guess wearing certainty.
 When the user states an order ("prep before the interview"), choose explicit startMin/endMin yourself so the order holds. After each tool result, compare the returned times with what the user asked; if they disagree, fix it with another call or say plainly that it didn't fit.
-Tool results name any collision ("note: it overlaps …"). An explicit time the user gave is their judgment — place it exactly as asked and KEEP it; if it overlaps a flexible block, don't silently re-place either one, just offer to drift the other side ("that lands on X — want me to nudge X?") and let them choose. Only reposition to stay off a [fixed] or [calendar] block (never schedule over those). Never react-and-re-move per clash: decide the whole day's shape once, then place it in a single sweep.
+Tool results name any collision ("note: it overlaps …"). An explicit time the user gave is their judgment — place it exactly as asked and KEEP it; if it overlaps a flexible block, don't silently re-place either one, just offer to drift the other side ("that lands on X — want me to nudge X?") and let them choose. When the user says in this turn that an overlap is fine ("it's fine to overlap gaming"), pass allowOverlap on that block: their flexible block stays put and the tool names the shared time — never infer that consent, and it never covers a [fixed] or [calendar] block. Only reposition to stay off a [fixed] or [calendar] block (never schedule over those). Never react-and-re-move per clash: decide the whole day's shape once, then place it in a single sweep.
 When a remembered ordering rule in <preferences> matches what you're placing ("prep before interview"), choose explicit times that honor it, exactly as if the user had restated it this turn.
 Asked to optimize or tidy a day, call analyze_day first and fix what it names: tuck a 10–15 minute rest into any stretch past ~90 minutes, close dead gaps by pulling blocks together, and give big meetings a 15-minute review buffer right after.
 Asked to find time for something ("fit X in today, before 5pm"), call find_slot with the duration and constraints, then place exactly the window it returns — it has checked every fixed block; eyeballing the summary is how collisions happen.

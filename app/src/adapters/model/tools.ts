@@ -174,6 +174,11 @@ export const MEW_TOOLS: NeutralTool[] = [
                 description:
                   'Hard deadline in minutes from midnight, independent of the end time ("due by 1pm" = 780). MEW watches the latest start.',
               },
+              allowOverlap: {
+                type: 'boolean',
+                description:
+                  "Set true ONLY when the user said in their own words this turn that this block may overlap ('it is fine to overlap gaming', 'let it run over lunch'). Their flexible blocks then stay put and the reply names the shared time; a fixed or [calendar] block still refuses. Never infer it, and never set it to get around a clash.",
+              },
               recurrence: {
                 type: 'object',
                 description:
@@ -265,6 +270,11 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'string',
           description:
             "The block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to move. Distinct from toStartMin (its new start).",
+        },
+        allowOverlap: {
+          type: 'boolean',
+          description:
+            "Set true ONLY when the user said in their own words this turn that this block may overlap ('it is fine to overlap gaming', 'let it run over lunch'). Their flexible blocks then stay put and the reply names the shared time; a fixed or [calendar] block still refuses. Never infer it, and never set it to get around a clash.",
         },
       },
       required: ['query'],
@@ -695,6 +705,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           attention: p.attention === 'background' ? ('background' as const) : undefined,
           due: optInt(p.dueMin, 0, 1439),
           rrule: parseRecurrence(p.recurrence),
+          allowOverlap: p.allowOverlap === true ? true : undefined, // #49: only an explicit true
         }))
       const frees = (Array.isArray(o.frees) ? o.frees : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -714,7 +725,9 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         optInt(o.toDayOffset, 0, 13),
         optInt(o.toStartMin, 0, 1439),
         undefined, // relStartMin: a keyed tool call always sends an absolute target
-        atArg(o.at)
+        atArg(o.at),
+        // #49: only an explicit true grants it; with none the call is exactly as before
+        ...(o.allowOverlap === true ? ([true] as const) : [])
       )
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))

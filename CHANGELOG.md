@@ -148,6 +148,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   routine inbox sweep isn't called a deep-work block one message before the offer. "Give them
   room" changes exactly the blocks it named, and the confirmation names them too.
 
+### Overlap on your say-so
+- Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it places
+  the block exactly there, leaves your flexible block where it is, and says the two share that time.
+  Meetings, calls and calendar events are still never covered: MEW names them and asks for another time.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
