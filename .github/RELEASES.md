@@ -6,7 +6,7 @@ How MEW ships, and how a release entry becomes a GitHub Release.
 
 - **Desktop** (the Tauri shell in `desktop/`) is the versioned artifact. A git tag matching
   `v*` drives [`.github/workflows/desktop.yml`](workflows/desktop.yml): each platform in the
-  matrix (Linux, Windows) builds its installer and an updater manifest into a shared **draft**
+  matrix (Linux, Windows, macOS) builds its installer and an updater manifest into a shared **draft**
   release, then the `publish` job flips that draft live once every platform's assets are in.
 - **Web** (`app/dist`) ships from the same tree, dockerized and deployed separately — the
   multi-stage image runs tests and typecheck inside the build, then serves the static bundle on
@@ -17,26 +17,68 @@ How MEW ships, and how a release entry becomes a GitHub Release.
 Both surfaces share one source of release notes: the [`CHANGELOG.md`](../CHANGELOG.md) at the
 repo root, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## Versioning: CalVer (since 2026.9.0)
+
+MEW's desktop version is the **calendar**: `YYYY.M.PATCH`. It is still a valid semver, so the
+updater keeps ordering releases correctly (`2026.9.0` > `0.7.0`).
+
+| Piece | Shape | Example: first release of September 2026 |
+|---|---|---|
+| RC branch | `vYYYY.MM-rcN` — month zero-padded, `N` counts the RCs | `v2026.09-rc1` |
+| `version` in `desktop/src-tauri/tauri.conf.json` on the RC | `YYYY.M.PATCH-rc.N` | `2026.9.0-rc.1` |
+| `version` after the promotion PR (on `main`) | `YYYY.M.PATCH` | `2026.9.0` |
+| Release tag | `vYYYY.M.PATCH`, must equal the config | `v2026.9.0` |
+| `bundle.windows.wix.version` (the MSI's version) | `(YYYY-2000).M.PATCH`, prerelease dropped | `26.9.0` |
+| `version` in `desktop/package.json` | mirrors the config, same string | `2026.9.0-rc.1` → `2026.9.0` |
+
+- **No leading zero in the version's month** (`2026.9.0`, never `2026.09.0`): semver forbids
+  leading zeros in numeric identifiers and Tauri parses the field as semver. The RC *branch* keeps
+  the zero-padded month because it is a label, not a version.
+- **`PATCH` counts the releases within the month.** The second September release: RC branch
+  `v2026.09-rc2`, config `2026.9.1-rc.1` → promotion `2026.9.1`, tag `v2026.9.1`, MSI `26.9.1`.
+  The first October release resets to `2026.10.0` (branch `v2026.10-rc1`, MSI `26.10.0`).
+- **The MSI needs its own version.** WiX's ProductVersion caps the major and minor at 255, so a
+  bare `2026` fails the Windows build. `bundle.windows.wix.version` overrides it with
+  `(YYYY-2000).M.PATCH`. NSIS, deb and dmg take the full CalVer version.
+- **When a new month's RC is cut**, set `version` = `YYYY.M.PATCH-rc.1` **and**
+  `bundle.windows.wix.version` = `(YYYY-2000).M.PATCH` together (the guard fails on a mismatch).
+  Both stay through the RC; the promotion PR only strips `-rc.N` from `version` — the MSI
+  version already has no prerelease, so it does not move at promotion.
+
+`desktop/scripts/check-release-version.mjs` enforces all of it, and every mode first checks the
+CalVer shape + the MSI mapping: `--shape` runs in ci.yml's `release-guard` job on every PR that
+touches `tauri.conf.json`, `desktop/package.json` or the guard (together with the guard's own
+cases), and before every desktop build (tag or dry-run); `--promotion` on the `v*-rc*` → `main` PR
+(also rejects a prerelease); `--tag vYYYY.M.PATCH` on the tag push (also requires a well-formed tag
+equal to the config). Its cases live in `desktop/scripts/__tests__/check-release-version.test.mjs`
+(`pnpm --dir desktop test`).
+
+Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and changelog sections stand.
+
 ## Cutting a release (maintainer)
 
 1. **Move `[Unreleased]` into a version.** In `CHANGELOG.md`, rename the `[Unreleased]` heading
-   to the new version with today's date (`## [0.1.10] — 2026-06-19`), then open a fresh empty
+   to the new version with today's date (`## [2026.9.0] — 2026-09-18`), then open a fresh empty
    `[Unreleased]` above it. Update the link-reference block at the bottom: add the new version's
-   `compare` link and re-point `[Unreleased]` to `vX.Y.Z...HEAD`.
-2. **Bump the shell version** to match in `desktop/tauri.conf.json` and `desktop/package.json`.
-3. **Tag and push:**
+   `compare` link and re-point `[Unreleased]` to `vYYYY.M.PATCH...HEAD`.
+2. **Bump the shell version to the clean `YYYY.M.PATCH`** in the promotion PR, before any tag:
+   `version` in `desktop/src-tauri/tauri.conf.json` and in `desktop/package.json` (strip the
+   `-rc.N`). `bundle.windows.wix.version` was set at the RC cut and stays. Then
+   `node desktop/scripts/check-release-version.mjs --promotion` must pass — the installers and
+   the updater manifest are stamped from the config, not the tag.
+3. **Tag and push** (the tag must equal the config; `--tag` re-checks it before building):
    ```sh
-   git tag v0.1.10
-   git push origin v0.1.10
+   git tag v2026.9.0
+   git push origin v2026.9.0
    ```
    The tag triggers the `release` matrix (installers + updater manifest into a draft) and the
    live model-contract `smoke` job.
-4. **Set the GitHub Release description.** CI names the release `MEW vX.Y.Z`. Paste that
+4. **Set the GitHub Release description.** CI names the release `MEW vYYYY.M.PATCH`. Paste that
    version's `CHANGELOG.md` section as the release body so users see the same story everywhere:
    ```sh
    # after `publish` flips the draft live (or against the draft, before)
-   awk '/^## \[0.1.10\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
-     | gh release edit v0.1.10 --repo Derpimort/mew --notes-file -
+   awk '/^## \[2026.9.0\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
+     | gh release edit v2026.9.0 --repo Derpimort/mew --notes-file -
    ```
    The `awk` slices out just that version's block (everything between its `## [version]` heading
    and the next `## [`), which is exactly the GitHub Release body.

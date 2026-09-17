@@ -30,12 +30,12 @@ All `gh`/`git`/`curl` on this box: prefix with `RES_OPTIONS=use-vc` if DNS is fl
 Flagged form (any subset, any order of steps):
 
 ```
-/release --version 0.1.5 --steps version,tag,sidecar,app,installers,release --push --publish --latest
+/release --version 2026.9.0 --steps version,tag,sidecar,app,installers,release --push --publish --latest
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--version X.Y.Z` | current `tauri.conf.json` version | target version for the bump/tag/release |
+| `--version YYYY.M.PATCH` | current `tauri.conf.json` version | target version for the bump/tag/release — CalVer, no leading zero in the month (`2026.9.0`); scheme in `.github/RELEASES.md` |
 | `--steps a,b,c` | `version,tag,sidecar,app,installers,release` | which steps to run (comma list) |
 | `--push` | off | push the tag to origin (CI would then ALSO run — see note) |
 | `--draft` / `--publish` | `--publish` | create the GitHub Release as draft or published (matches `desktop.yml`'s draft? no — CI drafts; choose deliberately) |
@@ -103,14 +103,19 @@ Also preflight the build toolchains the chosen steps need: `node`/`pnpm` (app), 
 ## The steps (run only those in `--steps`)
 
 ### 1 · version — bump in sync
-Tauri reads the bundle version from `tauri.conf.json`; keep `desktop/package.json` identical.
+Tauri reads the bundle version from `tauri.conf.json`; keep `desktop/package.json` identical. The
+Windows MSI cannot take a `2026` major (WiX caps it at 255), so `bundle.windows.wix.version` moves
+**together** with `version`, to `(YYYY-2000).M.PATCH` (`2026.9.0` → `26.9.0`).
 
 ```bash
-V=<target>
-# edit the single top-level "version" in each file (verify the diff after)
-sed -i.bak 's/"version": *"[^"]*"/"version": "'"$V"'"/' "$TAURI_CONF" && rm "$TAURI_CONF.bak"
-sed -i.bak 's/"version": *"[^"]*"/"version": "'"$V"'"/' "$DESK_PKG"  && rm "$DESK_PKG.bak"
-git --no-pager diff -- "$TAURI_CONF" "$DESK_PKG"          # confirm ONLY the version moved
+V=<target>                                                # YYYY.M.PATCH, e.g. 2026.9.0
+W=$(node -e 'const [y,m,p]=process.argv[1].split("-")[0].split(".");console.log(`${y-2000}.${m}.${p}`)' "$V")   # 2026.9.0 -> 26.9.0 (an rc target drops its -rc.N)
+# the top-level "version" is the only key at 2-space indent; the MSI version sits under bundle.windows.wix
+sed -i.bak 's/^  "version": *"[^"]*"/  "version": "'"$V"'"/' "$TAURI_CONF" && rm "$TAURI_CONF.bak"
+sed -i.bak '/"wix": {/,/}/ s/"version": *"[^"]*"/"version": "'"$W"'"/' "$TAURI_CONF" && rm "$TAURI_CONF.bak"
+sed -i.bak 's/^  "version": *"[^"]*"/  "version": "'"$V"'"/' "$DESK_PKG"  && rm "$DESK_PKG.bak"
+node desktop/scripts/check-release-version.mjs --shape    # CalVer shape + MSI mapping, before anything builds
+git --no-pager diff -- "$TAURI_CONF" "$DESK_PKG"          # confirm ONLY the versions moved
 ```
 Optional commit (only if the tree was clean): `git commit -am "desktop: bump to $V"`. Match CI's bump shape so local and CI releases are interchangeable.
 
