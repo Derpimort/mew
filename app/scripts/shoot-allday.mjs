@@ -1,4 +1,4 @@
-/* All-day lane proof (#27 slice 2): holidays, time off and birthdays are day
+/* All-day proof (#27 slices 2–3): holidays, time off and birthdays are day
    labels on a strip between the date header and 0:00 — never 24-hour blocks.
    Drives the __mewSimulatePull dev seam (the REAL pull path) against a served
    dist and fails loudly on any miss:
@@ -11,6 +11,12 @@
      · chips share the grid's single tab stop, walk in reading order, open the
        dock card (all day, no Done/Start/Move/Hold), and a nudge only speaks
      · zero text collisions across the collapsed and expanded lane
+   …and on the dial (slice 3):
+     · today's entries are pill badges above the centre — never ring wedges,
+       never the countdown — and the row stays inside the inner ring
+     · hover, keyboard focus or an open card lights the WHOLE ring
+     · badges lead the single tab stop; Space opens the all-day card
+     · a crowded day folds to "+N more" and opens in place
    Usage: node scripts/shoot-allday.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
@@ -71,8 +77,8 @@ console.log('build identity:', wantSrc)
 /* the text-collision net, the same rules as shoot-overlap.mjs: clip to
    overflow ancestors (ellipsis never phantom-collides), inset line leading,
    skip hidden/zero-area runs — so it reports what the eye sees */
-const collisions = () =>
-  page.evaluate(() => {
+const collisions = (rootSel = '.nxs1') =>
+  page.evaluate((sel) => {
     const hidden = (el) => {
       for (let n = el; n && n !== document.body; n = n.parentElement) {
         const s = getComputedStyle(n)
@@ -98,7 +104,7 @@ const collisions = () =>
       }
       return box
     }
-    const root = document.querySelector('.nxs1')
+    const root = document.querySelector(sel)
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
     const boxes = []
     let owner = 0
@@ -129,7 +135,7 @@ const collisions = () =>
         if (ix > 2 && iy > 2) hits.push(`"${a.txt}" ⟂ "${b.txt}"`)
       }
     return hits
-  })
+  }, rootSel)
 
 /* 1 · stage: the seeded week, in the Week view */
 phase = 'stage'
@@ -408,7 +414,169 @@ assert(whiteHits.length === 0, `text collisions (Pet White): ${whiteHits.join(';
 await page.screenshot({ path: `${outDir}/allday-week-white.png` })
 await page.evaluate(() => window.__mewConfigure?.({ themeMode: 'carbon' }))
 
+/* 7 · the dial (slice 3): today's all-day entries are pill badges above the
+   centre — never ring wedges, never the countdown — and one lights the WHOLE
+   ring. A fresh listing (the calendar's whole truth) leaves today with exactly
+   a holiday and a span that runs yesterday → tomorrow. */
+phase = 'dial'
+const todayKey = await page.evaluate(() =>
+  document.querySelector('.wk-grid .nxb-col.today')?.getAttribute('data-daykey')
+)
+assert(todayKey, 'could not read today from the week grid')
+await page.evaluate(
+  (events) => window.__mewSimulatePull?.(events),
+  [
+    allDay('dial-hol', 'Civic Holiday', todayKey),
+    allDay('dial-span', 'OOO — offsite', addDays(todayKey, -1), addDays(todayKey, 1)),
+  ]
+)
+await page.click('.seg2 button:has-text("Focus")')
+await page.waitForSelector('.dial-badges', { timeout: 5000 })
+await page.mouse.move(8, 830) // park the pointer off the stage: the face at rest
+await page.waitForTimeout(700)
+
+const dial = () =>
+  page.evaluate(() => {
+    const badges = [...document.querySelectorAll('.dial-badge:not(.more)')]
+    const arcs = [...document.querySelectorAll('.nx-stage svg [role="button"]')]
+    /* the drawn inner ring, read from the live SVG (the overlap gate's method) */
+    const ring = [...document.querySelectorAll('.nx-stage svg circle[fill="none"]')]
+      .filter((c) => (c.getAttribute('stroke') ?? '').includes('--line2'))
+      .sort((a, b) => a.r.baseVal.value - b.r.baseVal.value)[0]
+    const m = ring.getScreenCTM()
+    const cx = m.a * ring.cx.baseVal.value + m.c * ring.cy.baseVal.value + m.e
+    const cy = m.b * ring.cx.baseVal.value + m.d * ring.cy.baseVal.value + m.f
+    const r = ring.r.baseVal.value * Math.hypot(m.a, m.b)
+    const farthest = Math.max(
+      0,
+      ...badges.flatMap((el) => {
+        const b = el.getBoundingClientRect()
+        return [
+          [b.left, b.top],
+          [b.right, b.top],
+          [b.left, b.bottom],
+          [b.right, b.bottom],
+        ].map(([x, y]) => Math.hypot(x - cx, y - cy))
+      })
+    )
+    return {
+      badges: badges.map((el) => ({
+        text: el.textContent?.trim() ?? '',
+        label: el.getAttribute('aria-label') ?? '',
+        tab: el.getAttribute('tabindex'),
+      })),
+      arcNames: arcs.map((a) => a.getAttribute('aria-label') ?? ''),
+      /* the roving stop spans arcs + badges; the demote chip is its own stop by design */
+      stops: [
+        ...document.querySelectorAll(
+          '.nx-stage svg [role="button"][tabindex="0"], .dial-badge[tabindex="0"]'
+        ),
+      ].length,
+      task: document.querySelector('.clk-center .nx-task')?.textContent?.trim() ?? '',
+      meta: document.querySelector('.clk-center .nx-meta')?.textContent?.trim() ?? '',
+      lit: !!document.querySelector('.dial-wholeday'),
+      ring: Math.round(r),
+      farthest: Math.round(farthest),
+    }
+  })
+
+const rest = await dial()
+console.log('dial:', JSON.stringify(rest))
+assert(
+  JSON.stringify(rest.badges.map((b) => b.text)) === JSON.stringify(['OOO', 'Civic Holiday']),
+  `today's badges should read [OOO, Civic Holiday], got ${JSON.stringify(rest.badges.map((b) => b.text))}`
+)
+assert(
+  !rest.arcNames.some((n) => /civic holiday|^OOO/i.test(n)),
+  'an all-day entry is drawn as a ring wedge'
+)
+assert(!/civic holiday|ooo/i.test(rest.task), `the centre names an all-day entry: "${rest.task}"`)
+assert(!/until 23:59/i.test(rest.meta), `the countdown runs to 23:59: "${rest.meta}"`)
+assert(
+  /^OOO · all day, through \w+ · calendar$/.test(rest.badges[0].label),
+  `span badge name: "${rest.badges[0].label}"`
+)
+assert(
+  rest.badges[1].label === 'Civic Holiday · all day · calendar',
+  `badge name: "${rest.badges[1].label}"`
+)
+assert(rest.stops === 1, `badges and arcs must share ONE tab stop (got ${rest.stops})`)
+assert(!rest.lit, 'the whole ring is lit at rest')
+assert(
+  rest.farthest < rest.ring - 2,
+  `the badge row crosses the inner ring (corner at ${rest.farthest}px, ring ${rest.ring}px)`
+)
+const dialHits = await collisions('.nx-stage')
+assert(dialHits.length === 0, `text collisions (dial): ${dialHits.join('; ')}`)
+await page.screenshot({ path: `${outDir}/allday-dial.png` })
+
+/* hover lights the whole ring; leaving puts it out */
+await page.hover('.dial-badge >> text=Civic Holiday')
+await page.waitForTimeout(250)
+assert((await dial()).lit, 'hovering a badge does not light the whole ring')
+await page.screenshot({ path: `${outDir}/allday-dial-lit.png` })
+await page.mouse.move(8, 830)
+await page.waitForTimeout(250)
+assert(!(await dial()).lit, 'the whole-ring light outlives the hover')
+
+/* keyboard: badges lead the order, arrows walk them, Space opens the card */
+await page.locator('.dial-badge', { hasText: 'OOO' }).focus()
+await page.waitForTimeout(150)
+assert((await dial()).lit, 'a focused badge does not light the whole ring')
+await page.keyboard.press('ArrowRight')
+await page.waitForTimeout(200)
+const next = await page.evaluate(() => document.activeElement?.getAttribute('aria-label') ?? '')
+assert(
+  next === 'Civic Holiday · all day · calendar',
+  `→ from the first badge should reach the next, got "${next}"`
+)
+await page.keyboard.press(' ')
+await page.waitForSelector('.nx-card.center', { timeout: 3000 })
+const dialCard = await page.evaluate(() => {
+  const c = document.querySelector('.nx-card.center')
+  return {
+    title: c?.querySelector('.ct')?.textContent ?? '',
+    meta: c?.querySelector('.cm')?.textContent ?? '',
+    actions: [...(c?.querySelectorAll('.cacts button') ?? [])].map((b) => b.textContent?.trim()),
+  }
+})
+console.log('dial card:', JSON.stringify(dialCard))
+assert(
+  dialCard.title === 'Civic Holiday' && /^all day/.test(dialCard.meta),
+  'Space on a badge did not open its all-day card'
+)
+assert(dialCard.actions.length === 0, `a calendar all-day card offers actions: ${dialCard.actions}`)
+assert((await dial()).lit, 'an open badge card should keep the whole ring lit')
+await page.screenshot({ path: `${outDir}/allday-dial-card.png` })
+await page.keyboard.press('Escape')
+await page.waitForTimeout(250)
+assert(!(await page.$('.nx-card.center')), 'Escape on a badge did not close its card')
+
+/* a crowded day: two badges + "+2 more", opened in place */
+phase = 'dial-more'
+await page.evaluate(
+  (events) => window.__mewSimulatePull?.(events),
+  [
+    allDay('dial-hol', 'Civic Holiday', todayKey),
+    allDay('dial-span', 'OOO — offsite', addDays(todayKey, -1), addDays(todayKey, 1)),
+    allDay('dial-pay', 'Payday', todayKey),
+    allDay('dial-bday', "Sam's birthday", todayKey),
+  ]
+)
+await page.mouse.move(8, 830)
+await page.waitForTimeout(400)
+const more = page.locator('.dial-badges .dial-badge.more')
+assert((await more.textContent())?.trim() === '+2 more', `expected "+2 more" on the dial`)
+assert((await dial()).badges.length === 2, 'a crowded dial should show two badges folded')
+assert((await collisions('.nx-stage')).length === 0, 'text collisions (dial, folded)')
+await more.click()
+await page.waitForTimeout(300)
+assert((await dial()).badges.length === 4, 'opened, the dial should show all four badges')
+
 console.log(
   'all-day lane: continuous span, full-width tiles, height kept, fold/unfold, keyboard + card — proven'
+)
+console.log(
+  'all-day dial: badges not wedges, never the countdown, inside the ring, whole-ring light, keyboard + card, +N more — proven'
 )
 await browser.close()

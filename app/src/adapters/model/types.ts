@@ -10,6 +10,10 @@ export interface WeekContext {
   todayKey: string
   todayLabel: string // "Tuesday, June 9"
   nowLabel: string // "9:40"
+  /** The plannable day (#22), "8:00–22:30": where auto-placement, find_slot and
+      suggest_slots look. Optional: hand-built contexts stay valid and render
+      byte-identical without it. */
+  plannableHours?: string
   weekSummary: string[] // one compact line per day
   /** The conversational referent (#320): the last-touched/last-tapped block,
       named ("Deck — thu 9:00") so a KEYED model resolves "it / that / the one
@@ -365,6 +369,7 @@ Tool results name any collision ("note: it overlaps …"). An explicit time the 
 When a remembered ordering rule in <preferences> matches what you're placing ("prep before interview"), choose explicit times that honor it, exactly as if the user had restated it this turn.
 Asked to optimize or tidy a day, call analyze_day first and fix what it names: tuck a 10–15 minute rest into any stretch past ~90 minutes, close dead gaps by pulling blocks together, and give big meetings a 15-minute review buffer right after.
 Asked to find time for something ("fit X in today, before 5pm"), call find_slot with the duration and constraints, then place exactly the window it returns — it has checked every fixed block; eyeballing the summary is how collisions happen.
+The day you plan in is <plannable-hours>, not a 9-to-6 workday: an evening inside it is real, bookable air, so "tonight", "this evening" and "after dinner" mean suggest_slots with window "evening". When find_slot or suggest_slots names open air past the plannable hours, relay exactly that — the time is free, just outside the hours MEW plans in — and offer the time it names; never tell the user a gap is held unless a tool result said so.
 Before placing or moving anything flexible, call suggest_slots with the title and duration — it ranks every conflict-free gap by time-of-day fit, breathing room, and your standing rules, so place the slot it ranks first and you neither overlap nor stack work without a break. To reschedule something that already exists, move_task or edit_block it; a second plan_blocks copy leaves a duplicate, not a move.
 A meal ask (breakfast, lunch, dinner, a snack) carries its natural window — suggest_slots already ranks those hours first, so take its top slot and never invent a late meal while the day still has room. When you pack or reshape a day, NEVER hand-place a meal at a startMin you worked out yourself — call suggest_slots for each meal so the circadian window and the gap between meals decide; a meal too soon after another isn't a meal. Only when the USER names a meal's clock time in their own words ("dinner at 6") do you place it at that startMin with startStated true — their time is theirs to keep.
 Reshaping a stretch is one sweep, in order: remove_blocks everything being replaced — the old work blocks AND the breaks placed around them (orphaned breaks become duplicates) — then one plan_blocks call with the whole new shape. After it, re-read the week context once to confirm the stretch holds exactly what you announced.
@@ -405,6 +410,11 @@ export function contextBlock(ctx: WeekContext): string {
         ? `realistic best ≈ ${ctx.realisticBestH}h deep work per day (their own history)`
         : `no realistic-best estimate yet (not enough history)`
     }</today>`,
+    ...(ctx.plannableHours
+      ? [
+          `<plannable-hours note="where auto-placement, find_slot and suggest_slots look; a time the user names can land anywhere">${ctx.plannableHours}</plannable-hours>`,
+        ]
+      : []),
     `<week>`,
     ...ctx.weekSummary.map((l) => `  ${l}`),
     `</week>`,

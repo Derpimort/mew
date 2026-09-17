@@ -12,6 +12,7 @@ import type { Block, PrefPayload, ScaffoldMealId, ScaffoldMealPlan, Tag } from '
 import { parseTimeValue, resolveTaskSpec, type LearnedRule } from './prefs'
 import { fmtTime } from './time'
 import { blocksForDay } from './week'
+import { CLASSIC_DAY } from './plannable'
 /* scheduler.ts also imports this module (the meal facts feed its scoring
    seam). The cycle is deliberate and safe: both directions are consumed only
    inside function bodies, never at module init — the anchors live here, the
@@ -321,9 +322,20 @@ export function scaffoldDay(
       tag: 'private',
       durationMin,
     }
-    const best = scoreSlots(working, q, todayKey, opts.nowMin, prefs, undefined, 0, [
-      { startMin: plan.startMin, endMin: plan.endMin },
-    ])[0]
+    /* #22: the autonomous morning pass keeps the classic span — nobody asked
+       it for the evening, so a packed day still yields honest silence */
+    const best = scoreSlots(
+      working,
+      q,
+      todayKey,
+      opts.nowMin,
+      prefs,
+      undefined,
+      0,
+      [{ startMin: plan.startMin, endMin: plan.endMin }],
+      undefined,
+      CLASSIC_DAY
+    )[0]
     if (!best) continue // no air for this one — the day stays as it is
     const placed: ScaffoldPlacement = {
       title: SCAFFOLD_TITLE[meal],

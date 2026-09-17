@@ -8,7 +8,7 @@ Setup + gates: **[CONTRIBUTING.md](CONTRIBUTING.md)**. Locked product laws: **[H
 
 Fast reminders (the traps that bit us):
 
-- Merge feature PRs into the active `v*-rc` yourself (`gh pr merge --squash`, **never** `--admin`); `main` is the owner's click. (Assumes write access — on a fork, open the PR and a maintainer merges.)
-- In the promotion PR, bump `desktop/src-tauri/tauri.conf.json` to the clean release version (from `-rc`) and add the CHANGELOG section **before** tagging — tauri stamps installers from the config, not the tag. Guarded by `desktop/scripts/check-release-version.mjs`.
+- Merge feature PRs into the active `v*-rc*` (`vYYYY.MM-rcN`, e.g. `v2026.09-rc1`) yourself (`gh pr merge --squash`, **never** `--admin`); `main` is the owner's click. (Assumes write access — on a fork, open the PR and a maintainer merges.)
+- In the promotion PR, bump `desktop/src-tauri/tauri.conf.json` to the clean CalVer release version (`YYYY.M.PATCH-rc.N` → `YYYY.M.PATCH`; keep the MSI's `bundle.windows.wix.version` = `(YYYY-2000).M.PATCH`, mirror `desktop/package.json`) and add the CHANGELOG section **before** tagging `vYYYY.M.PATCH` — tauri stamps installers from the config, not the tag. Guarded by `desktop/scripts/check-release-version.mjs` (`--shape` / `--promotion` / `--tag`); scheme in `.github/RELEASES.md`.
 - Every feature is offer-then-confirm — human-in-the-loop, never autonomous.
 - Keep shell commands simple; re-check GitHub before reporting (the owner may have acted between turns).

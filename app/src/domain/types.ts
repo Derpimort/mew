@@ -314,6 +314,17 @@ export const DEFAULT_SUSTENANCE_MEALS: Record<ScaffoldMealId, ScaffoldMealPlan> 
   dinner: { startMin: 18 * 60 + 30, endMin: 20 * 60 + 30, durationMin: 60 },
 }
 
+/** The plannable day (#22): the hours placement looks in, minutes from
+    midnight. A same-day span (no past-midnight bounds), and a separate fact
+    from quietHours — "don't notify me" is not "I never schedule anything". */
+export interface PlannableHours {
+  startMin: number
+  endMin: number
+}
+/** 08:00 keeps every placement inside the old working day byte-identical;
+    22:30 is the ceiling find_slot and nextSlotAfter already searched to. */
+export const DEFAULT_PLANNABLE_HOURS: PlannableHours = { startMin: 8 * 60, endMin: 22 * 60 + 30 }
+
 export type PetId = 'cat' | 'dog' | 'fox' | 'bunny' | 'bird'
 
 /** Plan mode's auto-offer gear (#293) — see Settings.planMode. */
@@ -334,6 +345,9 @@ export interface Settings {
   uiFont: 'hanken' | 'open-sans' | 'system'
   browserMirror: boolean
   quietHours: { startMin: number; endMin: number } // 18:30–08:30 default, wraps midnight
+  /** Where auto-placement, find_slot and suggest_slots look (#22). Independent
+      of quietHours: changing one never moves the other. */
+  plannableHours: PlannableHours
   /** Once-a-day ritual times, minutes from midnight (#285). The morning brief
       posts at briefMin (default 8:30 — exactly where default quiet hours end,
       so the boundary resolves to "posts at 8:30"); the evening wrap at wrapMin
@@ -566,6 +580,7 @@ export const DEFAULT_SETTINGS: Settings = {
   uiFont: 'hanken',
   browserMirror: true,
   quietHours: { startMin: 18 * 60 + 30, endMin: 8 * 60 + 30 },
+  plannableHours: DEFAULT_PLANNABLE_HOURS,
   briefMin: 8 * 60 + 30,
   wrapMin: 17 * 60 + 30,
   weeklyRitualMin: 17 * 60,
