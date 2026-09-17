@@ -60,6 +60,31 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: npx tsc -b
 
+  # Production build + bundle-size budget. The budget step used to live only in
+  # desktop.yml's `check` job, which fires on PRs into main — so a PR into the RC
+  # could grow a chunk past its hard budget unnoticed until promotion (#54's lazy ai
+  # chunk did). This runs the same `pnpm build` + check-bundle-size.mjs on PRs into
+  # develop and the RC; on PRs into main it is skipped, because desktop.yml's check
+  # already runs that exact step there (same paths, app/**) and the minutes would
+  # double. workflow_dispatch has no base_ref, so a manual run always builds.
+  # The per-chunk breakdown goes to the job summary. ~1-2 min.
+  bundle:
+    if: github.base_ref != 'main'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with: { version: 9 }
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - name: Bundle size budget
+        run: node scripts/check-bundle-size.mjs dist
+
   # Unit suite — the domain + adapter + store vitest run. A red test fails the PR.
   unit:
     runs-on: ubuntu-latest

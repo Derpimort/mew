@@ -20,6 +20,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
 
+### A bundle budget every PR can see
+- The size budgets now run on every PR into `develop` and the release candidate: the quick
+  gate builds the app and checks each chunk against its ceiling, so a heavier download shows up
+  on the PR that caused it, long before release day.
+
 ### Removing one block removes one block
 - "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the
   same time on several days, MEW asks which day with tappable choices ("today 12:00",
