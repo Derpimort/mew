@@ -176,6 +176,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The review offers only your own unfinished work to roll: the breathers MEW tucks in for pacing and
   the meals it places for you stay out of the list, since next week gets its own. A meal or a rest
   you asked for yourself still rolls.
+- The evening's close-the-loop works the same way: a lunch or dinner MEW placed for you never counts
+  as unfinished work, so it doesn't keep your day from clearing and MEW never offers to move it to
+  tomorrow. A meal you named yourself still does.
 
 ### Midnight means the same day to every part of a turn
 - In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's
