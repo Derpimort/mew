@@ -85,6 +85,18 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   where it fits: a fixed or protected block there leaves everything as it is, and MEW names it.
 - The "split around it" choice MEW offers when a meeting lands on your work now runs the same
   split, and part 2 keeps the block's own flexibility.
+- A split choice picked after midnight checks its day first, like every other choice: one named for
+  a weekday ("… on thursday") still splits that day's block, and one for "today" leaves everything
+  as it is and says when it was offered.
+
+### Merge two blocks into one
+- Say "merge my two deck blocks" (or "join the writing blocks tomorrow") and MEW joins them into one
+  block, from the first start to the last end, and one "undo that" brings both back. MEW merges
+  only your own blocks with the same tag, across free time: when a call, a calendar event, a done
+  block or any other block sits between them, MEW names it and everything stays as it is, and
+  calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
+  Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
+  and MEW names both, so a merged block never loses one of its names.
 
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
@@ -201,56 +213,6 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   midnight, before MEW's clock catches up, checks against the new day, a choice that lengthens a
   block checks its day too, and a "done" choice keeps pointing at the block it was offered for even
   once that block is done.
-
-### Your stated lengths hold through the plan picker
-- A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
-  length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
-  size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
-### Midnight means the same day to every part of a turn
-- In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's
-  Groceries. Each turn, typed or tapped, now starts from one clock, so the words you use, the
-  choice checks, the tools that act and the model's view of your week all agree on what today is.
-
-### The weekly review's roll really moves your work
-- Rolling carried work forward now moves it: the block lands on the same weekday next week and
-  leaves this week's carried list, so it's never offered twice, and one "undo that" brings the
-  whole roll back. A repeating block rides with its own series instead of doubling, a block
-  already planned next week stays exactly where it is, and a day with no room keeps the work
-  carried and says so.
-### The drop choice names its day
-- When a block can't make way and MEW offers to drop it, that choice now names the day ("remove the
-  Groceries today at 14:00"). So it shows up even when the same block sits at the same time on
-  another day, and picking it removes only the one you're looking at. A drop picked on a later day
-  (after midnight, "today" is a new day) checks again first: it runs only while it still points at
-  the block it was offered for, and otherwise MEW names that block and everything stays as it is.
-
-### The room offer says what it would change
-- When MEW offers to give your work more room, it now names the blocks it would resize
-  ("(inbox sweep, errands)") and calls the kind what it is: hour-plus work. The count that comes
-  with a new block uses the same words ("That's your 2nd hour-plus work block this week"), so a
-  routine inbox sweep isn't called a deep-work block one message before the offer. "Give them
-  room" changes exactly the blocks it named, and the confirmation names them too.
-
-### Overlap on your say-so
-- Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it places
-  the block exactly there, leaves your flexible block where it is, and says the two share that time.
-  Meetings, calls and calendar events are still never covered: MEW names them and asks for another time.
-### Every choice keeps the day it was offered
-- The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
-  work to its next clean slot, pick which of two same-named blocks you meant, or apply an edit to
-  just this one of a repeating block) keep the day they were offered. Picked after midnight, a
-  choice checks first: it acts while it still reaches the same block on the same day and time, and
-  otherwise MEW says which day it was offered on and everything stays as it is. A choice named for
-  a weekday ("move it to thursday") keeps working the next day.
-
-### Merge two blocks into one
-- Say "merge my two deck blocks" (or "join the writing blocks tomorrow") and MEW joins them into one
-  block, from the first start to the last end, and one "undo that" brings both back. MEW merges
-  only your own blocks with the same tag, across free time: when a call, a calendar event, a done
-  block or any other block sits between them, MEW names it and everything stays as it is, and
-  calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
-  Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
-  and MEW names both, so a merged block never loses one of its names.
 
 ## [0.7.0] — 2026-08-12
 
