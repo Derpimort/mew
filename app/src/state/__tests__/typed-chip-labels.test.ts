@@ -409,6 +409,20 @@ describe('#139 — the words a question offers are words the reader accepts', ()
   const acceptsEveryWordItOffers = () => {
     const ask = chipMsgs().at(-1)!
     const words = offeredWords(ask.body)
+    /* LOAD-BEARING, and it looks trivial on purpose-free inspection: without it
+       an ask whose question has no enumerated tail yields [] and the loop below
+       runs zero times, so the invariant would PASS while checking nothing — a
+       green that means nothing, which is this shift's own defect class one level
+       up. coderpa verified the failure mode rather than reading the regex: the
+       scope ask, the drift offer, the batch confirm and a question with no dash
+       all yield [] and therefore fail HERE, loudly. Do not delete this line to
+       tidy the test; delete the test instead if it stops earning its place.
+
+       The boundary, also verified: the tail heuristic equals "the alternatives"
+       only for asks that ENUMERATE their chips in the question. The room offer
+       yields one whole clause ("want me to give them room"), so pointing this at
+       that family would demand the resolver accept a sentence and fail noisily —
+       the right failure mode, but check this first if you extend the table. */
     expect(words.length).toBeGreaterThan(0)
     for (const word of words) {
       const hit = typedChipLabel(chat(), word)
