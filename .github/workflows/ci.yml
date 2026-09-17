@@ -83,6 +83,15 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
       - run: pnpm install --frozen-lockfile
+      # Build BEFORE the tests: csp.test.ts asserts the built bundle carries no
+      # inline styles, and it can only do that when dist/index.html exists. With
+      # no build those two describes skipIf'd away, so the built-bundle CSP
+      # checks had never actually run in CI on any PR — and `bundle`, which does
+      # build, carries `if: base_ref != 'main'`, so it would not have covered the
+      # promotion PR either. `unit` has no such condition, which is why the build
+      # belongs here: one place that fires on a feature PR and on the promotion
+      # PR alike, at the cost of one extra build per run and no new job.
+      - run: pnpm build
       - run: pnpm test
 
   # ESLint + Prettier gate (folded in from the old lint.yml).
