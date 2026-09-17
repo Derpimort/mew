@@ -395,3 +395,15 @@ describe('#94 — which-block (#334) and series-scope (#343) chips re-check too:
     ).toBe(true)
   })
 })
+
+/* ── #94 × #96: the pick-time check reads the turn clock ──────────────── */
+
+describe('#94 with #96 — a chip picked in the seconds after midnight, before a tick lands', () => {
+  it('the rescue roll offered Tuesday, picked at Wed 00:00:02 while the store clock still says Tuesday: stale, nothing moves', async () => {
+    const offer = await rescueOffer()
+    rollTo(new Date(2026, 5, 9, 23, 59, 58)) // Tuesday's last tick
+    vi.setSystemTime(new Date(2026, 5, 10, 0, 0, 2)) // midnight passes; no tick yet
+    expect(dayKey(new Date(useMew.getState().nowMs))).toBe(TODAY)
+    await expectStalePick(offer.id, 'roll', 'roll to tomorrow')
+  })
+})

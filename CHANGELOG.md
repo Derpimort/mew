@@ -126,6 +126,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Two quiet details are now held by tests: the day picker keeps the dial's day selected while the
   arrow keys move through the month, and a remembered rule with none of your words shows just where
   it came from.
+- Three more midnight details are held by tests: a choice picked in the seconds before the clock
+  ticks over checks against the new day, a choice that lengthens a block checks its day too, and a
+  "done" choice keeps pointing at the block it was offered for even once that block is done.
 
 ### Your stated lengths hold through the plan picker
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
