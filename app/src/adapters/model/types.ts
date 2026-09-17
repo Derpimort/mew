@@ -291,6 +291,14 @@ export interface ToolExecutor {
     },
     at?: string
   ): string
+  /** Merge (#74): join same-tag blocks on one day into ONE block — the earliest
+      keeps its id and grows to span the run; the others go, in one undo step.
+      `query` names them by title; `at` pins the run's first block (the run is
+      then it and the next match after it), `dayOffset` pins the day. Only the
+      owner's own open, one-off blocks of one tag merge, and only across free
+      air: a fixed call, a [calendar] event, a done block or another block in
+      the span means nothing changes, and the reply says which. */
+  merge(query: string, dayOffset?: number, at?: string): string
   /** Move a block relative to where it is now, with no absolute time (#335):
       'earlier'/'later' shift the start by `amountMin` (default 30) on the same
       day, 'next_day' moves one day on at the same clock, 'next_free' relocates

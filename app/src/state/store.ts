@@ -3673,6 +3673,78 @@ export const useMew = create<MewState>((set, get) => {
     return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}${copyAsk ? ' The options for that overlap are on screen.' : ''}`
   }
 
+  /** Merge (#74): join the matched same-tag blocks on one day into ONE block.
+      The earliest keeps its id and grows to span the run; the others go. One
+      mutation through setBlocks (the executor wrapper snapshots first, so a
+      single "undo that" brings every part back). Only the owner's own open,
+      one-off blocks of one tag merge, and only across free air: anything else
+      in the span, or a calendar / done / repeating / other-tag part, means
+      nothing changes and the reply names it. */
+  function execMerge(query: string, dayOffset?: number, at?: string): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    /* "today" / "tomorrow" / "on Thursday" — reads right mid-sentence */
+    const dayWordOf = (k: string) =>
+      k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : `on ${fmtDowLong(k)}`
+    const named = (b: Block) => `${baseOf(b.title)} at ${fmtTime(b.startMin)}`
+    const cands = week.mergeCandidates(s.blocks, query, todayKey, {
+      dayKey: dayOffset != null ? addDaysKey(todayKey, dayOffset) : undefined,
+      at: at ? parseTimeValue(at) : null,
+    })
+    if (cands.status === 'none')
+      return `I couldn't find "${query}"${at ? ` at ${at}` : ''} to merge — say it another way?`
+    if (cands.status === 'single')
+      return `${named(cands.block)} ${dayWordOf(cands.block.dayKey)} is the only "${baseOf(query)}" there, so there's nothing to merge it with.`
+    const run = week.mergeRun(
+      s.blocks,
+      cands.parts.map((b) => b.id)
+    )
+    const day = dayWordOf(cands.dayKey)
+    if (!run.ok) {
+      const list = (bs: Block[]) => joinHuman(bs.map(named))
+      switch (run.reason) {
+        case 'external':
+          return `${list(run.parts)} came in from your calendar — I merge only blocks I placed, so everything stays as it is.`
+        case 'done':
+          return `${list(run.parts)} is already done — a mew stays a mew, so everything stays as it is.`
+        case 'series':
+          return `${list(run.parts)} repeats — I keep a repeating block whole, so everything stays as it is.`
+        case 'tags': {
+          const tags = [...new Set(run.parts.map((b) => b.tag))].join(' and ')
+          return `those "${baseOf(run.parts[0].title)}" blocks ${day} are tagged ${tags} — give them one tag and I'll merge them. Everything stays as it is for now.`
+        }
+        case 'blocked': {
+          const why = (b: Block) =>
+            b.external
+              ? 'from your calendar'
+              : week.isFixedTime(b, activePrefsFrom(s.memory, brainOn() ? brainPrefs : null))
+                ? 'fixed'
+                : b.status === 'done'
+                  ? 'done'
+                  : 'its own block'
+          const between = joinHuman(
+            run.blockers.map(
+              (b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} (${why(b)})`
+            )
+          )
+          return `${between} sits between them ${day}, so everything stays as it is.`
+        }
+        default:
+          return `there's nothing to merge there — everything stays as it is.`
+      }
+    }
+    const keep = run.keep
+    const removeIds = new Set(run.removeIds)
+    const next = s.blocks
+      .filter((b) => !removeIds.has(b.id))
+      .map((b) => (b.id === keep.id ? run.merged : b))
+    setBlocks(next)
+    storage.deleteBlocks(run.removeIds).catch(() => {})
+    noteReferentId(keep.id) // the merged block is now "it"
+    const n = run.removeIds.length + 1
+    return `Merged — ${baseOf(keep.title)} now runs ${day} ${fmtTime(run.startMin)}–${fmtTime(run.endMin)} as one block (${n} joined).`
+  }
+
   /** Move a block relative to where it is now, with no absolute time (#335).
       earlier/later delegate straight to moveResolved's relative shift; next_day
       keeps the clock one day on; next_free relocates to the soonest genuinely
@@ -5620,6 +5692,15 @@ export const useMew = create<MewState>((set, get) => {
             'duplicate',
             { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
             () => execDuplicate(q, opts, at)
+          )
+        },
+        merge: (q, dayOffset, at) => {
+          acted = true
+          snapshotForUndo()
+          working('merging them…')
+          closeStreamRow()
+          return runToolWithCard('merge', { query: q, dayOffset }, () =>
+            execMerge(q, dayOffset, at)
           )
         },
         relativeMove: (q, direction, amountMin, at) => {

@@ -626,6 +626,29 @@ export const MEW_TOOLS: NeutralTool[] = [
     },
   },
   {
+    name: 'merge_blocks',
+    description:
+      "Join the owner's same-tag blocks on ONE day into a single block (#74) — 'merge my two deck blocks', 'join the writing blocks tomorrow'. The earliest keeps its place and grows to span them all; the others go, and one undo brings them back. Name them by title (query); pass dayOffset for another day, or at (a block's CURRENT start) to merge that block with the next same-named one after it. Only open, one-off blocks the owner placed merge, and only across free air: a fixed call, a [calendar] event, a done block or any other block in between means nothing changes and the result says which. Never merges across days, and never merges blocks with different tags — ask which tag first.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: "A few words from the blocks' shared title" },
+        dayOffset: {
+          type: 'integer',
+          description:
+            'The day, in days from today (0 = today). Omit for the soonest day with two.',
+        },
+        at: {
+          type: 'string',
+          description:
+            "One block's CURRENT start time ('9:00', '2pm') — merges it with the next same-named block after it that day",
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'move_relative',
     description:
       "Nudge an existing block without naming an absolute time — 'a bit earlier', 'push it later', 'move it to the next day', 'find it the next free slot'. Set direction: 'earlier'/'later' shift the start on the SAME day by amountMin (default 30); 'next_day' moves it one day later at the same clock time; 'next_free' relocates it to the soonest genuinely clear slot from now. When the user DOES give an absolute target ('move it to 3pm', 'to friday'), use move_task instead. Fixed and calendar events are never moved, and the next free slot always lands clear of them. Target by a few words of the title, plus `at` (its current start) when several share the title.",
@@ -913,6 +936,8 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         },
         atArg(o.at)
       )
+    case 'merge_blocks':
+      return exec.merge(String(o.query ?? ''), optInt(o.dayOffset, 0, 13), atArg(o.at))
     case 'move_relative': {
       const dirs = ['earlier', 'later', 'next_day', 'next_free'] as const
       const direction = dirs.includes(o.direction as never)

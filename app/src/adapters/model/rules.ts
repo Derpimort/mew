@@ -179,6 +179,10 @@ export function runIntent(
           intent.at
         )
       )
+    case 'merge':
+      /* #74: join same-tag blocks on one day into one — the executor refuses (and
+         says why) anything that isn't the owner's own open blocks across free air */
+      return exec.merge(intent.query ?? '', intent.merge?.dayOffset, intent.at)
     case 'giveRoom':
       /* #322: the "give them room" chip — resize the just-placed blocks of one
          focus class up to how the kind really runs. Same executor the keyed
@@ -434,6 +438,16 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         direction: rm.direction as (typeof dirs)[number],
         amountMin: optInt(rm.amountMin, 5, 600),
       },
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+    }
+  }
+  if (kind === 'merge' && typeof o.query === 'string' && o.query.trim()) {
+    // #74: join same-tag blocks — a loose model may nest the day or hang it top-level.
+    const mg = (o.merge && typeof o.merge === 'object' ? o.merge : o) as Record<string, unknown>
+    return {
+      kind,
+      query: o.query,
+      merge: { dayOffset: optInt(mg.dayOffset, 0, 13) },
       ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
     }
   }

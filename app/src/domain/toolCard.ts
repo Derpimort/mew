@@ -110,6 +110,7 @@ const BASE_VERB: Record<string, string> = {
   undoLast: 'putting it back',
   resize: 'resizing it',
   duplicate: 'duplicating it',
+  merge: 'merging them',
   relativeMove: 'nudging it',
   split: 'splitting it',
 }
@@ -180,6 +181,11 @@ const FORMATTERS: Record<string, (a: Record<string, unknown>) => ToolCardLabel> 
   },
   relativeMove: (a) => ({ verb: BASE_VERB.relativeMove, target: namedTarget(a.query) }),
   split: (a) => ({ verb: BASE_VERB.split, target: namedTarget(a.query) }),
+  merge: (a) => {
+    const what = namedTarget(a.query)
+    const day = dayWord(a.dayOffset, a.todayKey)
+    return { verb: BASE_VERB.merge, target: what ? (day ? `${what} · ${day}` : what) : undefined }
+  },
 }
 
 /** One executor invocation → the card's line. Total: every input shape returns

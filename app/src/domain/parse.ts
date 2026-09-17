@@ -880,6 +880,34 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
      13:00-13:45" · "split the 12:00 deck around 1-1:45pm on friday". */
   const splitAsk = parseSplit(trimmed, now)
   if (splitAsk) return splitAsk
+  /* merge (#74): "merge my two deck blocks" · "join the writing blocks tomorrow" ·
+     "combine both gym blocks on thursday" · "merge the deck at 9:00 with the next
+     one". "merge" always means this; "join"/"combine" only with a merge word
+     (blocks / together / into one / both / two), so "join the standup at 9"
+     stays chat. A time pins the run's first block, a day word its day. */
+  const mergeM =
+    lower.match(/^merge\s+(.+)$/) ??
+    (/^(?:join|combine)\s+/.test(lower) && /\b(?:blocks|together|into\s+one|both|two)\b/.test(lower)
+      ? lower.match(/^(?:join|combine)\s+(.+)$/)
+      : null)
+  if (mergeM) {
+    const day = parseDayOffset(mergeM[1], now)
+    const { at, rest } = extractTargetAt(mergeM[1])
+    const query = cleanTitle(
+      stripTimeWords(rest)
+        .replace(/\b(?:with|and)\s+(?:the\s+)?(?:next|other)\s+one\b/g, ' ')
+        .replace(/\b(?:together|into\s+one|blocks?|my|the|both|two|all|these|those|on)\b/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+    if (query)
+      return {
+        kind: 'merge',
+        query,
+        ...(at ? { at } : {}),
+        merge: day ? { dayOffset: day.offset } : {},
+      }
+  }
 
   /* duplicate / copy (#335): "duplicate the deck to friday [at 9]" · "copy the
      standup to tomorrow" · "clone the release at 19:45 to monday". The original
