@@ -485,6 +485,7 @@ export interface ScheduleIntent {
     | 'resize'
     | 'duplicate'
     | 'relmove'
+    | 'merge'
     | 'remember'
     | 'chat'
     | 'insights'
@@ -567,6 +568,10 @@ export interface ScheduleIntent {
       one day on at the same clock, 'next_free' relocates to the soonest clear
       slot from now. The target is the `query` (+ `at`). */
   relmove?: { direction: 'earlier' | 'later' | 'next_day' | 'next_free'; amountMin?: number }
+  /** merge (#74): join the matched same-tag blocks on one day into one block —
+      the first keeps its id and spans the run. The target is the `query`; `at`
+      pins the run's first block, `dayOffset` its day. */
+  merge?: { dayOffset?: number }
   /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
       blocks of this focus class up to how the kind really runs. The union is
       spelled inline (not imported from energy) to keep types.ts a leaf. */

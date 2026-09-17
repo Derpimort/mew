@@ -757,6 +757,120 @@ export function resolveRemoval(
   return { remove: [], candidates: matches }
 }
 
+/* ── merge (#74): adjacent same-tag blocks become one ───────────────────
+   "merge my two deck blocks" names blocks by title; the parts are the matches
+   on ONE day (never across days). The run keeps its first block — its id grows
+   to span every part — and the rest go. A merge only ever joins the owner's
+   own open, one-off blocks of one tag, and only across free air: anything else
+   in the span (a fixed call, a calendar event, another block, a done one) stays
+   exactly where it is and the merge doesn't happen. */
+
+export type MergeCandidates =
+  | { status: 'ok'; dayKey: string; parts: Block[] }
+  | { status: 'none' }
+  /** one match on the day asked about (or on every day): nothing to join */
+  | { status: 'single'; block: Block }
+
+/** The blocks a merge ask names. `dayKey` pins the day; `at` pins the run's
+    first block (the run is then that block and the next match after it that
+    day). With neither, the run is every match on the soonest day (today on)
+    that has at least two. Done and calendar matches are included on purpose,
+    so mergeRun can say why they don't merge rather than skip them silently. */
+export function mergeCandidates(
+  blocks: Block[],
+  query: string,
+  todayKey: string,
+  opts: { dayKey?: string; at?: number | null } = {}
+): MergeCandidates {
+  const pool = titleMatches(blocks, query)
+    .filter((b) => b.dayKey >= todayKey && !isAllDay(b))
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+  if (!pool.length) return { status: 'none' }
+  const onDay = (k: string) => pool.filter((b) => b.dayKey === k)
+  if (opts.at != null) {
+    const first = pool.find(
+      (b) => b.startMin === opts.at && (opts.dayKey == null || b.dayKey === opts.dayKey)
+    )
+    if (!first) return { status: 'none' }
+    const next = onDay(first.dayKey).find((b) => b.id !== first.id && b.startMin >= first.startMin)
+    return next
+      ? { status: 'ok', dayKey: first.dayKey, parts: [first, next] }
+      : { status: 'single', block: first }
+  }
+  if (opts.dayKey != null) {
+    const parts = onDay(opts.dayKey)
+    if (!parts.length) return { status: 'none' }
+    return parts.length === 1
+      ? { status: 'single', block: parts[0] }
+      : { status: 'ok', dayKey: opts.dayKey, parts }
+  }
+  const days = [...new Set(pool.map((b) => b.dayKey))]
+  const day = days.find((k) => onDay(k).length >= 2)
+  return day
+    ? { status: 'ok', dayKey: day, parts: onDay(day) }
+    : { status: 'single', block: pool[0] }
+}
+
+export type MergeRun =
+  | { ok: true; keep: Block; removeIds: string[]; startMin: number; endMin: number }
+  | {
+      ok: false
+      /** what stops it, in the order checked; `blockers` for 'blocked', the
+          offending parts for the rest */
+      reason: 'few' | 'days' | 'external' | 'done' | 'series' | 'tags' | 'blocked'
+      parts: Block[]
+      blockers: Block[]
+    }
+
+/** Can these blocks become one? Pure. The span runs from the earliest start to
+    the latest end; the kept block is the earliest. */
+export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
+  const parts = blocks
+    .filter((b) => ids.includes(b.id))
+    .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin)
+  const no = (
+    reason: Exclude<MergeRun, { ok: true }>['reason'],
+    offending: Block[],
+    blockers: Block[] = []
+  ): MergeRun => ({
+    ok: false,
+    reason,
+    parts: offending,
+    blockers,
+  })
+  if (parts.length < 2) return no('few', parts)
+  if (new Set(parts.map((b) => b.dayKey)).size > 1) return no('days', parts)
+  const external = parts.filter((b) => b.external)
+  if (external.length) return no('external', external)
+  const done = parts.filter((b) => b.status !== 'open')
+  if (done.length) return no('done', done)
+  const series = parts.filter((b) => b.recurringBlockId)
+  if (series.length) return no('series', series)
+  if (new Set(parts.map((b) => b.tag)).size > 1) return no('tags', parts)
+  const startMin = parts[0].startMin
+  const endMin = Math.max(...parts.map((b) => b.endMin))
+  /* only free air may sit between the parts: every other block that holds time
+     in the span stays put and stops the merge — done blocks included, all-day
+     labels and background blocks aside (they hold no slot) */
+  const partIds = new Set(parts.map((b) => b.id))
+  const blockers = blocksForDay(blocks, parts[0].dayKey).filter(
+    (b) =>
+      !partIds.has(b.id) &&
+      !isAllDay(b) &&
+      !isBackground(b) &&
+      b.startMin < endMin &&
+      b.endMin > startMin
+  )
+  if (blockers.length) return no('blocked', parts, blockers)
+  return {
+    ok: true,
+    keep: parts[0],
+    removeIds: parts.slice(1).map((b) => b.id),
+    startMin,
+    endMin,
+  }
+}
+
 /** Conversational referent resolution (#320) — turn a parse.ts sentinel
     ("@referent", "@next", "@after:lunch", "@before:standup", "@at:900") into a
     concrete block against the LIVE week. Pure and keyless-first: the SAME

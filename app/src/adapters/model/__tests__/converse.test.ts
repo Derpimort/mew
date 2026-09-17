@@ -95,6 +95,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('duplicate')
       return `Copied ${q}.`
     }),
+    merge: vi.fn((q) => {
+      calls.push('merge')
+      return `Merged ${q}.`
+    }),
     relativeMove: vi.fn((q) => {
       calls.push('relativeMove')
       return `Moved ${q}.`

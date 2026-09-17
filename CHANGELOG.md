@@ -174,6 +174,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   otherwise MEW says which day it was offered on and everything stays as it is. A choice named for
   a weekday ("move it to thursday") keeps working the next day.
 
+### Merge two blocks into one
+- Say "merge my two deck blocks" (or "join the writing blocks tomorrow") and MEW joins them into one
+  block, from the first start to the last end, and one "undo that" brings both back. MEW merges
+  only your own blocks with the same tag, across free time: when a call, a calendar event, a done
+  block or any other block sits between them, MEW names it and everything stays as it is, and
+  calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
