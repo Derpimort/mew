@@ -26,6 +26,11 @@ export interface Block {
   status: BlockStatus
   calendarRefs: string[]
   estimateSource: 'user' | 'mew' | 'history'
+  /** MEW placed this block itself as scaffolding (#123): a breather from the
+      pacing pass, or a meal from the sustenance scaffold. Not the owner's work,
+      so the weekly review never offers it to roll into next week. Unset for
+      every block the owner asked for, including meals and rest they named. */
+  placedBy?: 'pacing' | 'sustenance'
   rolledToId?: string
   completedAt?: number
   /** Set by "Start now" — a started block completes or gets interrupted; it

@@ -298,6 +298,9 @@ const GOLDEN = [
     status: 'open',
     calendarRefs: [],
     estimateSource: 'user',
+    /* #123: the pacing pass marks its breather as MEW's own (the only field
+       added since the golden was captured) */
+    placedBy: 'pacing',
   },
 ]
 

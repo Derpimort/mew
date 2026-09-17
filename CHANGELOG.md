@@ -173,6 +173,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   roll back. A repeating block rides with its own series instead of doubling, a block already
   planned next week stays exactly where it is, and a day with no room keeps the work carried and
   says so.
+- The review offers only your own unfinished work to roll: the breathers MEW tucks in for pacing and
+  the meals it places for you stay out of the list, since next week gets its own. A meal or a rest
+  you asked for yourself still rolls.
 
 ### Midnight means the same day to every part of a turn
 - In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's

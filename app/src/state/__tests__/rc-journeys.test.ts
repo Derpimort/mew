@@ -667,7 +667,7 @@ describe('RC journey 4: Friday, with a split pair, the room offer and rolling fo
     expect(dayRows('2026-06-19')).toEqual([['Spec review (part 2)', 480, 540, 'open']])
   })
 
-  it.fails("#123: the weekly review never offers MEW's own breather as carried work", async () => {
+  it("#123: the weekly review never offers MEW's own breather as carried work", async () => {
     await friday()
     await say('split the spec review around the 2pm call')
     await settle()
