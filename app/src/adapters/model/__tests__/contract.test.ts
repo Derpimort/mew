@@ -129,6 +129,13 @@ function captureFetch(respond: () => Response | Promise<Response>) {
 const reject400 = () =>
   new Response(JSON.stringify({ error: { message: 'nope' } }), { status: 400 })
 
+/* An OpenAI-compatible SSE body: the given chunks, then `[DONE]`. Live servers end
+   a healthy reply with ONE terminal chunk carrying `finish_reason: "stop"` (Ollama's
+   /v1/chat/completions emits it from its FinishChunk), and since 3.0.33
+   @ai-sdk/openai-compatible reports a stream that ends without any finish reason as
+   an InvalidResponseDataError — so a fixture passes the terminal chunk EXPLICITLY
+   (`oaFinish('stop')`), and a test can just as explicitly build the cut-off stream
+   that lacks one. Nothing is added here on the fixture's behalf. */
 function sseResponse(lines: string[]) {
   const enc = new TextEncoder()
   return new Response(
@@ -142,6 +149,15 @@ function sseResponse(lines: string[]) {
     { status: 200, headers: { 'content-type': 'text/event-stream' } }
   )
 }
+/** the terminal chunk of an OpenAI-compatible stream (empty delta, the reason it stopped) */
+const oaFinish = (reason: string) =>
+  JSON.stringify({
+    id: '1',
+    object: 'chat.completion.chunk',
+    created: 0,
+    model: 'm',
+    choices: [{ index: 0, delta: {}, finish_reason: reason }],
+  })
 const oaChunk = (text: string) =>
   JSON.stringify({
     id: '1',
@@ -361,7 +377,7 @@ describe('retry policy on the SDK path (#152)', () => {
       vi.fn(async () => {
         calls++
         if (calls === 1) return new Response('overloaded', { status: 503 })
-        return sseResponse([oaChunk('recovered.')])
+        return sseResponse([oaChunk('recovered.'), oaFinish('stop')])
       })
     )
     const turn = drain({ provider: 'ollama', baseUrl: 'http://localhost:11434', model: 'llama3.2' })
@@ -440,7 +456,7 @@ describe('streamed text flows end-to-end on the SDK path', () => {
   it('Ollama: SSE deltas arrive as reply text', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => sseResponse([oaChunk('all '), oaChunk('set.')]))
+      vi.fn(async () => sseResponse([oaChunk('all '), oaChunk('set.'), oaFinish('stop')]))
     )
     const adapter = createAiAdapter({
       provider: 'ollama',
@@ -449,5 +465,26 @@ describe('streamed text flows end-to-end on the SDK path', () => {
     })
     const out = await collect(adapter.converse([{ role: 'user', text: 'hi' }], ctx, exec))
     expect(out).toBe('all set.')
+  })
+
+  it('Ollama: a stream that ends without finish_reason yields its text, then throws AI_InvalidResponseDataError', async () => {
+    /* the one user-visible change of the 3.0.33+ SDK: a cut-off stream (a proxy or
+       a crashed server closing mid-reply) is an honest error after the text it did
+       deliver — never a silent "complete" reply. No adapter rule may paper over it
+       by treating a missing finish reason as `stop`; that brings both silent
+       failures back. */
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => sseResponse([oaChunk('all '), oaChunk('set.')])) // no oaFinish
+    )
+    const { out, err } = await drain({
+      provider: 'ollama',
+      baseUrl: 'http://localhost:11434',
+      model: 'llama3.2',
+    })
+    expect(out).toBe('all set.')
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).name).toBe('AI_InvalidResponseDataError')
+    expect((err as Error).message).toMatch(/ended without a finish reason/)
   })
 })

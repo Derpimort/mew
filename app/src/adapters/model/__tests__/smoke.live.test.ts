@@ -53,6 +53,15 @@ const ctx: WeekContext = {
 // a no-op executor: the smoke turn is a plain greeting, so no tool should run
 const exec = {} as ToolExecutor
 
+/* The Ollama case reads the WHOLE stream: since @ai-sdk/openai-compatible 3.0.33 a
+   stream that ends without a finish reason is an error raised at the end, which a
+   first-token read would never see. */
+async function wholeText(it: AsyncIterable<ConverseChunk>): Promise<string> {
+  let out = ''
+  for await (const c of it) if (typeof c === 'string') out += c
+  return out
+}
+
 async function firstText(it: AsyncIterable<ConverseChunk>): Promise<string> {
   let out = ''
   for await (const c of it) {
@@ -111,7 +120,7 @@ maybe('live model-contract smoke', () => {
         baseUrl: OLLAMA_URL!,
         model: process.env.OLLAMA_MODEL?.trim() || PROVIDER_CONTRACT.ollama.defaultModel,
       })
-      const text = await firstText(
+      const text = await wholeText(
         adapter.converse([{ role: 'user', text: 'say hi in 3 words' }], ctx, exec)
       )
       expect(text.length).toBeGreaterThan(0)
