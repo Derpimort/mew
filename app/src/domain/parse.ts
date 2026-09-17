@@ -44,17 +44,42 @@ function parseDayOffset(text: string, now: Date): { offset: number; matched: str
     must never become one; nor does "next <weekday>" (this week's or the one
     after is the owner's call). Unpinned is always safe: a time that repeats
     across days asks with day chips, and those chips speak "on <weekday>". */
+const REMOVE_DOW =
+  '(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)'
+
 function removeDayPin(text: string, now: Date): number | null {
   const lower = text.toLowerCase()
   if (/\btoday\b/.test(lower)) return 0
   if (/\btomorrow\b/.test(lower)) return 1
-  const DOW =
-    '(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)'
   const m =
-    lower.match(new RegExp(`\\bon\\s+${DOW}\\b`)) ??
-    lower.match(new RegExp(`\\b${DOW}'s\\b`)) ??
-    lower.match(new RegExp(`\\S\\s+this\\s+${DOW}\\b`))
+    lower.match(new RegExp(`\\bon\\s+${REMOVE_DOW}\\b`)) ??
+    // a possessive after "next" names next week's day, which never pins (#72 review)
+    lower.match(new RegExp(`(?<!\\bnext\\s+)\\b${REMOVE_DOW}['’]s\\b`)) ??
+    lower.match(new RegExp(`\\S\\s+this\\s+${REMOVE_DOW}\\b`))
   return m ? weekdayOffset(m[1], now) : null
+}
+
+/** #72: the day phrases a remove reads as a DAY are not part of the title —
+    "this <weekday>" past the phrase's first word and a possessive "<weekday>'s"
+    (both pin, above), plus "next <weekday>" (a day, left unpinned). Lift each
+    out whole — a possessive with its qualifier ("next thursday's") — so "the
+    lunch this thursday" asks for "lunch", never "lunch this". Only a WEEKDAY
+    makes the phrase: "this morning" or "next week" stays in the query. A weekday
+    word outside those phrases ("the friday demo", "Sun salutation") is untouched
+    here — it stays the title's, exactly as before. */
+function stripRemoveDayPhrases(text: string): string {
+  return text
+    .replace(new RegExp(`(?:\\b(?:this|next)\\s+)?\\b${REMOVE_DOW}['’]s\\b`, 'gi'), ' ')
+    .replace(new RegExp(`(\\S)\\s+(?:this|next)\\s+${REMOVE_DOW}\\b`, 'gi'), '$1 ')
+}
+
+/** #72 peer review: "next <weekday>" names a day MEW never pins (this week's or
+    the one after is the owner's call), so it may never WIDEN a remove — with it,
+    "all"/"every" is dropped and the ask takes the day-chip path, exactly as
+    "remove the lunch next thursday" does. A bulk remove only ever sweeps a day
+    the owner pinned, or every day when they named none. */
+function namesUnpinnedDay(text: string): boolean {
+  return new RegExp(`\\bnext\\s+${REMOVE_DOW}\\b`, 'i').test(text)
 }
 
 function parseTime(text: string): number | null {
@@ -745,7 +770,7 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
        removal carries no time/all pins; hand the sentinel straight through */
     const refQ = referentQuery(dropM[1])
     if (refQ) return { kind: 'remove', query: refQ }
-    const all = /\b(?:both|all|every|each)\b/i.test(dropM[1])
+    const all = /\b(?:both|all|every|each)\b/i.test(dropM[1]) && !namesUnpinnedDay(dropM[1])
     /* a start time pins which of several same-named blocks. Read it with the
        same keyless clock grammar used elsewhere ("at 9", "at 9:30", "9am") and
        a bare "22:30", then hand resolveRemoval a canonical HH:MM string so its
@@ -755,7 +780,7 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     const at =
       atMin != null ? `${Math.floor(atMin / 60)}:${String(atMin % 60).padStart(2, '0')}` : undefined
     const q = cleanTitle(
-      stripTimeWords(dropM[1])
+      stripTimeWords(stripRemoveDayPhrases(dropM[1]))
         .replace(/\b\d{1,2}:\d{2}\b(?:\s*(?:-|–|to)\s*\d{1,2}(?::\d{2})?)?/g, ' ') // bare clock / range
         .replace(/^(?:both|all|every|each|the|my)\s+/i, '')
         .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, '')

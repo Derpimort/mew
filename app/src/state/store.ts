@@ -42,13 +42,11 @@ import {
   minOfDay,
   snapStart,
   spell,
-  stripWeekPhrase,
   uid,
   weekKey,
   weekKeys,
-  weekOffsetFromQuestion,
-  weekOffsetLabel,
 } from '../domain/time'
+import { rangeDayKeys, rangeStartLabel, readRange, stripRangePhrase } from '../domain/timeRange'
 import * as week from '../domain/week'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
 import {
@@ -477,9 +475,10 @@ export interface MewState {
       message queued this IS stop-and-send: the settle drain in speak's
       finally fires it — same action, no second path. */
   stopSpeaking(): void
-  /** Read-only history answer: real sums from the asked week — this one, or
-      a past one ("last week", "two weeks ago") — + brain recall color. Never
-      mutates — chat is where the reply lands, via the tool. */
+  /** Read-only history answer: real sums over the stretch the question names
+      — this week, a past one ("last week", "two weeks ago"), or any span
+      ("since August 1", "the last three weeks", "this month") — + brain recall
+      color. Never mutates — chat is where the reply lands, via the tool. */
   queryBrain(question: string): Promise<string>
   toggleComplete(blockId: string): void
   /** Record the conversational referent (#320) — the block the user just
@@ -3938,39 +3937,53 @@ export const useMew = create<MewState>((set, get) => {
     ...['first', 'last', 'past', 'next', 'previous', 'recent', 'earlier', 'final'],
   ])
 
-  /** History/entity answers: the asked week supplies the NUMBERS (rollup over
-      real blocks — never an estimate), the brain supplies citable color. The
-      question names its week: "last week" / "two weeks ago" reach back through
-      block history (kept forever), so past weeks answer with real sums even
-      with no brain; no time phrase means this week. "Eaten" means held clock
-      time. The subject is matched as a title fragment, so projects, tasks,
-      and people all answer — and a name only ever spoken to the keyless floor
-      (which lowercases titles) still resolves. */
+  /** History/entity answers: the asked stretch supplies the NUMBERS (rollup
+      over real blocks — never an estimate), the brain supplies citable color.
+      The question names its stretch (domain/timeRange): "last week" / "two
+      weeks ago" reach back one Mon–Sun week, "since August 1" / "the last three
+      weeks" / "this month" any span of days — block history is kept forever,
+      so past stretches answer with real sums even with no brain; no time
+      phrase means this week, and a span longer than a year keeps its most
+      recent year. "Eaten" means held clock time. The subject is matched as a
+      title fragment, so projects, tasks, and people all answer — and a name
+      only ever spoken to the keyless floor (which lowercases titles) still
+      resolves. */
   async function execQueryBrain(question: string): Promise<string> {
     const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
     const known = knownProjectsFrom(s.blocks.map((b) => b.title))
-    /* a subject NAMED with week words ("Last week review", asked by name)
+    /* a subject NAMED with time words ("Last week review", asked by name)
        must not be mis-windowed by the phrase parser: when a known project
-       or a block title that carries a week phrase matches the un-stripped
-       question, it IS the subject and the window stays the live week */
+       or a block title that carries a time phrase matches the un-stripped
+       question, it IS the subject, and the stretch is read from the rest of
+       the question (none left means the live week) */
     const rawSlug = `-${slugify(question)}-`
+    const timeWorded = (name: string) => stripRangePhrase(name, todayKey) !== name
     const namedHit: [string, string] | null =
       [...known.entries()].find(
-        ([slug, name]) => stripWeekPhrase(name) !== name && rawSlug.includes(`-${slug}-`)
+        ([slug, name]) => timeWorded(name) && rawSlug.includes(`-${slug}-`)
       ) ??
       s.blocks
         .map((b) => b.title.split('—')[0].trim())
-        .filter((t) => t && stripWeekPhrase(t) !== t)
+        .filter((t) => t && timeWorded(t))
         .map((t): [string, string] => [slugify(t), t])
         .find(([slug]) => slug && rawSlug.includes(`-${slug}-`)) ??
       null
-    /* which Mon–Sun window the question means — and the question with the
-       week phrase removed, so "gym last week" never reads as one title */
-    const offset = namedHit ? 0 : weekOffsetFromQuestion(question)
-    const subjectText = namedHit ? question : stripWeekPhrase(question)
-    const label = weekOffsetLabel(offset)
+    /* which stretch the question means — and the question with the time
+       phrase removed, so "gym since August 1" never reads as one title */
+    const read = readRange(
+      namedHit
+        ? question
+            .replace(/['’]/g, '')
+            .replace(new RegExp(`\\b${namedHit[0].split('-').join('[^a-z0-9]+')}\\b`, 'i'), ' ')
+        : question,
+      todayKey
+    )
+    const range = read.range
+    const subjectText = namedHit ? question : read.rest
+    const label = range.capped ? `${range.label} (the most recent year)` : range.label
     const qSlug = `-${slugify(subjectText)}-`
-    /* subject: the week-worded name if one matched, else a declared project
+    /* subject: the time-worded name if one matched, else a declared project
        named in the question, else the noun the question's own shape points
        at ("how much has X eaten", "how long did X take", "my X sessions") —
        single-token captures are stoplist-checked so a bare function word
@@ -4013,8 +4026,8 @@ export const useMew = create<MewState>((set, get) => {
       else recall = got
     }
 
-    if (slug && name) {
-      const days = weekKeys(new Date(s.nowMs), offset)
+    if (slug && name && !range.future) {
+      const days = rangeDayKeys(range)
       const r = week.rollup(s.blocks, days, (b) => slugify(b.title).includes(slug))
       if (r.plannedMin > 0 || r.rolled > 0) {
         const h = (min: number) =>
@@ -4022,8 +4035,9 @@ export const useMew = create<MewState>((set, get) => {
         const openMin = r.plannedMin - r.doneMin
         const parts = [
           `${name} ${label}: ${h(r.plannedMin)} across ${r.done + r.open} block${r.done + r.open === 1 ? '' : 's'}`,
-          /* a past week that finished clean needs no "0h still open" tail */
-          offset < 0 && openMin === 0
+          /* nothing open needs no "0h still open" tail — for a past week (as
+             ever) and for any other stretch; this week keeps its pre-#8 words */
+          openMin === 0 && (range.kind === 'days' || range.toDayKey < todayKey)
             ? `${h(r.doneMin)} done`
             : `${h(r.doneMin)} done, ${h(openMin)} still open`,
         ]
@@ -4034,7 +4048,7 @@ export const useMew = create<MewState>((set, get) => {
     }
 
     /* no local numbers — recall may still know it; absent both, say so
-       honestly, naming the week the question asked about. "Or the brain" is
+       honestly, naming the stretch the question asked about. "Or the brain" is
        claimed only when the brain really answered: an unanswering brain is
        named as such (it may know more) — its silence is never passed off as
        an empty history (#249) */
@@ -4044,7 +4058,13 @@ export const useMew = create<MewState>((set, get) => {
       brainOn() && !brainAnswered
         ? ` I'm running on what I know on-device — the brain didn't answer just now, so it may know more; worth asking again in a moment.`
         : ''
-    if (offset < 0)
+    if (range.future)
+      return `${rangeStartLabel(range, todayKey)} is still ahead, so there's nothing to look back on yet.${brainSilent}`
+    if (range.kind === 'days') {
+      const blocksOf = range.fromDayKey === range.toDayKey ? "that day's" : "those days'"
+      return `I can't see ${name ?? 'that'} ${label} — nothing in ${blocksOf} blocks${brainChecked} mentions it.${brainSilent}`
+    }
+    if (range.weekOffset < 0)
       return `I can't see ${name ?? 'that'} ${label} — nothing in that week's blocks${brainChecked} mentions it.${brainSilent}`
     return `I can't see ${name ?? 'that'} yet — nothing in this week's blocks${brainChecked} mentions it.${brainSilent}`
   }
@@ -5275,7 +5295,8 @@ export const useMew = create<MewState>((set, get) => {
                  busy line claims a retry, because only the local adapter
                  retries (the SDK's backoff) — remote fails fast to this floor
                  by design (#156), so its copy never claims a retry that didn't
-                 happen. */
+                 happen. A dropped reply (2xx, then the connection broke) claims
+                 none on either side: the SDK never retries a started stream. */
               const local = failed.includes('ollama')
               const kind = classifyFailure(lastModelErr)
               post([
@@ -5290,7 +5311,9 @@ export const useMew = create<MewState>((set, get) => {
                           ? local
                             ? `(the local model was busy — I retried, then handled it myself.)`
                             : `(the model was busy — I handled this one myself.)`
-                          : `(I couldn't reach the model just now — I handled this myself.)`
+                          : kind === 'dropped'
+                            ? `(the connection to the model hiccuped — I handled this one myself.)`
+                            : `(I couldn't reach the model just now — I handled this myself.)`
                 ),
               ])
             }

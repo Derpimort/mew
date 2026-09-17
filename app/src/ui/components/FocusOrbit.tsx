@@ -8,7 +8,7 @@
    chip under the task lets it run in background. Those clicks write `attention`
    on the block — that's the whole mechanism. */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMew, useLive, clockNow } from '../../state/store'
 import type { Block } from '../../domain/types'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
@@ -38,23 +38,141 @@ import {
   wrapLabel,
 } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
+import { DayPicker } from './DayPicker'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
+import {
+  dayLine,
+  dayRelation,
+  daySummary,
+  daySummaryLine,
+  dayTitle,
+  dialAriaLabel,
+  spokenDay,
+  stepDay,
+  washMinute,
+} from './dialDay'
 
 /** Live wall clock, parked top-centre of the stage clear of the face — the exact
     readout the clock-face approximates. Date rides above the time, both centred;
-    the time is the hero, the date shares the seconds' gold-mono type. */
-function NxClock({ now }: { now: Date }) {
+    the time is the hero, the date shares the seconds' gold-mono type.
+
+    The date line is also the day header (#23): ‹ › step the dial to the day
+    before or after, and away from today the live time gives way to a way back.
+    The steps sit outside the date's flow and stay invisible until the date is
+    hovered or a step is focused, so today's clock renders exactly as before.
+    The date itself is the day picker's trigger (slice 2): a real button whose
+    calendar glyph shows with the steps, and whose name starts with the date it
+    shows (WCAG 2.5.3). "current time" names the time readout alone, so the
+    trigger never borrows that tooltip. */
+function NxClock({
+  now,
+  viewDayKey,
+  todayKey,
+  isToday,
+  onStep,
+  onToday,
+  onPick,
+}: {
+  now: Date
+  viewDayKey: string
+  todayKey: string
+  isToday: boolean
+  onStep: (dir: 1 | -1) => void
+  onToday: () => void
+  onPick: (key: string) => void
+}) {
+  const [picking, setPicking] = useState(false)
+  const pickRef = useRef<HTMLButtonElement>(null)
+  /* a close hands focus back to the trigger (WCAG 2.4.3); a dismissal leaves
+     it wherever the user sent it */
+  const closePicker = useCallback(() => {
+    setPicking(false)
+    pickRef.current?.focus()
+  }, [])
+  const dismissPicker = useCallback(() => setPicking(false), [])
   return (
-    <span className="nx-clock" title="current time">
-      <span className="dt">
-        {fmtDow(dayKey(now))} ·{' '}
-        {now.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+    <span className={'nx-clock' + (picking ? ' picking' : '')}>
+      <span className={'nx-day' + (isToday ? '' : ' away')}>
+        <button
+          type="button"
+          className="nx-day-step prev"
+          aria-label={`previous day — ${spokenDay(stepDay(viewDayKey, -1))}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onStep(-1)
+          }}
+        >
+          ‹
+        </button>
+        <button
+          ref={pickRef}
+          type="button"
+          className="nx-day-pick"
+          aria-haspopup="dialog"
+          aria-expanded={picking}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (picking) closePicker()
+            else setPicking(true)
+          }}
+        >
+          <svg
+            className="nx-day-glyph"
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect x="1.75" y="3" width="12.5" height="11.25" rx="2" />
+            <path d="M1.75 6.75h12.5M5.25 1.5v3M10.75 1.5v3" />
+          </svg>
+          <span className="dt">{dayLine(viewDayKey)}</span>
+          <span className="sr-only"> — change day</span>
+        </button>
+        <button
+          type="button"
+          className="nx-day-step next"
+          aria-label={`next day — ${spokenDay(stepDay(viewDayKey, 1))}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onStep(1)
+          }}
+        >
+          ›
+        </button>
+        {picking && (
+          <DayPicker
+            viewDayKey={viewDayKey}
+            todayKey={todayKey}
+            triggerRef={pickRef}
+            onClose={closePicker}
+            onDismiss={dismissPicker}
+            onPick={(key) => {
+              onPick(key)
+              closePicker()
+            }}
+          />
+        )}
       </span>
-      <span className="nx-time">
-        <span className="hm">{fmtTime(minOfDay(now))}</span>
-        <span className="sc">:{String(now.getSeconds()).padStart(2, '0')}</span>
-      </span>
+      {isToday ? (
+        <span className="nx-time" title="current time">
+          <span className="hm">{fmtTime(minOfDay(now))}</span>
+          <span className="sc">:{String(now.getSeconds()).padStart(2, '0')}</span>
+        </span>
+      ) : (
+        <button
+          type="button"
+          className="nx-day-today"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToday()
+          }}
+        >
+          back to today
+        </button>
+      )}
     </span>
   )
 }
@@ -71,24 +189,35 @@ export function FocusOrbit() {
   const nowMs = useMew((s) => s.nowMs)
   const setAttention = useMew((s) => s.setAttention)
   const noteReferent = useMew((s) => s.noteReferent)
+  const focusedDayKey = useMew((s) => s.focusedDayKey)
+  const focusDay = useMew((s) => s.focusDay)
   const live = useLive()
 
-  /* 1s clock: countdown + the rolling mapping both stay fresh between store ticks */
   const [, forceSecond] = useState(0)
-  useEffect(() => {
-    const id = setInterval(() => forceSecond((n) => n + 1), 1000)
-    return () => clearInterval(id)
-  }, [])
   const now = new Date(Math.max(nowMs, clockNow()))
   const todayKey = dayKey(now)
   const nowH = minOfDay(now) / 60
+  /* the shown day (#23): the day picked in Week or with the header steps, else
+     today — one key, so Focus → Week → Focus keeps it. Everything keyed to NOW
+     (the tick, the hand, running, the countdown) belongs to today alone. */
+  const viewDayKey = focusedDayKey ?? todayKey
+  const isToday = viewDayKey === todayKey
+  const relation = dayRelation(viewDayKey, todayKey) // a lived day, today, or a day ahead
+  /* 1s clock: countdown + the rolling mapping both stay fresh between store
+     ticks — today only; another day has no now to keep fresh */
+  useEffect(() => {
+    if (!isToday) return
+    const id = setInterval(() => forceSecond((n) => n + 1), 1000)
+    return () => clearInterval(id)
+  }, [isToday])
 
-  // `nowH`/`todayKey` derive from clockNow() each render, so the React Compiler
+  // `nowH`/`viewDayKey` derive from clockNow() each render, so the React Compiler
   // can't prove this memo's inputs are stable and bails out. The manual deps are
   // correct and intended (recompute only when blocks/day/hour change); keep them.
   // eslint-disable-next-line react-hooks/preserve-manual-memoization -- deps derive from a non-reactive clock read; manual memo is intentional
-  const vis = useMemo(() => visibleOrbit(blocks, todayKey, nowH), [blocks, todayKey, nowH])
-  const focusId = live.current?.id ?? null
+  const vis = useMemo(() => visibleOrbit(blocks, viewDayKey, nowH), [blocks, viewDayKey, nowH])
+  /* useLive() is today's live state — another day has no current item */
+  const focusId = isToday ? (live.current?.id ?? null) : null
   const radii = useMemo(() => radiiFor(vis, focusId, nowH), [vis, focusId, nowH])
   /* only open blocks carry a persistent callout — done ones are quiet markers
      (title shows in the hover hint), keeping a full day's face uncluttered */
@@ -103,9 +232,9 @@ export function FocusOrbit() {
 
   /* today's all-day entries (#27): pill badges above the centre, never wedges.
      A crowded day shows BADGE_MAX and "+N more" until opened (per day). */
-  const badges = dialBadges(blocks, todayKey)
+  const badges = dialBadges(blocks, viewDayKey)
   const [badgesOpenDay, setBadgesOpenDay] = useState<string | null>(null)
-  const badgeView = badgeRow(badges, badgesOpenDay === todayKey)
+  const badgeView = badgeRow(badges, badgesOpenDay === viewDayKey)
   const badgeIds = badgeView.shown.map((b) => b.id)
 
   const [hover, setHover] = useState<string | null>(null)
@@ -204,7 +333,8 @@ export function FocusOrbit() {
     badges.length > 0 ? (
       <DialBadges
         view={badgeView}
-        todayKey={todayKey}
+        dayKey={viewDayKey}
+        dayName={isToday ? undefined : spokenDay(viewDayKey)}
         rovingId={rovingId}
         litId={hover ?? cardId}
         hidden={cardId != null}
@@ -219,13 +349,13 @@ export function FocusOrbit() {
         onBlurBadge={(id) => setBadgeFocus((f) => (f === id ? null : f))}
         onOpen={openCard}
         onBadgeKey={(id, e) => onBadgeKeyDown(id)(e)}
-        onMore={() => setBadgesOpenDay(todayKey)}
+        onMore={() => setBadgesOpenDay(viewDayKey)}
       />
     ) : null
 
   /* countdown to the FOCUS item's end, ticking seconds */
   const secOfDay = minOfDay(now) * 60 + now.getSeconds()
-  const current = live.current
+  const current = isToday ? live.current : undefined
   const left = current ? Math.max(0, current.endMin * 60 - secOfDay) : 0
   const count = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`
   const meta = current
@@ -246,7 +376,7 @@ export function FocusOrbit() {
          not a document region, so AT hands keystrokes straight to it (APG). The
          label names what it is; the hint line describes how to read it. */
       role="application"
-      aria-label="focus dial: 12-hour clock showing today's tasks"
+      aria-label={dialAriaLabel(viewDayKey, todayKey)}
       aria-describedby="dial-hint"
       onClick={() => setCardId(null)}
       onMouseEnter={() => setDialHover(true)}
@@ -259,7 +389,25 @@ export function FocusOrbit() {
       </h2>
       {/* top-center: the live clock and the loose-threads pill, side by side */}
       <div className="nx-topbar">
-        <NxClock now={now} />
+        <NxClock
+          now={now}
+          viewDayKey={viewDayKey}
+          todayKey={todayKey}
+          isToday={isToday}
+          onStep={(dir) => {
+            const next = stepDay(viewDayKey, dir)
+            focusDay(next === todayKey ? null : next) // today stays the canonical null
+            setCardId(null)
+          }}
+          onToday={() => {
+            focusDay(null)
+            setCardId(null)
+          }}
+          onPick={(key) => {
+            focusDay(key === todayKey ? null : key) // the picker's day, the same one key
+            setCardId(null)
+          }}
+        />
         <ThreadRail onOpen={(id) => setCardId(id)} />
       </div>
       <svg width={OG.w} height={OG.h} viewBox={`-${OG.ox} 0 ${OG.w} ${OG.h}`}>
@@ -273,7 +421,8 @@ export function FocusOrbit() {
             divider (ro) is geometry only — never a line — so the face reads as two
             clean rings, not three. */}
         {(() => {
-          const f = dayFill(minOfDay(now))
+          /* a lived day is full, a day ahead empty; today fills to the now notch */
+          const f = dayFill(washMinute(viewDayKey, todayKey, minOfDay(now)))
           return (
             <g pointerEvents="none" aria-hidden="true">
               {f.inner > 0.3 && (
@@ -408,7 +557,7 @@ export function FocusOrbit() {
               ? `→ ${fmtTime(span.endLabelMin)}` // runs into tomorrow; show its real end
               : span.continuesFrom
                 ? `ends ${fmtTime(span.endLabelMin)}` // tail of a block that began yesterday
-                : isRunning(b, nowH)
+                : isToday && isRunning(b, nowH)
                   ? `→ ${fmtTime(b.endMin)}`
                   : `@ ${fmtTime(b.startMin)}`
           const arcPath = rArc(OG.cx, OG.cy, r, d0, d1)
@@ -635,36 +784,38 @@ export function FocusOrbit() {
 
         {/* now — a hand that sweeps the fixed face to the current clock angle,
             crossing all four bands from the clear disk out to the rim notch where
-            the day wash ends */}
-        {(() => {
-          const deg = clockDeg(minOfDay(now) / 60)
-          const [hx, hy] = rPolar(OG.cx, OG.cy, OG.tick, deg)
-          const [tx, ty] = rPolar(OG.cx, OG.cy, OG.disk - 6, deg)
-          return (
-            <g pointerEvents="none" aria-hidden="true">
-              <line
-                x1={tx}
-                y1={ty}
-                x2={hx}
-                y2={hy}
-                stroke="var(--ice)"
-                strokeWidth="2"
-                opacity={0.85}
-                style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }}
-              />
-              <circle
-                cx={hx}
-                cy={hy}
-                r="5.5"
-                fill="var(--ice)"
-                style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }}
-              />
-            </g>
-          )
-        })()}
+            the day wash ends. Today only: another day has no now (#23). */}
+        {isToday &&
+          (() => {
+            const deg = clockDeg(minOfDay(now) / 60)
+            const [hx, hy] = rPolar(OG.cx, OG.cy, OG.tick, deg)
+            const [tx, ty] = rPolar(OG.cx, OG.cy, OG.disk - 6, deg)
+            return (
+              <g pointerEvents="none" aria-hidden="true">
+                <line
+                  x1={tx}
+                  y1={ty}
+                  x2={hx}
+                  y2={hy}
+                  stroke="var(--ice)"
+                  strokeWidth="2"
+                  opacity={0.85}
+                  style={{ filter: 'drop-shadow(0 0 6px var(--glowc))' }}
+                />
+                <circle
+                  cx={hx}
+                  cy={hy}
+                  r="5.5"
+                  fill="var(--ice)"
+                  style={{ filter: 'drop-shadow(0 0 12px var(--glowc))' }}
+                />
+              </g>
+            )
+          })()}
       </svg>
 
-      {/* center: countdown → meta → task → demote chip; or "Nothing holds you." */}
+      {/* center: countdown → meta → task → demote chip; or "Nothing holds you.";
+          or, on another day, that day itself — never a fabricated current (#23) */}
       {current ? (
         <div
           className="clk-center"
@@ -722,7 +873,7 @@ export function FocusOrbit() {
             ↓ let it run in background
           </button>
         </div>
-      ) : (
+      ) : isToday ? (
         <div className="clk-center" style={{ width: 280 }}>
           {badgeRowEl}
           <div className="nx-task" style={{ fontSize: 24, color: 'var(--muted)' }}>
@@ -739,7 +890,30 @@ export function FocusOrbit() {
             {meta}
           </div>
         </div>
+      ) : (
+        <div className="clk-center" style={{ width: 280 }}>
+          {badgeRowEl}
+          <div className="nx-task" style={{ fontSize: 24, color: 'var(--muted)' }}>
+            <StaggeredText
+              key={viewDayKey}
+              text={dayTitle(viewDayKey)}
+              as="span"
+              segmentBy="words"
+              delay={55}
+              duration={0.5}
+            />
+          </div>
+          <div className="nx-meta" style={{ marginTop: 10 }}>
+            {daySummaryLine(daySummary(blocks, viewDayKey))}
+          </div>
+        </div>
       )}
+
+      {/* the shown day, spoken when a step changes it (a live region announces
+          changes, not its first content) */}
+      <span className="sr-only" aria-live="polite">
+        {isToday ? 'showing today' : `showing ${spokenDay(viewDayKey)}`}
+      </span>
 
       {(() => {
         const cardBlock = cardId ? blocks.find((b) => b.id === cardId) : null
@@ -749,6 +923,7 @@ export function FocusOrbit() {
             variant="center"
             block={cardBlock}
             isNow={cardBlock.id === focusId}
+            offDay={relation === 'today' ? undefined : relation}
             pinned
             onClose={() => setCardId(null)}
             style={{ left: OG.cx + OG.ox, top: OG.cy }}
@@ -782,7 +957,7 @@ export function FocusOrbit() {
               <>
                 <span className="pri-range">
                   all day
-                  {hb.endDayKey && hb.endDayKey > todayKey && (
+                  {hb.endDayKey && hb.endDayKey > viewDayKey && (
                     <span className="xd">→ {fmtDow(hb.endDayKey).toLowerCase()}</span>
                   )}
                 </span>
@@ -830,12 +1005,15 @@ export function FocusOrbit() {
   )
 }
 
-/** The dial's all-day badges (#27): today's day labels as pills above the
+/** The dial's all-day badges (#27): the shown day's labels as pills above the
     centre stack — never ring wedges. Props in, markup out: FocusOrbit owns the
-    state; a badge joins the dial's roving tab stop and opens the same card. */
+    state; a badge joins the dial's roving tab stop and opens the same card.
+    Everything is measured against the day the dial shows (#23), so a label reads
+    on any day exactly as it would if that day were today. */
 export function DialBadges({
   view,
-  todayKey,
+  dayKey,
+  dayName,
   rovingId,
   litId,
   hidden,
@@ -848,7 +1026,10 @@ export function DialBadges({
   onMore,
 }: {
   view: { shown: Block[]; more: number }
-  todayKey: string
+  /** the day the dial shows — "through <day>" is measured against it */
+  dayKey: string
+  /** off today, how the group names its day ("Monday, September 14"); absent on today */
+  dayName?: string
   /** the dial's single tab stop — a badge holds it when it's the keyboard anchor */
   rovingId: string | null
   /** the badge hovered or open, drawn lit */
@@ -867,7 +1048,7 @@ export function DialBadges({
     <div
       className="dial-badges"
       role="group"
-      aria-label="today's all-day labels"
+      aria-label={dayName ? `all-day labels for ${dayName}` : "today's all-day labels"}
       style={hidden ? { opacity: 0, pointerEvents: 'none' } : undefined}
       onClick={(e) => e.stopPropagation()}
     >
@@ -879,7 +1060,7 @@ export function DialBadges({
           }
           role="button"
           tabIndex={rovingId === b.id ? 0 : -1}
-          aria-label={badgeAriaLabel(b, todayKey)}
+          aria-label={badgeAriaLabel(b, dayKey)}
           title={b.title}
           ref={badgeRef?.(b.id)}
           onMouseEnter={() => onHover?.(b.id)}
@@ -897,7 +1078,7 @@ export function DialBadges({
           type="button"
           className="dial-badge more"
           aria-expanded={false}
-          aria-label={`${view.more} more all-day labels today — show them all`}
+          aria-label={`${view.more} more all-day labels ${dayName ? `for ${dayName}` : 'today'} — show them all`}
           onClick={() => onMore?.()}
         >
           +{view.more} more
