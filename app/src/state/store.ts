@@ -1164,9 +1164,20 @@ function driftReply(
   const stuckPart = stuckNames.length
     ? ` — ${stuckNames.join(' and ')} still ${stuckNames.length === 1 ? 'shares' : 'share'} that time`
     : ''
+  /* #122: work over a protected rest stays where it was asked and the rest
+     stays too, so the reply names the time it runs over; a rest the owner kept
+     after protect-rest's one ask would otherwise go unmentioned */
+  const restPart = res.rests.length
+    ? ` — it runs over your ${andList(
+        res.rests.map(
+          (r) =>
+            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
+        )
+      )}`
+    : ''
   return {
     blocks: next,
-    note: `${driftPart}${fixedPart}${stuckPart}`,
+    note: `${driftPart}${fixedPart}${stuckPart}${restPart}`,
     driftedIds,
     stuckIds: res.stuck.map((b) => b.id),
   }
@@ -3870,7 +3881,16 @@ export const useMew = create<MewState>((set, get) => {
         case 'series':
           return `${list(run.parts)} repeats — I keep a repeating block whole, so everything stays as it is.`
         case 'titles': {
-          const names = [...new Set(run.parts.map((b) => baseOf(b.title)))]
+          /* one name per block: a split's pieces are one block, named without
+             their "(part N)" (#121 review) */
+          const names = [
+            ...new Map(
+              run.parts.map((b) => [
+                week.mergeName(b),
+                baseOf(b.title).replace(/\s+\(part \d+\)$/i, ''),
+              ])
+            ).values(),
+          ]
           return `${andList(names)} are different blocks — name the one whose parts you want joined, and I'll merge them. Everything stays as it is for now.`
         }
         case 'tags': {
