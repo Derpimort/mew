@@ -28,9 +28,11 @@ import {
   rescueOptions,
   withinDayWords,
 } from '../domain/rescue'
+import { parseCommand } from '../domain/parse'
 import {
   addDaysKey,
   dayKey,
+  dayWord,
   fmtDowLong,
   fmtLongDate,
   fmtShortDate,
@@ -101,6 +103,7 @@ import {
   condenseChatPage,
   condensedChatSlug,
   debriefPage,
+  forgottenPrefPage,
   knownProjectsFrom,
   learnedRulePage,
   makeChatBatcher,
@@ -108,6 +111,7 @@ import {
   prefPage,
   slugify,
 } from '../adapters/brain/senses'
+import { mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
 import {
   adoptSidecarSnapshot,
   effectiveBrain,
@@ -227,8 +231,9 @@ export const mewBrain = brain
 /** re-exported so the UI reads sidecar state through the store, not the adapter */
 export type { SidecarStatus } from '../adapters/brain/sidecar'
 
-/* the always-on pref slice: brain-backed when connected, memory-backed
-   otherwise. Cached per session; refreshed after every remember. */
+/* the brain's copy of the rulebook, cached per session and refreshed after every
+   remember/forget and on (re)connect. What APPLIES is always the merge with local
+   memory (activePrefsFrom): local rules and forgets win, and brain-only rules join. */
 let brainPrefs: PrefPayload[] | null = null
 function refreshBrainPrefs(): void {
   if (!brainOn()) {
@@ -237,7 +242,47 @@ function refreshBrainPrefs(): void {
   }
   void brain.listPrefs().then((prefs) => {
     brainPrefs = prefs
+    replayLocalPrefs(prefs)
   })
+}
+
+/* #15: what the owner told MEW while the brain was away (or forgot since) reaches
+   the brain once it answers. The plan comes from the pure merge rule
+   (prefReplayPlan). A session ledger keyed by brain + rule + value makes each
+   replay happen exactly once. Nothing is claimed unless the brain proves
+   reachable, so a down brain is simply retried on the next connect. */
+const replayedPrefs = new Set<string>()
+function replayLocalPrefs(fromBrain: PrefPayload[]): void {
+  const s = useMew.getState()
+  if (!s.hydrated || !brainOn()) return
+  const plan = prefReplayPlan(s.memory, fromBrain)
+  if (!plan.remember.length && !plan.forget.length) return
+  const brainKey = effectiveBrainKey(s.settings)
+  void (async () => {
+    if (!(await brain.health())) return
+    let wrote = false
+    /* claim before the write (a concurrent replay can't double it), then confirm
+       the brain is still there: ingest never throws, so a brain that went away
+       mid-loop releases the claim and stops — the next reachable connect replays
+       it instead of the ledger remembering a write that never landed */
+    const replay = async (id: string, page: Parameters<typeof brain.ingest>[0]) => {
+      if (replayedPrefs.has(id)) return true
+      replayedPrefs.add(id)
+      await brain.ingest(page)
+      if (await brain.health()) return (wrote = true)
+      replayedPrefs.delete(id)
+      return false
+    }
+    for (const p of plan.remember)
+      if (!(await replay(`${brainKey}|${prefKey(p)}|${p.value}`, prefPage(p)))) return
+    for (const p of plan.forget)
+      if (!(await replay(`${brainKey}|${prefKey(p)}|forgotten`, forgottenPrefPage(p)))) return
+    // re-read the brain's copy; no second replay, the ledger already holds these
+    if (wrote)
+      void brain.listPrefs().then((prefs) => {
+        brainPrefs = prefs
+      })
+  })()
 }
 
 /** newest-first, deduped by kind+match — the standing rulebook, as data */
@@ -245,22 +290,11 @@ export function activePrefsFrom(
   memory: MemoryEvent[],
   fromBrain: PrefPayload[] | null
 ): PrefPayload[] {
-  const source: PrefPayload[] = fromBrain?.length
-    ? fromBrain
-    : [...memory]
-        .reverse()
-        .filter((e) => e.kind === 'preference' && e.pref)
-        .map((e) => e.pref!)
-  const seen = new Set<string>()
-  const out: PrefPayload[] = []
-  for (const p of source) {
-    const key = `${p.kind}:${p.match.toLowerCase()}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(p)
-    if (out.length >= 15) break
-  }
-  return out
+  /* #15: ONE merge rule (domain/prefMerge.ts). Local rules and forgets win, and
+     brain-only rules join. The brain's list used to REPLACE local memory whenever
+     it held anything, dropping rules told to MEW while it was away and bringing
+     back rules the owner had forgotten. */
+  return mergeActivePrefs(memory, fromBrain)
 }
 
 /** the same rulebook, rendered for the context block */
@@ -1005,7 +1039,7 @@ function driftReply(
   todayKey: string,
   nowMin: number,
   prefs: PrefPayload[]
-): { blocks: Block[]; note: string; driftedIds: string[] } {
+): { blocks: Block[]; note: string; driftedIds: string[]; stuckIds: string[] } {
   const res = driftCollisions(blocks, placed, todayKey, nowMin, prefs)
   let next = blocks
   const driftedIds: string[] = []
@@ -1024,14 +1058,18 @@ function driftReply(
   const driftPart = moved.length ? ` — moved ${moved.join(', ')} to clear ${placedBase}` : ''
   // external/fixed never move — the same honest note clashNote has always given
   const fixedPart = clashNote(res.fixed, prefs)
-  const stuckPart = res.stuck.length
-    ? ` — note: ${res.stuck
-        .map((b) => b.title.split('—')[0].trim())
-        .join(
-          ' and '
-        )} still overlaps ${placedBase} with no clean slot to drift to — offer to shift the work, drop it, or keep the overlap (don't leave it unasked)`
+  /* #12: no clean slot to drift to — the note states the fact only; the
+     executor's offerDriftChoices turns it into a real choice (chips) */
+  const stuckNames = res.stuck.map((b) => b.title.split('—')[0].trim())
+  const stuckPart = stuckNames.length
+    ? ` — ${stuckNames.join(' and ')} still ${stuckNames.length === 1 ? 'shares' : 'share'} that time`
     : ''
-  return { blocks: next, note: `${driftPart}${fixedPart}${stuckPart}`, driftedIds }
+  return {
+    blocks: next,
+    note: `${driftPart}${fixedPart}${stuckPart}`,
+    driftedIds,
+    stuckIds: res.stuck.map((b) => b.id),
+  }
 }
 
 function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = false): WeekContext {
@@ -1082,7 +1120,12 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
        shows, over LOCAL memory (brain-off by law), so reply and card are one
        summary. Computed here so runIntent stays a pure render of ctx. */
     knownLines: consoleSummary(
-      memoryConsole({ events: s.memory, prefs: activePrefsFrom(s.memory, null), insights })
+      memoryConsole({
+        events: s.memory,
+        prefs: activePrefsFrom(s.memory, null),
+        insights,
+        energy: energyProfile(s.memory, agg, now), // #15: rhythm rows, parity with the card
+      })
     ),
     recallLines,
     recallDegraded,
@@ -1771,6 +1814,102 @@ export const useMew = create<MewState>((set, get) => {
      on. Under the ask setting, under the pad floor, or with a stated duration,
      this says nothing. */
   let pendingEstimateMsgs: ChatMessage[] = []
+
+  /* No clean drift (#12): new explicit work landed on the owner's own flexible
+     blocks and one of them has nowhere clean to go. The owner gets ONE chips
+     message with the honest ways forward: shift the work to its next clean
+     slot, drop the flexible block, or keep both. Every chip's reply is a plain
+     ask the executor runs (so it's keyless-safe: the rules floor parses each
+     one), and a chip is offered only when that exact reply resolves to exactly
+     its block through the same resolvers the executor uses. A pick can never
+     touch a block its label didn't name. Nothing moves until a pick. Parked
+     like the day-load chips (#301) so the ask lands after the turn's reply.
+     Returns whether chips went out, so the reply can say the options are on
+     screen. */
+  let pendingDriftMsgs: ChatMessage[] = []
+  function offerDriftChoices(
+    stuck: { placedId: string; stuckIds: string[] }[],
+    todayKey: string
+  ): boolean {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const hours = plannableOf(s.settings)
+    const base = (b: Block) => b.title.split('\u2014')[0].trim()
+    const msgs: ChatMessage[] = []
+    for (const rec of stuck) {
+      const placed = s.blocks.find((b) => b.id === rec.placedId)
+      if (!placed) continue
+      const flex = rec.stuckIds
+        .map((id) => s.blocks.find((b) => b.id === id))
+        .filter(
+          (b): b is Block =>
+            b != null &&
+            b.status === 'open' &&
+            b.dayKey === placed.dayKey &&
+            b.startMin < placed.endMin &&
+            b.endMin > placed.startMin
+        )
+      if (!flex.length) continue // resolved in the meantime — nothing to ask
+      const choices: ChatChoice[] = []
+
+      /* shift the work: its next clean slot at or after where it asked to be */
+      const slot = week.nextSlotAfter(s.blocks, placed, placed.startMin, hours)
+      const toDay = slot ? dayWord(slot.dayKey, todayKey) : null
+      if (slot && toDay) {
+        const reply = `move the ${base(placed)} at ${fmtTime(placed.startMin)} to ${toDay} at ${fmtTime(slot.startMin)}`
+        const ask = parseCommand(reply, now)
+        const hit =
+          ask.kind === 'move' && ask.at
+            ? week.findTarget(s.blocks, ask.query ?? '', todayKey, {
+                at: parseTimeValue(ask.at),
+              })
+            : null
+        const landsOn =
+          ask.toDayKey != null && /^\d+$/.test(ask.toDayKey)
+            ? addDaysKey(todayKey, Number(ask.toDayKey))
+            : null
+        if (
+          hit?.status === 'ok' &&
+          hit.block.id === placed.id &&
+          landsOn === slot.dayKey &&
+          ask.toStartMin === slot.startMin
+        )
+          choices.push({
+            id: 'shift',
+            label: `move ${base(placed)} to ${toDay === 'today' ? '' : `${toDay} `}${fmtTime(slot.startMin)}`,
+            reply,
+          })
+      }
+
+      /* drop the flexible block: only a one-off (a series asks this/following/
+         series first) that its own reply singles out */
+      for (const b of flex.slice(0, 3)) {
+        if (b.recurringBlockId) continue
+        const reply = `remove the ${base(b)} at ${fmtTime(b.startMin)}`
+        const ask = parseCommand(reply, now)
+        if (ask.kind !== 'remove') continue
+        const r = week.resolveRemoval(s.blocks, ask.query ?? '', ask.remove ?? {}, todayKey)
+        if (r.remove.length === 1 && r.remove[0].id === b.id && !r.candidates.length)
+          choices.push({ id: `drop-${b.id}`, label: `drop ${base(b)}`, reply })
+      }
+
+      if (!choices.length) continue // no exact way to act — the plain note stands
+      choices.push({ id: 'keep', label: 'keep both', reply: 'ok, keep both as they are' })
+      const overlapStart = Math.max(placed.startMin, Math.min(...flex.map((b) => b.startMin)))
+      const overlapEnd = Math.min(placed.endMin, Math.max(...flex.map((b) => b.endMin)))
+      const names = [...flex.map(base), base(placed)] // "a, b and c", however many are stuck
+      msgs.push(
+        choicesMsg(
+          `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} share ${fmtTime(overlapStart)}\u2013${fmtTime(overlapEnd)}, with no clean slot to drift to. How should it go?`,
+          choices
+        )
+      )
+    }
+    if (!msgs.length) return false
+    if (turnInFlight) pendingDriftMsgs.push(...msgs)
+    else queueMicrotask(() => post(msgs))
+    return true
+  }
   let pendingEstimatePad: { ids: string[]; factor: number; focusClass: FocusClass } | null = null
   function offerEstimateGuard(
     placed: { id: string; focusClass: FocusClass }[],
@@ -2349,6 +2488,13 @@ export const useMew = create<MewState>((set, get) => {
       pendingEstimateMsgs = []
       post(msgs)
     }
+    /* the no-clean-drift ask (#12) rides the same beat: it's a direct question
+       about this turn's own placement, so it comes after the reply too */
+    if (pendingDriftMsgs.length) {
+      const msgs = pendingDriftMsgs
+      pendingDriftMsgs = []
+      post(msgs)
+    }
   }
 
   function setBlocks(blocks: Block[]) {
@@ -2411,9 +2557,11 @@ export const useMew = create<MewState>((set, get) => {
        clear in this same pass and names what moved (external/fixed stay put, an
        honest note); every other placement keeps the place-then-offer note
        (#102). `blocks` must already hold `landed`. Mutates blocks + touchedDays. */
+    const stuckDrifts: { placedId: string; stuckIds: string[] }[] = [] // #12
     const collisionNote = (landed: Block, key: string): string => {
       if (landed.tag === 'work' && !week.isBackground(landed)) {
         const d = driftReply(blocks, landed, todayKey, minOfDay(now), prefs)
+        if (d.stuckIds.length) stuckDrifts.push({ placedId: landed.id, stuckIds: d.stuckIds })
         blocks = d.blocks
         for (const id of d.driftedIds) {
           const b = blocks.find((x) => x.id === id)
@@ -2689,6 +2837,8 @@ export const useMew = create<MewState>((set, get) => {
       }
     }
     setBlocks(blocks)
+    /* #12: any own flexible block left overlapping gets a real choice (chips) */
+    const driftAsk = stuckDrifts.length ? offerDriftChoices(stuckDrifts, todayKey) : false
 
     /* referent (#320): a single-block plan is the one unambiguous "it" — set it.
        A multi-block plan or a kept-free window is ambiguous by construction, so
@@ -2741,7 +2891,8 @@ export const useMew = create<MewState>((set, get) => {
       const joined = joinHuman(mealNotes)
       mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
     }
-    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}`
+    const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
+    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}`
   }
 
   /* completions through CHAT celebrate in the reply itself — the celebrate
@@ -3182,10 +3333,12 @@ export const useMew = create<MewState>((set, get) => {
        drifts them clear in the same pass and names what moved; other moves keep
        the honest place-then-offer note. External/fixed are never moved. */
     let clashPart: string
+    let moveStuck: string[] = [] // #12
     if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
       const d = driftReply(moved, landedBlock, todayKey, minOfDay(now), prefs)
       moved = d.blocks
       clashPart = d.note
+      moveStuck = d.stuckIds
     } else {
       const landed = week.conflictsWith(
         moved,
@@ -3199,7 +3352,10 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(moved)
     noteReferentId(target.id) // the turn touched one block — "it" now points here
-    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}`
+    const moveAsk = moveStuck.length
+      ? offerDriftChoices([{ placedId: target.id, stuckIds: moveStuck }], todayKey)
+      : false
+    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}${moveAsk ? ' The options for that overlap are on screen.' : ''}`
   }
 
   /* ── granular calendar ops (#335) ────────────────────────────────────────
@@ -3356,10 +3512,12 @@ export const useMew = create<MewState>((set, get) => {
     /* the copy is a placement, so it drifts own flexible work and words fixed/
        external clashes exactly like plan/move (#324) — never moving a neighbor. */
     let note: string
+    let copyStuck: string[] = [] // #12
     if (made.tag === 'work' && !week.isBackground(made)) {
       const d = driftReply(blocks, made, todayKey, minOfDay(now), prefs)
       blocks = d.blocks
       note = d.note
+      copyStuck = d.stuckIds
     } else {
       const clash = week.isBackground(made)
         ? []
@@ -3368,8 +3526,11 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(blocks)
     noteReferentId(made.id) // the fresh copy is now "it"
+    const copyAsk = copyStuck.length
+      ? offerDriftChoices([{ placedId: made.id, stuckIds: copyStuck }], todayKey)
+      : false
     const when = toKey === todayKey ? 'today' : fmtDowLong(toKey)
-    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}`
+    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}${copyAsk ? ' The options for that overlap are on screen.' : ''}`
   }
 
   /** Move a block relative to where it is now, with no absolute time (#335).
@@ -3986,10 +4147,12 @@ export const useMew = create<MewState>((set, get) => {
 
   function execRemove(
     query: string,
-    opts: { at?: string; all?: boolean; scope?: RecurScope } = {}
+    opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = {}
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
+    /* #62: a named day pins which occurrence; a time alone never reaches across days */
+    const day = opts.dayOffset != null ? addDaysKey(todayKey, opts.dayOffset) : undefined
     /* #343: "the whole series" (scope:'series') sweeps the linked set exactly as
        an explicit all does — both flow through seriesOf below. */
     const scope = opts.scope
@@ -4011,7 +4174,7 @@ export const useMew = create<MewState>((set, get) => {
       ;({ remove: matches, candidates } = week.resolveRemoval(
         s.blocks,
         query,
-        { at: opts.at, all: wholeSeries },
+        { at: opts.at, all: wholeSeries, day },
         todayKey
       ))
       /* no OPEN target by that name — it may name DONE block(s). The cage lifts
@@ -4022,7 +4185,7 @@ export const useMew = create<MewState>((set, get) => {
         const atMin = opts.at ? parseTimeValue(opts.at) : null
         const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone: true })
         const hits = r.status === 'ok' ? [r.block] : r.status === 'ambiguous' ? r.candidates : []
-        doneProposal = hits.filter((b) => b.status === 'done')
+        doneProposal = hits.filter((b) => b.status === 'done' && (day == null || b.dayKey === day))
       }
     }
     if (doneProposal.length) return proposeDoneRemoval(baseOf(query), doneProposal, todayKey)
@@ -4060,19 +4223,37 @@ export const useMew = create<MewState>((set, get) => {
          too. Each reply is a complete remove the parser (and any model) acts
          on; times dedupe because `at` pins by start minute — one chip removes
          exactly what typing that time would. ≤5 chips: 4 times + the sweep. */
+      /* #62: when the SAME time repeats across days, a time-only chip would
+         match every one of them again, so each block gets a chip that names
+         its day ("remove lunch on thursday at 12:00"). Distinct times keep the
+         time-only chips (each is already exact). A block past the day words
+         (7+ days out) gets no chip, since its reply would land on the wrong day;
+         the question text still names it. */
+      const timeRepeatsAcrossDays = candidates.some((b) =>
+        candidates.some((c) => c !== b && c.startMin === b.startMin && c.dayKey !== b.dayKey)
+      )
       const seen = new Set<string>()
-      const timeOptions = candidates
-        .filter((b) => {
-          const t = fmtTime(b.startMin)
-          if (seen.has(t)) return false
-          seen.add(t)
-          return true
-        })
-        .slice(0, 4)
-        .map((b) => ({
-          label: `the ${fmtTime(b.startMin)}`,
-          reply: `remove ${base} ${fmtTime(b.startMin)}`,
-        }))
+      const timeOptions = timeRepeatsAcrossDays
+        ? candidates
+            .map((b) => ({ b, word: dayWord(b.dayKey, todayKey) }))
+            .filter((x): x is { b: Block; word: string } => x.word != null)
+            .slice(0, 4)
+            .map(({ b, word }) => ({
+              label: `${word} ${fmtTime(b.startMin)}`,
+              reply: `remove ${base} ${word === 'today' || word === 'tomorrow' ? word : `on ${word}`} at ${fmtTime(b.startMin)}`,
+            }))
+        : candidates
+            .filter((b) => {
+              const t = fmtTime(b.startMin)
+              if (seen.has(t)) return false
+              seen.add(t)
+              return true
+            })
+            .slice(0, 4)
+            .map((b) => ({
+              label: `the ${fmtTime(b.startMin)}`,
+              reply: `remove ${base} ${fmtTime(b.startMin)}`,
+            }))
       return execOfferChoices(
         `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`,
         [
@@ -6289,22 +6470,28 @@ export const useMew = create<MewState>((set, get) => {
       execRemember(pref)
     },
     forgetStandingPref(pref) {
-      const key = `${pref.kind}:${pref.match.toLowerCase()}`
+      const key = prefKey(pref)
       const drop = get()
-        .memory.filter(
-          (e) =>
-            e.kind === 'preference' &&
-            e.pref &&
-            `${e.pref.kind}:${e.pref.match.toLowerCase()}` === key
-        )
+        .memory.filter((e) => e.kind === 'preference' && e.pref && prefKey(e.pref) === key)
         .map((e) => e.id)
-      if (!drop.length) return
-      const gone = new Set(drop)
-      set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
-      persistDeleteMemory(drop)
-      /* local removal is authoritative for what applies; mirror it into the
-         brain-backed pref cache too (the brain's copy is append-only, as undo). */
-      refreshBrainPrefs()
+      const brainHasIt = (brainPrefs ?? []).some((p) => prefKey(p) === key)
+      if (!drop.length && !brainHasIt) return
+      if (drop.length) {
+        const gone = new Set(drop)
+        set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
+        persistDeleteMemory(drop)
+      }
+      /* #15: the forget is a TOMBSTONE, so it sticks with the brain on. The merge
+         rule lets it win over the brain's copy (listPrefs would otherwise bring
+         the rule straight back), and the brain's page is retired to match. A
+         later remember of the same rule is newer and simply wins again. */
+      logMemory({
+        kind: 'forgotten_pref',
+        dayKey: dayKey(new Date(get().nowMs)),
+        pref: { kind: pref.kind, match: pref.match, value: '', stated: '' },
+      })
+      if (brainOn()) void brain.ingest(forgottenPrefPage(pref)).then(() => refreshBrainPrefs())
+      else refreshBrainPrefs()
     },
 
     /* ── weekly review (#346) ──────────────────────────────────────────
@@ -6376,7 +6563,12 @@ export const useMew = create<MewState>((set, get) => {
          (opt-in on, or the sidecar it falls back to) gets its offer (#249).
          URL/token edits alone don't trigger — a half-typed endpoint must not
          be sprayed with a replay; the next launch converges it. */
-      if ('brainEnabled' in patch) maybeBackfillBrain()
+      if ('brainEnabled' in patch) {
+        maybeBackfillBrain()
+        /* #15: the connect re-reads the brain's rulebook, and that read replays
+           whatever the owner told MEW while it was away (once, idempotently) */
+        refreshBrainPrefs()
+      }
     },
 
     async applyCaptureHotkey(accel) {

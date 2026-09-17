@@ -1,8 +1,14 @@
 /* The @noble CryptoPort — pure TS, ships now. AEAD is Cure53-audited
    (@noble/ciphers); the KEM is self-audited but hybrid, so an ML-KEM bug
    alone can't break it (an attacker must also break X25519). The FIPS path
-   (aws-lc-rs via napi) swaps in behind this same port for GA — see #57. */
-import { XWing } from '@noble/post-quantum/hybrid.js'
+   (aws-lc-rs via napi) swaps in behind this same port for GA — see #57.
+
+   The KEM is X-Wing (ML-KEM-768 + X25519, draft-connolly-cfrg-xwing-kem).
+   @noble/post-quantum 0.7 exports it under the descriptive name
+   `ml_kem768_x25519` and dropped the 0.6 `XWing` alias; the construction,
+   key and ciphertext formats are unchanged — 0.6.1 keys and ciphertexts
+   interoperate, pinned by __tests__/noble-kem.test.ts. */
+import { ml_kem768_x25519 as xwing } from '@noble/post-quantum/hybrid.js'
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js'
 import { argon2id } from 'hash-wasm'
 import type { CryptoPort } from './types'
@@ -35,15 +41,15 @@ export function createNobleCrypto(opts: NobleOpts = {}): CryptoPort {
       return xchacha20poly1305(key, blob.nonce).decrypt(blob.ct)
     },
     kemKeygen() {
-      const { publicKey, secretKey } = XWing.keygen()
+      const { publicKey, secretKey } = xwing.keygen()
       return { publicKey, secretKey }
     },
     kemEncapsulate(publicKey) {
-      const { cipherText, sharedSecret } = XWing.encapsulate(publicKey)
+      const { cipherText, sharedSecret } = xwing.encapsulate(publicKey)
       return { kemCt: cipherText, sharedSecret }
     },
     kemDecapsulate(kemCt, secretKey) {
-      return XWing.decapsulate(kemCt, secretKey)
+      return xwing.decapsulate(kemCt, secretKey)
     },
     randomBytes: rand,
   }

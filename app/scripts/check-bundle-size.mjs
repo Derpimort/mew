@@ -46,7 +46,12 @@ export const BUDGETS = {
   // lazy, only when a model call runs: ai + @ai-sdk/* (off the first-load path).
   // 560→580 for v0.5: the streaming + tool-loop paths grew it ~1 KB past the
   // old line; headroom restored, still lazy so first-load is unaffected.
-  ai: 580 * KB,
+  // 580→620 for v2026.09 (#54): the ai-sdk security group (ai 7.0.92, @ai-sdk/openai
+  // 4.0.58, anthropic 4.0.49, openai-compatible 3.0.43 + provider-utils/gateway)
+  // grew the chunk 550→600 KB, spread across the providers — still lazy, first load
+  // unchanged (~772 KB). Per-provider lazy loading is its own follow-up, not a
+  // security bump's job.
+  ai: 620 * KB,
   // any other lazy chunk (dynamic import())
   lazy: 300 * KB,
   // what a first visit actually downloads: the entry chunk + everything it

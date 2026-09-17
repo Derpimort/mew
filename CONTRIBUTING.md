@@ -47,6 +47,7 @@ pnpm install --frozen-lockfile
 npx tsc -b        # strict typecheck — no errors
 npx vitest run    # the domain + adapter + store suite — all green
 pnpm build        # production bundle succeeds (also enforces the size-budget warning)
+node scripts/check-bundle-size.mjs dist   # hard bundle budgets (CI: ci.yml `bundle` job)
 ```
 
 **Tests live with behavior.** Add them at the right layer:
@@ -65,6 +66,24 @@ pnpm -C app shoot
 pnpm -C app shoot:overlap
 ```
 
+Both gates run on one pinned calendar day (`app/scripts/lib/shootClock.mjs`, a
+Wednesday), so the seeded week and the canon PNGs are the same whatever weekday
+you run them. `SHOOT_DATE=YYYY-MM-DD pnpm -C app shoot` probes another day (the
+gate is proven for a Monday and mid-week); the pin, not the override, is the gate.
+Probe caveats: a malformed `SHOOT_DATE` stops the run (it never falls back silently); only
+a probe may self-seed the done block, so on the pin a week with no seeded done block fails;
+a Sunday probe fails day-load (a Sunday week has no days ahead to tint); and a probe
+**overwrites the tracked canon PNGs**, so run `git checkout -- app/shots` after probing.
+
+**Who owns which canon** (`app/shots/`, re-pin with `git add -f <file>`): `shoot.mjs` owns
+`1-focus-rest` … `8-sync-paused`. The scenario proofs run keyless against the same preview
+(`node scripts/shoot-<name>.mjs http://localhost:5199`) on the shared `scripts/lib/harness.mjs`
+and `lib/tauri-stub.mjs`: `shoot-update.mjs` owns `update-1-offer`, `update-2-accepted`;
+`shoot-desktop.mjs` owns `desktop-1-restore-offer`, `desktop-2-settings-row`, `desktop-3-restored`;
+`shoot-threads.mjs` owns `threads-1-pill` … `threads-4-resumed`; `shoot-oauth.mjs` owns
+`oauth-1-connecting`, `oauth-2-after-redirect`. The scenario proofs document shipped features;
+they are not merge gates.
+
 A failing gate is a bug in your change, not the harness. Read the error, fix it,
 re-run. Never ship red.
 
@@ -75,10 +94,11 @@ re-run. Never ship red.
 MEW uses a calm two-tier gitflow, and CI matches it so day-to-day work stays
 fast and the heavy suite runs only when it earns its keep:
 
-- **Feature branches → PR into `develop`.** This fires the **quick gate**
-  (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`), and lint
-  (ESLint + Prettier `--check`). It's all pure-JS and lands in ~2-3 min, so you
-  get fast feedback on every push.
+- **Feature branches → PR into `develop`** (or the active RC, `v*-rc*`). This fires
+  the **quick gate** (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`),
+  lint (ESLint + Prettier `--check`), and the **`bundle`** job (`pnpm build` + the
+  hard bundle budgets, §4). It lands in a few minutes, so you get fast feedback on
+  every push.
 - **Promote with a `develop → main` PR.** A PR whose base is `main` is a release
   promotion, and it runs the **full suite** on top of the quick gate: the app
   build + `cargo check` (`desktop.yml`), Playwright e2e (`e2e.yml`), Lighthouse
@@ -107,9 +127,11 @@ Two checks guard it:
 
 1. **`pnpm build` warns** when any single chunk exceeds **400 KB** (uncompressed) —
    `build.chunkSizeWarningLimit`.
-2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build` in the
-   `desktop.yml` check job) when a chunk or the total crosses its hard budget. It
-   reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
+2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build`) when a
+   chunk or the total crosses its hard budget. It runs in the quick gate's **`bundle`
+   job** (`ci.yml`) on every PR into `develop` and the RC, and in the `desktop.yml`
+   check job on PRs into `main` (where `bundle` skips, so the minutes don't double).
+   It reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
    the job summary.
 
 **Budgets** (uncompressed; the targets to keep):
