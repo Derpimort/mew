@@ -2640,3 +2640,83 @@
   flex-wrap: wrap;
   width: 300px;
 }
+
+/* ── the dial on any day (#23) — the date line's day steps ──────────────────
+   The date above the live clock is also the day header. Its ‹ › steps sit
+   OUTSIDE the date's flow (absolute), invisible at rest and shown on hover or
+   keyboard focus, so today's clock renders exactly as before; away from today
+   they stay shown and the live time gives way to "back to today". The topbar is
+   pointer-events:none, so the header opts back in. Scoped under .nx-clock past
+   the shell's `.stl button { font: inherit }` reset. Tokens only. */
+.nx-day {
+  position: relative;
+  display: inline-flex;
+  pointer-events: auto;
+}
+.nx-clock .nx-day-step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--gold);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    color 0.15s ease;
+}
+.nx-clock .nx-day-step.prev {
+  right: 100%;
+  margin-right: 6px;
+}
+.nx-clock .nx-day-step.next {
+  left: 100%;
+  margin-left: 6px;
+}
+.nx-day:hover .nx-day-step,
+.nx-day:focus-within .nx-day-step,
+.nx-day.away .nx-day-step {
+  opacity: 1;
+}
+.nx-clock .nx-day-step:hover {
+  color: var(--ink);
+}
+.nx-clock .nx-day-step:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.nx-clock .nx-day-today {
+  pointer-events: auto;
+  margin-top: 4px;
+  padding: 3px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+.nx-clock .nx-day-today:hover {
+  color: var(--gold);
+  border-color: var(--ice-bd);
+}
+.nx-clock .nx-day-today:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}

@@ -17,6 +17,7 @@ export function BlockCard({
   onClose,
   variant,
   pinned,
+  offDay,
 }: {
   block: Block
   isNow: boolean
@@ -27,6 +28,10 @@ export function BlockCard({
   variant?: 'center' | 'dock'
   /** Clicked-and-held selection: hover stops mattering, the × explains why. */
   pinned?: boolean
+  /** The dial is showing another day (#23): time-relative actions (Start now,
+      Interrupt, Move — which re-places into today/tomorrow) mean nothing there;
+      Done, Hold and Remove stay. */
+  offDay?: boolean
 }) {
   const toggleComplete = useMew((s) => s.toggleComplete)
   const startNow = useMew((s) => s.startNow)
@@ -119,7 +124,11 @@ export function BlockCard({
       {allDay && !done && !block.external && <div className="cacts">{removeControl}</div>}
       {!done && !allDay && (
         <div className="cacts">
-          {isNow || block.startedAt != null ? (
+          {offDay ? (
+            <button type="button" className="ca pri" onClick={act(() => toggleComplete(block.id))}>
+              Done — a mew
+            </button>
+          ) : isNow || block.startedAt != null ? (
             <>
               <button
                 type="button"
@@ -148,14 +157,16 @@ export function BlockCard({
           )}
           {!block.external && (
             <>
-              <button
-                type="button"
-                className="ca sec"
-                title="re-place this block in the next free slot"
-                onClick={act(() => moveToNextFree(block.id))}
-              >
-                Move
-              </button>
+              {!offDay && (
+                <button
+                  type="button"
+                  className="ca sec"
+                  title="re-place this block in the next free slot"
+                  onClick={act(() => moveToNextFree(block.id))}
+                >
+                  Move
+                </button>
+              )}
               <button
                 type="button"
                 className="ca sec"
