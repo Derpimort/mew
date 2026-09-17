@@ -56,6 +56,12 @@ equal to the config, and on a mismatch names both fixes: re-tag from the config,
 config to the tag). Its cases live in `desktop/scripts/__tests__/check-release-version.test.mjs`
 (`pnpm --dir desktop test`).
 
+`desktop/scripts/check-changelog.mjs` guards the release notes in the same workflow: `[Unreleased]`
+must never repeat a section heading or a bullet (every PR adds its own line and squash merges make
+the others re-sync with a keep-both, which once re-introduced seven whole sections). It runs on every
+PR that touches `CHANGELOG.md`; a duplicate fails the PR before promotion turns `[Unreleased]` into the
+release body. Its cases live beside the version guard's (`pnpm --dir desktop test`).
+
 Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and changelog sections stand.
 
 ## Cutting a release (maintainer)
