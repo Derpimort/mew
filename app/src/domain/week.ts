@@ -11,6 +11,28 @@ export function isBackground(b: Block): boolean {
   return b.attention === 'background'
 }
 
+/** All-day holds neither time nor you — a label on the day (#27). The ONE
+    predicate every time-claim reader skips on: slot search, conflicts, load,
+    live-now, rescue, nudges, insights. */
+export function isAllDay(b: Block): boolean {
+  return b.allDay === true
+}
+
+/** The all-day entries labelling `dayKey` — a multi-day span (dayKey …
+    endDayKey, inclusive) labels every day it covers, not only its first.
+    Rolled blocks stay out, same as blocksForDay. */
+export function allDayOn(blocks: Block[], dayKey: string): Block[] {
+  return blocks
+    .filter(
+      (b) =>
+        isAllDay(b) &&
+        b.status !== 'rolled' &&
+        b.dayKey <= dayKey &&
+        dayKey <= (b.endDayKey ?? b.dayKey)
+    )
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.title.localeCompare(b.title))
+}
+
 export const DAY_START = 8 * 60
 export const DAY_END = 18 * 60 + 30
 export const LOAD_SCALE_MIN = 10 * 60 // week-rail bars are % of a 10h day
@@ -25,9 +47,10 @@ export function duration(b: Block): number {
   return b.endMin - b.startMin
 }
 
-/** Deep work = a work block of an hour or more. Used for load math + realistic best. */
+/** Deep work = a work block of an hour or more. Used for load math + realistic best.
+    An all-day label is never deep work, whatever its span. */
 export function isDeep(b: Block): boolean {
-  return b.tag === 'work' && duration(b) >= 60
+  return b.tag === 'work' && !isAllDay(b) && duration(b) >= 60
 }
 
 /** Day load by rail segment (health rides with private in the bars; legend stays work/private/rest). */
@@ -37,7 +60,7 @@ export function loadBySegment(
 ): { work: number; priv: number; rest: number } {
   const out = { work: 0, priv: 0, rest: 0 }
   for (const b of blocksForDay(blocks, dayKey)) {
-    if (b.optional) continue // tentative time isn't load
+    if (b.optional || isAllDay(b)) continue // tentative time and day labels aren't load
     const d = duration(b)
     if (b.tag === 'work') out.work += d
     else if (b.tag === 'rest') out.rest += d
@@ -66,12 +89,12 @@ export interface Rollup {
 
 /** How much the matching blocks have eaten across `dayKeys` — real sums from
     the live week, never an estimate. Optional blocks hold no time and stay
-    out, same as load math. */
+    out, same as load math; so do all-day labels. */
 export function rollup(blocks: Block[], dayKeys: string[], match: (b: Block) => boolean): Rollup {
   const days = new Set(dayKeys)
   const out: Rollup = { plannedMin: 0, doneMin: 0, done: 0, open: 0, rolled: 0 }
   for (const b of blocks) {
-    if (!days.has(b.dayKey) || b.optional || !match(b)) continue
+    if (!days.has(b.dayKey) || b.optional || isAllDay(b) || !match(b)) continue
     if (b.status === 'rolled') {
       out.rolled++
       continue // a rolled block's time moved with it — counting both doubles it
@@ -108,7 +131,8 @@ export function isFixedTime(b: Block, prefs: PrefPayload[] = []): boolean {
 /** Open, time-holding blocks overlapping [startMin,endMin) that day. Optional
     blocks are transparent — unless they're fixed-time (a tentative interview
     still matters). Background blocks are transparent unconditionally: they
-    hold the clock, not the slot — meetings place straight over them. */
+    hold the clock, not the slot — meetings place straight over them. All-day
+    labels hold no slot at all: MEW schedules straight through a holiday. */
 export function conflictsWith(
   blocks: Block[],
   dayKey: string,
@@ -123,6 +147,7 @@ export function conflictsWith(
       b.status === 'open' &&
       (!b.optional || isFixedTime(b, prefs)) &&
       !isBackground(b) &&
+      !isAllDay(b) &&
       overlaps(b.startMin, b.endMin, startMin, endMin)
   )
 }
@@ -152,9 +177,10 @@ export function findFreeSlot(
 ): { startMin: number; endMin: number } | null {
   /* optional events don't hold time — except fixed-time ones (a tentative
      interview is still an interview; auto-placement keeps clear of it).
-     background blocks don't hold the slot either: place right over them */
+     background blocks don't hold the slot either: place right over them.
+     all-day labels are transparent: people work on holidays */
   const day = blocksForDay(blocks, dayKey)
-    .filter((b) => (!b.optional || isFixedTime(b)) && !isBackground(b))
+    .filter((b) => (!b.optional || isFixedTime(b)) && !isBackground(b) && !isAllDay(b))
     .map((b) => busySpan(b, bufferMin))
     .sort((a, b) => a.startMin - b.startMin)
   let cursor = windowStart
@@ -196,6 +222,13 @@ export function nextFreeSlot(
     the time owns its slot (schedule around it) — the block itself is still
     fully editable/removable. The two are different facts. */
 export function contextMarkers(b: Block): string {
+  /* an all-day entry reads as a day label, tag-neutral — its clock span is
+     not a time it holds, so the model never has to explain one away (#27) */
+  if (isAllDay(b)) {
+    const parts = [b.endDayKey ? `all-day through ${b.endDayKey}` : 'all-day']
+    if (b.external) parts.push('calendar')
+    return parts.join(', ')
+  }
   const parts = [b.tag as string]
   if (b.external) parts.push('calendar')
   else if (isFixedTime(b)) parts.push('fixed')
@@ -233,6 +266,7 @@ export function overlappingFocus(blocks: Block[], target: Block): Block[] {
       b.id !== target.id &&
       b.status === 'open' &&
       (b.attention ?? 'focus') === 'focus' &&
+      !isAllDay(b) &&
       overlaps(b.startMin, b.endMin, target.startMin, target.endMin)
   )
 }
@@ -258,7 +292,10 @@ export function freeWindows(
   bufferMin = 0
 ): { startMin: number; endMin: number }[] {
   const busy = blocksForDay(blocks, dayKey)
-    .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b))
+    .filter(
+      (b) =>
+        b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b) && !isAllDay(b)
+    )
     .map((b) => busySpan(b, bufferMin))
     .sort((a, b) => a.startMin - b.startMin)
   const out: { startMin: number; endMin: number }[] = []
@@ -285,7 +322,7 @@ export function tightMeetingJunction(
 ): number | null {
   if (bufferMin <= 0) return null
   const ext = blocksForDay(blocks, dayKey)
-    .filter((b) => b.status === 'open' && b.external)
+    .filter((b) => b.status === 'open' && b.external && !isAllDay(b))
     .sort((a, b) => a.startMin - b.startMin)
   for (let i = 1; i < ext.length; i++) {
     if (ext[i].startMin - ext[i - 1].endMin <= bufferMin) return ext[i].startMin
@@ -808,21 +845,24 @@ export function seriesMembership(blocks: Block[], block: Block): SeriesMembershi
   return { recurringBlockId: block.recurringBlockId, position, count }
 }
 
-/** All of the day's non-rest items are done → the day is clear, rest is earned. */
+/** All of the day's non-rest items are done → the day is clear, rest is earned.
+    A holiday label is not an item: it never holds a day open. */
 export function dayClear(blocks: Block[], dayKey: string): boolean {
-  const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest' && !b.optional)
+  const day = blocksForDay(blocks, dayKey).filter(
+    (b) => b.tag !== 'rest' && !b.optional && !isAllDay(b)
+  )
   return day.length > 0 && day.every((b) => b.status === 'done')
 }
 
 export function openItems(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional
+    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional && !isAllDay(b)
   )
 }
 
 /** The working day ends at the later of 18:30 and the last non-rest block. */
 export function dayEndMin(blocks: Block[], dayKey: string): number {
-  const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest')
+  const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest' && !isAllDay(b))
   return Math.max(DAY_END, ...day.map((b) => b.endMin))
 }
 
@@ -859,7 +899,8 @@ export function looseThreads(
       nowMin < b.endMin
   )
   const slipped = day.filter(
-    (b) => b.status === 'open' && !isBackground(b) && !b.optional && b.endMin < nowMin
+    (b) =>
+      b.status === 'open' && !isBackground(b) && !b.optional && !isAllDay(b) && b.endMin < nowMin
   )
   const rolledTargets = new Set(blocks.map((b) => b.rolledToId).filter((id): id is string => !!id))
   const paused = blocks.filter((b) => b.status === 'open' && rolledTargets.has(b.id))
