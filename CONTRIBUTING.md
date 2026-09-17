@@ -70,6 +70,15 @@ Wednesday), so the seeded week and the canon PNGs are the same whatever weekday
 you run them. `SHOOT_DATE=YYYY-MM-DD pnpm -C app shoot` probes another day (the
 gate is proven for a Monday and mid-week); the pin, not the override, is the gate.
 
+**Who owns which canon** (`app/shots/`, re-pin with `git add -f <file>`): `shoot.mjs` owns
+`1-focus-rest` … `8-sync-paused`. The scenario proofs run keyless against the same preview
+(`node scripts/shoot-<name>.mjs http://localhost:5199`) on the shared `scripts/lib/harness.mjs`
+and `lib/tauri-stub.mjs`: `shoot-update.mjs` owns `update-1-offer`, `update-2-accepted`;
+`shoot-desktop.mjs` owns `desktop-1-restore-offer`, `desktop-2-settings-row`, `desktop-3-restored`;
+`shoot-threads.mjs` owns `threads-1-pill` … `threads-4-resumed`; `shoot-oauth.mjs` owns
+`oauth-1-connecting`, `oauth-2-after-redirect`. The scenario proofs document shipped features;
+they are not merge gates.
+
 A failing gate is a bug in your change, not the harness. Read the error, fix it,
 re-run. Never ship red.
 

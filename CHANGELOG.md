@@ -25,6 +25,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
   `SHOOT_DATE` probes another day when you want to look.
 
+### Feature proofs that run again
+- The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in
+  proofs run green again with no API key, on the same pinned day and shared harness as the
+  canon gate. Their screenshots are current, and the Google sign-in proof runs fully offline.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
