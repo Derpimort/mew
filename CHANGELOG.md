@@ -14,6 +14,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+### Ask about any stretch of time
+- Ask MEW about any stretch of your history, not just one week: "since August 1", "the last
+  three weeks", "this month", "in March", "between Aug 3 and Aug 17" or "yesterday" all answer
+  with real sums from your own blocks, on this device, with or without the brain connected. A
+  very long stretch is answered for its most recent year, and "last week" reads just as before.
+
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
