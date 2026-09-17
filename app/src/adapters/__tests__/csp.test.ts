@@ -87,8 +87,21 @@ describe('CSP — style-src is tight (no unsafe-inline)', () => {
 })
 
 /* The premise that lets 'unsafe-inline' go: the production bundle carries no
-   inline styles. Only assert when a build exists — the gate runs vitest before
-   `pnpm build`, so on a clean tree dist/ is absent and this skips cleanly. */
+   inline styles. Asserted only when a build exists, so a developer running
+   `pnpm test` on a clean tree is not forced to build first.
+
+   In CI that silence was a hole: the `unit` job had no build step, so these two
+   describes skipped on every PR and the built-bundle checks never actually ran
+   — on an app whose premise is that keys never leave the device. CI now builds
+   before it tests, and the tripwire below makes a missing build FAIL rather
+   than skip, so removing that step can never quietly re-open this. */
+describe('CSP — the built bundle is really being checked', () => {
+  it('CI has a build to check: dist/index.html exists', () => {
+    /* local runs without a build stay quiet; CI must have one */
+    if (process.env.CI) expect(existsSync(DIST_HTML)).toBe(true)
+  })
+})
+
 describe.skipIf(!existsSync(DIST_HTML))('CSP — built bundle has no inline styles', () => {
   const html = existsSync(DIST_HTML) ? readFileSync(DIST_HTML, 'utf8') : ''
 
