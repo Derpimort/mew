@@ -196,6 +196,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Forget works on them like any other rule, and it sticks. With the brain off, the list is exactly
   what's on this device.
 
+### The loose-threads rail holds your own work
+- The rail beside your week lists your own loose ends only: once its time has passed, a lunch or a
+  breather MEW placed for you never turns up there as something that slipped, waiting for you to
+  tick it off or pick it back up. A meal you asked for yourself still does.
+
 ### The weekly review's roll really moves your work
 
 - Rolling carried work forward now moves it: the block lands on the same weekday next week and
