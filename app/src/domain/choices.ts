@@ -106,8 +106,35 @@ export function typedChipLabel(
   if (!ask || !choicesActive(chat, ask)) return null
   const said = norm(text)
   if (!said) return null
-  const hits = ask.choices!.filter((c) => norm(c.label) === said)
-  return hits.length === 1 ? { msgId: ask.id, choiceId: hits[0].id } : null
+  const one = (cs: ChatChoice[]) =>
+    cs.length === 1 ? { msgId: ask!.id, choiceId: cs[0].id } : null
+
+  /* the exact label first, ALWAYS — a chip that reads exactly what was typed can
+     never be beaten by a looser reading of a different chip (#139 slice 2). An
+     ambiguous exact match refuses here rather than falling through: two chips
+     reading the same way are not resolved by trying harder. */
+  const exact = ask.choices!.filter((c) => norm(c.label) === said)
+  if (exact.length) return one(exact)
+
+  /* then the same labels read the way an owner types them (#139 slice 2 audit).
+     Two gaps, both found by typing at the real ask: a which-block label carries
+     a day in brackets it has no reason to look load-bearing ("the 8:30
+     (Wednesday)"), and MEW's own question offers the bare time ("two blocks —
+     8:30 or 18:30? Which one?") while the chip reads "the 8:30". A question that
+     declines the words it just offered is MEW contradicting itself, so the
+     reader accepts both shapes — and still only when they point at ONE chip. */
+  return one(ask.choices!.filter((c) => labelReadings(c.label).includes(said)))
+}
+
+/** The looser ways a chip's own label reads: without the qualifier it carries in
+    brackets, and without a leading article. Kept general rather than tied to the
+    which-block family, so an ask whose labels gain a qualifier later is answerable
+    the day it ships. The exact label is not included — that pass has already run. */
+function labelReadings(label: string): string[] {
+  const base = norm(label)
+  const noBracket = base.replace(/\s*\([^)]*\)$/, '').trim()
+  const bare = (s: string) => s.replace(/^the\s+/, '')
+  return [...new Set([noBracket, bare(base), bare(noBracket)])].filter((s) => s && s !== base)
 }
 
 /** one shape for comparing what was typed with what a chip reads */

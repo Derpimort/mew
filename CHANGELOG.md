@@ -211,6 +211,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   checks, the tools that act and the model's view of your week all agree on what today is.
 
 ### Type what a choice says, or tap it — either way it does the same thing
+- And typed the way you would say it: when MEW asks which of two blocks you mean, the answer can be
+  the time on its own — the same words the question used — or the choice without the day it carries
+  in brackets. If the words fit more than one choice, MEW asks again rather than guessing.
 - Whatever MEW puts on screen as choices, typing one of them word for word now does exactly what
   tapping it does: "roll to tomorrow" when a meeting lands on your work, "tomorrow 9:15" when today
   has no room left, "do it" on a change MEW is about to make, "just this one" when a repeating block
