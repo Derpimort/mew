@@ -98,6 +98,7 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
   }),
 }))
 
+import { typedChipLabel } from '../../domain/choices'
 import { useMew } from '../store'
 
 /* ── harness ──────────────────────────────────────────────────────────── */
@@ -311,5 +312,39 @@ describe('#139 slice 2 — the room offer answers to its own labels', () => {
     )
     expect(rows()).not.toEqual(sized)
     expect(captures()).toEqual([])
+  })
+})
+
+/* ── the pass boundary, from my #159 review ───────────────────────── */
+
+describe('#139 — an ambiguous exact match refuses rather than falling through', () => {
+  /* Found as a surviving mutant while reviewing #159 and carried here per the
+     manager's ruling. The exact pass runs first; when it finds TWO chips reading
+     the same way it must REFUSE, not hand the question to the looser pass —
+     because a looser reading of a THIRD chip would then answer, and answering
+     with a chip the owner did not name is worse than not answering at all.
+     That is the one-match law applied to the pass BOUNDARY rather than inside a
+     single pass, which is the thing nothing else pins.
+
+     Pure, and written against a tree that HAS the loose pass: on a tree without
+     it this same assertion passes for the wrong reason, since the exact pass
+     refuses on its own and there is no second pass to fall through to. */
+  const ask = (labels: string[]): ChatMessage => ({
+    id: 'a',
+    role: 'mew',
+    body: 'which?',
+    ts: 1,
+    choices: labels.map((label, i) => ({ id: `c${i + 1}`, label, reply: `reply ${i + 1}` })),
+  })
+  const user = (): ChatMessage => ({ id: 'u', role: 'user', body: 'x', ts: 0 })
+
+  it('two chips reading the same way refuse, even when a third would match loosely', () => {
+    /* "8:30" is exactly two chips' label AND the loose reading of a third */
+    const m = ask(['8:30', '8:30', 'the 8:30'])
+    expect(typedChipLabel([user(), m], '8:30')).toBeNull()
+    /* the loose pass still works where it is unambiguous: the third chip's own
+       label, minus its article, is nobody else's exact label */
+    const m2 = ask(['9:15', 'the 8:30'])
+    expect(typedChipLabel([user(), m2], '8:30')).toEqual({ msgId: 'a', choiceId: 'c2' })
   })
 })
