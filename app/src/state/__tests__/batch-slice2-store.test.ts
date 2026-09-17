@@ -371,6 +371,22 @@ describe('#75 slice 2 — a retag, offered first and applied in place', () => {
   })
 })
 
+describe('#75 slice 2 — the retag says what it does', () => {
+  it('its receipt card and the chat card say "tagging them", not "moving them"', async () => {
+    const { toolCardLabel } = await import('../../domain/toolCard')
+    expect(toolCardLabel('retag', { query: 'call' })).toEqual({
+      verb: 'tagging them',
+      target: 'call',
+    })
+    await fresh(calls())
+    await say("tag all of tomorrow's calls as work")
+    await settle()
+    const cards = chat().filter((m) => m.role === 'tool')
+    expect(cards.at(-1)?.tool).toMatchObject({ name: 'retag', verb: 'tagging them' })
+    expect(cards.some((m) => m.tool?.verb === 'moving them')).toBe(false)
+  })
+})
+
 describe('#75 slice 2 — "between X and Y"', () => {
   it('"push everything between 2 and 5pm back 30 min" picks the blocks that start from 14:00 to before 17:00', async () => {
     await fresh([
@@ -394,6 +410,17 @@ describe('#75 slice 2 — "between X and Y"', () => {
     )
     expect(offer.choices![0].reply).toMatch(
       /^push everything after 14:00 and before 17:00 today later by 30 min — yes, all 3 · [a-z0-9]+$/
+    )
+  })
+
+  it('with nothing in the window, the line names it as one window', async () => {
+    await fresh([
+      block({ id: 'a', title: 'Deck', startMin: 9 * 60, endMin: 10 * 60, protected: false }),
+    ])
+    await say('push everything between 2 and 5pm back 30 min')
+    await settle()
+    expect(lastMew()).toBe(
+      'nothing matches everything starting between 14:00 and 17:00 today, so everything stays as it is.'
     )
   })
 })

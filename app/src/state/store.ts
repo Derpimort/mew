@@ -4008,8 +4008,14 @@ export const useMew = create<MewState>((set, get) => {
     const plan = planBatch(s.blocks, sel, op, prefs)
     const what = [
       sel.titleQuery ? `"${sel.titleQuery}"` : sel.tag ? `your ${sel.tag} blocks` : 'everything',
-      sel.afterMin != null ? `starting after ${fmtTime(sel.afterMin)}` : '',
-      sel.beforeMin != null ? `starting before ${fmtTime(sel.beforeMin)}` : '',
+      /* both edges read as one window (#75 slice 2) */
+      sel.afterMin != null && sel.beforeMin != null
+        ? `starting between ${fmtTime(sel.afterMin)} and ${fmtTime(sel.beforeMin)}`
+        : sel.afterMin != null
+          ? `starting after ${fmtTime(sel.afterMin)}`
+          : sel.beforeMin != null
+            ? `starting before ${fmtTime(sel.beforeMin)}`
+            : '',
       onDay(sel.dayKey),
     ]
       .filter(Boolean)
@@ -6120,10 +6126,14 @@ export const useMew = create<MewState>((set, get) => {
         batch: (selector, op, confirmCount, confirmToken) => {
           acted = true
           snapshotForUndo()
-          working('moving them…')
+          /* a retag moves nothing: its card and working line say so (#75 slice 2) */
+          const retag = op.kind === 'setTag'
+          working(retag ? 'tagging them…' : 'moving them…')
           closeStreamRow()
-          return runChange('batch', { query: selector.titleQuery ?? selector.tag }, () =>
-            execBatch(selector, op, confirmCount, confirmToken)
+          return runChange(
+            retag ? 'retag' : 'batch',
+            { query: selector.titleQuery ?? selector.tag },
+            () => execBatch(selector, op, confirmCount, confirmToken)
           )
         },
         merge: (q, dayOffset, at) => {
