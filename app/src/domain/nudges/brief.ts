@@ -7,7 +7,7 @@
 
 import type { Block, MemoryEvent } from '../types'
 import type { Insights } from '../insights'
-import { blocksForDay, isBackground, openItems, overlaps, plannedDeepMin } from '../week'
+import { blocksForDay, isAllDay, isBackground, openItems, overlaps, plannedDeepMin } from '../week'
 import { fmtTime, hoursLabel, spell } from '../time'
 
 /** The base half of a title — the same convention every nudge phrases with. */
@@ -21,7 +21,9 @@ function base(title: string): string {
    then day order), else the earliest hard due. None ⇒ null — the composer
    turns that into the kind clean-runway line. */
 export function pickMorningRisk(blocks: Block[], todayKey: string): string | null {
-  const open = blocksForDay(blocks, todayKey).filter((b) => b.status === 'open' && !b.optional)
+  const open = blocksForDay(blocks, todayKey).filter(
+    (b) => b.status === 'open' && !b.optional && !isAllDay(b)
+  )
 
   /* overlap pressure — only blocks that hold attention can collide */
   const focus = open.filter((b) => !isBackground(b))
@@ -60,7 +62,8 @@ export function composeMorningBrief(
   todayKey: string,
   insights: Insights
 ): { body: string } {
-  const day = blocksForDay(blocks, todayKey).filter((b) => !b.optional)
+  /* the day's shape is its timed blocks — an all-day label spans no clock */
+  const day = blocksForDay(blocks, todayKey).filter((b) => !b.optional && !isAllDay(b))
 
   let shape: string
   if (!day.length) {

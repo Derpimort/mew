@@ -2,9 +2,11 @@
    the same merge pipeline as live sync. Built against real Google exports:
    folded lines, TZID datetimes across zones, weekly/daily RRULEs with
    BYDAY/UNTIL/COUNT/INTERVAL, EXDATE, and RECURRENCE-ID instance overrides.
-   All-day events and monthly/yearly rules are skipped (counted, reported). */
+   All-day events (VALUE=DATE, or a local midnight→midnight span) arrive as
+   all-day entries (#27); monthly/yearly rules are skipped (counted, reported). */
 
-import { dayKey, minOfDay } from '../../domain/time'
+import { addDaysKey, dayKey, fromDayKey, minOfDay } from '../../domain/time'
+import { allDaySpan, midnightSpan } from './allDay'
 import type { RemoteEvent } from './types'
 
 /* ── line unfolding + property parsing ───────────────────────────── */
@@ -135,6 +137,8 @@ interface VEvent {
   start: number
   end: number
   dateOnly: boolean
+  /** date-only events: the calendar days covered (DTEND is exclusive), ≥ 1 */
+  spanDays: number
   cancelled: boolean
   declined: boolean
   optional: boolean
@@ -149,15 +153,19 @@ interface VEvent {
 export interface IcsParseResult {
   calName: string | null
   events: VEvent[]
-  skippedAllDay: number
   skippedRules: number
+}
+
+/** Whole calendar days from one DATE's parts to another's — UTC date math, so
+    a DST shift in between can never round a day away. */
+function daysBetween(a: DtParts, b: DtParts): number {
+  return Math.round((Date.UTC(b.y, b.mo - 1, b.d) - Date.UTC(a.y, a.mo - 1, a.d)) / 86400000)
 }
 
 export function parseIcs(text: string, ownerEmail?: string): IcsParseResult {
   const lines = unfold(text)
   let calName: string | null = null
   const events: VEvent[] = []
-  let skippedAllDay = 0
   let skippedRules = 0
   let cur: Prop[] | null = null
 
@@ -177,13 +185,20 @@ export function parseIcs(text: string, ownerEmail?: string): IcsParseResult {
           cur = null
           continue
         }
-        if (start.dateOnly) {
-          skippedAllDay++
-          cur = null
-          continue
-        }
         const end = endP ? propToEpoch(endP) : null
-        const endEpoch = end && !end.dateOnly ? end.epoch : start.epoch + 30 * 60000
+        /* an all-day event covers whole DATES: DTEND's date is exclusive, and a
+           missing (or non-later) DTEND means the start day alone (RFC 5545) */
+        const endDate = endP ? parseDtValue(endP.value) : null
+        const startDate = parseDtValue(startP.value)
+        const spanDays =
+          start.dateOnly && startDate && endDate
+            ? Math.max(1, daysBetween(startDate.parts, endDate.parts))
+            : 1
+        const endEpoch = start.dateOnly
+          ? start.epoch + spanDays * 86400000 // nominal: date-only days are read from keys
+          : end && !end.dateOnly
+            ? end.epoch
+            : start.epoch + 30 * 60000
         const rruleP = get('RRULE')
         let rrule: Record<string, string> | null = null
         if (rruleP) {
@@ -228,7 +243,8 @@ export function parseIcs(text: string, ownerEmail?: string): IcsParseResult {
               .replace(/\\\\/g, '\\') ?? '(untitled)',
           start: start.epoch,
           end: endEpoch,
-          dateOnly: false,
+          dateOnly: start.dateOnly,
+          spanDays,
           cancelled: get('STATUS')?.value === 'CANCELLED',
           declined,
           optional,
@@ -250,26 +266,42 @@ export function parseIcs(text: string, ownerEmail?: string): IcsParseResult {
     if (line.startsWith('X-WR-CALNAME:')) calName = line.slice('X-WR-CALNAME:'.length).trim()
   }
 
-  return { calName, events, skippedAllDay, skippedRules }
+  return { calName, events, skippedRules }
 }
 
 /* ── RRULE expansion within a window ──────────────────────────────── */
 
 const BYDAY: Record<string, number> = { MO: 0, TU: 1, WE: 2, TH: 3, FR: 4, SA: 5, SU: 6 }
-const DAY_MS = 86400000
+/** How far before a date's UTC midnight any zone's midnight of that date can
+    fall (UTC+14 is the earliest zone on Earth). */
+const EARLIEST_MIDNIGHT_MS = 14 * 3600000
 
 function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): number[] {
   const r = ev.rrule!
   const interval = Math.max(1, +(r.INTERVAL ?? 1) || 1)
   const count = r.COUNT ? +r.COUNT : null
+  const tzid = ev.startProp.params.TZID
+  const base = parseDtValue(ev.startProp.value)!
+  const baseParts = base.parts
+  const baseUtcFlag = base.utc
+  /* a wall-clock date + time in the series' own zone (its TZID, UTC for a Z
+     start, the device for a floating or date-only start) → the instant */
+  const inZone = (parts: DtParts) => partsToEpoch(parts, tzid, baseUtcFlag)
+
   let untilMs = Infinity
   if (r.UNTIL) {
     const dv = parseDtValue(r.UNTIL)
-    if (dv) untilMs = partsToEpoch(dv.parts, undefined, dv.utc || !dv.dateOnly === false)
+    if (dv) {
+      /* a date-only UNTIL names a DAY, inclusive: the series runs through its
+         end in the series' own zone (RFC 5545) — read as UTC midnight it cut
+         the last occurrence anywhere west of UTC */
+      untilMs = dv.dateOnly
+        ? inZone({ ...dv.parts, h: 23, mi: 59, s: 59 })
+        : dv.utc
+          ? partsToEpoch(dv.parts, undefined, true)
+          : inZone(dv.parts)
+    }
   }
-  const tzid = ev.startProp.params.TZID
-  const baseParts = parseDtValue(ev.startProp.value)!.parts
-  const baseUtcFlag = parseDtValue(ev.startProp.value)!.utc
 
   const days =
     r.FREQ === 'WEEKLY'
@@ -280,19 +312,26 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
         : null
       : null
 
-  const startDay = new Date(ev.start)
-  startDay.setHours(0, 0, 0, 0)
-  const baseDow = (new Date(ev.start).getDay() + 6) % 7
+  /* the walk steps CALENDAR dates from the series' own start date: its
+     weekdays (BYDAY, the start weekday, INTERVAL weeks from the start's week)
+     belong to its zone, never the device's — a Kiritimati Monday is a UTC
+     Sunday. UTC date arithmetic is only a DST-free calendar here, so a step is
+     exactly one date (24h steps repeated a date on a fall-back night). */
+  const dateAt = (i: number) => new Date(Date.UTC(baseParts.y, baseParts.mo - 1, baseParts.d + i))
+  const baseDow = (dateAt(0).getUTCDay() + 6) % 7
   const wanted = days && days.length ? days : [baseDow]
 
   const out: number[] = []
   let occIndex = 0
   const hardStop = 800 // bounded walk (~2.2 years of days)
   for (let i = 0; i < hardStop; i++) {
-    const dayMs = startDay.getTime() + i * DAY_MS
-    if (dayMs > windowEndMs && (count == null || occIndex >= count)) break
-    const d = new Date(dayMs)
-    const dow = (d.getDay() + 6) % 7
+    const date = dateAt(i)
+    /* past the window once even the earliest zone's midnight (UTC+14) of this
+       date is — a cheap bound, no zone lookup per walked day */
+    if (date.getTime() - EARLIEST_MIDNIGHT_MS > windowEndMs && (count == null || occIndex >= count))
+      break
+    const ymd = { y: date.getUTCFullYear(), mo: date.getUTCMonth() + 1, d: date.getUTCDate() }
+    const dow = (date.getUTCDay() + 6) % 7
 
     let hit: boolean
     if (r.FREQ === 'DAILY') {
@@ -304,11 +343,7 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
     if (!hit) continue
 
     /* occurrence keeps the series' wall-clock time in its own zone (DST-safe) */
-    const occEpoch = partsToEpoch(
-      { ...baseParts, y: d.getFullYear(), mo: d.getMonth() + 1, d: d.getDate() },
-      tzid,
-      baseUtcFlag
-    )
+    const occEpoch = inZone({ ...baseParts, ...ymd })
     if (occEpoch < ev.start - 60000) continue
     if (occEpoch > untilMs) break
     occIndex++
@@ -324,7 +359,6 @@ function expandRule(ev: VEvent, windowStartMs: number, windowEndMs: number): num
 export interface IcsImport {
   calName: string | null
   events: RemoteEvent[]
-  skippedAllDay: number
   skippedRules: number
 }
 
@@ -348,19 +382,36 @@ export function icsToRemoteEvents(
 
   const push = (ev: VEvent, startMs: number, idSuffix: string) => {
     if (ev.cancelled || ev.declined) return
+    const s = new Date(startMs)
+    const sKey = dayKey(s)
+    const head = { eventId: `${ev.uid}${idSuffix}`, calId, title: ev.summary }
+    const tail = ev.optional ? { optional: true } : {}
+    if (ev.dateOnly) {
+      /* whole dates: the covered days come from keys, never from a ms duration
+         a DST night would shorten — the window test uses local midnights */
+      const lastKey = addDaysKey(sKey, ev.spanDays - 1)
+      const endMs = fromDayKey(addDaysKey(lastKey, 1)).getTime()
+      if (endMs <= ws || startMs >= we) return
+      out.push({ ...head, ...allDaySpan(sKey, lastKey), ...tail })
+      return
+    }
     const endMs = startMs + ev.durationMs
     if (endMs <= ws || startMs >= we) return
-    const s = new Date(startMs)
     const e = new Date(endMs)
-    const sKey = dayKey(s)
+    const midnight = midnightSpan(
+      { dayKey: sKey, min: minOfDay(s) },
+      { dayKey: dayKey(e), min: minOfDay(e) }
+    )
+    if (midnight) {
+      out.push({ ...head, ...allDaySpan(midnight.firstKey, midnight.lastKey), ...tail })
+      return
+    }
     out.push({
-      eventId: `${ev.uid}${idSuffix}`,
-      calId,
-      title: ev.summary,
+      ...head,
       dayKey: sKey,
       startMin: minOfDay(s),
       endMin: dayKey(e) === sKey ? Math.max(minOfDay(e), minOfDay(s) + 5) : 23 * 60 + 59,
-      ...(ev.optional ? { optional: true } : {}),
+      ...tail,
     })
   }
 
@@ -383,7 +434,6 @@ export function icsToRemoteEvents(
   return {
     calName: parsed.calName,
     events: out,
-    skippedAllDay: parsed.skippedAllDay,
     skippedRules: parsed.skippedRules,
   }
 }

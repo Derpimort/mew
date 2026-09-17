@@ -38,6 +38,7 @@ import {
   fromDayKey,
   inQuietHours,
   minOfDay,
+  snapStart,
   spell,
   stripWeekPhrase,
   uid,
@@ -84,6 +85,7 @@ import {
   type SlotQuery,
   type TimeWindow,
 } from '../domain/scheduler'
+import { pastEndNote, plannableLabel, plannableOf } from '../domain/plannable'
 import { correctMeal, mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
 import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
@@ -179,7 +181,13 @@ import { choicesActive, scenariosActive } from '../domain/choices'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
-import { adoptOrphanedExternals, mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
+import {
+  adoptOrphanedExternals,
+  healAllDayBlocks,
+  mergePull,
+  runSync,
+  syncWindow,
+} from '../adapters/calendar/sync'
 import { icsToRemoteEvents } from '../adapters/calendar/ics'
 import type { RemoteCalendar } from '../adapters/calendar/types'
 import { ReauthRequiredError } from '../adapters/calendar/types'
@@ -560,7 +568,9 @@ export interface MewState {
       does, then the same rescue-offer pass runs — with no network and no
       OAuth. Each call is one complete simulated listing for its calendar
       (an event absent from a later call reads as deleted, same as a real
-      pull). RC verification is one paste: window.__mewSimulatePull. */
+      pull). RC verification is one paste: window.__mewSimulatePull. An
+      all-day entry (#27) rides the same seam: `allDay: true` (+ an inclusive
+      `endDayKey` for a multi-day span); its clock span is ignored. */
   simulatePull(
     events: {
       eventId: string
@@ -570,6 +580,8 @@ export interface MewState {
       dayKey?: string
       calId?: string
       optional?: boolean
+      allDay?: boolean
+      endDayKey?: string
     }[]
   ): void
 
@@ -1055,6 +1067,8 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
     todayKey,
     todayLabel: fmtLongDate(now),
     nowLabel: fmtTime(minOfDay(now)),
+    /* #22: the model reasons about the bounds instead of guessing them */
+    plannableHours: plannableLabel(plannableOf(s.settings)),
     weekSummary: summary,
     ...(referent ? { referent } : {}),
     realisticBestH: agg.realisticBestH,
@@ -1606,7 +1620,7 @@ export const useMew = create<MewState>((set, get) => {
     for (const c of conflicts) {
       const key = rescueKey(c)
       if (lastFired[key]) continue // this landing was already offered
-      const options = rescueOptions(s.blocks, c, todayKey, minOfDay(now))
+      const options = rescueOptions(s.blocks, c, todayKey, minOfDay(now), plannableOf(s.settings))
       if (options.length) {
         msgs.push(choicesMsg(rescueLine(c, todayKey), options))
       } else if (!withinDayWords(c.block.dayKey, todayKey)) {
@@ -2043,6 +2057,7 @@ export const useMew = create<MewState>((set, get) => {
     if (!open.length) return []
     return fitOffers(open, s.blocks, s.memory, new Date(s.nowMs), {
       energyFit: s.settings.energyFit !== 'off',
+      hours: plannableOf(s.settings), // #22
     })
   }
 
@@ -2448,7 +2463,7 @@ export const useMew = create<MewState>((set, get) => {
          RRULE (sync.ts has no rrule field by design). A confirmed rule may
          supply the recurrence itself (#328), routed here like an explicit one. */
       if (prefd.rrule) {
-        const anchorStart = prefd.startMin ?? week.DAY_START
+        const anchorStart = prefd.startMin ?? plannableOf(s.settings).startMin
         const durationMin = prefd.durationMin ?? 60
         const windowEnd = addDaysKey(key, RRULE_DEFAULT_WEEKS * 7)
         const occs = expandRrule(prefd.rrule, key, anchorStart, durationMin, key, windowEnd)
@@ -2500,8 +2515,8 @@ export const useMew = create<MewState>((set, get) => {
       const bgAutoStart =
         bg && prefd.startMin == null
           ? key === todayKey
-            ? Math.max(week.DAY_START, Math.ceil(minOfDay(now) / 5) * 5)
-            : week.DAY_START
+            ? Math.max(plannableOf(s.settings).startMin, Math.ceil(minOfDay(now) / 5) * 5)
+            : plannableOf(s.settings).startMin
           : prefd.startMin
       /* de-dup (#89): re-planning a block that already lives in the target day
          is a MOVE, not a twin. Match on the EXACT base title (before any "—"
@@ -2546,7 +2561,8 @@ export const useMew = create<MewState>((set, get) => {
           undefined, // weights: the default profile
           undefined, // horizonDays: the default week
           undefined, // mealBase: the circadian default (#298)
-          bufferMin // #302: keep MEW's placements shy of external meetings
+          bufferMin, // #302: keep MEW's placements shy of external meetings
+          plannableOf(s.settings) // #22: the owner's plannable day
         ).find((c) => c.dayKey === key)
         if (best) start = best.startMin
       }
@@ -2590,16 +2606,20 @@ export const useMew = create<MewState>((set, get) => {
         )
         continue
       }
-      const placed = week.place(blocks, {
-        title: p.title,
-        tag,
-        dayKey: key,
-        startMin: start,
-        durationMin: prefd.durationMin,
-        protected: prefd.protected ?? !microRest,
-        attention: prefd.attention,
-        due: p.due,
-      })
+      const placed = week.place(
+        blocks,
+        {
+          title: p.title,
+          tag,
+          dayKey: key,
+          startMin: start,
+          durationMin: prefd.durationMin,
+          protected: prefd.protected ?? !microRest,
+          attention: prefd.attention,
+          due: p.due,
+        },
+        plannableOf(s.settings) // #22: a first-fit fallback stays inside the plannable day
+      )
       if (!placed) {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
         continue
@@ -2644,7 +2664,7 @@ export const useMew = create<MewState>((set, get) => {
        would need a committed block displaced is only OFFERED, never seized. */
     const restNotes: string[] = []
     for (const key of touchedDays) {
-      const r = restInsertion(blocks, key)
+      const r = restInsertion(blocks, key) // #22: the pacing pass keeps the classic day
       if (!r) continue
       const when = key === todayKey ? 'today' : fmtDowLong(key)
       if (r.kind === 'place') {
@@ -3124,6 +3144,7 @@ export const useMew = create<MewState>((set, get) => {
          (#302) the same as plan/findSlot/suggestSlots — an explicit toStartMin
          above skips this branch entirely (explicit intent wins). */
       const bufferMin = s.settings.meetingBufferMin ?? 0
+      const hours = plannableOf(s.settings)
       const q: SlotQuery = {
         title: target.title,
         tag: target.tag,
@@ -3138,7 +3159,8 @@ export const useMew = create<MewState>((set, get) => {
         undefined, // weights: the default profile
         undefined, // horizonDays: the default week
         undefined, // mealBase: the circadian default (#298)
-        bufferMin // #302: keep the moved block shy of external meetings
+        bufferMin, // #302: keep the moved block shy of external meetings
+        hours // #22: the owner's plannable day
       ).find((c) => c.dayKey === toKey)
       if (best) start = best.startMin
       else {
@@ -3146,8 +3168,8 @@ export const useMew = create<MewState>((set, get) => {
           blocks.filter((b) => b.id !== target.id),
           toKey,
           week.duration(target),
-          toKey === todayKey ? minOfDay(now) + 15 : undefined,
-          undefined, // windowEnd: the working-day cap
+          toKey === todayKey ? minOfDay(now) + 15 : hours.startMin,
+          hours.endMin, // #22: the plannable day's end
           bufferMin // #302: the first-fit fallback honors the buffer too
         )
         if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
@@ -3302,12 +3324,13 @@ export const useMew = create<MewState>((set, get) => {
     let startMin = opts.toStartMin
     if (startMin == null) {
       if (toKey === target.dayKey) {
+        const hours = plannableOf(s.settings) // #22
         const slot = week.findFreeSlot(
           s.blocks,
           toKey,
           dur,
-          toKey === todayKey ? minOfDay(now) + 15 : undefined,
-          undefined,
+          toKey === todayKey ? minOfDay(now) + 15 : hours.startMin,
+          hours.endMin,
           bufferMin
         )
         if (!slot)
@@ -3406,7 +3429,8 @@ export const useMew = create<MewState>((set, get) => {
       fromMin,
       durMin,
       13,
-      bufferMin
+      bufferMin,
+      plannableOf(s.settings) // #22
     )
     if (!slot)
       return `I couldn't find a clear ${durMin}-min slot in the next two weeks — want me to make room?`
@@ -4179,34 +4203,48 @@ export const useMew = create<MewState>((set, get) => {
     const key = addDaysKey(todayKey, dayOffset)
     const label = key === todayKey ? 'today' : fmtDowLong(key)
     const bufferMin = s.settings.meetingBufferMin ?? 0 // #302: shy of meeting edges
+    const hours = plannableOf(s.settings) // #22: the day find_slot searches by default
     const floor = Math.max(
-      notBeforeMin ?? week.DAY_START,
+      notBeforeMin ?? hours.startMin,
       key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0
     )
-    const ceil = notAfterMin ?? 22 * 60 + 30
-    const fit = week
-      .freeWindows(s.blocks, key, floor, ceil, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
-    if (fit) {
-      return `Clear window ${label}: ${fmtTime(fit.startMin)}–${fmtTime(fit.startMin + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
+    const ceil = notAfterMin ?? hours.endMin
+    /* #22: the window a model will place at starts at a human time — the first
+       free gap whose snapped start still holds the duration */
+    const firstFit = (k: string, from: number, to: number): number | null => {
+      for (const w of week.freeWindows(s.blocks, k, from, to, bufferMin)) {
+        const at = snapStart(w.startMin, w.endMin - durationMin)
+        if (at != null) return at
+      }
+      return null
+    }
+    const fit = firstFit(key, floor, ceil)
+    if (fit != null) {
+      return `Clear window ${label}: ${fmtTime(fit)}–${fmtTime(fit + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
     }
     /* honest alternatives: same day without the ceiling, then tomorrow */
-    const later = week
-      .freeWindows(s.blocks, key, floor, 22 * 60 + 30, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
+    const later = firstFit(key, floor, hours.endMin)
     const nextKey = addDaysKey(key, 1)
-    const nextDay = week
-      .freeWindows(s.blocks, nextKey, 9 * 60, 22 * 60 + 30, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
+    const nextDay = firstFit(nextKey, 9 * 60, hours.endMin)
     const alts = [
-      later
-        ? `later ${label} ${fmtTime(later.startMin)}–${fmtTime(later.startMin + durationMin)}`
-        : null,
-      nextDay
-        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}`
+      later != null ? `later ${label} ${fmtTime(later)}–${fmtTime(later + durationMin)}` : null,
+      nextDay != null
+        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay)}–${fmtTime(nextDay + durationMin)}`
         : null,
     ].filter(Boolean)
-    return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''}`
+    const options = alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''
+    /* #22: never claim a gap is held when the free air only runs past the
+       plannable end — name the bounds and the real free time instead. A
+       stated ceiling inside the day is the user's own limit, so it keeps its
+       wording (the air it rules out is theirs to rule out). */
+    const pastEnd =
+      notAfterMin == null
+        ? pastEndNote(s.blocks, key, floor, durationMin, hours, label, bufferMin)
+        : null
+    if (pastEnd) {
+      return `No ${durationMin}-min window ${label} fits inside the hours I plan in (${plannableLabel(hours)}). ${pastEnd}${options}`
+    }
+    return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${options}`
   }
 
   /* suggest_slots: hand the model the scoring oracle's ranked, conflict-free
@@ -4224,6 +4262,7 @@ export const useMew = create<MewState>((set, get) => {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
+    const hours = plannableOf(s.settings)
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const q: SlotQuery = {
       title: clean,
@@ -4241,17 +4280,44 @@ export const useMew = create<MewState>((set, get) => {
       undefined, // weights: the default profile
       undefined, // horizonDays: the default week
       undefined, // mealBase: the circadian default (#298)
-      s.settings.meetingBufferMin ?? 0 // #302: shy of external meetings
+      s.settings.meetingBufferMin ?? 0, // #302: shy of external meetings
+      hours // #22: candidates span the owner's plannable day
     )
+    /* #22: tonight past the plannable end is real free time — name it rather
+       than let an empty or tomorrow-only ranking read as "tonight is held" */
+    const tonight = ranked.some((c) => c.dayKey === todayKey)
+      ? null
+      : pastEndNote(
+          s.blocks,
+          todayKey,
+          Math.max(hours.startMin, minOfDay(now)),
+          durationMin,
+          hours,
+          'today',
+          s.settings.meetingBufferMin ?? 0,
+          dueMin
+        )
     if (!ranked.length) {
+      if (tonight) {
+        return `No ${durationMin}-min slot for "${clean}" fits inside the hours I plan in (${plannableLabel(hours)})${dueMin != null ? ' before its deadline today' : ' this week'}. ${tonight}`
+      }
       return `No conflict-free ${durationMin}-min slot for "${clean}"${dueMin != null ? ' before its deadline today' : ' in the next week'} — every fit is held by something fixed. Shorten it or free some time.`
     }
     const label = (k: string) =>
       k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(k)
-    const top = ranked
-      .slice(0, 4)
-      .map((c) => `${label(c.dayKey)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.why})`)
-    return `Best slots for "${clean}", highest first: ${joinHuman(top)}. Place the first unless the user wants another.`
+    const shown = ranked.slice(0, 4)
+    const top = shown.map(
+      (c) => `${label(c.dayKey)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.why})`
+    )
+    /* #22: an evening slot ranks low by design, so tomorrow can fill the list —
+       when tonight still has room, say so, or the model reads it as held */
+    const evening = shown.some((c) => c.dayKey === todayKey)
+      ? undefined
+      : ranked.find((c) => c.dayKey === todayKey && c.endMin > week.DAY_END)
+    const eveningPart = evening
+      ? ` Tonight is open too: ${fmtTime(evening.startMin)}–${fmtTime(evening.endMin)}.`
+      : ''
+    return `Best slots for "${clean}", highest first: ${joinHuman(top)}. Place the first unless the user wants another.${eveningPart}${tonight ? ` ${tonight}` : ''}`
   }
 
   function execClear(scope: import('../domain/types').ClearScope): string {
@@ -4528,9 +4594,13 @@ export const useMew = create<MewState>((set, get) => {
         if (lastFired['weekly-ritual']?.key === bootWeek && !ritualDelivered) {
           delete lastFired['weekly-ritual']
         }
+        /* heal the 0:00–23:59 blocks a pre-#27 pull minted from all-day events
+           back into all-day labels — FIRST, so a healed label the orphan sweep
+           then adopts as native is still never pushed */
+        const healed = healAllDayBlocks(loaded.blocks)
         /* heal blocks whose source calendar is gone (restored backup, cleared
            connections): adopt them as MEW's own so sync can place them again */
-        const swept = adoptOrphanedExternals(loaded.blocks, settings.calendars)
+        const swept = adoptOrphanedExternals(healed.blocks, settings.calendars)
         /* the scaffold key (#299) heals by the same chat-as-truth rule: today's
            key with NO meal-class block on today AND no scaffold line in today's
            chat means the pass never landed — drop the key so it re-runs (the
@@ -4563,7 +4633,7 @@ export const useMew = create<MewState>((set, get) => {
           hydrated: true,
           nowMs: nowFn(),
         })
-        if (swept.adopted) persistBlocks(swept.blocks)
+        if (swept.adopted || healed.healed) persistBlocks(swept.blocks)
         if (cards.flipped.length) persistChat(cards.flipped)
       }
       /* the persisted binding registers on every desktop boot — and again
@@ -5459,15 +5529,23 @@ export const useMew = create<MewState>((set, get) => {
           const target = s.blocks.find((b) => b.id === id)
           if (target) {
             const without = s.blocks.filter((b) => b.id !== id)
+            const { endMin: planEnd } = plannableOf(s.settings) // #22
             const todaySlot = week.findFreeSlot(
               without,
               todayKey,
               week.duration(target),
-              minOfDay(now) + 15
+              minOfDay(now) + 15,
+              planEnd
             )
             const slot =
               todaySlot ??
-              week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
+              week.findFreeSlot(
+                without,
+                addDaysKey(todayKey, 1),
+                week.duration(target),
+                9 * 60,
+                planEnd
+              )
             if (slot) {
               const toKey = todaySlot ? todayKey : addDaysKey(todayKey, 1)
               setBlocks(week.move(s.blocks, id, toKey, slot.startMin))
@@ -5535,7 +5613,13 @@ export const useMew = create<MewState>((set, get) => {
             let moved = false
             for (let i = 1; i <= 6 && !moved; i++) {
               const toKey = addDaysKey(heavyKey, i)
-              const slot = week.findFreeSlot(s.blocks, toKey, week.duration(candidate), 9 * 60)
+              const slot = week.findFreeSlot(
+                s.blocks,
+                toKey,
+                week.duration(candidate),
+                9 * 60,
+                plannableOf(s.settings).endMin // #22
+              )
               if (slot) {
                 setBlocks(week.move(s.blocks, candidate.id, toKey, slot.startMin))
                 post([
@@ -5647,7 +5731,8 @@ export const useMew = create<MewState>((set, get) => {
               s.blocks.filter((b) => b.id !== restId),
               rest.dayKey,
               week.duration(rest),
-              rest.endMin
+              rest.endMin,
+              plannableOf(s.settings).endMin // #22
             )
             if (slot) {
               setBlocks(week.move(s.blocks, restId, rest.dayKey, slot.startMin))
@@ -5999,7 +6084,13 @@ export const useMew = create<MewState>((set, get) => {
       let toKey = todayKey
       for (let i = 0; i <= 3 && !slot; i++) {
         const key = addDaysKey(todayKey, i)
-        slot = week.findFreeSlot(without, key, remaining, i === 0 ? nowMin + 15 : 9 * 60)
+        slot = week.findFreeSlot(
+          without,
+          key,
+          remaining,
+          i === 0 ? nowMin + 15 : 9 * 60,
+          plannableOf(s.settings).endMin // #22
+        )
         if (slot) toKey = key
       }
       if (!slot) {
@@ -6043,15 +6134,17 @@ export const useMew = create<MewState>((set, get) => {
       const now = new Date(s.nowMs)
       const todayKey = dayKey(now)
       const without = s.blocks.filter((b) => b.id !== blockId)
+      const { endMin: planEnd } = plannableOf(s.settings) // #22
       const todaySlot = week.findFreeSlot(
         without,
         todayKey,
         week.duration(target),
-        minOfDay(now) + 15
+        minOfDay(now) + 15,
+        planEnd
       )
       const slot =
         todaySlot ??
-        week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
+        week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60, planEnd)
       if (!slot) {
         post([mewMsg(`Nowhere kind to put it yet — want to look at the week together?`)])
         return
@@ -6398,13 +6491,16 @@ export const useMew = create<MewState>((set, get) => {
       if (removedIds.length) storage.deleteBlocks(removedIds).catch(() => {})
 
       const optionalCount = events.filter((e) => e.optional).length
+      /* all-day entries arrive as day labels now (#27) — only monthly/yearly
+         rules still stay out */
+      const allDayCount = events.filter((e) => e.allDay).length
       const skipped =
-        result.skippedAllDay + result.skippedRules > 0
-          ? ` (skipped ${result.skippedAllDay} all-day and ${result.skippedRules} monthly/yearly-recurring — they don't sit on the day grid)`
+        result.skippedRules > 0
+          ? ` (skipped ${result.skippedRules} monthly/yearly-recurring — they don't sit on the day grid)`
           : ''
       post([
         mewMsg(
-          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
+          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${allDayCount ? `, ${allDayCount} all-day (a label on the day — no time held)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
         ),
       ])
     },
@@ -6640,7 +6736,13 @@ export const useMew = create<MewState>((set, get) => {
         const s = get()
         const now = new Date(s.nowMs)
         const todayKey = dayKey(now)
-        const slot = week.findFreeSlot(s.blocks, todayKey, 30, Math.max(minOfDay(now) + 15, 9 * 60))
+        const slot = week.findFreeSlot(
+          s.blocks,
+          todayKey,
+          30,
+          Math.max(minOfDay(now) + 15, 9 * 60),
+          plannableOf(s.settings).endMin // #22
+        )
         if (slot) {
           const placed = week.place(s.blocks, {
             title: clean,
@@ -6863,7 +6965,8 @@ declare global {
         through the REAL pull + rescue path (mergePull diff → rescue chips) —
         no OAuth, no network. dayKey defaults to today; calId to 'demo@sim'.
         One paste verifies the rescue loop end-to-end:
-        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }]) */
+        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }])
+        An all-day entry (#27): { eventId:'h1', title:'Civic Holiday', startMin:0, endMin:0, allDay:true } */
     __mewSimulatePull?: (
       events: {
         eventId: string
@@ -6873,6 +6976,8 @@ declare global {
         dayKey?: string
         calId?: string
         optional?: boolean
+        allDay?: boolean
+        endDayKey?: string
       }[]
     ) => void
     /** Dev/scenario helper (#346): open the weekly-review surface directly, the

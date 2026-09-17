@@ -11,6 +11,7 @@ import {
   blocksForDay,
   duration,
   findFreeSlot,
+  isAllDay,
   isBackground,
   isDeep,
   isFixedTime,
@@ -697,11 +698,12 @@ function halfHours(min: number): string {
 }
 
 /** A day's planned work minutes — deep and shallow alike, meetings included
-    (they eat the day too). Optional blocks hold no time and background holds
-    the clock, not the user: both stay out, same as the load math. */
+    (they eat the day too). Optional blocks hold no time, background holds
+    the clock, not the user, and an all-day label holds neither: all stay out,
+    same as the load math. */
 function plannedWorkMin(blocks: Block[], forDayKey: string): number {
   return blocksForDay(blocks, forDayKey)
-    .filter((b) => b.tag === 'work' && !b.optional && !isBackground(b))
+    .filter((b) => b.tag === 'work' && !b.optional && !isBackground(b) && !isAllDay(b))
     .reduce((s, b) => s + duration(b), 0)
 }
 
@@ -827,6 +829,7 @@ export function trimMove(
       !b.external &&
       !b.optional &&
       !isBackground(b) &&
+      !isAllDay(b) &&
       !isFixedTime(b) &&
       (overDayKey !== todayKey || b.startMin >= nowMin) &&
       base(b).length > 0 &&

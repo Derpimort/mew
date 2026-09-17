@@ -2460,3 +2460,218 @@
   gap: 8px;
   margin-left: auto;
 }
+
+/* ── the all-day lane (#27) — day labels between the date header and 0:00 ──
+   A strip, not a time slot: a hairline under it, chips that span their days
+   (ONE chip across a multi-day span) and a quiet tint in place of a block's
+   solid fill — a holiday is a fact about the day, never a claim on its hours.
+   The box metrics mirror allDayLane.ts (LANE_*_PX): the time grid gives up
+   exactly what the strip takes, so the page keeps its height. Tokens only. */
+.wk-allday {
+  display: grid;
+  column-gap: 10px;
+  row-gap: 3px; /* LANE_GAP_PX */
+  box-sizing: border-box;
+  padding: 4px 0 6px; /* LANE_PAD_TOP_PX · LANE_PAD_BOTTOM_PX */
+  border-bottom: 1px solid var(--line); /* LANE_RULE_PX */
+  margin-bottom: 6px; /* LANE_MARGIN_PX */
+}
+.wk-allday-chip {
+  min-width: 0;
+  margin: 0 4px;
+  padding: 0 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background: var(--ice-soft);
+  box-shadow: inset 0 0 0 1px var(--ice-bd);
+  color: var(--ink);
+  cursor: pointer;
+}
+.wk-allday-chip .t {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wk-allday-chip:hover {
+  box-shadow: inset 0 0 0 1.4px var(--ice);
+}
+.wk-allday-chip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+/* a span that runs past the visible week keeps a square, flush edge on that side */
+.wk-allday-chip.cont-l {
+  margin-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.wk-allday-chip.cont-r {
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* lived days dim exactly like their columns */
+.wk-allday-chip.past {
+  opacity: 0.45;
+}
+.wk-allday-chip.done .t {
+  text-decoration: line-through;
+  font-weight: 600;
+}
+/* scoped under the lane: the app shell's `.stl button { font: inherit }` reset
+   outranks a lone class */
+.wk-allday .wk-allday-more,
+.wk-allday .wk-allday-less {
+  min-width: 0;
+  margin: 0 4px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--muted);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+/* "less" lives in the 34px hour gutter, right-aligned like the hour labels */
+.wk-allday .wk-allday-less {
+  margin: 0;
+  padding: 0 2px 0 0;
+  text-align: right;
+  color: var(--faint);
+}
+.wk-allday .wk-allday-more:hover,
+.wk-allday .wk-allday-less:hover {
+  color: var(--gold);
+}
+.wk-allday .wk-allday-more:focus-visible,
+.wk-allday .wk-allday-less:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+/* ── all-day badges on the dial (#27) — labels on today, never ring wedges ──
+   A single line of pills anchored just above the centre stack (bottom: 100%,
+   out of its flow, so the countdown never reflows and a day without all-day
+   entries renders exactly as before). The 240px line sits inside the inner
+   ring: its outer corners stay ≈160px from centre with ri = 170 (see .clk-center
+   and OG.ri — change them together). Tokens only. */
+.dial-badges {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 10px;
+  width: 240px;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: auto;
+  transition: opacity 0.18s ease;
+}
+.dial-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  background: var(--ice-soft);
+  box-shadow: inset 0 0 0 1px var(--ice-bd);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.dial-badge .t {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dial-badge:hover,
+.dial-badge.on {
+  box-shadow:
+    inset 0 0 0 1.4px var(--ice),
+    0 0 12px var(--glowc);
+}
+.dial-badge:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.dial-badge.done .t {
+  text-decoration: line-through;
+  font-weight: 600;
+}
+/* "+N more" — scoped past the shell's `.stl button { font: inherit }` reset */
+.dial-badges .dial-badge.more {
+  flex: none;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dial-badges .dial-badge.more:hover {
+  color: var(--gold);
+}
+/* opened past BADGE_MAX, the line may wrap — rows grow upward from the anchor */
+.dial-badges:has(.dial-badge:nth-child(4)) {
+  flex-wrap: wrap;
+  width: 300px;
+}
+
+/* ── plannable hours (#22 slice B) ─────────────────────────────────────
+   Two .keyfield clock fields and a live hint that wraps under them, right-
+   aligned with the row's control column. Tokens only. */
+.plannable {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  column-gap: 6px;
+  max-width: 260px;
+}
+.plannable .keyfield input {
+  width: 5.5ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.plannable-sep {
+  color: var(--faint);
+  font-size: 11px;
+}
+.plannable-flag {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+.plannable-hint {
+  flex-basis: 100%;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gold);
+}
+.plannable-hint:not(:empty) {
+  margin-top: 5px;
+}

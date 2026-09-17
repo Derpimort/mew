@@ -12,8 +12,8 @@
    de-collision. All pure — tested like the week model is. */
 
 import type { Block } from '../../domain/types'
-import { isBackground } from '../../domain/week'
-import { fmtTime } from '../../domain/time'
+import { allDayOn, isAllDay, isBackground } from '../../domain/week'
+import { fmtDowLong, fmtTime } from '../../domain/time'
 import { clockDeg, rPolar } from './dialGeometry'
 
 /* Radii, centre → out (SVG units around cx,cy). Radius encodes COMMITMENT within
@@ -136,13 +136,16 @@ export function crossDaySpan(startMin: number, endMin: number): CrossDaySpan {
 
 /** Visible set: everything on today's face — open AND done, the whole day (no
     forward clip; the AM/PM bands keep 12-hours-apart events off one radius).
-    Done blocks stay as completed markers. Equal-start blocks tie-break on the
+    Done blocks stay as completed markers; an all-day entry is a label on the
+    day, never a ring wedge (#27). Equal-start blocks tie-break on the
     DRAWN end (crossDaySpan), so a folded overnight block — whose raw endMin
     wrapped below its start — orders by the arc it actually paints, not the
     collapsed wrap. */
 export function visibleOrbit(blocks: Block[], todayKey: string, _nowH: number): Block[] {
   return blocks
-    .filter((b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done'))
+    .filter(
+      (b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done') && !isAllDay(b)
+    )
     .sort(
       (a, b) =>
         a.startMin - b.startMin ||
@@ -423,16 +426,20 @@ export function stepDialFocus(
   radii: Map<string, number>,
   currentId: string | null,
   axis: 'time' | 'lane',
-  dir: 1 | -1
+  dir: 1 | -1,
+  /* #27: today's shown all-day badges lead the reading order (they sit above
+     the centre); arrows walk badges and arcs as one ring. [] ⇒ unchanged */
+  badgeIds: readonly string[] = []
 ): string | null {
-  if (vis.length === 0) return currentId
-  const order = dialFocusOrder(vis)
-  if (vis.length === 1) return order[0]
+  const order = [...badgeIds, ...dialFocusOrder(vis)]
+  if (order.length === 0) return currentId
+  if (order.length === 1) return order[0]
   // no anchor yet → first/last in reading order, so the first arrow lands on the face
   if (currentId == null || !order.includes(currentId))
     return dir === 1 ? order[0] : order[order.length - 1]
 
-  if (axis === 'time') {
+  /* a badge has no clock angle or lane: both axes step the reading order */
+  if (axis === 'time' || badgeIds.includes(currentId)) {
     const i = order.indexOf(currentId)
     return order[(i + dir + order.length) % order.length]
   }
@@ -459,4 +466,45 @@ export function stepDialFocus(
   // nothing to step to in this band → keep the key useful by stepping in time
   const i = order.indexOf(currentId)
   return order[(i + dir + order.length) % order.length]
+}
+
+/* ── all-day badges (#27) ─────────────────────────────────────────────────
+   An all-day entry is a label on the day, never a wedge: visibleOrbit keeps it
+   off the ring, and the dial wears it as a pill badge above the centre stack
+   instead. Hover, focus or selection lights the WHOLE ring — this covers the
+   day — and a badge is never the countdown (liveNow excludes it). */
+
+/** Today's badges: every all-day entry covering today, so a Mon–Wed OOO wears
+    its badge on Tuesday too (start day, then title). */
+export function dialBadges(blocks: Block[], todayKey: string): Block[] {
+  return allDayOn(blocks, todayKey)
+}
+
+/** Badges that fit above the countdown on one line without crowding it. */
+export const BADGE_MAX = 3
+
+/** What the badge row draws: all of them up to BADGE_MAX, else the first
+    BADGE_MAX − 1 and a "+N more" in the last slot until the owner opens it. */
+export function badgeRow(badges: Block[], expanded: boolean): { shown: Block[]; more: number } {
+  if (expanded || badges.length <= BADGE_MAX) return { shown: badges, more: 0 }
+  const keep = BADGE_MAX - 1
+  return { shown: badges.slice(0, keep), more: badges.length - keep }
+}
+
+/** A badge's accessible name: "{title} · all day · calendar" — a span that runs
+    past today says through which day — never a clock span it doesn't hold. */
+export function badgeAriaLabel(b: Block, todayKey: string): string {
+  const title = b.title.split('—')[0].trim()
+  const through =
+    b.endDayKey && b.endDayKey > todayKey
+      ? `, through ${fmtDowLong(b.endDayKey).toLowerCase()}`
+      : ''
+  const done = b.status === 'done' ? ', done' : ''
+  return `${title} · all day${through} · ${b.external ? 'calendar' : 'day label'}${done}`
+}
+
+/** True when an id names one of today's badges — the dial lights the whole
+    ring while one is hovered, focused or open. */
+export function isBadge(badges: Block[], id: string | null): boolean {
+  return id != null && badges.some((b) => b.id === id && isAllDay(b))
 }
