@@ -141,6 +141,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   (after midnight, "today" is a new day) checks again first: it runs only while it still points at
   the block it was offered for, and otherwise MEW names that block and everything stays as it is.
 
+### The room offer says what it would change
+- When MEW offers to give your work more room, it now names the blocks it would resize
+  ("(inbox sweep, errands)") and calls the kind what it is: hour-plus work. The count that comes
+  with a new block uses the same words ("That's your 2nd hour-plus work block this week"), so a
+  routine inbox sweep isn't called a deep-work block one message before the offer. "Give them
+  room" changes exactly the blocks it named, and the confirmation names them too.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
