@@ -2836,6 +2836,18 @@ export const useMew = create<MewState>((set, get) => {
          conflict-free by construction and rest-aware — so even a model that
          skips suggest_slots can't stack work into a busy gap. */
       let start = bgAutoStart
+      /* #117: "tonight" / "this evening" / "after dinner" place from the classic
+         day's end, and "after dinner" after that day's dinner too */
+      const eveningFrom = (k: string): number =>
+        Math.max(
+          week.DAY_END,
+          ...(p.afterDinner
+            ? week
+                .blocksForDay(blocks, k)
+                .filter((b) => b.status === 'open' && mealClassOf(b.title) === 'dinner')
+                .map((b) => b.endMin)
+            : [])
+        )
       if (start == null && !bg) {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
         const q: SlotQuery = {
@@ -2846,7 +2858,11 @@ export const useMew = create<MewState>((set, get) => {
           /* #328: a confirmed window is FIRM here — the scorer collapses
              off-window, so "deck → mornings" lands in the morning. No confirmed
              window ⇒ unset ⇒ today's soft tag-default scoring, byte-identical. */
-          ...(prefd.window != null ? { window: prefd.window, windowFirm: prefd.windowFirm } : {}),
+          ...(p.window != null
+            ? { window: p.window, windowFirm: true } // #117: the owner's own words this turn
+            : prefd.window != null
+              ? { window: prefd.window, windowFirm: prefd.windowFirm }
+              : {}),
         }
         const best = scoreSlots(
           occupied,
@@ -2859,7 +2875,7 @@ export const useMew = create<MewState>((set, get) => {
           undefined, // mealBase: the circadian default (#298)
           bufferMin, // #302: keep MEW's placements shy of external meetings
           plannableOf(s.settings) // #22: the owner's plannable day
-        ).find((c) => c.dayKey === key)
+        ).find((c) => c.dayKey === key && (p.window == null || c.startMin >= eveningFrom(key)))
         if (best) start = best.startMin
       }
       /* #323 the meal guardrail: the circadian window + inter-meal gap engage
@@ -2936,30 +2952,50 @@ export const useMew = create<MewState>((set, get) => {
                 attention: prefd.attention,
                 due: p.due,
               },
-              auto && key === todayKey
-                ? { ...planHours, startMin: Math.max(planHours.startMin, minOfDay(now)) }
+              auto && (key === todayKey || p.window != null)
+                ? {
+                    ...planHours,
+                    startMin: Math.max(
+                      planHours.startMin,
+                      key === todayKey ? minOfDay(now) : 0,
+                      p.window != null ? eveningFrom(key) : 0
+                    ),
+                  }
                 : planHours
             )
       if (!placed && auto && key <= todayKey) {
         const base = p.title.split('—')[0].trim()
         const dur = prefd.durationMin ?? 60
-        const from = Math.max(planHours.startMin, minOfDay(now))
+        const evening = p.window != null // #117: an evening ask stays in the evening
+        const from = Math.max(
+          planHours.startMin,
+          minOfDay(now),
+          evening ? eveningFrom(todayKey) : 0
+        )
         const tonight =
           key === todayKey
-            ? pastEndNote(blocks, todayKey, from, dur, planHours, 'today', bufferMin)
+            ? pastEndNote(
+                blocks,
+                todayKey,
+                from,
+                dur,
+                planHours,
+                evening ? 'tonight' : 'today',
+                bufferMin
+              )
             : null
         const nextKey = addDaysKey(todayKey, 1)
         const next = week.findFreeSlot(
           blocks,
           nextKey,
           dur,
-          planHours.startMin,
+          Math.max(planHours.startMin, evening ? eveningFrom(nextKey) : 0),
           planHours.endMin,
           bufferMin
         )
         const why =
           key === todayKey
-            ? `No ${dur}-min window is left today for "${base}" inside the hours I plan in (${plannableLabel(planHours)}).`
+            ? `No ${dur}-min window is left ${evening ? 'tonight' : 'today'} for "${base}" inside the hours I plan in (${plannableLabel(planHours)}).`
             : `${fmtDowLong(key)} has already gone by, so "${base}" needs a day ahead.`
         noRoom.push({
           note: `${why}${tonight ? ` ${tonight}` : ''}${next ? ` Tomorrow ${fmtTime(next.startMin)}–${fmtTime(next.endMin)} is open.` : ''}`,

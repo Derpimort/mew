@@ -133,6 +133,10 @@ function extractTargetAt(text: string): { at?: string; rest: string } {
 
 /* "in the background" / "bg task" / "while I work" — holds the clock, not the user */
 const BG_CUE = /\b(?:in the background|background|bg task|while i work)\b/i
+/* #117: the evening, said the way people say it. With no clock time it's the
+   evening WINDOW (from the classic day's end, inside the plannable hours), not
+   the fixed 18:00 "evening" part, and the phrase never stays in the title */
+const EVENING_CUE = /\b(?:tonight|this\s+evening|after\s+dinner)(?:['’]s)?\b/i // "tonight's reading" too
 
 /* "due by 1pm" / "due 13:00" / "must finish by 1" — a hard deadline, distinct
    from the block's end. Bare hours ≤ 7 read as afternoon (a 1pm world). */
@@ -1188,16 +1192,20 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
       let rest = blockM ? blockM[1] : clause
       let title: string
       const forM = rest.match(/^(.*?)\s+for\s+(.+)$/)
+      const eveningM = clause.match(EVENING_CUE)
+      const unEvening = (s: string) => s.replace(new RegExp(EVENING_CUE.source, 'gi'), ' ')
       if (forM && blockM) {
-        title = stripTimeWords(stripAttentionWords(forM[2])) // "spec review tomorrow at 9" → "spec review"
+        title = stripTimeWords(stripAttentionWords(unEvening(forM[2]))) // "spec review tomorrow at 9" → "spec review"
         rest = forM[1]
       } else {
         /* "schedule the deck thursday morning" — title is what's left after day/part/time words */
-        title = stripTimeWords(stripAttentionWords(rest))
+        title = stripTimeWords(stripAttentionWords(unEvening(rest)))
       }
       const day = parseDayOffset(clause, now)
-      const part = parsePart(clause)
       const time = parseTime(clause)
+      /* an evening cue with no clock time is the evening window (#117) */
+      const evening = eveningM != null && time == null
+      const part = evening ? null : parsePart(clause)
       const due = parseDue(clause)
       const background = BG_CUE.test(clause)
       const dur = parseDuration(rest) ?? parseDuration(clause)
@@ -1217,6 +1225,8 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
         protected: true,
         ...(background ? { attention: 'background' as const } : {}),
         ...(due != null ? { due } : {}),
+        ...(evening ? { window: 'evening' as const } : {}),
+        ...(evening && /after\s+dinner/i.test(eveningM![0]) ? { afterDinner: true } : {}),
       })
       continue
     }

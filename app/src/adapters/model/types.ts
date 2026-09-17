@@ -95,6 +95,11 @@ export interface PlaceSpec {
       and the receipt names the overlap; a fixed or [calendar] block still
       refuses. Never inferred. */
   allowOverlap?: boolean
+  /** #117: the owner's "tonight" / "this evening" / "after dinner" with no clock
+      time — placed from the classic day's end, inside the plannable hours */
+  window?: 'evening'
+  /** #117: "after dinner" — the evening, and after that day's dinner too */
+  afterDinner?: boolean
 }
 export interface FreeSpec {
   dayOffset: number
