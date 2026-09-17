@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { icsToRemoteEvents, parseIcs } from '../ics'
+import { dayKey, minOfDay } from '../../../domain/time'
 
 const WS = new Date(2026, 5, 8) // Mon Jun 8 2026 (local)
 const WE = new Date(2026, 5, 29)
+/* recurrence cases assert INSTANTS: a UTC-bounded window roomy enough for
+   every zone (UTC−12 … UTC+14), and each expected instant converted to the
+   local day/minute the importer reports — so the suite holds in any TZ */
+const WS_UTC = new Date(Date.UTC(2026, 5, 6))
+const WE_UTC = new Date(Date.UTC(2026, 5, 30))
+const local = (ms: number) => {
+  const d = new Date(ms)
+  return { dayKey: dayKey(d), startMin: minOfDay(d) }
+}
 
 function ics(body: string): string {
   return ['BEGIN:VCALENDAR', 'X-WR-CALNAME:mew@example.com', body, 'END:VCALENDAR'].join('\r\n')
@@ -93,13 +103,19 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'END:VEVENT',
       ].join('\r\n')
     )
-    const out = icsToRemoteEvents(text, 'cal', WS, WE)
-    // window Jun 8–28, Mon+Wed = 8,10,15,17,22 (UNTIL 24T04:59Z ends the series
-    // before the Jun 24 10:30 IST occurrence — Google's convention) minus EXDATE Jun 15 → 4
-    expect(out.events).toHaveLength(4)
+    const out = icsToRemoteEvents(text, 'cal', WS_UTC, WE_UTC)
+    // Mon+Wed 10:30 IST (05:00 UTC) inside Jun 6–30 UTC: 8, 10, 15, 17, 22, 24 —
+    // EXDATE drops Jun 15, and UNTIL 24T04:59Z ends the series before Jun 24's
+    // occurrence (Google's convention) → 4
     expect(out.events.every((e) => e.title === 'Standup')).toBe(true)
-    expect(out.events.some((e) => e.dayKey === '2026-06-15')).toBe(false)
-    expect(out.events.some((e) => e.dayKey === '2026-06-10')).toBe(true)
+    expect(out.events.map((e) => ({ dayKey: e.dayKey, startMin: e.startMin }))).toEqual(
+      [
+        Date.UTC(2026, 5, 8, 5),
+        Date.UTC(2026, 5, 10, 5),
+        Date.UTC(2026, 5, 17, 5),
+        Date.UTC(2026, 5, 22, 5),
+      ].map(local)
+    )
   })
 
   it('RECURRENCE-ID overrides replace their occurrence (the moved instance wins)', () => {
@@ -121,14 +137,20 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'END:VEVENT',
       ].join('\r\n')
     )
-    const out = icsToRemoteEvents(text, 'cal', WS, WE)
-    const mon15 = out.events.filter((e) => e.dayKey === '2026-06-15')
-    expect(mon15).toHaveLength(0) // original occurrence replaced
-    expect(out.events.some((e) => e.title === '1:1 (moved)' && e.dayKey === '2026-06-16')).toBe(
-      true
+    const out = icsToRemoteEvents(text, 'cal', WS_UTC, WE_UTC)
+    const slot = (e: { dayKey: string; startMin: number }) =>
+      JSON.stringify({ dayKey: e.dayKey, startMin: e.startMin })
+    const original15 = slot(local(Date.UTC(2026, 5, 15, 9)))
+    expect(out.events.filter((e) => slot(e) === original15)).toHaveLength(0) // replaced
+    expect(out.events.filter((e) => e.title === '1:1 (moved)').map(slot)).toEqual([
+      slot(local(Date.UTC(2026, 5, 16, 12))),
+    ])
+    // the other Mondays still expand: Jun 8, 22 and 29 at 09:00 UTC
+    expect(out.events.filter((e) => e.title === '1:1').map(slot)).toEqual(
+      [Date.UTC(2026, 5, 8, 9), Date.UTC(2026, 5, 22, 9), Date.UTC(2026, 5, 29, 9)]
+        .map(local)
+        .map(slot)
     )
-    // the other Mondays still expand
-    expect(out.events.filter((e) => e.title === '1:1').length).toBeGreaterThanOrEqual(2)
   })
 
   it('COUNT-bound rules stop where they should', () => {
@@ -143,8 +165,10 @@ describe('ICS parsing — the shapes real Google exports use', () => {
         'END:VEVENT',
       ].join('\r\n')
     )
-    const out = icsToRemoteEvents(text, 'cal', WS, WE)
-    expect(out.events).toHaveLength(3)
+    const out = icsToRemoteEvents(text, 'cal', WS_UTC, WE_UTC)
+    expect(out.events.map((e) => ({ dayKey: e.dayKey, startMin: e.startMin }))).toEqual(
+      [Date.UTC(2026, 5, 8, 7), Date.UTC(2026, 5, 9, 7), Date.UTC(2026, 5, 10, 7)].map(local)
+    )
   })
 
   it('cancelled events stay out', () => {
