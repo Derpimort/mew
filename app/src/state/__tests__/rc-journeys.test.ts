@@ -508,7 +508,8 @@ describe('RC journey 3: same-titled lunches across midnight', () => {
     await say('remove the lunch at 12:00')
     await settle()
     expect(lastMew()).toMatch(
-      /^3 "lunch" blocks ahead — the 12:00 \(12:00–12:45\), the 12:00 \(Wednesday 12:00–12:45\), or the 12:00 \(Thursday 12:00–12:45\)\? Tell me which/
+      /* #161: the chips' own words, each naming its day */
+      /^3 "lunch" blocks ahead — today 12:00, tomorrow 12:00, or thursday 12:00\? Tell me which/
     )
     expect(chips()).toEqual([
       ['today 12:00', 'remove lunch today at 12:00'],
@@ -530,7 +531,12 @@ describe('RC journey 3: same-titled lunches across midnight', () => {
     await say('remove the lunch at 12:00')
     await settle()
     expect(lastMew()).toBe(
-      '2 "lunch" blocks ahead — the 12:00 (12:00–12:45) or the 12:00 (Thursday 12:00–12:45)? Tell me which, or say "both" to drop them all.'
+      /* #161: the chips' own words, so the alternatives are typable — and note
+         the day words have MOVED with the clock: the block that read "thursday"
+         before the tick reads "tomorrow" after it, in the question exactly as in
+         the chips. That is #94's law showing through the copy rather than only
+         in the pick. */
+      '2 "lunch" blocks ahead — today 12:00 or tomorrow 12:00? Tell me which, or say "both" to drop them all.'
     )
     expect(chips()).toEqual([
       ['today 12:00', 'remove lunch today at 12:00'],

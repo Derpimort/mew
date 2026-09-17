@@ -222,7 +222,8 @@ describe('#124 — the remove ask names its all-chip in the chip’s words', () 
     await say('remove the lunch at 12:00')
     await settle()
     expect(lastMew()).toBe(
-      '3 "lunch" blocks ahead — the 12:00 (12:00–12:45), the 12:00 (Wednesday 12:00–12:45), or the 12:00 (Thursday 12:00–12:45)? Tell me which, or say "all of them" to drop them all.'
+      /* #161: one vocabulary — the question reads the chips' labels */
+      '3 "lunch" blocks ahead — today 12:00, tomorrow 12:00, or thursday 12:00? Tell me which, or say "all of them" to drop them all.'
     )
     expect(chipsOf().at(-1)).toEqual(['all of them', 'remove all lunch'])
     const msg = chipMsgs().at(-1)!
