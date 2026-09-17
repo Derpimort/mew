@@ -148,6 +148,40 @@ export function chipReplyEffect(
            to the block's own day and start */
         from: ask.relmove?.direction === 'next_free' ? todayKey : null,
       }
+    case 'split': {
+      /* execSplit's resolution (#73): a named day narrows the target to that
+         day, `at` pins which of same-named blocks (a done one isn't split), and
+         a block to split around resolves on the target's own day. So a split
+         chip that still reaches the same block around the same gap acts after
+         midnight ("… on thursday"), and a day-relative one ("… today") does not. */
+      const sp = ask.split ?? {}
+      const onDay = sp.dayOffset != null ? addDaysKey(todayKey, sp.dayOffset) : undefined
+      const pool = onDay ? blocks.filter((b) => b.dayKey === onDay) : blocks
+      const r = week.findTarget(pool, ask.query ?? '', todayKey, {
+        at: ask.at ? parseTimeValue(ask.at) : null,
+        includeDone: false,
+      })
+      const around =
+        sp.gapStartMin != null && sp.gapEndMin != null
+          ? { startMin: sp.gapStartMin, endMin: sp.gapEndMin }
+          : r.status === 'ok'
+            ? targetOf(
+                week.findTarget(
+                  blocks.filter((b) => b.dayKey === r.block.dayKey && b.id !== r.block.id),
+                  sp.aroundQuery ?? '',
+                  todayKey,
+                  { at: sp.aroundAt ? parseTimeValue(sp.aroundAt) : null, includeDone: true }
+                )
+              )
+            : null
+      return {
+        kind: 'split',
+        target: targetOf(r),
+        around,
+        tailMin: sp.tailMin ?? null,
+        seriesScope: ask.seriesScope ?? null,
+      }
+    }
     case 'plan':
       return {
         kind: 'plan',

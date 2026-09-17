@@ -80,6 +80,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   where it fits: a fixed or protected block there leaves everything as it is, and MEW names it.
 - The "split around it" choice MEW offers when a meeting lands on your work now runs the same
   split, and part 2 keeps the block's own flexibility.
+- A split choice picked after midnight checks its day first, like every other choice: one named for
+  a weekday ("… on thursday") still splits that day's block, and one for "today" leaves everything
+  as it is and says when it was offered.
 
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
