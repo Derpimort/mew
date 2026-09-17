@@ -108,6 +108,7 @@ const pristine = useMew.getState()
 const TUE = (h: number, m = 0) => new Date(2026, 5, 9, h, m) // Tuesday, June 9
 const TODAY = '2026-06-09'
 const THU = addDaysKey(TODAY, 2)
+const TOMORROW = addDaysKey(TODAY, 1)
 
 function block(over: Partial<Block>): Block {
   return {
@@ -222,5 +223,99 @@ describe('#160 ordering: the title match runs before any day reading', () => {
     await settle()
     expect(lastBody()).toBe('Removed — Wednesday review (Thursday 11:00).')
     expect(titles()).toEqual(['Friday demo@2026-06-09'])
+  })
+})
+
+/* ── one reader, both verbs ───────────────────────────────────────── */
+
+describe('#160: move reads the day phrases remove already read', () => {
+  const say = (t: string) => useMew.getState().speak(t)
+  const lastBody = () => lastMew().body
+  const at = (id: string) => {
+    const b = blocks().find((x) => x.id === id)
+    return b ? `${b.dayKey}@${b.startMin}` : 'GONE'
+  }
+  /* one title, two days — so only a day can say which */
+  const gyms = () => [
+    block({
+      id: 'g-wed',
+      title: 'Gym',
+      tag: 'health',
+      dayKey: TOMORROW,
+      startMin: 510,
+      endMin: 570,
+      protected: false,
+    }),
+    block({
+      id: 'g-thu',
+      title: 'Gym',
+      tag: 'health',
+      dayKey: THU,
+      startMin: 510,
+      endMin: 570,
+      protected: false,
+    }),
+  ]
+
+  it('"on <weekday>" names which one moves — including the one that is NOT the soonest', async () => {
+    await fresh(gyms())
+    await say('move the gym on thursday to 15:00')
+    await settle()
+    expect(lastBody()).toBe('Moved — Gym now lives Thursday at 15:00.')
+    expect([at('g-wed'), at('g-thu')]).toEqual([`${TOMORROW}@510`, `${THU}@900`])
+  })
+
+  it('the possessive names it too — the same phrase remove has read since #72', async () => {
+    await fresh(gyms())
+    await say("move wednesday's gym to 15:00")
+    await settle()
+    expect(lastBody()).toBe('Moved — Gym now lives Wednesday at 15:00.')
+    expect([at('g-wed'), at('g-thu')]).toEqual([`${TOMORROW}@900`, `${THU}@510`])
+  })
+
+  it('a day with no such block: the miss NAMES the day, on both verbs (#160)', async () => {
+    /* the reply must not be wrong about the one thing the parser got right —
+       "I couldn't find \"gym\"" tells an owner looking at two gyms they have none */
+    await fresh(gyms())
+    await say('move the gym on friday to 15:00')
+    await settle()
+    expect(lastBody()).toBe(`I couldn't find "gym" on Friday to move — say it another way?`)
+    expect([at('g-wed'), at('g-thu')]).toEqual([`${TOMORROW}@510`, `${THU}@510`])
+
+    await fresh(gyms())
+    await say('remove the gym on friday')
+    await settle()
+    expect(lastBody()).toBe(`I couldn't find "gym" on Friday to remove — say it another way?`)
+    expect(blocks()).toHaveLength(2)
+  })
+
+  it('an ask naming no day keeps its old wording — no "on today" where nobody said today', async () => {
+    /* the rescue split passes a DEFAULTED day, so the named-day sentence is fed
+       by what the ask said rather than by what the resolver filters on */
+    await fresh([block({ id: 'deck', title: 'Deck polish', startMin: 540, endMin: 660 })])
+    await say('split the flurble around 13:00-13:45, keep 45m after')
+    await settle()
+    expect(lastBody()).toBe(`I couldn't find "flurble" to split — say it another way?`)
+  })
+
+  it("the adjective form is NOT a day phrase, on either verb — #72's decision, pinned", async () => {
+    /* "the wednesday gym" keeps the weekday in the TITLE, because a weekday at
+       the front of a title is ordinary ("Friday demo", "Sun salutation"). Read it
+       as a day and those titles stop resolving — see the ordering pin above.
+       Excluding it on BOTH verbs is what makes them consistent; teaching it to
+       either one is a behaviour change that belongs to the owner, with #158's
+       ask-or-guess question attached. */
+    await fresh(gyms())
+    await say('move the wednesday gym to 15:00')
+    await settle()
+    expect(lastBody()).toBe(`I couldn't find "wednesday gym" to move — say it another way?`)
+    expect([at('g-wed'), at('g-thu')]).toEqual([`${TOMORROW}@510`, `${THU}@510`])
+
+    await fresh(gyms())
+    await say('remove the wednesday gym')
+    await settle()
+    /* remove finds the title "gym" and asks which — it does not filter by day */
+    expect(lastBody()).toMatch(/^2 "gym" blocks ahead/)
+    expect(blocks()).toHaveLength(2)
   })
 })

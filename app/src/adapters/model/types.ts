@@ -155,7 +155,10 @@ export interface ToolExecutor {
     relStartMin?: number,
     at?: string,
     /** #49: a granted overlap — see PlaceSpec.allowOverlap */
-    allowOverlap?: boolean
+    allowOverlap?: boolean,
+    /** #160: the TARGET block's own day when the ask named one, pinning which of
+        several same-titled blocks moves — the same pin remove has read since #72 */
+    fromDayOffset?: number
   ): string
   capture(title: string): string
   /** Remove open MEW-placed blocks in scope. Done mews and external calendar
