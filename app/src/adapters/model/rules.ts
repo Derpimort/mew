@@ -137,7 +137,9 @@ export function runIntent(
             : undefined,
           intent.toStartMin,
           intent.relStartMin, // #320: a relative shift ("30 min earlier") the executor applies
-          intent.at // #334: the target block's current start, pinning which of several
+          intent.at, // #334: the target block's current start, pinning which of several
+          undefined, // #49 allowOverlap is model-only — the keyless floor never grants one
+          intent.fromDayOffset // #160: a day the ask named pins WHICH block moves
         )
       )
     case 'capture':

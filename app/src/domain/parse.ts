@@ -69,9 +69,18 @@ function removeDayPin(text: string, now: Date): number | null {
     word outside those phrases ("the friday demo", "Sun salutation") is untouched
     here — it stays the title's, exactly as before. */
 function stripRemoveDayPhrases(text: string): string {
-  return text
-    .replace(new RegExp(`(?:\\b(?:this|next)\\s+)?\\b${REMOVE_DOW}['’]s\\b`, 'gi'), ' ')
-    .replace(new RegExp(`(\\S)\\s+(?:this|next)\\s+${REMOVE_DOW}\\b`, 'gi'), '$1 ')
+  return (
+    text
+      .replace(new RegExp(`(?:\\b(?:this|next)\\s+)?\\b${REMOVE_DOW}['’]s\\b`, 'gi'), ' ')
+      .replace(new RegExp(`(\\S)\\s+(?:this|next)\\s+${REMOVE_DOW}\\b`, 'gi'), '$1 ')
+      /* #160: "on <weekday>" too, which removeDayPin has always PINNED but this
+         did not lift — remove got away with it because its own path runs
+         stripTimeWords afterwards and that swallowed the phrase. Move has no such
+         downstream strip, so the reader has to be complete rather than rely on a
+         second pass one caller happens to have. Remove is unchanged in effect:
+         the phrase leaves here instead of two steps later. */
+      .replace(new RegExp(`(\\S)\\s+on\\s+${REMOVE_DOW}\\b`, 'gi'), '$1 ')
+  )
 }
 
 /** #72 peer review: "next <weekday>" names a day MEW never pins (this week's or
@@ -1220,12 +1229,22 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     const day = parseDayOffset(moveM[2], now)
     const time = parseDestTime(moveM[2]) ?? parsePart(moveM[2])?.start ?? undefined
     const refQ = referentQuery(moveM[1])
-    const { at, rest } = extractTargetAt(moveM[1])
+    /* #160: the TARGET half reads its day with the SAME reader remove has used
+       since #72 — removeDayPin to pin it, stripRemoveDayPhrases to lift it out
+       of the title — rather than a second reader that could drift from it. So
+       "move the gym on wednesday to 15:00" names Wednesday's gym, exactly as
+       "remove the gym on wednesday" already did. The phrases both verbs read are
+       the same set, which also means both EXCLUDE a weekday at the front of a
+       title ("the friday demo"): that stays the title's, by #72's decision. */
+    const fromDay = refQ ? null : removeDayPin(moveM[1], now)
+    const targetText = refQ ? moveM[1] : stripRemoveDayPhrases(moveM[1])
+    const { at, rest } = extractTargetAt(targetText)
     return {
       kind: 'move',
       query: refQ ?? cleanTitle(rest),
       toDayKey: day ? String(day.offset) : undefined, // offset; store resolves to key
       toStartMin: time,
+      ...(fromDay != null ? { fromDayOffset: fromDay } : {}),
       ...(!refQ && at ? { at } : {}),
     }
   }
