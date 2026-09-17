@@ -14,79 +14,99 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
-### Toward dragging on the dial
-- The Focus dial can now read any point on its face back as a time of day, to the minute, on
-  either half of the clock, and a drop there lands on the same five-minute grid the week uses.
-  It's the groundwork for sliding a block around the clock; nothing on screen changes yet.
 ### The dial on any day
-- The Focus dial shows any day, not just today: step through the days from the date line
-  above the clock and see that day's blocks on the same calm face — a lived day wears its full
-  wash, a day ahead stays clear, and the centre names the day with its blocks, committed hours
-  and mews. One click brings you back to today, where the live countdown belongs, and a day
-  picked in Week carries across. On a lived day the card keeps Done, Hold and Remove; a day
-  ahead keeps Hold and Remove, so a mew is only ever counted once it's done.
-- The date above the dial opens a day picker: a small month calendar that lands on the day
-  you're viewing, with today marked. Pick with a click or from the keyboard alone — arrows move
-  by day and week, Page Up and Page Down by month, Enter shows the day — and Escape simply
-  closes the calendar, leaving the dial exactly as it was.
-- The day-progress wash now holds when half the day is complete: the morning disk stays filled
-  from noon on, and a lived day shows its whole wash.
-### Ask about any stretch of time
-- Ask MEW about any stretch of your history, not just one week: "since August 1", "the last
-  three weeks", "this month", "in March", "between Aug 3 and Aug 17" or "yesterday" all answer
-  with real sums from your own blocks, on this device, with or without the brain connected. A
-  very long stretch is answered for its most recent year, and "last week" reads just as before.
+- The Focus dial shows any day, not just today: step through the days from the date line above the
+  clock and see that day's blocks on the same calm face — a lived day wears its full wash, a day
+  ahead stays clear, and the centre names the day with its blocks, committed hours and mews. One
+  click brings you back to today, where the live countdown belongs, and a day picked in Week carries
+  across. On a lived day the card keeps Done, Hold and Remove; a day ahead keeps Hold and Remove, so
+  a mew is only ever counted once it's done.
+- The date above the dial opens a day picker: a small month calendar that lands on the day you're
+  viewing, with today marked. Pick with a click or from the keyboard alone — arrows move by day and
+  week, Page Up and Page Down by month, Enter shows the day — and Escape simply closes the calendar,
+  leaving the dial exactly as it was.
+- The day-progress wash now holds when half the day is complete: the morning disk stays filled from
+  noon on, and a lived day shows its whole wash.
 
-### Versioning by the calendar
-- MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
-  `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
-  MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
-  any build or tag — documented in `.github/RELEASES.md`.
-- The release guard now names a tag exactly as it was given, and when a tag and the config
-  disagree it spells out both ways forward: re-tag from the config, or bump the config (and the
-  MSI version) to the tag. It also runs as its own workflow, so a desktop-only change no longer
-  waits on the app's typecheck, tests and lint.
+### Toward dragging on the dial
+- The Focus dial can now read any point on its face back as a time of day, to the minute, on either
+  half of the clock, and a drop there lands on the same five-minute grid the week uses. It's the
+  groundwork for sliding a block around the clock; nothing on screen changes yet.
 
-### A bundle budget every PR can see
-- The size budgets now run on every PR into `develop` and the release candidate: the quick
-  gate builds the app and checks each chunk against its ceiling, so a heavier download shows up
-  on the PR that caused it, long before release day.
+### All-day entries are labels on the day
+- Holidays, time off and birthdays now arrive from Google and ICS calendars as all-day entries, a
+  fact about the day rather than a 0:00–23:59 block on it; a span covers every day it names.
+- The Week shows them on a strip above 0:00 — one continuous chip for a Monday-to-Wednesday
+  out-of-office, packed neatly when several share a day.
+- The Focus dial shows today's all-day entries as pill badges above the centre; a holiday labels the
+  day and never becomes a wedge or takes the countdown.
 
-### Screenshots that hold on any weekday
-- The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on
-  a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
-  `SHOOT_DATE` probes another day when you want to look.
-- The day view, day picker and all-day proofs run on that same pinned day too, and keep passing on
-  whatever date `SHOOT_DATE` probes — month ends and a four-week February included.
+### The evening exists
+- MEW now plans inside the hours you actually keep: placement, suggestions and free-slot searches
+  read your **plannable hours** rather than stopping at 18:30, and when nothing fits inside them MEW
+  says so plainly and names the free time past them. Its own morning scaffold and the weekly ritual
+  keep the classic day.
+- **Plannable hours** have their own row in Settings → Nudges & notifications, independent of quiet
+  hours: two 24h fields on a five-minute grid, steppable from the keyboard and named for screen
+  readers.
+- Auto-placement lands on human times: a slot asked for at 10:07 opens at 10:30, or at the next
+  quarter that still fits, and every placement path stays on the five-minute grid. Times you name
+  yourself are kept exactly.
+
+### Your stated lengths hold through the plan picker
+- A length you say in your own words ("block 90 min for the quarterly report") now stays exactly
+  that length when you pick a plan from the picker. MEW only offers to give room to the blocks you
+  didn't size yourself, and a plan it re-offers after the week moved keeps the lengths it already
+  showed you.
+
+### The room offer says what it would change
+- When MEW offers to give your work more room, it now names the blocks it would resize ("(inbox
+  sweep, errands)") and calls the kind what it is: hour-plus work. The count that comes with a new
+  block uses the same words ("That's your 2nd hour-plus work block this week"), so a routine inbox
+  sweep isn't called a deep-work block one message before the offer. "Give them room" changes
+  exactly the blocks it named, and the confirmation names them too.
+
+### Overlap on your say-so
+- Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it
+  places the block exactly there, leaves your flexible block where it is, and says the two share
+  that time. Meetings, calls and calendar events are still never covered: MEW names them and asks
+  for another time.
+
+### A real choice when a block can't make way
+- When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
+  now asks with up to three tappable choices: move the work to its next clean slot, drop the
+  flexible block, or keep both. Nothing moves until you pick, and every choice does exactly what it
+  says, with or without a model key.
+
+### The drop choice names its day
+- When a block can't make way and MEW offers to drop it, that choice now names the day ("remove the
+  Groceries today at 14:00"). So it shows up even when the same block sits at the same time on
+  another day, and picking it removes only the one you're looking at. A drop picked on a later day
+  (after midnight, "today" is a new day) checks again first: it runs only while it still points at
+  the block it was offered for, and otherwise MEW names that block and everything stays as it is.
 
 ### Removing one block removes one block
-- "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the
-  same time on several days, MEW asks which day with tappable choices ("today 12:00",
-  "thursday 12:00") and changes nothing until you pick. Naming the day ("remove the lunch on
-  thursday at 12:00") goes straight to that one, and "all" still means all.
-### A real choice when a block can't make way
-- When new work lands on one of your own flexible blocks and that block has nowhere clean to go,
-  MEW now asks with up to three tappable choices: move the work to its next clean slot, drop the
-  flexible block, or keep both. Nothing moves until you pick, and every choice does exactly
-  what it says, with or without a model key.
-### What you tell MEW sticks
-- A standing rule you tell MEW while its brain is away keeps applying once the brain is back,
-  and MEW passes it along to the brain exactly once. A rule you forget stays forgotten with
-  the brain on. And "what I've picked up about you" now shows your rhythm by energy: where your
-  deep work, admin and health blocks actually get finished.
-### Feature proofs that run again
-- The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in
-  proofs run green again with no API key, on the same pinned day and shared harness as the
-  canon gate. Their screenshots are current, and the Google sign-in proof runs fully offline.
-### Straight talk when a reply drops
-- When the connection to the model drops after a reply has begun, MEW names it for what it is —
-  "the connection to the model hiccuped" — and answers the turn itself. Whatever already streamed
-  stays exactly as it arrived, and nothing is sent twice behind your back.
+- "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the same
+  time on several days, MEW asks which day with tappable choices ("today 12:00", "thursday 12:00")
+  and changes nothing until you pick. Naming the day ("remove the lunch on thursday at 12:00") goes
+  straight to that one, and "all" still means all.
 
 ### Say the day your way when removing
-- "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday
-  at 12:00" now find the block. The day phrase is read as the day, so only the title is looked up,
-  and when the same time repeats across days MEW still asks which with day choices.
+- "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at
+  12:00" now find the block. The day phrase is read as the day, so only the title is looked up, and
+  when the same time repeats across days MEW still asks which with day choices.
+
+### Ask about any stretch of time
+- Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three
+  weeks", "this month", "in March", "between Aug 3 and Aug 17" or "yesterday" all answer with real
+  sums from your own blocks, on this device, with or without the brain connected. A very long
+  stretch is answered for its most recent year, and "last week" reads just as before.
+
+### What you tell MEW sticks
+- A standing rule you tell MEW while its brain is away keeps applying once the brain is back, and
+  MEW passes it along to the brain exactly once. A rule you forget stays forgotten with the brain
+  on. And "what I've picked up about you" now shows your rhythm by energy: where your deep work,
+  admin and health blocks actually get finished.
 
 ### Rules from your brain are yours to see and let go
 - The memory console now lists every standing rule MEW applies, including ones that live only in
@@ -94,35 +114,70 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Forget works on them like any other rule, and it sticks. With the brain off, the list is exactly
   what's on this device.
 
-### The evening exists
-- MEW now plans inside the hours you actually keep: placement, suggestions and free-slot searches
-  read your **plannable hours** rather than stopping at 18:30, and when nothing fits inside them
-  MEW says so plainly and names the free time past them. Its own morning scaffold and the weekly
-  ritual keep the classic day.
-- **Plannable hours** have their own row in Settings → Nudges & notifications, independent of
-  quiet hours: two 24h fields on a five-minute grid, steppable from the keyboard and named for
-  screen readers.
-- Auto-placement lands on human times: a slot asked for at 10:07 opens at 10:30, or at the next
-  quarter that still fits, and every placement path stays on the five-minute grid. Times you name
-  yourself are kept exactly.
+### The weekly review's roll really moves your work
+- Rolling carried work forward now moves it: the block lands on the same weekday next week and
+  leaves this week's carried list, so it's never offered twice, and one "undo that" brings the whole
+  roll back. A repeating block rides with its own series instead of doubling, a block already
+  planned next week stays exactly where it is, and a day with no room keeps the work carried and
+  says so.
 
-### All-day entries are labels on the day
-- Holidays, time off and birthdays now arrive from Google and ICS calendars as all-day entries, a
-  fact about the day rather than a 0:00–23:59 block on it; a span covers every day it names.
-- The Week shows them on a strip above 0:00 — one continuous chip for a Monday-to-Wednesday
-  out-of-office, packed neatly when several share a day.
-- The Focus dial shows today's all-day entries as pill badges above the centre; a holiday labels
-  the day and never becomes a wedge or takes the countdown.
+### Midnight means the same day to every part of a turn
+- In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's
+  Groceries. Each turn, typed or tapped, now starts from one clock, so the words you use, the choice
+  checks, the tools that act and the model's view of your week all agree on what today is.
+
+### Every choice keeps the day it was offered
+- The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
+  work to its next clean slot, pick which of two same-named blocks you meant, or apply an edit to
+  just this one of a repeating block) keep the day they were offered. Picked after midnight, a
+  choice checks first: it acts while it still reaches the same block on the same day and time, and
+  otherwise MEW says which day it was offered on and everything stays as it is. A choice named for a
+  weekday ("move it to thursday") keeps working the next day.
 
 ### Recurring events keep their own clock
 - Weekly and fortnightly ICS series now walk their event's own time zone, so "every Monday 09:00"
-  stays a Monday wherever you are, a clock-change night never doubles an occurrence, and a
-  date-only UNTIL keeps the series' last day.
+  stays a Monday wherever you are, a clock-change night never doubles an occurrence, and a date-only
+  UNTIL keeps the series' last day.
+
+### Straight talk when a reply drops
+- When the connection to the model drops after a reply has begun, MEW names it for what it is — "the
+  connection to the model hiccuped" — and answers the turn itself. Whatever already streamed stays
+  exactly as it arrived, and nothing is sent twice behind your back.
+
+### Versioning by the calendar
+- MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
+  `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching MSI-safe
+  `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before any build or
+  tag — documented in `.github/RELEASES.md`.
+- The release guard now names a tag exactly as it was given, and when a tag and the config disagree
+  it spells out both ways forward: re-tag from the config, or bump the config (and the MSI version)
+  to the tag. It also runs as its own workflow, so a desktop-only change no longer waits on the
+  app's typecheck, tests and lint.
+
+### A bundle budget every PR can see
+- The size budgets now run on every PR into `develop` and the release candidate: the quick gate
+  builds the app and checks each chunk against its ceiling, so a heavier download shows up on the PR
+  that caused it, long before release day.
+
+### Screenshots that hold on any weekday
+- The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on a
+  Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
+  `SHOOT_DATE` probes another day when you want to look.
+- The day view, day picker and all-day proofs run on that same pinned day too, and keep passing on
+  whatever date `SHOOT_DATE` probes — month ends and a four-week February included.
+
+### Feature proofs that run again
+- The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in proofs
+  run green again with no API key, on the same pinned day and shared harness as the canon gate.
+  Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
 - Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key
   exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
   same wire behaviour as before, held by pinned tests.
+- The bundle gate now measures everything MEW loads eagerly — the entry plus the chunks it pulls in
+  at start — as one sum against one ceiling, and the gate's own policy tests run in CI, so a heavier
+  start can't hide in a side chunk.
 - Two quiet details are now held by tests: the day picker keeps the dial's day selected while the
   arrow keys move through the month, and a remembered rule with none of your words shows just where
   it came from.
