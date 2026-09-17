@@ -3834,7 +3834,9 @@ export const useMew = create<MewState>((set, get) => {
       op.kind === 'shift'
         ? `${baseOf(m.block.title)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
         : `${baseOf(m.block.title)} ${fmtTime(m.startMin)}`
-    const wide = n >= 3 || op.kind === 'moveToDay'
+    /* wide by what the ask SELECTED, not by what can move: "push everything after
+       7pm" over four blocks, two of which stay put, is shown first, list and all */
+    const wide = plan.selected.length >= 3 || op.kind === 'moveToDay'
     /* a yes names a list: if the plan no longer moves exactly that many, offer
        again, even when the smaller set would be narrow enough to act directly */
     if ((wide || confirmCount != null) && confirmCount !== n) {

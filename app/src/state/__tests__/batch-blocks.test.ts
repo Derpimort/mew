@@ -340,6 +340,34 @@ describe('#75 — narrow batches, collisions, and a pick after midnight', () => 
     expect(at('d2')).toEqual([TODAY, 18 * 60 + 30, 19 * 60])
   })
 
+  it('three or more selected is offered even when fewer can move (the live-app case): the list says which stay put', async () => {
+    await fresh([
+      deck('pa', 19 * 60, 19 * 60 + 30, { title: 'Probe alpha' }),
+      deck('pb', 20 * 60, 20 * 60 + 30, { title: 'Probe beta' }),
+      block({ id: 'call', title: 'Client call', startMin: 20 * 60 + 30, endMin: 20 * 60 + 45 }),
+      deck('pg', 21 * 60, 21 * 60 + 30, { title: 'Probe gamma' }),
+    ])
+    const before = snapshot()
+    await say('push everything after 7pm back 30 min')
+    await settle()
+    expect(snapshot()).toBe(before)
+    expect(chipMsgs().at(-1)!.body).toBe(
+      'move 2 blocks 30 min later? Probe alpha 19:00→19:30 · Probe gamma 21:00→21:30. Client call 20:30 (fixed) and Probe beta 20:00 (would sit over Client call 20:30–20:45) stay where they are.'
+    )
+    await pick('do it')
+    expect(at('pa')).toEqual([TODAY, 19 * 60 + 30, 20 * 60])
+    expect(at('pb')).toEqual([TODAY, 20 * 60, 20 * 60 + 30])
+    expect(at('pg')).toEqual([TODAY, 21 * 60 + 30, 22 * 60])
+  })
+
+  it('the receipt card names the move, not the tool', async () => {
+    const { toolCardLabel } = await import('../../domain/toolCard')
+    expect(toolCardLabel('batch', { query: 'work' })).toEqual({
+      verb: 'moving them',
+      target: 'work',
+    })
+  })
+
   it('a collision the batch leaves speaks the existing clash wording', async () => {
     await fresh([
       deck('d1', 17 * 60, 18 * 60),
