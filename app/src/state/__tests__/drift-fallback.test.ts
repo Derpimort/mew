@@ -336,6 +336,56 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
     expect(offer.choices!.map((c) => c.id)).toEqual(['shift', 'keep'])
   })
 
+  /* peer review of #63 (coderpa): the shift chip's exactness guard, pinned. A
+     same-titled block at the same minute on an EARLIER day means the shift
+     reply ("move the release review at 14:00 to …") resolves to THAT block —
+     picking it would move today's review and leave the new one on Groceries. */
+  it('a same-titled block at the same minute earlier in the week keeps the shift chip off (its reply would move that one)', async () => {
+    const wall = (id: string, dayKey: string, startMin: number, endMin: number) =>
+      block({ id, title: 'Offsite', dayKey, startMin, endMin })
+    await fresh([
+      block({ id: 'rr-today', title: 'release review', startMin: 14 * 60, endMin: 15 * 60 }),
+      wall('tue-am', TODAY, 8 * 60, 14 * 60),
+      wall('tue-pm', TODAY, 15 * 60, 22.5 * 60),
+      block({
+        id: 'groceries-wed',
+        title: 'Groceries',
+        tag: 'private',
+        dayKey: WED,
+        startMin: 14 * 60,
+        endMin: 15.5 * 60,
+        protected: false,
+      }),
+      wall('wed-am', WED, 8 * 60, 14 * 60),
+      wall('wed-pm', WED, 15.5 * 60, 22.5 * 60),
+      wall('thu-wall', THU, 10 * 60, 22.5 * 60), // Thursday keeps one free hour, at 9:00
+    ])
+    await say('block 1h for the release review tomorrow at 14')
+    await settle()
+    const offer = chipMsgs()[0]
+    expect(offer.choices!.map((c) => c.id)).toEqual(['drop-groceries-wed', 'keep'])
+    expect(visibleText()).not.toMatch(/move release review/)
+    expect(byId('rr-today')).toMatchObject({ dayKey: TODAY, startMin: 14 * 60 }) // never a candidate
+  })
+
+  it('several stuck blocks are named as a list: "a, b and c share …"', async () => {
+    /* two 90-min flexible blocks around 14:00, today walled either side; tomorrow's
+       one free hour fits neither, so both are stuck */
+    const flexible = (id: string, title: string, startMin: number) =>
+      block({ id, title, tag: 'private', startMin, endMin: startMin + 90, protected: false })
+    await fresh([
+      block({ id: 'wall-am', title: 'Offsite', startMin: 8 * 60, endMin: 13 * 60 }),
+      flexible('laundry', 'Laundry', 13 * 60),
+      flexible('groceries', 'Groceries', 14.5 * 60),
+      block({ id: 'wall-pm', title: 'Offsite', startMin: 16 * 60, endMin: 22.5 * 60 }),
+      ...week0().filter((b) => b.id === 'wed-wall'),
+    ])
+    await say(PLACE)
+    await settle()
+    const offer = chipMsgs()[0]
+    expect(offer.body).toMatch(/^Laundry, Groceries and release review share 14:00–15:00/)
+  })
+
   it('with neither an exact shift nor an exact drop, no chips: the plain fact stands', async () => {
     await fresh([
       ...week0().filter((b) => b.id !== 'wed-wall'),

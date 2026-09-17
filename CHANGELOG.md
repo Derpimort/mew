@@ -22,7 +22,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go,
-  MEW now asks with three tappable choices: move the work to its next clean slot, drop the
+  MEW now asks with up to three tappable choices: move the work to its next clean slot, drop the
   flexible block, or keep both. Nothing moves until you pick, and every choice does exactly
   what it says, with or without a model key.
 

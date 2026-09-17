@@ -1860,9 +1860,10 @@ export const useMew = create<MewState>((set, get) => {
       choices.push({ id: 'keep', label: 'keep both', reply: 'ok, keep both as they are' })
       const overlapStart = Math.max(placed.startMin, Math.min(...flex.map((b) => b.startMin)))
       const overlapEnd = Math.min(placed.endMin, Math.max(...flex.map((b) => b.endMin)))
+      const names = [...flex.map(base), base(placed)] // "a, b and c", however many are stuck
       msgs.push(
         choicesMsg(
-          `${flex.map(base).join(' and ')} and ${base(placed)} share ${fmtTime(overlapStart)}\u2013${fmtTime(overlapEnd)}, with no clean slot to drift to. How should it go?`,
+          `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} share ${fmtTime(overlapStart)}\u2013${fmtTime(overlapEnd)}, with no clean slot to drift to. How should it go?`,
           choices
         )
       )
