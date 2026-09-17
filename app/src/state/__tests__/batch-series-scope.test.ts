@@ -198,8 +198,6 @@ afterEach(() => {
 
 /* ── fixtures ─────────────────────────────────────────────────────── */
 
-/* ── fixtures ─────────────────────────────────────────────────────── */
-
 const WED = '2026-06-10'
 const THU = '2026-06-11'
 const lastMew = () =>
@@ -335,30 +333,70 @@ describe('#75 slice 3 — a sweep over a repeating block asks first', () => {
     expect(at('g-tue')).toEqual([TODAY, 18 * 60])
     expect(at('deck')).toEqual([TODAY, 17 * 60 + 30])
   })
-})
 
-it('a row that stays put names its day too, so the list can be checked afterwards', async () => {
-  /* the same ambiguity as the moves list, on the other half of the sentence:
-       a fixed call on Wednesday keeps that occurrence where it is, and without
-       its day "Gym 18:00" reads as the one the sweep started from */
-  await fresh([
-    ...gymSeries(),
-    block({
-      id: 'call',
-      title: 'Client call',
-      dayKey: WED,
-      startMin: 18 * 60 + 30,
-      endMin: 19 * 60,
-    }),
-  ])
-  await say('push all health after 4pm today later by 30 min')
-  await settle()
-  await pick('the whole series')
-  const offer = chipMsgs().at(-1)!.body
-  expect(offer).toContain('Gym today 18:00→18:30 · Gym Thursday 18:00→18:30.')
-  expect(offer).toContain(
-    'Gym tomorrow 18:00 (would sit over Client call 18:30–19:00) stays where it is.'
-  )
+  it('a row that stays put names its day too, so the list can be checked afterwards', async () => {
+    /* the same ambiguity as the moves list, on the other half of the sentence:
+         a fixed call on Wednesday keeps that occurrence where it is, and without
+         its day "Gym 18:00" reads as the one the sweep started from */
+    await fresh([
+      ...gymSeries(),
+      block({
+        id: 'call',
+        title: 'Client call',
+        dayKey: WED,
+        startMin: 18 * 60 + 30,
+        endMin: 19 * 60,
+      }),
+    ])
+    await say('push all health after 4pm today later by 30 min')
+    await settle()
+    await pick('the whole series')
+    const offer = chipMsgs().at(-1)!.body
+    expect(offer).toContain('Gym today 18:00→18:30 · Gym Thursday 18:00→18:30.')
+    expect(offer).toContain(
+      'Gym tomorrow 18:00 (would sit over Client call 18:30–19:00) stays where it is.'
+    )
+  })
+  it('the days that cross can be the ones that STAY: skipped rows carry their day too (#150 review, optional green)', async () => {
+    /* coderpa's mutant: spansDays deliberately counts the SKIPPED blocks' days
+         as well as the moves', and nothing held that half. This is the shape that
+         needs it — a calendar event at 18:30 on Wednesday AND Thursday keeps both
+         of those occurrences where they are, so only Tuesday's moves. The MOVES
+         are single-day; the sentence still crosses days because of what stayed. */
+    await fresh([
+      ...gymSeries(),
+      block({
+        id: 'ext-wed',
+        title: 'Board call',
+        dayKey: WED,
+        startMin: 18 * 60 + 30,
+        endMin: 19 * 60,
+        calendarRefs: ['c'],
+        external: { calId: 'c', eventId: 'bw' },
+      }),
+      block({
+        id: 'ext-thu',
+        title: 'Board call',
+        dayKey: THU,
+        startMin: 18 * 60 + 30,
+        endMin: 19 * 60,
+        calendarRefs: ['c'],
+        external: { calId: 'c', eventId: 'bt' },
+      }),
+    ])
+    await say('push all health after 4pm today later by 30 min')
+    await settle()
+    await pick('the whole series')
+    const offer = chipMsgs().at(-1)!.body
+    /* one row moves, and it says which day it is */
+    expect(offer).toContain('Gym today 18:00→18:30.')
+    /* the two that stay are told apart by their day — without that they are two
+         identical rows under a claim that only covers today */
+    expect(offer).toContain(
+      'Gym tomorrow 18:00 (would sit over Board call 18:30–19:00) and Gym Thursday 18:00 (would sit over Board call 18:30–19:00) stay where they are.'
+    )
+    expect(offer).not.toContain('30 min later today?')
+  })
 })
 
 describe('#75 slice 3 — a move onto one day says what does work', () => {
