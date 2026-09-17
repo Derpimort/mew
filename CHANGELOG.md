@@ -51,6 +51,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   the brain on. And "what I've picked up about you" now shows your rhythm by energy: where your
   deep work, admin and health blocks actually get finished.
 
+### Rules from your brain are yours to see and let go
+- The memory console now lists every standing rule MEW applies, including ones that live only in
+  your brain (told on another device, or seeded there), each with a quiet "from your brain" mark.
+  Forget works on them like any other rule, and it sticks. With the brain off, the list is exactly
+  what's on this device.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
