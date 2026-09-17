@@ -7,7 +7,7 @@
    store (execBatch) owns the offer, the one mutation and the reply. */
 
 import type { Block, PrefPayload, Tag } from './types'
-import { blocksForDay, isAllDay, isBackground, isFixedTime } from './week'
+import { blocksForDay, isAllDay, isBackground, isFixedTime, seriesOf } from './week'
 
 export interface BatchSelector {
   dayKey: string
@@ -43,8 +43,13 @@ export type BatchSkipReason =
   | 'fixed'
   /** already done — a mew is history */
   | 'done'
-  /** a repeating block — series edits ask their scope first (#343), out of a batch */
+  /** a repeating block, and no scope answered yet — the store asks which
+      occurrences the change means (#343's three chips) before touching a series */
   | 'repeating'
+  /** #75 slice 3: a repeating block asked to move to one day, for more than this
+      occurrence — a series keeps its own days, so the whole run never collapses
+      onto one of them */
+  | 'series-day'
   /** the shift would run it past midnight or before 0:00 */
   | 'off-day'
   /** its new time would sit over a fixed or calendar block */
@@ -59,8 +64,14 @@ export interface BatchSkip {
   on?: Block[]
 }
 
+/** Which occurrences of a repeating block a batch means (#75 slice 3) — the same
+    three answers a single series edit asks for (#343), so a chip's re-issued ask
+    carries one vocabulary across both surfaces. */
+export type BatchScope = 'this' | 'following' | 'series'
+
 export interface BatchPlan {
-  /** everything the selector picked, in time order */
+  /** everything the change touches, in time order: the selector's own picks, plus
+      the other occurrences a scope reaches (they can fall on other days) */
   selected: Block[]
   moves: BatchMove[]
   skipped: BatchSkip[]
@@ -87,14 +98,43 @@ export function selectBatch(blocks: Block[], sel: BatchSelector): Block[] {
   return !picked.length && q && q.length > 3 && q.endsWith('s') ? pick(q.slice(0, -1)) : picked
 }
 
-/** Plan a batch: which selected blocks move where, which stay put and why. */
+/** The occurrences a scope adds to a selection (#75 slice 3): "just this one"
+    adds nothing, "this and the ones after" adds the later open occurrences of
+    each picked series, "the whole series" adds all of them. Later is read on the
+    day first and the clock second, so an occurrence earlier the same day is not
+    "after" — and since seriesOf is open-only, a done occurrence never joins.
+    Time order, by day: the plan's own list crosses days once a scope widens it. */
+function withScope(blocks: Block[], selected: Block[], scope: BatchScope): Block[] {
+  if (scope === 'this') return selected
+  const out = [...selected]
+  const seen = new Set(selected.map((b) => b.id))
+  for (const b of selected) {
+    if (!b.recurringBlockId) continue
+    for (const o of seriesOf(blocks, b)) {
+      if (seen.has(o.id)) continue
+      const after = o.dayKey > b.dayKey || (o.dayKey === b.dayKey && o.startMin > b.startMin)
+      if (scope === 'following' && !after) continue
+      seen.add(o.id)
+      out.push(o)
+    }
+  }
+  return out.sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+}
+
+/** Plan a batch: which selected blocks move where, which stay put and why.
+    `scope` answers the series question (#75 slice 3): without it a repeating
+    block stays put and is named, so the store can ask; with it the change
+    reaches exactly the occurrences that answer names. */
 export function planBatch(
   blocks: Block[],
   sel: BatchSelector,
   op: BatchOp,
-  prefs: PrefPayload[] = []
+  prefs: PrefPayload[] = [],
+  scope?: BatchScope
 ): BatchPlan {
-  const selected = selectBatch(blocks, sel)
+  const selected = scope
+    ? withScope(blocks, selectBatch(blocks, sel), scope)
+    : selectBatch(blocks, sel)
   const skipped: BatchSkip[] = []
   const candidates: BatchMove[] = []
   const moves: BatchMove[] = []
@@ -105,7 +145,12 @@ export function planBatch(
        ("Client call") takes the tag (#75 slice 2); a move still never touches it */
     else if (op.kind !== 'setTag' && isFixedTime(b, prefs))
       skipped.push({ block: b, reason: 'fixed' })
-    else if (b.recurringBlockId) skipped.push({ block: b, reason: 'repeating' })
+    /* a series without an answer stays whole and is named; with an answer, only
+       a move onto one day is refused — that would stack every occurrence the
+       scope reaches on the same day, which is never what "move them" means */
+    else if (b.recurringBlockId && !scope) skipped.push({ block: b, reason: 'repeating' })
+    else if (b.recurringBlockId && op.kind === 'moveToDay' && scope !== 'this')
+      skipped.push({ block: b, reason: 'series-day' })
     else if (b.status !== 'open') continue
     else if (op.kind === 'setTag') {
       /* a retag keeps every block where it is: nothing to land on, no day to leave */

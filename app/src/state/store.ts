@@ -53,6 +53,7 @@ import {
   batchToken,
   planBatch,
   type BatchOp,
+  type BatchScope,
   type BatchSelector,
   type BatchSkip,
 } from '../domain/batch'
@@ -4011,7 +4012,10 @@ export const useMew = create<MewState>((set, get) => {
       | { kind: 'moveToDay'; toDayOffset: number }
       | { kind: 'setTag'; tag: import('../domain/types').Tag },
     confirmCount?: number,
-    confirmToken?: string
+    confirmToken?: string,
+    /** #75 slice 3: which occurrences of a repeating block the sweep means —
+        absent means MEW asks with chips before touching a series */
+    scope?: BatchScope
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -4050,7 +4054,17 @@ export const useMew = create<MewState>((set, get) => {
       return `those already live ${onDay(sel.dayKey)}, so everything stays as it is.`
 
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
-    const plan = planBatch(s.blocks, sel, op, prefs)
+    const plan = planBatch(s.blocks, sel, op, prefs, scope)
+    /* #75 slice 3 review: an answered series is the first plan whose list can
+       cross days, and a sweep's offer is the sentence the owner says yes to — so
+       when it does, every row names its own day and the change drops the day
+       claim it can no longer make. A move onto one day is not this case: its own
+       wording already names both days, and every row lands on the target. A
+       single-day sweep reads exactly as it did before. */
+    const spansDays =
+      op.kind !== 'moveToDay' &&
+      new Set([...plan.moves.map((m) => m.dayKey), ...plan.skipped.map((sk) => sk.block.dayKey)])
+        .size > 1
     const what = [
       sel.titleQuery ? `"${sel.titleQuery}"` : sel.tag ? `your ${sel.tag} blocks` : 'everything',
       /* both edges read as one window (#75 slice 2) */
@@ -4067,11 +4081,12 @@ export const useMew = create<MewState>((set, get) => {
       .join(' ')
     /* every offer and receipt names its day, so the day a yes acts on is on
        screen before the yes */
+    const onDayOf = (k: string) => (spansDays ? '' : ` ${onDay(k)}`)
     const change =
       op.kind === 'shift'
-        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'} ${onDay(sel.dayKey)}`
+        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'}${onDayOf(sel.dayKey)}`
         : op.kind === 'setTag'
-          ? `as ${op.tag} ${onDay(sel.dayKey)}`
+          ? `as ${op.tag}${onDayOf(sel.dayKey)}`
           : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
     const why = (sk: BatchSkip): string =>
       sk.reason === 'calendar'
@@ -4081,20 +4096,94 @@ export const useMew = create<MewState>((set, get) => {
           : sk.reason === 'done'
             ? 'done'
             : sk.reason === 'repeating'
-              ? 'repeats'
-              : sk.reason === 'off-day'
-                ? 'would leave the day'
-                : sk.reason === 'already'
-                  ? `already ${op.kind === 'setTag' ? op.tag : ''}`
-                  : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+              ? /* a move onto one day asks nothing, so the reason says what does
+                   work: this occurrence can go, the run keeps its own days */
+                op.kind === 'moveToDay'
+                ? 'repeats — "just this one" moves this one'
+                : 'repeats'
+              : sk.reason === 'series-day'
+                ? 'repeats, and a series keeps its own days'
+                : sk.reason === 'off-day'
+                  ? 'would leave the day'
+                  : sk.reason === 'already'
+                    ? `already ${op.kind === 'setTag' ? op.tag : ''}`
+                    : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+    /* a row's own day, once the list crosses days: "Gym Wednesday 18:00→18:30"
+       reads as one thing the owner can check against the week afterwards */
+    const rowDay = (k: string) => (spansDays ? ` ${dayName(k)}` : '')
     const stays = plan.skipped.map(
-      (sk) => `${baseOf(sk.block.title)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
+      (sk) =>
+        `${baseOf(sk.block.title)}${rowDay(sk.block.dayKey)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
     )
     const staysLine = !stays.length
       ? ''
       : retag
         ? ` ${andList(stays)} ${stays.length === 1 ? 'keeps its tag' : 'keep their tags'}.`
         : ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
+    /* the words a chip re-asks in: always the keyless batch grammar, for every
+       selector a batch holds, so a pick means the same list on either floor. The
+       day is named (never 'today' by position), so a chip clicked after midnight
+       still asks for the day it was offered for (#96). `tail` is what the pick
+       adds: a yes with its count and token, or a scope word (#75 slice 3). */
+    const batchAsk = (tail: string): string => {
+      const dayRef = (k: string) => dayWord(k, todayKey) ?? k
+      const edges = [
+        sel.afterMin != null ? `after ${fmtTime(sel.afterMin)}` : '',
+        sel.beforeMin != null ? `before ${fmtTime(sel.beforeMin)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' and ')
+      const words = sel.titleQuery ? `"${sel.titleQuery.replace(/["“”]/g, '')}"` : ''
+      if (op.kind === 'shift') {
+        const who =
+          sel.tag || words ? ['all', sel.tag, words].filter(Boolean).join(' ') : 'everything'
+        const d = dayRef(sel.dayKey)
+        const dayPart = d === 'today' || d === 'tomorrow' ? d : `on ${d}`
+        const by = `${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min`
+        return [`push ${who}`, edges, dayPart, by].filter(Boolean).join(' ') + tail
+      }
+      const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
+      return op.kind === 'setTag'
+        ? [`tag all ${dayRef(sel.dayKey)}'s ${who}`, edges, `as ${op.tag}`]
+            .filter(Boolean)
+            .join(' ') + tail
+        : [`move all ${dayRef(sel.dayKey)}'s ${who}`, edges, `to ${dayRef(op.toDayKey)}`]
+            .filter(Boolean)
+            .join(' ') + tail
+    }
+
+    /* #75 slice 3: a repeating block in the sweep, with no answer yet — one calm
+       question, and NOTHING moves until it is answered. Asking first (rather
+       than moving the one-offs now and asking after) is what keeps a pick exact:
+       each chip re-issues this same ask with its scope word, so a sweep that had
+       already shifted its one-off blocks would shift them a second time. Only a
+       series that still holds more than one open occurrence raises it — with a
+       single occurrence the three answers collapse into one. A move onto ONE day
+       never asks: two of the three answers cannot act on it (a series keeps its
+       own days), so the reply names the occurrence and says what does work.
+       The `scope` guard below is belt-and-braces: a plan given an answer reports
+       no 'repeating' skip at all (pinned as an invariant in batch-slice3), so
+       this can't loop even if that ever changed. */
+    const askable =
+      scope || op.kind === 'moveToDay'
+        ? []
+        : plan.skipped.filter(
+            (sk) =>
+              sk.reason === 'repeating' &&
+              (week.seriesMembership(s.blocks, sk.block)?.count ?? 0) > 1
+          )
+    if (askable.length) {
+      const names = andList([...new Set(askable.map((sk) => baseOf(sk.block.title)))])
+      return execOfferChoices(
+        `${names} repeat${askable.length === 1 ? 's' : ''} — which do you mean?`,
+        [
+          { label: 'just this one', reply: batchAsk(' just this one') },
+          { label: 'this & the ones after', reply: batchAsk(' this and following') },
+          { label: 'the whole series', reply: batchAsk(' across the whole series') },
+        ]
+      )
+    }
+
     if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
     if (!plan.moves.length)
       return `nothing there can ${retag ? 'be tagged' : 'move'} ${change}:${staysLine} Everything stays as it is.`
@@ -4102,8 +4191,8 @@ export const useMew = create<MewState>((set, get) => {
     const n = plan.moves.length
     const line = (m: (typeof plan.moves)[number]) =>
       op.kind === 'shift'
-        ? `${baseOf(m.block.title)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
-        : `${baseOf(m.block.title)} ${fmtTime(m.startMin)}`
+        ? `${baseOf(m.block.title)}${rowDay(m.dayKey)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
+        : `${baseOf(m.block.title)}${rowDay(m.dayKey)} ${fmtTime(m.startMin)}`
     const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
     const next = s.blocks.map((b) => {
       const m = byId.get(b.id)
@@ -4130,34 +4219,12 @@ export const useMew = create<MewState>((set, get) => {
        list (its count and its token), else MEW offers again, even when the plan
        left would be narrow enough to act directly */
     if ((wide || confirmCount != null) && (confirmCount !== n || confirmToken !== token)) {
-      /* the words a yes re-asks in: always the keyless batch grammar, for every
-         selector a batch holds, so a yes means the same list on either floor */
-      const dayRef = (k: string) => dayWord(k, todayKey) ?? k
-      const edges = [
-        sel.afterMin != null ? `after ${fmtTime(sel.afterMin)}` : '',
-        sel.beforeMin != null ? `before ${fmtTime(sel.beforeMin)}` : '',
-      ]
-        .filter(Boolean)
-        .join(' and ')
-      const words = sel.titleQuery ? `"${sel.titleQuery.replace(/["“”]/g, '')}"` : ''
-      const yes = ` — yes, all ${n} · ${token}`
-      let reply: string
-      if (op.kind === 'shift') {
-        const who =
-          sel.tag || words ? ['all', sel.tag, words].filter(Boolean).join(' ') : 'everything'
-        const d = dayRef(sel.dayKey)
-        const dayPart = d === 'today' || d === 'tomorrow' ? d : `on ${d}`
-        const by = `${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min`
-        reply = [`push ${who}`, edges, dayPart, by].filter(Boolean).join(' ') + yes
-      } else if (op.kind === 'setTag') {
-        const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
-        const from = `tag all ${dayRef(sel.dayKey)}'s ${who}`
-        reply = [from, edges, `as ${op.tag}`].filter(Boolean).join(' ') + yes
-      } else {
-        const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
-        const from = `move all ${dayRef(sel.dayKey)}'s ${who}`
-        reply = [from, edges, `to ${dayRef(op.toDayKey)}`].filter(Boolean).join(' ') + yes
-      }
+      /* the yes carries the answer the sweep is already acting on (#75 slice 3),
+         so confirming does not raise the series question a second time — the
+         scope phrase is lifted off the ask before the grammar reads it, and the
+         yes tail is read off the end, so the two never collide */
+      const yes = `${scope ? ` ${scopeWord(scope)}` : ''} — yes, all ${n} · ${token}`
+      const reply = batchAsk(yes)
       const shares = sharing
         .filter((x) => x.with.length)
         .map(
@@ -6180,7 +6247,7 @@ export const useMew = create<MewState>((set, get) => {
             () => execDuplicate(q, opts, at)
           )
         },
-        batch: (selector, op, confirmCount, confirmToken) => {
+        batch: (selector, op, confirmCount, confirmToken, scope) => {
           acted = true
           snapshotForUndo()
           /* a retag moves nothing: its card and working line say so (#75 slice 2) */
@@ -6190,7 +6257,7 @@ export const useMew = create<MewState>((set, get) => {
           return runChange(
             retag ? 'retag' : 'batch',
             { query: selector.titleQuery ?? selector.tag },
-            () => execBatch(selector, op, confirmCount, confirmToken)
+            () => execBatch(selector, op, confirmCount, confirmToken, scope)
           )
         },
         merge: (q, dayOffset, at) => {

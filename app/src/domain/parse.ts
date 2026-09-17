@@ -888,7 +888,13 @@ export function parseCommand(text: string, now: Date): ScheduleIntent {
   const { scope, text: scoped } = extractSeriesScope(text)
   const cmd = parseCommandInner(scoped, now)
   return scope &&
-    (cmd.kind === 'edit' || cmd.kind === 'remove' || cmd.kind === 'resize' || cmd.kind === 'split')
+    (cmd.kind === 'edit' ||
+      cmd.kind === 'remove' ||
+      cmd.kind === 'resize' ||
+      cmd.kind === 'split' ||
+      /* #75 slice 3: a sweep takes the same answer, so the scope chips can
+         re-issue a batch ask ("push all work after 5pm back 30 min just this one") */
+      cmd.kind === 'batch')
     ? { ...cmd, seriesScope: scope }
     : cmd
 }
