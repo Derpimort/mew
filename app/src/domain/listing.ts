@@ -12,7 +12,7 @@
 
 import type { Block, Tag } from './types'
 import { addDaysKey, fmtDowLong, fmtTime } from './time'
-import { blocksForDay, isBackground, isFixedTime } from './week'
+import { allDayOn, blocksForDay, contextMarkers, isAllDay, isBackground, isFixedTime } from './week'
 
 export interface ListingScope {
   /** The days to itemize, in display order (execListBlocks resolves offsets). */
@@ -30,6 +30,9 @@ export interface ListingScope {
     reads) so a block looks the same in both places; status is the one thing it
     omits, because the readout carries that as the ✓ on the line. */
 function descriptor(b: Block): string {
+  /* an all-day entry is a label on the day, tag-neutral (#27): the very
+     markers the week context shows the model, so both read the same */
+  if (isAllDay(b)) return contextMarkers(b)
   const parts: string[] = [b.tag]
   if (b.external) parts.push('calendar')
   else if (isFixedTime(b)) parts.push('fixed')
@@ -43,7 +46,8 @@ function descriptor(b: Block): string {
     a trailing ✓ when the block is done (a done block is still listed). */
 function line(b: Block): string {
   const done = b.status === 'done' ? ' ✓' : ''
-  return `- ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} ${b.title} [${descriptor(b)}]${done}`
+  const when = isAllDay(b) ? 'all day' : `${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`
+  return `- ${when} ${b.title} [${descriptor(b)}]${done}`
 }
 
 function dayLabel(key: string, todayKey: string): string {
@@ -60,8 +64,10 @@ export function listReadout(blocks: Block[], scope: ListingScope): string {
   const { dayKeys, todayKey, tag } = scope
   const tagNote = tag ? ` tagged ${tag}` : ''
   const forDay = (key: string): Block[] => {
-    const day = blocksForDay(blocks, key)
-    return tag ? day.filter((b) => b.tag === tag) : day
+    /* all-day labels lead their day — EVERY day a span covers (a Mon–Wed OOO
+       reads on Tuesday too); tag-neutral, so a tag filter never lists them */
+    if (tag) return blocksForDay(blocks, key).filter((b) => !isAllDay(b) && b.tag === tag)
+    return [...allDayOn(blocks, key), ...blocksForDay(blocks, key).filter((b) => !isAllDay(b))]
   }
 
   if (dayKeys.length === 1) {

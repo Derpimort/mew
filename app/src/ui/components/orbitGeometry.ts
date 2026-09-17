@@ -12,7 +12,7 @@
    de-collision. All pure — tested like the week model is. */
 
 import type { Block } from '../../domain/types'
-import { isBackground } from '../../domain/week'
+import { isAllDay, isBackground } from '../../domain/week'
 import { fmtTime } from '../../domain/time'
 import { clockDeg, rPolar } from './dialGeometry'
 
@@ -136,13 +136,16 @@ export function crossDaySpan(startMin: number, endMin: number): CrossDaySpan {
 
 /** Visible set: everything on today's face — open AND done, the whole day (no
     forward clip; the AM/PM bands keep 12-hours-apart events off one radius).
-    Done blocks stay as completed markers. Equal-start blocks tie-break on the
+    Done blocks stay as completed markers; an all-day entry is a label on the
+    day, never a ring wedge (#27). Equal-start blocks tie-break on the
     DRAWN end (crossDaySpan), so a folded overnight block — whose raw endMin
     wrapped below its start — orders by the arc it actually paints, not the
     collapsed wrap. */
 export function visibleOrbit(blocks: Block[], todayKey: string, _nowH: number): Block[] {
   return blocks
-    .filter((b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done'))
+    .filter(
+      (b) => b.dayKey === todayKey && (b.status === 'open' || b.status === 'done') && !isAllDay(b)
+    )
     .sort(
       (a, b) =>
         a.startMin - b.startMin ||
