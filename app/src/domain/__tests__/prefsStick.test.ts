@@ -9,6 +9,7 @@ import type { MemoryAggregates } from '../memory'
 import { PREF_CAP, mergeActivePrefs, prefKey, prefReplayPlan } from '../prefMerge'
 import { energyProfile } from '../energy'
 import { consoleSummary, memoryConsole } from '../console'
+import { consolidate } from '../memory'
 import type { Insights } from '../insights'
 
 let seq = 0
@@ -142,6 +143,29 @@ describe('mergeActivePrefs — the one merge rule (#15)', () => {
       said(pref('deck', '60m', 'duration-default')),
     ]
     expect(mergeActivePrefs(memory, null)).toEqual(legacyLocal(memory))
+  })
+})
+
+/* peer review of #68 (coderpa): the tombstone is STATE, so correctness never
+   depends on the brain honoring the retire — it must outlive compaction */
+describe('a forget outlives compaction (#15 review)', () => {
+  it('a 70-day-old tombstone is kept by consolidate, and a stubborn brain copy still does not apply', () => {
+    const today = new Date(2026, 7, 18) // 70 days after the forget, past the 56-day floor
+    const tombstone = forgot(GYM)
+    const oldDone: MemoryEvent = { id: 'done-old', ts: 1, kind: 'completed', dayKey: '2026-06-09' }
+    let n = 0
+    const { kept, removedIds, summaries } = consolidate(
+      [tombstone, oldDone],
+      today,
+      () => `s${n++}`
+    )
+    expect(removedIds).toEqual(['done-old']) // compaction really ran on that week
+    expect(summaries.map((e) => e.kind)).toEqual(['weekly_summary'])
+    // the forget is state, not history: it survives beside the new summary
+    expect(kept.map((e) => e.kind).sort()).toEqual(['forgotten_pref', 'weekly_summary'])
+    const memoryAfter = kept
+    expect(matches(mergeActivePrefs(memoryAfter, [GYM]))).toEqual([]) // the brain's copy stays out
+    expect(prefReplayPlan(memoryAfter, [GYM]).forget.map(prefKey)).toEqual([prefKey(GYM)])
   })
 })
 

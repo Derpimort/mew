@@ -95,11 +95,14 @@ const brainFake = {
   ingests: [] as { slug: string; tags: string[] }[],
   reachable: true,
   stubborn: false,
+  /** the brain goes away during its next write: nothing lands, health flips */
+  dieOnIngest: false,
   reset() {
     this.pages.clear()
     this.ingests = []
     this.reachable = true
     this.stubborn = false
+    this.dieOnIngest = false
   },
   seed(p: PrefPayload) {
     this.pages.set(`pref/${p.kind}-${p.match}`, { tags: ['mew', 'preference', p.kind], pref: p })
@@ -109,6 +112,10 @@ vi.mock('../../adapters/brain/gbrainHttp', () => ({
   createGbrainHttp: (cfg: { enabled(): boolean }) => ({
     ingest: async (page: { slug: string; tags: string[]; body: string }) => {
       if (!cfg.enabled()) return
+      if (brainFake.dieOnIngest) {
+        brainFake.reachable = false // swallowed, like the port: warn + health flip
+        return
+      }
       brainFake.ingests.push({ slug: page.slug, tags: page.tags })
       if (page.tags.includes('forgotten-preference')) {
         if (!brainFake.stubborn) brainFake.pages.delete(page.slug)
@@ -162,6 +169,12 @@ const LUNCH: PrefPayload = {
   match: 'lunch',
   value: 'starts 12:30',
   stated: 'lunch at 12:30',
+}
+const DECK: PrefPayload = {
+  kind: 'duration-default',
+  match: 'deck',
+  value: '90m',
+  stated: 'the deck takes 90 minutes',
 }
 /* any lived memory keeps the turn off the first-run path, so it reaches the model */
 const LIVED: MemoryEvent = {
@@ -283,6 +296,24 @@ describe('#15 — told while the brain was away, it applies and replays once', (
     brainFake.pages.delete('pref/time-default-lunch')
     await reconnect()
     expect(prefIngests('pref/time-default-lunch')).toBe(1)
+  })
+
+  /* peer review of #68 (coderpa): a write the brain never took must not stay
+     claimed — the ledger means "landed", not "attempted" */
+  it('a brain that goes away mid-replay releases the claim; the next reachable connect replays each once', async () => {
+    await fresh([said(LUNCH), said(DECK)], false, 'http://brain-3.test')
+    brainFake.dieOnIngest = true
+    await reconnect()
+    expect(prefIngests('pref/time-default-lunch')).toBe(0)
+    expect(prefIngests('pref/duration-default-deck')).toBe(0)
+
+    brainFake.dieOnIngest = false
+    brainFake.reachable = true
+    await reconnect()
+    expect(prefIngests('pref/time-default-lunch')).toBe(1)
+    expect(prefIngests('pref/duration-default-deck')).toBe(1)
+    await reconnect()
+    expect(prefIngests('pref/time-default-lunch')).toBe(1) // and still exactly once
   })
 
   it('an unreachable brain claims nothing; the next reachable connect replays', async () => {

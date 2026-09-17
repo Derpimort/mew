@@ -259,20 +259,22 @@ function replayLocalPrefs(fromBrain: PrefPayload[]): void {
   void (async () => {
     if (!(await brain.health())) return
     let wrote = false
-    for (const p of plan.remember) {
-      const id = `${brainKey}|${prefKey(p)}|${p.value}`
-      if (replayedPrefs.has(id)) continue
+    /* claim before the write (a concurrent replay can't double it), then confirm
+       the brain is still there: ingest never throws, so a brain that went away
+       mid-loop releases the claim and stops — the next reachable connect replays
+       it instead of the ledger remembering a write that never landed */
+    const replay = async (id: string, page: Parameters<typeof brain.ingest>[0]) => {
+      if (replayedPrefs.has(id)) return true
       replayedPrefs.add(id)
-      await brain.ingest(prefPage(p))
-      wrote = true
+      await brain.ingest(page)
+      if (await brain.health()) return (wrote = true)
+      replayedPrefs.delete(id)
+      return false
     }
-    for (const p of plan.forget) {
-      const id = `${brainKey}|${prefKey(p)}|forgotten`
-      if (replayedPrefs.has(id)) continue
-      replayedPrefs.add(id)
-      await brain.ingest(forgottenPrefPage(p))
-      wrote = true
-    }
+    for (const p of plan.remember)
+      if (!(await replay(`${brainKey}|${prefKey(p)}|${p.value}`, prefPage(p)))) return
+    for (const p of plan.forget)
+      if (!(await replay(`${brainKey}|${prefKey(p)}|forgotten`, forgottenPrefPage(p)))) return
     // re-read the brain's copy; no second replay, the ledger already holds these
     if (wrote)
       void brain.listPrefs().then((prefs) => {
