@@ -12,6 +12,7 @@ import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { clockUrl } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots/overlap')
@@ -228,8 +229,10 @@ const seed = async (cmds) => {
 }
 
 /* start clean, then seed a real day spread across the clock so the time sweep
-   exercises block labels at many angles (seeded at 00:05 so all are ahead). */
-await page.goto(`${base}/?t=00:05`)
+   exercises block labels at many angles (seeded at 00:05 so all are ahead).
+   Every goto carries the pinned DAY (scripts/lib/shootClock.mjs) so the two
+   gates in ui-overlap.yml drive the same calendar day on any weekday. */
+await page.goto(clockUrl(base, '00:05'))
 await ready()
 await page.evaluate(() => window.__mewReset?.())
 await ready()
@@ -253,14 +256,14 @@ await seed([
    labels must never stack. 11:09 is the time from the user's bug report. */
 const TIMES = ['00:05', '06:30', '09:40', '11:09', '12:00', '15:20', '18:45', '23:59']
 for (const t of TIMES) {
-  await page.goto(`${base}/?t=${t}`)
+  await page.goto(clockUrl(base, t))
   await ready()
   await page.waitForTimeout(1300) // let entrance/toast animations settle
   await detect(`focus-${t}`)
 }
 
 /* 2 · week columns */
-await page.goto(`${base}/?t=11:09`)
+await page.goto(clockUrl(base, '11:09'))
 await ready()
 await page.click('.seg2 button:has-text("Week")').catch(() => {})
 await page.waitForTimeout(700)
@@ -273,7 +276,7 @@ await detect('settings')
 
 /* 3b · the quick-capture inbox (#348) — the capture field, waiting items, and
    each item's fitting-slot offer must never collide at any width */
-await page.goto(`${base}/?t=15:20`)
+await page.goto(clockUrl(base, '15:20'))
 await ready()
 await page.click('.navlink:has-text("inbox")').catch(() => {})
 await page.waitForTimeout(400)
@@ -286,7 +289,7 @@ await page.waitForTimeout(400)
 await detect('inbox')
 
 /* 4 · crowded focus — pile blocks onto one morning so dial labels must de-collide */
-await page.goto(`${base}/?t=09:40`)
+await page.goto(clockUrl(base, '09:40'))
 await ready()
 await seed([
   'block 1h for candidate interview today at 10',

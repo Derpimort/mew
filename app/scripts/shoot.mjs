@@ -6,6 +6,7 @@ import { chromium } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { clockUrl, shootDay } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 /* unpinned chromium (shared resolver, PW_CHROMIUM seam) — this script gates
@@ -94,9 +95,12 @@ process.on('uncaughtException', (err) => {
     .finally(() => process.exit(1))
 })
 
-/* 1 · Focus dial at the canonical 9:40 — minimal at rest, then hover reveal */
+/* 1 · Focus dial at the canonical 9:40 — minimal at rest, then hover reveal.
+   The DAY is pinned too (scripts/lib/shootClock.mjs): the seed builds its week
+   around the app's today, so the canon week is the same on every weekday the
+   runner wakes up on — a Monday used to leave the week with no done block. */
 phase = 'dial-load'
-await page.goto(`${base}/?t=9:40`)
+await page.goto(clockUrl(base, '9:40'))
 await skipOnboarding()
 await page.waitForSelector('.nx-count', { timeout: 10000 })
 await page.waitForTimeout(1500)
@@ -294,9 +298,9 @@ await page.screenshot({ path: `${outDir}/5-session.png` })
    a keyless composer turn that pushes a quiet far day past the demonstrated
    line posts exactly ONE chips message — the kindness line + keep/trim — and
    a second over-placement on the same day re-nudges nothing (once per day
-   per day-key). The target day is computed from the run's real weekday
-   (offset +4, a day the earlier thursday placement can never collide with),
-   so the phase holds on every day of the week. */
+   per day-key). The target day is computed from the PINNED day's weekday
+   (offset +4, a day the earlier thursday placement can never collide with) —
+   the app's today is that pinned day, so the Node side must agree with it. */
 phase = 'day-load'
 {
   const tint = await page.evaluate(() => ({
@@ -310,7 +314,7 @@ phase = 'day-load'
   assert(tint.spoken, 'the tint a11y label does not carry the hours')
 
   const word = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'][
-    (new Date().getDay() + 4) % 7
+    (shootDay().getDay() + 4) % 7
   ]
   const chipsCount = () => page.$$eval('.chip-choices', (els) => els.length)
   const before = await chipsCount()
@@ -638,6 +642,19 @@ phase = 'remove-affordance'
 {
   await page.click('.seg2 button:has-text("Week")')
   const doneSel = '.nxb-blk[aria-label*="done"]'
+  /* The seed's done blocks live on the days BEHIND today; a pinned (or real)
+     Monday has none, and this phase used to time out right here on every
+     Monday run. The phase proves the cage-lift, not the seed — so when the
+     week holds no done block it makes one the way an owner would: through the
+     composer and the real complete executor ("Marked … done — that's a mew"). */
+  if (!(await page.$(doneSel))) {
+    await page.fill(composer, 'done with the standup')
+    await page.press(composer, 'Enter')
+    await page.waitForSelector(doneSel, { timeout: 8000 })
+    console.log(
+      'remove affordance: no done block in the seeded week — completed one via the composer'
+    )
+  }
   await page.waitForSelector(doneSel, { timeout: 5000 })
   const doneBefore = (await page.$$(doneSel)).length
   await page.click(doneSel) // pin the done block → its detail card docks
