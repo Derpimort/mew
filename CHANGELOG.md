@@ -53,6 +53,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   quarter that still fits, and every placement path stays on the five-minute grid. Times you name
   yourself are kept exactly.
 
+### Placing from your inbox leaves a receipt
+- When you place something from your inbox or the loose-threads rail, the conversation now shows its
+  receipt like any other placement, and "undo that" right after takes the block back and returns
+  the item to your inbox. Where it lands is exactly as before.
+
 ### Your stated lengths hold through the plan picker
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly
   that length when you pick a plan from the picker. MEW only offers to give room to the blocks you
