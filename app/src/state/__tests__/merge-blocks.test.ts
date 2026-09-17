@@ -250,6 +250,13 @@ describe('#74 — two same-tag blocks become one', () => {
     expect(fakeDb.blocks.has('d2')).toBe(true) // and re-persisted the removed part
   })
 
+  it('the merged block keeps the firmest hold: a protected part makes the whole span protected', async () => {
+    await fresh([deck('d1', 9 * 60, 10 * 60), deck('d2', 10 * 60, 11 * 60, { protected: true })])
+    await say('merge my two deck blocks')
+    await settle()
+    expect(byId('d1')).toMatchObject({ startMin: 9 * 60, endMin: 11 * 60, protected: true })
+  })
+
   it('three matches on the day merge as one run; overlapping parts are fine', async () => {
     await fresh([
       deck('d1', 9 * 60, 10 * 60),

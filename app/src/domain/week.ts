@@ -812,7 +812,17 @@ export function mergeCandidates(
 }
 
 export type MergeRun =
-  | { ok: true; keep: Block; removeIds: string[]; startMin: number; endMin: number }
+  | {
+      ok: true
+      keep: Block
+      removeIds: string[]
+      startMin: number
+      endMin: number
+      /** the kept block as it becomes: the span, holding its time as firmly as
+          its firmest part — protected if any part was, background only if every
+          part was, and the earliest due */
+      merged: Block
+    }
   | {
       ok: false
       /** what stops it, in the order checked; `blockers` for 'blocked', the
@@ -862,12 +872,28 @@ export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
       b.endMin > startMin
   )
   if (blockers.length) return no('blocked', parts, blockers)
+  const keep = parts[0]
+  const dues = parts.map((b) => b.due).filter((d): d is number => d != null)
+  const { attention: _attention, due: _due, ...rest } = keep
+  const merged: Block = {
+    ...rest,
+    startMin,
+    endMin,
+    protected: parts.some((b) => b.protected),
+    ...(parts.every((b) => b.attention === 'background')
+      ? { attention: 'background' as const }
+      : keep.attention === 'focus'
+        ? { attention: 'focus' as const }
+        : {}),
+    ...(dues.length ? { due: Math.min(...dues) } : {}),
+  }
   return {
     ok: true,
-    keep: parts[0],
+    keep,
     removeIds: parts.slice(1).map((b) => b.id),
     startMin,
     endMin,
+    merged,
   }
 }
 

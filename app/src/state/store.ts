@@ -3754,7 +3754,7 @@ export const useMew = create<MewState>((set, get) => {
     const removeIds = new Set(run.removeIds)
     const next = s.blocks
       .filter((b) => !removeIds.has(b.id))
-      .map((b) => (b.id === keep.id ? { ...b, startMin: run.startMin, endMin: run.endMin } : b))
+      .map((b) => (b.id === keep.id ? run.merged : b))
     setBlocks(next)
     storage.deleteBlocks(run.removeIds).catch(() => {})
     noteReferentId(keep.id) // the merged block is now "it"

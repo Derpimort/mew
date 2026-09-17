@@ -78,7 +78,46 @@ describe('mergeRun — one block, or exactly why not', () => {
       removeIds: ['b'],
       startMin: 9 * 60,
       endMin: 12 * 60,
+      merged: { ...bs[0], startMin: 9 * 60, endMin: 12 * 60 },
     })
+  })
+
+  it('the merged block holds its time as firmly as its firmest part: protected if any part was', () => {
+    const bs = [
+      block({ id: 'a', protected: false }),
+      block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60, protected: true }),
+    ]
+    const r = mergeRun(bs, ['a', 'b'])
+    expect(r.ok && r.merged).toMatchObject({
+      id: 'a',
+      protected: true,
+      startMin: 9 * 60,
+      endMin: 11 * 60,
+    })
+  })
+
+  it('background only when every part is background; a focus part keeps the whole span in focus', () => {
+    const mixed = [
+      block({ id: 'a', attention: 'background' }),
+      block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60 }),
+    ]
+    const r1 = mergeRun(mixed, ['a', 'b'])
+    expect(r1.ok && r1.merged.attention).toBeUndefined()
+    const allBg = [
+      block({ id: 'a', attention: 'background' }),
+      block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60, attention: 'background' }),
+    ]
+    const r2 = mergeRun(allBg, ['a', 'b'])
+    expect(r2.ok && r2.merged.attention).toBe('background')
+  })
+
+  it('the earliest due of the parts carries over', () => {
+    const bs = [
+      block({ id: 'a', due: 17 * 60 }),
+      block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60, due: 12 * 60 }),
+    ]
+    const r = mergeRun(bs, ['a', 'b'])
+    expect(r.ok && r.merged.due).toBe(12 * 60)
   })
 
   it('overlapping parts merge to the widest span', () => {
