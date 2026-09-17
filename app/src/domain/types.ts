@@ -539,7 +539,7 @@ export interface ScheduleIntent {
       today move needs an absolute target, so the relative math lives there. */
   relStartMin?: number
   /** remove: pin which of several same-named blocks ("22:30"), or drop all */
-  remove?: { at?: string; all?: boolean }
+  remove?: { at?: string; all?: boolean; dayOffset?: number }
   /** edit/remove: the recurring-edit scope a scope word named (#343) — 'this'
       (just this one), 'following' (this & the ones after), 'series' (the whole
       set). Absent on a series block ⇒ the executor asks with chips. */
