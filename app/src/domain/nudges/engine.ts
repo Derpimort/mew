@@ -99,10 +99,38 @@ export function findHeavyDay(
   return heaviest
 }
 
-function findRestCollision(
-  blocks: Block[],
+/** The fired slot for one rest block on its day (#14): a rest is asked about
+    once, whichever protect-rest line asks. Both lines key their instance
+    `${rest.id}|${rest.dayKey}`, and the store records it here beside the type
+    slot, so rest A → rest B → rest A the same day asks about A once, and B still
+    gets its own ask. */
+export function restFiredKey(rest: Pick<Block, 'id' | 'dayKey'>): `rest:${string}` {
+  return `rest:${rest.id}|${rest.dayKey}`
+}
+
+/** Record a fired nudge in the dedupe map (pure): its type slot, as ever, plus
+    for protect-rest the rest block's own slot. Rest slots for days already lived
+    are swept, since that rest can't be asked about again. */
+export function recordFired(
+  lastFired: NudgeFiredMap,
+  n: NudgeInstance,
+  nowMs: number,
   todayKey: string
-): { rest: Block; intruder: Block } | null {
+): NudgeFiredMap {
+  const next: NudgeFiredMap = { ...lastFired, [n.type]: { ts: nowMs, key: n.key } }
+  if (n.type === 'protect-rest' && n.key) {
+    next[`rest:${n.key}`] = { ts: nowMs, key: n.key.slice(n.key.lastIndexOf('|') + 1) }
+  }
+  for (const k of Object.keys(next) as (keyof NudgeFiredMap)[]) {
+    if (k.startsWith('rest:') && k.slice(k.lastIndexOf('|') + 1) < todayKey) delete next[k]
+  }
+  return next
+}
+
+/** Every rest block (today and tomorrow) with work set to run over it, one
+    collision per rest, in day and time order. */
+function findRestCollisions(blocks: Block[], todayKey: string): { rest: Block; intruder: Block }[] {
+  const found: { rest: Block; intruder: Block }[] = []
   for (let i = 0; i <= 1; i++) {
     const key = addDaysKey(todayKey, i)
     const day = blocksForDay(blocks, key)
@@ -127,10 +155,10 @@ function findRestCollision(
           !isAllDay(b) &&
           overlaps(b.startMin, b.endMin, rest.startMin, rest.endMin)
       )
-      if (intruder) return { rest, intruder }
+      if (intruder) found.push({ rest, intruder })
     }
   }
-  return null
+  return found
 }
 
 /** A background block with a hard due and an unstarted engine, inside the
@@ -190,6 +218,9 @@ export function buildCtx(
      applies the per-key cooldown exactly as it does for start-by. */
   const drifts = prefContradictions(t.prefs ?? [], events, new Date(t.nowMs))
   const coolingPrefKey = engine.lastFired['pref-drift']?.key
+  const restAsked = (rest: Block) => engine.lastFired[restFiredKey(rest)] != null
+  const restTonight =
+    blocksForDay(t.blocks, t.todayKey).find((b) => b.tag === 'rest' && b.status === 'open') ?? null
   const prefDrift = drifts.find((d) => prefKey(d.pref) !== coolingPrefKey) ?? drifts[0] ?? null
 
   /* a chronic roller (≥3 rolls) that still has an open block → starter proposal */
@@ -295,10 +326,11 @@ export function buildCtx(
     pastDayEnd,
     eodOpen,
     eodProposal,
-    restCollision: findRestCollision(t.blocks, t.todayKey),
-    restPlannedToday:
-      blocksForDay(t.blocks, t.todayKey).find((b) => b.tag === 'rest' && b.status === 'open') ??
-      null,
+    /* each rest block gets its one ask (#14): the first collision on a rest not
+       yet asked about, so a second rest still speaks while the first stays
+       quiet; the slipped-rest line asks about tonight's rest only if nothing has */
+    restCollision: findRestCollisions(t.blocks, t.todayKey).find((c) => !restAsked(c.rest)) ?? null,
+    restPlannedToday: restTonight && !restAsked(restTonight) ? restTonight : null,
     justEndedFixed,
     startBy: findStartBy(t.blocks, t.todayKey, t.nowMin),
     prefDrift,

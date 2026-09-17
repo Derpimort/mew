@@ -170,6 +170,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   connection to the model hiccuped" — and answers the turn itself. Whatever already streamed stays
   exactly as it arrived, and nothing is sent twice behind your back.
 
+### Each rest gets its one gentle ask
+- When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
+  and remembers it, across a restart too. A second rest that day still gets its own ask, even
+  while the first one's question stands, and tomorrow starts fresh.
+
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching MSI-safe
