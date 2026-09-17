@@ -11,6 +11,7 @@ import { RITUAL_ASK } from '../../domain/chipEffect' // #94: one home with the c
 import { weekdayOffset } from '../../domain/time'
 import type { PlanMode, ScheduleIntent, Tag } from '../../domain/types'
 import { CHOICES_POSTED } from './choicesPosted'
+import { ownerView } from './modelNotes'
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
@@ -318,17 +319,18 @@ export function createRulesAdapter(now: () => Date, planMode: PlanMode = 'auto')
          ahead of the grammar — parse.ts has no single intent for shrink+place */
       const split = parseSplitAsk(last)
       if (split) {
-        yield runSplit(split, exec, now())
+        yield ownerView(runSplit(split, exec, now()))
         return
       }
       /* the weekly ritual (#304) rides ahead of the grammar the same way —
          to the block clause, "plan my week" reads as placing "my week" */
       if (RITUAL_ASK.test(last)) {
-        yield runRitual(ctx, exec)
+        yield ownerView(runRitual(ctx, exec))
         return
       }
       const intent = ruleParse(last, now())
-      yield runIntent(intent, exec, ctx, last, planMode)
+      /* the floor SPEAKS the tool result, so model-only notes stay out (#119) */
+      yield ownerView(runIntent(intent, exec, ctx, last, planMode))
     },
   }
 }

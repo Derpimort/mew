@@ -182,6 +182,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   connection to the model hiccuped" — and answers the turn itself. Whatever already streamed stays
   exactly as it arrived, and nothing is sent twice behind your back.
 
+### Replies written for you
+- Every reply MEW speaks without a connected model is written for you alone: a captured thought
+  reads just `Captured "call the bank".`, and an overlap a batch change leaves names the block and
+  that it's flexible. A connected model still gets its own guidance behind the scenes.
+
 ### Each rest gets its one gentle ask
 - When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
   and remembers it, across a restart too. A second rest that day still gets its own ask, even
