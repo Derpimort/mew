@@ -611,14 +611,16 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     return { kind: 'insights' }
   }
 
-  /* "give my deep-work blocks room" (#322) — the "give them room?" chip's ask,
+  /* "give my hour-plus work blocks room" (#322, worded by #90) — the "give them
+     room?" chip's ask. The pre-#90 "give my deep-work blocks room" still reads the
+     same, so a chip already in the chat history keeps working. The chip's ask,
      resizing the just-placed blocks of one kind up to how it really runs. A
      dedicated intent so both floors (keyless here, keyed via the give_room tool)
      answer the offer identically. Placed ahead of the grammar so it never falls
      through to capture as a task called "give my blocks". */
-  const roomM = lower.match(/^give my (deep-work|admin|health) blocks room[?.!\s]*$/)
+  const roomM = lower.match(/^give my (deep-work|hour-plus work|admin|health) blocks room[?.!\s]*$/)
   if (roomM) {
-    const focusClass = roomM[1] === 'deep-work' ? 'deep' : roomM[1] === 'admin' ? 'admin' : 'health'
+    const focusClass = roomM[1] === 'admin' ? 'admin' : roomM[1] === 'health' ? 'health' : 'deep'
     return { kind: 'giveRoom', focusClass }
   }
 

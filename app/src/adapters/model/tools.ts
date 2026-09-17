@@ -646,7 +646,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'give_room',
     description:
-      "Give the just-placed blocks of one kind ROOM — resize them longer, in place, by the factor the user's OWN completion history shows for that kind (deep work runs over; batched admin usually doesn't). Call this ONLY to answer MEW's own 'your deep-work blocks tend to run long — give them room?' offer (the user tapped 'give them room' or typed 'give my deep-work blocks room'), or when the user explicitly asks to size a kind to how it really runs. Do NOT volunteer it. Blocks whose length the user stated are never touched.",
+      "Give the just-placed blocks of one kind ROOM — resize them longer, in place, by the factor the user's OWN completion history shows for that kind (deep work runs over; batched admin usually doesn't). Call this ONLY to answer MEW's own 'your hour-plus work blocks tend to run long — want me to give <the named blocks> room?' offer (the user tapped 'give them room' or typed 'give my hour-plus work blocks room'; the older 'deep-work' wording means the same), or when the user explicitly asks to size a kind to how it really runs. Do NOT volunteer it. Blocks whose length the user stated are never touched.",
     parameters: {
       type: 'object',
       properties: {

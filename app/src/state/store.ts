@@ -801,6 +801,34 @@ function choicesMsg(body: string, choices: ChatChoice[]): ChatMessage {
   return { id: uid(), role: 'mew', body, ts: nowFn(), choices }
 }
 
+/** The drift drop chip's exactness guard (#12): its reply resolves exactly as
+    execRemove will (the day pin becomes the resolver's day) to block `id` and
+    nothing else. It runs when the chip is offered AND again when it's picked:
+    the reply's day words mean the day it's spoken, so a chip picked after
+    midnight has to single out its block all over again. */
+function dropReplySinglesOut(
+  blocks: Block[],
+  reply: string,
+  now: Date,
+  todayKey: string,
+  id: string
+): boolean {
+  const ask = parseCommand(reply, now)
+  if (ask.kind !== 'remove') return false
+  const pin = ask.remove ?? {}
+  const r = week.resolveRemoval(
+    blocks,
+    ask.query ?? '',
+    {
+      at: pin.at,
+      all: pin.all,
+      day: pin.dayOffset != null ? addDaysKey(todayKey, pin.dayOffset) : undefined,
+    },
+    todayKey
+  )
+  return r.remove.length === 1 && r.remove[0].id === id && !r.candidates.length
+}
+
 /** The #293 scenario-picker message shape — the chips pattern with cards:
     ONE mew message carrying the engine's named placements. Chat-only data;
     the week changes only when pickScenario routes the stored places through
@@ -1908,14 +1936,18 @@ export const useMew = create<MewState>((set, get) => {
       }
 
       /* drop the flexible block: only a one-off (a series asks this/following/
-         series first) that its own reply singles out */
+         series first) that its own reply singles out. The reply names its DAY
+         (#62's day pin: "today", "tomorrow", "on thursday"), so a same-titled
+         block at the same time on another day no longer hides the chip. Past the
+         day words (a week or more out) it stays day-less, and the exactness guard
+         below withholds it whenever that could reach another day. */
       for (const b of flex.slice(0, 3)) {
         if (b.recurringBlockId) continue
-        const reply = `remove the ${base(b)} at ${fmtTime(b.startMin)}`
-        const ask = parseCommand(reply, now)
-        if (ask.kind !== 'remove') continue
-        const r = week.resolveRemoval(s.blocks, ask.query ?? '', ask.remove ?? {}, todayKey)
-        if (r.remove.length === 1 && r.remove[0].id === b.id && !r.candidates.length)
+        const word = dayWord(b.dayKey, todayKey)
+        const onDay =
+          word == null ? '' : word === 'today' || word === 'tomorrow' ? ` ${word}` : ` on ${word}`
+        const reply = `remove the ${base(b)}${onDay} at ${fmtTime(b.startMin)}`
+        if (dropReplySinglesOut(s.blocks, reply, now, todayKey, b.id))
           choices.push({ id: `drop-${b.id}`, label: `drop ${base(b)}`, reply })
       }
 
@@ -1974,8 +2006,11 @@ export const useMew = create<MewState>((set, get) => {
     const pct = Math.round((factor - 1) * 100)
     const label = FOCUS_CLASS_LABEL[focusClass]
     pendingEstimatePad = { ids, factor, focusClass }
+    /* #90: name the blocks the pad would touch, so the offer never lets a class
+       word stand in for what it changes */
+    const names = namesOfBlocks(s.blocks, ids)
     const msg = choicesMsg(
-      `your ${label} blocks tend to run ~${pct}% long — want me to give them room?`,
+      `your ${label} blocks tend to run ~${pct}% long — want me to give them room? (${listShort(names)})`,
       [
         { id: 'pad', label: 'give them room', reply: `give my ${label} blocks room` },
         { id: 'leave', label: 'leave as-is', reply: 'ok, leave them as they are' },
@@ -2027,10 +2062,11 @@ export const useMew = create<MewState>((set, get) => {
     )
     setBlocks(next)
     pendingEstimatePad = null // one pad per offer
-    const label = FOCUS_CLASS_LABEL[focusClass]
     const n = targets.length
     const pct = Math.round((pad.factor - 1) * 100)
-    return `Gave your ${label} block${n === 1 ? '' : 's'} room — ${n} now run${n === 1 ? 's' : ''} about ${pct}% longer, sized to how they really go.`
+    /* #90: name what grew, the same names the offer promised */
+    const names = andList(namesOfBlocks(targets, [...grown]))
+    return `Gave ${names} room — ${n === 1 ? 'it now runs' : `${n} now run`} about ${pct}% longer, sized to how ${n === 1 ? 'it really goes' : 'they really go'}.`
   }
 
   /* task→person link snapshot for the delegate nudge — fetched once per
@@ -2895,7 +2931,10 @@ export const useMew = create<MewState>((set, get) => {
           week.isDeep(b) &&
           b.status !== 'rolled'
       ).length
-      observation = ` That's your ${ordinal(deepCount)} deep-work block this week.`
+      /* #90: the count names the class in the room offer's own words — the same
+         turn's offer says "hour-plus work", so an inbox sweep isn't a "deep-work
+         block" one message earlier */
+      observation = ` That's your ${ordinal(deepCount)} ${FOCUS_CLASS_LABEL.deep} block this week.`
       /* the meter speaking for this day makes the right-size aside a second
          voice in the same turn — the chips carry the offer, the count stands */
       if (agg.realisticBestH != null && !guarded.has(placedDeep.dayKey)) {
@@ -5505,6 +5544,30 @@ export const useMew = create<MewState>((set, get) => {
       }))
       const updated = get().chat.find((m) => m.id === msgId)
       if (updated) persistChat([updated]) // delta putChat, same as resolveNudge
+      /* a drift drop chip (#12) re-runs its exactness guard with the pick's own
+         clock: "remove the Groceries today at 14:00", offered Tuesday and picked
+         after midnight, means Wednesday's Groceries now. It speaks only while it
+         still singles out the block it was offered for; otherwise the chip is
+         spent, MEW names that block, and everything stays as it is. */
+      if (choice.id.startsWith('drop-')) {
+        const id = choice.id.slice('drop-'.length)
+        const now = new Date(s.nowMs)
+        const todayKey = dayKey(now)
+        if (!dropReplySinglesOut(s.blocks, choice.reply, now, todayKey, id)) {
+          const b = s.blocks.find((x) => x.id === id)
+          const word = b ? dayWord(b.dayKey, todayKey) : null
+          const whose = !b
+            ? ''
+            : word === 'today' || word === 'tomorrow'
+              ? `${word}'s `
+              : `${fmtDowLong(b.dayKey)}'s `
+          const name = b
+            ? `${b.title.split('—')[0].trim()} at ${fmtTime(b.startMin)}`
+            : choice.label.replace(/^drop /, '')
+          post([mewMsg(`That choice was for ${whose}${name}, so everything stays as it is.`)])
+          return
+        }
+      }
       /* the pick IS the user's next message — the normal turn does the rest */
       await get().speak(choice.reply)
     },
@@ -7289,6 +7352,31 @@ function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd']
   const v = n % 100
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0])
+}
+
+/** #90: "a, b, c" or "a, b and 2 more" — the offer's parenthetical of names */
+function listShort(parts: string[]): string {
+  return parts.length > 3
+    ? `${parts.slice(0, 2).join(', ')} and ${parts.length - 2} more`
+    : parts.join(', ')
+}
+
+/** #90: "a", "a and b", "a, b and c", "a, b and 2 more" — a short, human list */
+function andList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  if (parts.length > 3) return `${parts.slice(0, 2).join(', ')} and ${parts.length - 2} more`
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+/** #90: the spoken names of the blocks with `ids`, in id order, each title once */
+function namesOfBlocks(blocks: Block[], ids: string[]): string[] {
+  const names: string[] = []
+  for (const id of ids) {
+    const b = blocks.find((x) => x.id === id)
+    const name = b?.title.split('—')[0].trim()
+    if (name && !names.includes(name)) names.push(name)
+  }
+  return names
 }
 
 function joinHuman(parts: string[]): string {
