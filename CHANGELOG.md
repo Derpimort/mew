@@ -193,6 +193,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
   and remembers it, across a restart too. A second rest that day still gets its own ask, even
   while the first one's question stands, and tomorrow starts fresh.
+- When you place work over a rest, the reply names the time it runs over ("it runs over your
+  evening walk 18:00–18:45"), so a rest you chose to keep is never covered without a word. The
+  rest stays where it is.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as

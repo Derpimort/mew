@@ -480,6 +480,9 @@ export interface CollisionDrift {
   fixed: Block[]
   /** own-flexible blocks with no clean slot — the offer_choices fallback */
   stuck: Block[]
+  /** #122: protected rest the placement runs over — never moved here (the
+      protect-rest flow owns sacred rest), but named in the reply */
+  rests: Block[]
 }
 
 /** The nearest conflict-free home for one flexible block yielding to `placed`.
@@ -526,7 +529,8 @@ export function driftCollisions(
   const drifts: FlexDrift[] = []
   const fixed: Block[] = []
   const stuck: Block[] = []
-  if (isBackground(placed)) return { drifts, fixed, stuck }
+  const rests: Block[] = []
+  if (isBackground(placed)) return { drifts, fixed, stuck, rests }
   const clash = conflictsWith(
     blocks,
     placed.dayKey,
@@ -541,7 +545,10 @@ export function driftCollisions(
       fixed.push(c) // external/fixed: a fact to schedule around, never moved
       continue
     }
-    if (c.tag === 'rest' && c.protected) continue // sacred rest → protect-rest, not here
+    if (c.tag === 'rest' && c.protected) {
+      rests.push(c) // sacred rest → protect-rest's to move, never here; named (#122)
+      continue
+    }
     const slot = driftSlot(working, c, placed, todayKey, nowMin, prefs)
     if (!slot) {
       stuck.push(c)
@@ -556,7 +563,7 @@ export function driftCollisions(
     })
     working = move(working, c.id, slot.dayKey, slot.startMin)
   }
-  return { drifts, fixed, stuck }
+  return { drifts, fixed, stuck, rests }
 }
 
 /* ── direct-manipulation drop validity (#347) ──────────────────────────
