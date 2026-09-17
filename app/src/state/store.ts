@@ -49,6 +49,7 @@ import {
 import { rangeDayKeys, rangeStartLabel, readRange, stripRangePhrase } from '../domain/timeRange'
 import * as week from '../domain/week'
 import { nextPartTitle, splitGeometry, SPLIT_MIN_PIECE } from '../domain/split'
+import { planBatch, type BatchOp, type BatchSelector, type BatchSkip } from '../domain/batch'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
 import {
   describeRrule,
@@ -3749,6 +3750,159 @@ export const useMew = create<MewState>((set, get) => {
     return `Merged — ${baseOf(keep.title)} now runs ${day} ${fmtTime(run.startMin)}–${fmtTime(run.endMin)} as one block (${n} joined).`
   }
 
+  /** Batch (#75): ONE op over the blocks a selector picks on one day. The plan is
+      pure (domain/batch.ts): what moves where, what stays put and why. A narrow
+      batch (1–2 blocks, same day) acts directly like today's single ops; a wide
+      one (3+ blocks, or any move to another day) is OFFERED first as a confirm
+      naming every move and every block that stays put, and nothing changes until
+      the owner says yes. The yes re-asks with the count it named: if the week
+      changed and the plan no longer moves exactly that many, MEW offers again.
+      One setBlocks under the wrapper's snapshot, so one undo reverses the lot;
+      a collision the batch leaves speaks in the existing clash wording. */
+  function execBatch(
+    selIn: {
+      dayOffset?: number
+      afterMin?: number
+      beforeMin?: number
+      tag?: import('../domain/types').Tag
+      titleQuery?: string
+    },
+    opIn: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
+    confirmCount?: number
+  ): string {
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const sel: BatchSelector = {
+      dayKey: addDaysKey(todayKey, selIn.dayOffset ?? 0),
+      afterMin: selIn.afterMin,
+      beforeMin: selIn.beforeMin,
+      tag: selIn.tag,
+      titleQuery: selIn.titleQuery?.trim() || undefined,
+    }
+    const op: BatchOp =
+      opIn.kind === 'shift'
+        ? { kind: 'shift', deltaMin: opIn.deltaMin }
+        : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
+    /* "today" / "tomorrow" / "on Thursday" for replies; "today" / "tomorrow" /
+       "thursday" for the words a confirm re-asks in */
+    const onDay = (k: string) =>
+      k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : `on ${fmtDowLong(k)}`
+    const word = (k: string) => dayWord(k, todayKey)
+    if (op.kind === 'shift' && !op.deltaMin)
+      return `nothing to shift — say how far (30 min, an hour).`
+    if (op.kind === 'moveToDay' && op.toDayKey === sel.dayKey)
+      return `those already live ${onDay(sel.dayKey)}, so everything stays as it is.`
+
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const plan = planBatch(s.blocks, sel, op, prefs)
+    const what = [
+      sel.titleQuery ? `"${sel.titleQuery}"` : sel.tag ? `your ${sel.tag} blocks` : 'everything',
+      sel.afterMin != null ? `starting after ${fmtTime(sel.afterMin)}` : '',
+      sel.beforeMin != null ? `starting before ${fmtTime(sel.beforeMin)}` : '',
+      onDay(sel.dayKey),
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const change =
+      op.kind === 'shift'
+        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'}`
+        : `to ${onDay(op.toDayKey)}`
+    const why = (sk: BatchSkip): string =>
+      sk.reason === 'calendar'
+        ? 'from your calendar'
+        : sk.reason === 'fixed'
+          ? 'fixed'
+          : sk.reason === 'done'
+            ? 'done'
+            : sk.reason === 'repeating'
+              ? 'repeats'
+              : sk.reason === 'off-day'
+                ? 'would leave the day'
+                : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+    const stays = plan.skipped.map(
+      (sk) => `${baseOf(sk.block.title)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
+    )
+    const staysLine = stays.length
+      ? ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
+      : ''
+    if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
+    if (!plan.moves.length)
+      return `nothing there can move ${change}:${staysLine} Everything stays as it is.`
+
+    const n = plan.moves.length
+    const line = (m: (typeof plan.moves)[number]) =>
+      op.kind === 'shift'
+        ? `${baseOf(m.block.title)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
+        : `${baseOf(m.block.title)} ${fmtTime(m.startMin)}`
+    const wide = n >= 3 || op.kind === 'moveToDay'
+    /* a yes names a list: if the plan no longer moves exactly that many, offer
+       again, even when the smaller set would be narrow enough to act directly */
+    if ((wide || confirmCount != null) && confirmCount !== n) {
+      /* the words a yes re-asks in: the keyless batch grammar when the selector
+         fits it (so the floor applies it exactly), plain words otherwise (a keyed
+         model reads them and calls again with confirmCount) */
+      const yes = ` — yes, all ${n}`
+      const fromWord = word(sel.dayKey)
+      const toWord = op.kind === 'moveToDay' ? word(op.toDayKey) : null
+      let reply: string
+      if (
+        op.kind === 'shift' &&
+        !sel.titleQuery &&
+        (sel.afterMin != null) !== (sel.beforeMin != null) &&
+        fromWord
+      ) {
+        const who = sel.tag ? `all ${sel.tag}` : 'everything'
+        const edge =
+          sel.afterMin != null
+            ? `after ${fmtTime(sel.afterMin)}`
+            : `before ${fmtTime(sel.beforeMin!)}`
+        const dayPart =
+          fromWord === 'today' || fromWord === 'tomorrow' ? fromWord : `on ${fromWord}`
+        reply = `push ${who} ${edge} ${dayPart} ${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min${yes}`
+      } else if (
+        op.kind === 'moveToDay' &&
+        sel.afterMin == null &&
+        sel.beforeMin == null &&
+        fromWord &&
+        toWord
+      ) {
+        const who = sel.titleQuery ? `${sel.titleQuery} blocks` : sel.tag ? sel.tag : 'blocks'
+        reply = `move all ${fromWord}'s ${who} to ${toWord}${yes}`
+      } else {
+        reply = `yes — move those ${n} blocks ${change}`
+      }
+      const changed = confirmCount != null ? 'the week changed since then — ' : ''
+      return execOfferChoices(
+        `${changed}move ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}`,
+        [
+          { label: 'do it', reply },
+          { label: 'not now', reply: 'ok, leave them as they are' },
+        ]
+      )
+    }
+
+    const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
+    const next = s.blocks.map((b) => {
+      const m = byId.get(b.id)
+      return m ? { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin } : b
+    })
+    setBlocks(next)
+    /* a collision the batch leaves with a block that stayed put speaks in the
+       existing clash wording (#324), never a second vocabulary */
+    const clash = [
+      ...new Map(
+        plan.moves
+          .flatMap((m) =>
+            week
+              .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
+              .filter((c) => !byId.has(c.id))
+          )
+          .map((c) => [c.id, c])
+      ).values(),
+    ]
+    return `Moved ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
+  }
+
   /** Move a block relative to where it is now, with no absolute time (#335).
       earlier/later delegate straight to moveResolved's relative shift; next_day
       keeps the clock one day on; next_free relocates to the soonest genuinely
@@ -5696,6 +5850,15 @@ export const useMew = create<MewState>((set, get) => {
             'duplicate',
             { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
             () => execDuplicate(q, opts, at)
+          )
+        },
+        batch: (selector, op, confirmCount) => {
+          acted = true
+          snapshotForUndo()
+          working('moving them…')
+          closeStreamRow()
+          return runToolWithCard('batch', { query: selector.titleQuery ?? selector.tag }, () =>
+            execBatch(selector, op, confirmCount)
           )
         },
         merge: (q, dayOffset, at) => {

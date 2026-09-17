@@ -326,6 +326,108 @@ export function referentQuery(phrase: string): string | null {
   return null
 }
 
+/* batch (#75): the two commonest wide changes, keyless.
+   · a shift with a start window: "push everything after 3pm back an hour",
+     "pull all work before noon 30 min earlier", "push everything after 15:00
+     tomorrow later by 60 min"
+   · a move to another day: "move all of today's work to tomorrow", "move all
+     thursday's deck review blocks to friday"
+   A confirm chip re-asks in exactly these words with " — yes, all N" (the count
+   the owner said yes to). Everything else stays with the single-block grammar. */
+const BATCH_TAGS: Tag[] = ['work', 'private', 'health', 'rest']
+const BATCH_YES = /\s*[—–-]+\s*yes,?\s+all\s+(\d+)\s*$/
+
+/** "3pm" · "3:30pm" · "15:00" · "noon" → minutes; a bare "3" is ambiguous → null */
+function batchClock(s: string): number | null {
+  const t = s.trim().toLowerCase()
+  if (t === 'noon') return 12 * 60
+  const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/)
+  if (!m) return null
+  const h = Number(m[1])
+  const min = m[2] ? Number(m[2]) : 0
+  if (min > 59) return null
+  if (m[3]) {
+    if (h < 1 || h > 12) return null
+    return ((h % 12) + (m[3] === 'pm' ? 12 : 0)) * 60 + min
+  }
+  if (m[2] || h >= 13) return h <= 23 ? h * 60 + min : null
+  return null
+}
+
+function parseBatch(text: string, now: Date): ScheduleIntent | null {
+  let lower = text.trim().toLowerCase()
+  let confirmCount: number | undefined
+  const yes = lower.match(BATCH_YES)
+  if (yes && yes.index != null) {
+    confirmCount = Number(yes[1])
+    lower = lower.slice(0, yes.index).trim()
+  }
+  const confirm = confirmCount != null ? { confirmCount } : {}
+  const dayOf = (phrase: string | undefined): number | undefined => {
+    if (!phrase) return undefined
+    const d = parseDayOffset(phrase.replace(/^on\s+/, '').replace(/'s$/, ''), now)
+    return d ? d.offset : undefined
+  }
+
+  /* a shift with a start window */
+  const shiftM = lower.match(
+    /^(?:push|move|shift|bring|pull)\s+(?:everything|all(?:\s+(work|private|health|rest))?(?:\s+blocks)?)\s+(after|before)\s+(noon|\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?:\s+(today|tomorrow|on\s+[a-z]+))?\s+(.+)$/
+  )
+  if (shiftM) {
+    const at = batchClock(shiftM[3])
+    const deltaMin = parseTimeShift(shiftM[5])
+    /* a bare hour ("after 3") is 3am or 3pm: ask, rather than read a block
+       called "everything after 3" */
+    if (at == null && deltaMin != null && /^\d{1,2}$/.test(shiftM[3].trim()))
+      return {
+        kind: 'chat',
+        reply: `after ${shiftM[3].trim()}am or ${shiftM[3].trim()}pm? say "after ${shiftM[3].trim()}pm" and I'll line them up.`,
+      }
+    if (at == null || deltaMin == null) return null
+    const dayOffset = dayOf(shiftM[4])
+    if (shiftM[4] && dayOffset == null) return null
+    return {
+      kind: 'batch',
+      batch: {
+        ...(dayOffset != null ? { dayOffset } : {}),
+        ...(shiftM[2] === 'after' ? { afterMin: at } : { beforeMin: at }),
+        ...(shiftM[1] ? { tag: shiftM[1] as Tag } : {}),
+        op: 'shift',
+        deltaMin,
+        ...confirm,
+      },
+    }
+  }
+
+  /* a move to another day: "move all [of] [today's] <tag | title words> [blocks] to <day>" */
+  const moveM = lower.match(
+    /^move\s+all\s+(?:of\s+)?(?:(today's|tomorrow's|[a-z]+day's)\s+)?(.+?)\s+to\s+(today|tomorrow|(?:on\s+)?[a-z]+day)$/
+  )
+  if (moveM) {
+    const toDayOffset = dayOf(moveM[3])
+    const fromOffset = dayOf(moveM[1])
+    if (toDayOffset == null || (moveM[1] && fromOffset == null)) return null
+    const what = moveM[2].replace(/\s+blocks?$/, '').trim()
+    if (!what) return null
+    const sel = BATCH_TAGS.includes(what as Tag)
+      ? { tag: what as Tag }
+      : what === 'blocks' || what === 'my blocks'
+        ? {}
+        : { titleQuery: what }
+    return {
+      kind: 'batch',
+      batch: {
+        ...(fromOffset != null ? { dayOffset: fromOffset } : {}),
+        ...sel,
+        op: 'moveToDay',
+        toDayOffset,
+        ...confirm,
+      },
+    }
+  }
+  return null
+}
+
 /** A relative TIME shift for move — signed minutes, needing both an amount
     ("30 min", "an hour", "half an hour") and a direction (earlier/later, push
     back, move up). Returns null when either is missing, so a plain duration
@@ -715,6 +817,11 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
           : ('upcoming' as const)
     return { kind: 'clear', scope }
   }
+
+  /* batch (#75) rides ahead of the single-block moves: "push everything after
+     3pm back an hour" is a wide change, never a block called "everything" */
+  const batchAsk = parseBatch(trimmed, now)
+  if (batchAsk) return batchAsk
 
   /* relative move (#320): "move it 30 min earlier", "push it back an hour",
      "the deck 30 min later". A direction word + amount is the signal; gate off

@@ -299,6 +299,23 @@ export interface ToolExecutor {
       air: a fixed call, a [calendar] event, a done block or another block in
       the span means nothing changes, and the reply says which. */
   merge(query: string, dayOffset?: number, at?: string): string
+  /** Batch (#75): ONE op over the blocks a selector picks on one day — shift by
+      minutes, or move to another day. A wide batch (3+ blocks, or any move to
+      another day) is OFFERED first as a confirm naming every block it moves and
+      every one that stays put (calendar events, fixed-time, done and repeating
+      blocks never move); nothing changes until the owner says yes, and the yes
+      re-asks with `confirmCount`, the count it named. One undo reverses the lot. */
+  batch(
+    selector: {
+      dayOffset?: number
+      afterMin?: number
+      beforeMin?: number
+      tag?: import('../../domain/types').Tag
+      titleQuery?: string
+    },
+    op: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
+    confirmCount?: number
+  ): string
   /** Move a block relative to where it is now, with no absolute time (#335):
       'earlier'/'later' shift the start by `amountMin` (default 30) on the same
       day, 'next_day' moves one day on at the same clock, 'next_free' relocates

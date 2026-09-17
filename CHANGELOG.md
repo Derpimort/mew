@@ -247,6 +247,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
   and MEW names both, so a merged block never loses one of its names.
 
+### Change several blocks at once, with a yes first
+- Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
+  lines it up in one go. When it touches three or more blocks, or moves anything to another day,
+  MEW first shows exactly which blocks move where and which stay put, and nothing changes until
+  you say yes; one "undo that" puts them all back. Calendar events, fixed calls, done blocks and
+  repeating blocks keep their place, and so does any block whose new time would sit over one.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar

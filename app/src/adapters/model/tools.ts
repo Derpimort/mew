@@ -626,6 +626,46 @@ export const MEW_TOOLS: NeutralTool[] = [
     },
   },
   {
+    name: 'batch_blocks',
+    description:
+      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier) or move_to_day (toDayOffset, same clock). Calendar events, fixed-time, done and repeating blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount ONLY when the user just said yes to MEW's batch offer, with the count that offer named; if the week changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
+    parameters: {
+      type: 'object',
+      properties: {
+        dayOffset: {
+          type: 'integer',
+          description: 'The day to pick from, days from today (0 = today)',
+        },
+        afterMin: {
+          type: 'integer',
+          description: 'Pick blocks STARTING at or after this minute (15:00 = 900)',
+        },
+        beforeMin: { type: 'integer', description: 'Pick blocks starting before this minute' },
+        tag: { ...TAG_SCHEMA, description: 'Pick only blocks of this tag' },
+        titleQuery: {
+          type: 'string',
+          description: 'Pick only blocks whose title contains these words',
+        },
+        op: { type: 'string', enum: ['shift', 'move_to_day'] },
+        deltaMin: {
+          type: 'integer',
+          description: 'For shift: minutes to move each block (+60 = an hour later, −30 = earlier)',
+        },
+        toDayOffset: {
+          type: 'integer',
+          description: 'For move_to_day: the target day, days from today',
+        },
+        confirmCount: {
+          type: 'integer',
+          description:
+            "ONLY after the user said yes to MEW's batch offer: the number of blocks that offer named",
+        },
+      },
+      required: ['op'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'merge_blocks',
     description:
       "Join the owner's same-tag blocks on ONE day into a single block (#74) — 'merge my two deck blocks', 'join the writing blocks tomorrow'. The earliest keeps its place and grows to span them all; the others go, and one undo brings them back. Name them by title (query); pass dayOffset for another day, or at (a block's CURRENT start) to merge that block with the next same-named one after it. Only open, one-off blocks the owner placed merge, and only across free air: a fixed call, a [calendar] event, a done block or any other block in between means nothing changes and the result says which. Never merges across days, and never merges blocks with different tags — ask which tag first.",
@@ -936,6 +976,30 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         },
         atArg(o.at)
       )
+    case 'batch_blocks': {
+      const selector = {
+        dayOffset: optInt(o.dayOffset, 0, 13),
+        afterMin: optInt(o.afterMin, 0, 1439),
+        beforeMin: optInt(o.beforeMin, 1, 1440),
+        tag: (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
+          ? (o.tag as 'work')
+          : undefined,
+        titleQuery:
+          typeof o.titleQuery === 'string' && o.titleQuery.trim() ? o.titleQuery.trim() : undefined,
+      }
+      const confirmCount = optInt(o.confirmCount, 1, 500)
+      if (o.op === 'shift') {
+        const deltaMin = optInt(o.deltaMin, -720, 720)
+        if (!deltaMin) return 'nothing to shift — pass deltaMin (+ later, − earlier)'
+        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount)
+      }
+      if (o.op === 'move_to_day') {
+        const toDayOffset = optInt(o.toDayOffset, 0, 13)
+        if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
+        return exec.batch(selector, { kind: 'moveToDay', toDayOffset }, confirmCount)
+      }
+      return 'nothing to batch — op must be shift or move_to_day'
+    }
     case 'merge_blocks':
       return exec.merge(String(o.query ?? ''), optInt(o.dayOffset, 0, 13), atArg(o.at))
     case 'move_relative': {

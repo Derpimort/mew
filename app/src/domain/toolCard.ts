@@ -111,6 +111,7 @@ const BASE_VERB: Record<string, string> = {
   resize: 'resizing it',
   duplicate: 'duplicating it',
   merge: 'merging them',
+  batch: 'moving them',
   relativeMove: 'nudging it',
   split: 'splitting it',
 }
