@@ -160,6 +160,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it places
   the block exactly there, leaves your flexible block where it is, and says the two share that time.
   Meetings, calls and calendar events are still never covered: MEW names them and asks for another time.
+### Every choice keeps the day it was offered
+- The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
+  work to its next clean slot, pick which of two same-named blocks you meant, or apply an edit to
+  just this one of a repeating block) keep the day they were offered. Picked after midnight, a
+  choice checks first: it acts while it still reaches the same block on the same day and time, and
+  otherwise MEW says which day it was offered on and everything stays as it is. A choice named for
+  a weekday ("move it to thursday") keeps working the next day.
 
 ## [0.7.0] — 2026-08-12
 

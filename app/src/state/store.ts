@@ -181,6 +181,7 @@ import {
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
 import { choicesActive, scenariosActive } from '../domain/choices'
+import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
@@ -813,20 +814,15 @@ function dropReplySinglesOut(
   todayKey: string,
   id: string
 ): boolean {
-  const ask = parseCommand(reply, now)
-  if (ask.kind !== 'remove') return false
-  const pin = ask.remove ?? {}
-  const r = week.resolveRemoval(
-    blocks,
-    ask.query ?? '',
-    {
-      at: pin.at,
-      all: pin.all,
-      day: pin.dayOffset != null ? addDaysKey(todayKey, pin.dayOffset) : undefined,
-    },
-    todayKey
+  const e = chipReplyEffect(blocks, reply, now, todayKey) // #94: the one chip resolver
+  return (
+    e?.kind === 'remove' &&
+    Array.isArray(e.remove) &&
+    e.remove.length === 1 &&
+    e.remove[0] === id &&
+    Array.isArray(e.candidates) &&
+    !e.candidates.length
   )
-  return r.remove.length === 1 && r.remove[0].id === id && !r.candidates.length
 }
 
 /** The #293 scenario-picker message shape — the chips pattern with cards:
@@ -5670,6 +5666,24 @@ export const useMew = create<MewState>((set, get) => {
           post([mewMsg(`That choice was for ${whose}${name}, so everything stays as it is.`)])
           return
         }
+      }
+      /* #94: every chip's reply speaks in the pick's day words. Picked on a later
+         calendar day than it was offered, a chip acts only while its reply still
+         reaches the same blocks on the same absolute day and time ("to thursday"
+         still does; "to tomorrow" moved a day). Otherwise the chip is spent, MEW
+         says when it was offered, and everything stays as it is. */
+      const offeredAt = new Date(msg.ts)
+      const pickedAt = new Date(s.nowMs)
+      if (
+        dayKey(offeredAt) !== dayKey(pickedAt) &&
+        !chipStillMeans(s.blocks, choice.reply, offeredAt, pickedAt)
+      ) {
+        post([
+          mewMsg(
+            `That choice was offered on ${fmtDowLong(dayKey(offeredAt))} ("${choice.label}"), so everything stays as it is.`
+          ),
+        ])
+        return
       }
       /* the pick IS the user's next message — the normal turn does the rest */
       await get().speak(choice.reply)
