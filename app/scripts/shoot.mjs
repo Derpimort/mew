@@ -6,7 +6,7 @@ import { chromium } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
-import { clockUrl, shootDay } from './lib/shootClock.mjs'
+import { PROBING, SHOOT_DATE, clockUrl, shootDay } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 /* unpinned chromium (shared resolver, PW_CHROMIUM seam) — this script gates
@@ -202,6 +202,18 @@ if (hits[1]) {
 phase = 'week'
 await page.click('.seg2 button:has-text("Week")')
 await page.waitForTimeout(600)
+{
+  /* the pin took effect: the week's first live (non-past) day IS the pinned day
+     (`.today` marks the selected column, so read the past/live split instead) */
+  const firstLive = await page
+    .$eval('.wk-grid .nxb-col:not(.past)', (el) => el.getAttribute('data-daykey'))
+    .catch(() => null)
+  console.log('pinned day:', SHOOT_DATE, '· first live week day:', firstLive)
+  assert(
+    firstLive === SHOOT_DATE,
+    `the pinned day did not take effect (week starts live at ${firstLive}, expected ${SHOOT_DATE})`
+  )
+}
 console.log('summary:', (await page.textContent('.week-summary'))?.trim())
 await page.screenshot({ path: `${outDir}/4-week.png` })
 
@@ -642,12 +654,17 @@ phase = 'remove-affordance'
 {
   await page.click('.seg2 button:has-text("Week")')
   const doneSel = '.nxb-blk[aria-label*="done"]'
-  /* The seed's done blocks live on the days BEHIND today; a pinned (or real)
-     Monday has none, and this phase used to time out right here on every
-     Monday run. The phase proves the cage-lift, not the seed — so when the
-     week holds no done block it makes one the way an owner would: through the
-     composer and the real complete executor ("Marked … done — that's a mew"). */
+  await page.waitForSelector('.wk-grid .nxb-blk', { timeout: 5000 }) // the week has rendered
+  /* The seed's done blocks live on the days BEHIND today. On the pinned Wednesday
+     they must be there, and a week without them is a seed regression the gate
+     must fail on. Only a SHOOT_DATE probe of a day with nothing behind it (a
+     Monday) makes its own done block, the way an owner would: through the
+     composer and the real complete executor. */
   if (!(await page.$(doneSel))) {
+    assert(
+      PROBING,
+      'pinned week rendered no seeded done block — self-seed is only for SHOOT_DATE probes'
+    )
     await page.fill(composer, 'done with the standup')
     await page.press(composer, 'Enter')
     await page.waitForSelector(doneSel, { timeout: 8000 })
