@@ -3,7 +3,7 @@
    and the session log's inert rendering — one reason to fail each. */
 
 import { describe, expect, it } from 'vitest'
-import { choicePicked, choicesActive, choicesSuperseded } from '../choices'
+import { choicePicked, choicesActive, choicesSuperseded, typedChipLabel } from '../choices'
 import type { ChatMessage } from '../types'
 
 const mew = (id: string, choices?: ChatMessage['choices']): ChatMessage => ({
@@ -71,5 +71,46 @@ describe('choicesActive', () => {
   it('a plain mew message is never active', () => {
     const msg = mew('m1')
     expect(choicesActive([msg], msg)).toBe(false)
+  })
+})
+
+describe('typedChipLabel (#139)', () => {
+  it("reads the live chips' own labels, case and punctuation aside", () => {
+    const ask = mew('m1', CHOICES)
+    expect(typedChipLabel([ask], 'the 18:30')).toEqual({ msgId: 'm1', choiceId: 'c2' })
+    expect(typedChipLabel([ask], '  The 7:00.  ')).toEqual({ msgId: 'm1', choiceId: 'c1' })
+    expect(typedChipLabel([ask], 'the  7:00')).toEqual({ msgId: 'm1', choiceId: 'c1' })
+  })
+
+  it('says nothing about anything else the owner types', () => {
+    const ask = mew('m1', CHOICES)
+    expect(typedChipLabel([ask], 'the 9:00')).toBeNull()
+    expect(typedChipLabel([ask], 'remove the 7:00 one')).toBeNull() // not the whole message
+    expect(typedChipLabel([ask], '')).toBeNull()
+  })
+
+  it('two chips reading the same way answer for neither', () => {
+    /* no family ships duplicate labels today, and this is why it stays that
+       way: an ambiguous answer must never be resolved by chip order */
+    const twins = mew('m1', [
+      { id: 'c1', label: 'tomorrow 9:00', reply: 'move the deck to tomorrow at 9:00' },
+      { id: 'c2', label: 'tomorrow 9:00', reply: 'move the notes to tomorrow at 9:00' },
+    ])
+    expect(typedChipLabel([twins], 'tomorrow 9:00')).toBeNull()
+  })
+
+  it('only the newest chips, and only while they are live', () => {
+    const older = mew('m1', CHOICES)
+    const newer = mew('m2', [{ id: 'd1', label: 'do it', reply: 'go ahead' }])
+    /* the older ask is superseded by the newer one, so its labels are spent */
+    expect(typedChipLabel([older, newer], 'the 7:00')).toBeNull()
+    expect(typedChipLabel([older, newer], 'do it')).toEqual({ msgId: 'm2', choiceId: 'd1' })
+    const picked = mew('m3', [{ id: 'e1', label: 'do it', reply: 'go ahead', picked: true }])
+    expect(typedChipLabel([picked], 'do it')).toBeNull()
+    /* and a newer USER turn retires them too (#254's own law), which is exactly
+       why the store asks this question BEFORE it posts the typed message: asked
+       afterwards, the owner's own words would supersede the chips they name and
+       no label could ever match */
+    expect(typedChipLabel([newer, user('u1')], 'do it')).toBeNull()
   })
 })

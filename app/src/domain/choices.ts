@@ -77,6 +77,48 @@ const COUNT_WORDS: Record<string, number> = {
   eight: 8,
 }
 
+/** A typed reply that IS one of the live chips' own labels (#139): the pick the
+    tap would make, for every chip family — a rescue offer, a no-room time, a
+    batch confirm, a series-scope ask. Typing what is on screen was doing nothing
+    outside a remove ask: some labels became inbox thoughts, others got the
+    generic help line.
+
+    Whole-message and exact, with case, surrounding space and one trailing
+    ./!/? aside, and only when the words point at exactly ONE chip. The richer
+    per-family readings (a remove ask's "both", "the thursday one", a count that
+    does not fit) stay with typedRemoveAnswer, which the store tries first — this
+    is the floor under all of them, not a replacement.
+
+    Pure: it returns which chip on which message, and the store routes it through
+    pickChoice, so the pick-time re-checks (#94) and retiring the chips are the
+    tap's own, not a second implementation. */
+export function typedChipLabel(
+  chat: ChatMessage[],
+  text: string
+): { msgId: string; choiceId: string } | null {
+  let ask: ChatMessage | undefined
+  for (let i = chat.length - 1; i >= 0; i--) {
+    if ((chat[i].choices?.length ?? 0) > 0) {
+      ask = chat[i]
+      break
+    }
+  }
+  if (!ask || !choicesActive(chat, ask)) return null
+  const said = norm(text)
+  if (!said) return null
+  const hits = ask.choices!.filter((c) => norm(c.label) === said)
+  return hits.length === 1 ? { msgId: ask.id, choiceId: hits[0].id } : null
+}
+
+/** one shape for comparing what was typed with what a chip reads */
+function norm(s: string): string {
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, '')
+    .replace(/\s+/g, ' ')
+}
+
 export function typedRemoveAnswer(
   chat: ChatMessage[],
   text: string,
