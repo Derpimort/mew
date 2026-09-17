@@ -209,6 +209,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - When you place work over a rest, the reply names the time it runs over ("it runs over your
   evening walk 18:00–18:45"), so a rest you chose to keep is never covered without a word. The
   rest stays where it is.
+- Moving several blocks at once, changing a block and copying one say it the same way: work that
+  lands on a protected rest names that rest ("it runs over your evening walk"), and only a truly
+  flexible block is called flexible.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
