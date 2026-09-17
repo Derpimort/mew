@@ -3,6 +3,8 @@
    standard clock angle, now a hand that sweeps it. The old rolling next-12h
    mapping (now pinned at top) is retired. */
 
+import { snapMin, type DragState } from './dragGeometry'
+
 export const rPolar = (cx: number, cy: number, r: number, deg: number): [number, number] => {
   const a = ((deg - 90) * Math.PI) / 180
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
@@ -56,6 +58,81 @@ export const sector = (
     12 hours per turn — so 3:00→90°, 6:00→180°, 9:00→270°, and 15:00 lands on
     the same 90° as 3:00 (AM/PM is disambiguated by the inner/outer day fill). */
 export const clockDeg = (h: number): number => ((((h % 12) + 12) % 12) / 12) * 360
+
+/* ── The inverse: pointer → angle → time (#24) ───────────────────────────────
+   What a dial drag stands on. clockDeg is lossy — 09:00 and 21:00 both ride
+   270° — so an angle names a time only within a HALF of the day, and the caller
+   supplies which: a drag keeps its block's half for the whole gesture (the
+   tangential drag #24 recommends), so crossing 12 o'clock wraps within the half
+   instead of jumping twelve hours. Everything answers in whole minutes of the
+   day, and a drop snaps through Week's own snapMin — one grid for both views. */
+
+/** A half of the day: the face's first turn (00:00–11:59) or its second. */
+export type DayHalf = 'am' | 'pm'
+
+/** The half a minute of the day falls in. */
+export const halfOf = (min: number): DayHalf => (((min % 1440) + 1440) % 1440 < 720 ? 'am' : 'pm')
+
+/** Degrees onto [0, 360). */
+export const normDeg = (deg: number): number => ((deg % 360) + 360) % 360
+
+/** Minutes of the day an angle names within a half: 0° is 12 o'clock (00:00 in
+    the morning half, 12:00 in the afternoon), clockwise, 720 minutes a turn,
+    rounded to the nearest minute. A full turn is the top of the SAME half, so
+    the morning answers 0–719 and the afternoon 720–1439 — never the other. */
+export function minFromDeg(deg: number, half: DayHalf): number {
+  const m = Math.round((normDeg(deg) / 360) * 720) % 720
+  return (half === 'pm' ? 720 : 0) + m
+}
+
+/** A point's clock angle about the dial's centre, on [0, 360): 0° at 12
+    o'clock, clockwise (screen y grows downward). The exact inverse of rPolar's
+    −90° offset, in whatever space the centre and the point share. The centre
+    itself has no angle: null. */
+export function degFromPoint(cx: number, cy: number, x: number, y: number): number | null {
+  const dx = x - cx
+  const dy = y - cy
+  if (dx === 0 && dy === 0) return null
+  return normDeg((Math.atan2(dy, dx) * 180) / Math.PI + 90)
+}
+
+/** Where a press grabbed a block along its arc: the block's half, and the
+    minutes from its start to the pressed angle — read forward within that half,
+    so a press past 12 o'clock on a block that crosses the top still measures
+    from the start. Held for the whole drag, so the arc slides under the pointer
+    instead of jumping its start to it (Week's grabOffsetPx, in minutes). */
+export interface DialGrab {
+  half: DayHalf
+  offsetMin: number
+}
+
+export function dialGrab(startMin: number, pressDeg: number): DialGrab {
+  const half = halfOf(startMin)
+  const offsetMin = (((minFromDeg(pressDeg, half) - startMin) % 720) + 720) % 720
+  return { half, offsetMin }
+}
+
+/** The candidate drop for a pointer on the dial — the dial's dropTarget. The
+    pointer's angle names a minute in the grabbed half; the block's START follows
+    it less the grab offset, wrapping within the half; then snapMin, Week's rule
+    verbatim (the 5-minute grid, the day's bounds with the block's length kept
+    before midnight). The day never changes: the dial shows one. A pointer on the
+    centre has no angle, so the block stays home. Pure — the store's dragMove
+    decides whether the drop is allowed. */
+export function dialDropTarget(
+  drag: Pick<DragState, 'fromDayKey' | 'fromStartMin' | 'durationMin'>,
+  grab: DialGrab,
+  cx: number,
+  cy: number,
+  x: number,
+  y: number
+): { dayKey: string; startMin: number } {
+  const deg = degFromPoint(cx, cy, x, y)
+  if (deg == null) return { dayKey: drag.fromDayKey, startMin: drag.fromStartMin }
+  const base = grab.half === 'pm' ? 720 : 0
+  const inHalf = (((minFromDeg(deg, grab.half) - grab.offsetMin - base) % 720) + 720) % 720
+  return { dayKey: drag.fromDayKey, startMin: snapMin(base + inHalf, drag.durationMin) }
+}
 
 /** Time-true week columns: hour → y over the full 00:00–24:00 day, so early
     and late blocks (imported calendars cross timezones) sit where they belong. */
