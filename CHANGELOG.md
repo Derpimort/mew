@@ -85,7 +85,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 ### The drop choice names its day
 - When a block can't make way and MEW offers to drop it, that choice now names the day ("remove the
   Groceries today at 14:00"). So it shows up even when the same block sits at the same time on
-  another day, and picking it removes only the one you're looking at.
+  another day, and picking it removes only the one you're looking at. A drop picked on a later day
+  (after midnight, "today" is a new day) checks again first: it runs only while it still points at
+  the block it was offered for, and otherwise MEW names that block and everything stays as it is.
 
 ## [0.7.0] — 2026-08-12
 

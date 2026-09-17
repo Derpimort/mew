@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, Settings } from '../../domain/types'
 import { chatOrder } from '../../adapters/storage-port'
+import { choicesActive } from '../../domain/choices'
 import type { ToolExecutor } from '../../adapters/model/types'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
@@ -509,5 +510,150 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
     expect(result).not.toMatch(/offer to|don't leave it unasked/)
     expect(chipMsgs()).toHaveLength(1)
     expect(chipMsgs()[0].choices!.map((c) => c.id)).toEqual(['shift', 'drop-groceries', 'keep'])
+  })
+})
+
+/* ── a drop chip picked after midnight (peer review of #89, coderpa) ── */
+
+describe('#12 — a drop chip re-checks at pick time: its day words mean the day it is picked', () => {
+  const groceriesOn = (id: string, dayKey: string) =>
+    block({
+      id,
+      title: 'Groceries',
+      tag: 'private',
+      dayKey,
+      startMin: 14 * 60,
+      endMin: 15.5 * 60,
+      protected: false,
+    })
+  /** the clock rolls past midnight into Wednesday, and the store ticks */
+  const rollTo = (d: Date) => {
+    vi.setSystemTime(d)
+    useMew.getState().tick()
+  }
+  const WED_0005 = new Date(2026, 5, 10, 0, 5)
+  const lastMew = () =>
+    chat()
+      .filter((m) => m.role === 'mew')
+      .at(-1)!
+
+  it('offered Tuesday for Tuesday’s Groceries, picked Wednesday 00:05 with a same-titled Groceries on Wednesday: nothing is removed, and MEW names the block the choice was for', async () => {
+    await fresh([...week0(), groceriesOn('groceries-wed', WED)])
+    await say(PLACE)
+    await settle()
+    const offer = chipMsgs()[0]
+    expect(offer.choices!.find((c) => c.id === 'drop-groceries')!.reply).toBe(
+      'remove the Groceries today at 14:00'
+    )
+
+    rollTo(WED_0005)
+    expect(choicesActive(chat(), chipMsgs()[0])).toBe(true) // still pickable after midnight
+    const before = snapshot()
+    const userTurns = chat().filter((m) => m.role === 'user').length
+
+    await useMew.getState().pickChoice(offer.id, 'drop-groceries')
+    await settle()
+
+    expect(snapshot()).toBe(before) // both Groceries stay, Wednesday's included
+    expect(byId('groceries')).toBeDefined()
+    expect(byId('groceries-wed')).toBeDefined()
+    expect(lastMew().body).toBe(
+      "That choice was for Tuesday's Groceries at 14:00, so everything stays as it is."
+    )
+    expect(chat().filter((m) => m.role === 'user')).toHaveLength(userTurns) // no reply was spoken
+    const spent = chat().find((m) => m.id === offer.id)!
+    expect(spent.choices!.find((c) => c.id === 'drop-groceries')!.picked).toBe(true)
+    expect(choicesActive(chat(), spent)).toBe(false) // the offer is spent
+  })
+
+  it('a chip for tomorrow’s block, picked after midnight: "tomorrow" is Thursday now, so nothing is removed and the block is named as today’s', async () => {
+    await fresh([...week0(), groceriesOn('groceries-wed', WED)])
+    await say(PLACE)
+    await settle()
+    const offer = chipMsgs()[0]
+    /* the same offer, re-pointed at Wednesday's Groceries the way a Tuesday
+       offer for it reads */
+    useMew.setState((st) => ({
+      chat: st.chat.map((m) =>
+        m.id === offer.id
+          ? {
+              ...m,
+              choices: m.choices!.map((c) =>
+                c.id === 'drop-groceries'
+                  ? {
+                      id: 'drop-groceries-wed',
+                      label: 'drop Groceries',
+                      reply: 'remove the Groceries tomorrow at 14:00',
+                    }
+                  : c
+              ),
+            }
+          : m
+      ),
+    }))
+    rollTo(WED_0005)
+    const before = snapshot()
+
+    await useMew.getState().pickChoice(offer.id, 'drop-groceries-wed')
+    await settle()
+
+    expect(snapshot()).toBe(before)
+    expect(lastMew().body).toBe(
+      "That choice was for today's Groceries at 14:00, so everything stays as it is."
+    )
+  })
+
+  it('a weekday-named chip still singles out its block after midnight, so the pick removes exactly that block', async () => {
+    await fresh([...week0(), groceriesOn('groceries-thu', THU)])
+    await say(PLACE)
+    await settle()
+    const offer = chipMsgs()[0]
+    useMew.setState((st) => ({
+      chat: st.chat.map((m) =>
+        m.id === offer.id
+          ? {
+              ...m,
+              choices: m.choices!.map((c) =>
+                c.id === 'drop-groceries'
+                  ? {
+                      id: 'drop-groceries-thu',
+                      label: 'drop Groceries',
+                      reply: 'remove the Groceries on thursday at 14:00',
+                    }
+                  : c
+              ),
+            }
+          : m
+      ),
+    }))
+    rollTo(WED_0005)
+    const before = JSON.parse(snapshot()) as unknown[][]
+
+    await useMew.getState().pickChoice(offer.id, 'drop-groceries-thu')
+    await settle()
+
+    expect(byId('groceries-thu')).toBeUndefined() // Thursday is still Thursday
+    expect(JSON.parse(snapshot())).toEqual(before.filter((r) => r[0] !== 'groceries-thu'))
+    expect(
+      chat().some(
+        (m) => m.role === 'user' && m.body === 'remove the Groceries on thursday at 14:00'
+      )
+    ).toBe(true)
+  })
+
+  it('a block that is gone by the pick: nothing else is touched, and MEW names it by the chip', async () => {
+    await fresh([...week0(), groceriesOn('groceries-wed', WED)])
+    await say(PLACE)
+    await settle()
+    const offer = chipMsgs()[0]
+    useMew.setState((st) => ({ blocks: st.blocks.filter((b) => b.id !== 'groceries') }))
+    rollTo(WED_0005)
+    const before = snapshot()
+
+    await useMew.getState().pickChoice(offer.id, 'drop-groceries')
+    await settle()
+
+    expect(snapshot()).toBe(before) // Wednesday's Groceries stays
+    expect(lastMew().body).toBe('That choice was for Groceries, so everything stays as it is.')
   })
 })
