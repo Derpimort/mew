@@ -17,12 +17,17 @@
      · hover, keyboard focus or an open card lights the WHOLE ring
      · badges lead the single tab stop; Space opens the all-day card
      · a crowded day folds to "+N more" and opens in place
+   The calendar day is pinned (scripts/lib/shootClock.mjs, the shoot.mjs gate's
+   pin), so the proof reads the same on any weekday; SHOOT_DATE=YYYY-MM-DD probes
+   another day. Every fixture is weekday-relative (the grid's own columns, today's
+   own column), so a probe must pass too.
    Usage: node scripts/shoot-allday.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { PROBING, SHOOT_DATE, clockUrl } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots')
@@ -64,7 +69,7 @@ phase = 'identity'
 const distHtml = readFileSync(path.resolve('dist/index.html'), 'utf8')
 const wantSrc = distHtml.match(/src="([^"]*assets\/index-[^"]+\.js)"/)?.[1]
 assert(wantSrc, 'dist/index.html has no hashed index bundle — run pnpm build first')
-await page.goto(`${base}/?t=9:40`)
+await page.goto(clockUrl(base, '9:40')) // the pinned day rides every load
 const servedSrc = await page.evaluate(() =>
   [...document.querySelectorAll('script[src]')].map((s) => s.getAttribute('src')).join(' ')
 )
@@ -145,6 +150,20 @@ await page.waitForSelector('.ob-scrim', { state: 'detached', timeout: 5000 }).ca
 await page.click('.seg2 button:has-text("Week")')
 await page.waitForSelector('.wk-grid [data-daykey]', { timeout: 10000 })
 await page.waitForTimeout(500)
+const todayColumn = await page.evaluate(() =>
+  document.querySelector('.wk-grid .nxb-col.today')?.getAttribute('data-daykey')
+)
+console.log(
+  'pinned day:',
+  SHOOT_DATE,
+  PROBING ? '(probe)' : '(the pin)',
+  '· today column:',
+  todayColumn
+)
+assert(
+  todayColumn === SHOOT_DATE,
+  `the pinned day did not take effect (today column ${todayColumn}, expected ${SHOOT_DATE})`
+)
 
 const weekState = () =>
   page.evaluate(() => {

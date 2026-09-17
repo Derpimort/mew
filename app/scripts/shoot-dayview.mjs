@@ -1,34 +1,54 @@
 /* The Focus dial on any day (#23 slice 1): the date line steps the dial to
    the day before or after, and away from today nothing pretends it's now.
-   Drives the real app against a served dist with today pinned via ?d= (a
-   Wednesday) and fails loudly on any miss:
+   Drives the real app against a served dist with today pinned by
+   scripts/lib/shootClock.mjs (the shoot.mjs gate's Wednesday; SHOOT_DATE probes
+   another day, and every day named below derives from it) and fails loudly on
+   any miss:
      · today: the steps are invisible at rest, the live clock and countdown
        stand, the hand sweeps, the stage ticks every second
-     · a past day (Tuesday): no now-hand, the wash is FULL, no countdown, the
+     · a past day (the day before): no now-hand, the wash is FULL, no countdown, the
        centre names the day with its summary, the stage stops ticking, the
        dial's name says the day, a block card never offers Start now,
        Interrupt or Move
-     · a future day (Thursday): no hand, the wash is EMPTY, same resting centre;
+     · a future day (the day after): no hand, the wash is EMPTY, same resting centre;
        an open block's card keeps Hold and Remove but never offers Done — a mew
        is credited when a block is finished, never before it happens
      · "back to today" restores the live countdown; the picked day survives a
        trip through Week and back
      · zero text collisions on the past and the future day
-     · an all-day badge reads against the SHOWN day: a Mon–Wed entry viewed on
-       Monday runs "through wednesday" (its name and the hover readout), the
-       group names Monday, and on Wednesday itself it runs through nothing
+     · an all-day badge reads against the SHOWN day: an entry running from two
+       days back through today (Mon–Wed on the pin), viewed on its first day,
+       runs "through <today>" (its name and the hover readout), the group names
+       that day, and on today itself it runs through nothing
    Usage: node scripts/shoot-dayview.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { PROBING, SHOOT_DATE, clockUrl, shootDay } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots')
 mkdirSync(outDir, { recursive: true })
 
-const TODAY = '2026-09-16' // a Wednesday
+/* every day this proof names derives from the pinned day, so a SHOOT_DATE probe
+   checks the same shape on any weekday (Wednesday on the pin) */
+const TODAY = SHOOT_DATE
+const pinned = shootDay() // the pinned day at noon, local
+const dayAt = (n) => new Date(pinned.getFullYear(), pinned.getMonth(), pinned.getDate() + n, 12)
+const keyOf = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const weekday = (d) => d.toLocaleDateString('en-US', { weekday: 'long' }) // "Tuesday"
+const dow = (d) => weekday(d).slice(0, 3) // "Tue"
+const longDate = (d) =>
+  `${weekday(d)}, ${d.toLocaleDateString('en-US', { month: 'long' })} ${d.getDate()}` // "Tuesday, September 15"
+const shortDate = (d) =>
+  `${weekday(d)}, ${d.toLocaleDateString('en-US', { month: 'short' })} ${d.getDate()}` // "Tuesday, Sep 15"
+const PAST = dayAt(-1)
+const FUTURE = dayAt(1)
+const SPAN_FROM = dayAt(-2)
+console.log('pinned day:', SHOOT_DATE, PROBING ? '(probe)' : '(the pin)')
 const browser = await chromium.launch({ executablePath: findChromium(), args: ['--disable-gpu'] })
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 840 } })
 const page = await ctx.newPage()
@@ -65,7 +85,7 @@ phase = 'identity'
 const distHtml = readFileSync(path.resolve('dist/index.html'), 'utf8')
 const wantSrc = distHtml.match(/src="([^"]*assets\/index-[^"]+\.js)"/)?.[1]
 assert(wantSrc, 'dist/index.html has no hashed index bundle — run pnpm build first')
-await page.goto(`${base}/?d=${TODAY}&t=9:40`)
+await page.goto(clockUrl(base, '9:40'))
 const servedSrc = await page.evaluate(() =>
   [...document.querySelectorAll('script[src]')].map((s) => s.getAttribute('src')).join(' ')
 )
@@ -195,8 +215,8 @@ await page.waitForTimeout(1500)
 const today = await dial()
 console.log('today:', JSON.stringify(today))
 assert(
-  today.date.startsWith('Wed'),
-  `the date line should read today (a Wednesday): "${today.date}"`
+  today.date.startsWith(dow(pinned)),
+  `the date line should read today (a ${weekday(pinned)}): "${today.date}"`
 )
 assert(
   today.label === "focus dial: 12-hour clock showing today's tasks",
@@ -223,8 +243,11 @@ await page.mouse.move(8, 830)
 await page.waitForTimeout(1200)
 const past = await dial()
 console.log('past:', JSON.stringify(past))
-assert(past.date.startsWith('Tue'), `the previous-day step should show Tuesday: "${past.date}"`)
-assert(/showing the tasks for Tuesday, September 15/.test(past.label), `dial name: "${past.label}"`)
+assert(
+  past.date.startsWith(dow(PAST)),
+  `the previous-day step should show ${weekday(PAST)}: "${past.date}"`
+)
+assert(past.label.includes(`showing the tasks for ${longDate(PAST)}`), `dial name: "${past.label}"`)
 assert(
   past.stepsVisible.every((o) => o === 1),
   'away from today the steps stay shown'
@@ -233,7 +256,7 @@ assert(!past.time && past.back, 'away from today the live time gives way to "bac
 assert(!past.hand, 'a past day has no now-hand')
 assert(past.washInner && past.washOuter, 'a past day’s wash should be FULL')
 assert(past.count == null, 'a past day shows no countdown')
-assert(/^Tuesday, Sep 15/.test(past.task), `the centre should name the day: "${past.task}"`)
+assert(past.task.startsWith(shortDate(PAST)), `the centre should name the day: "${past.task}"`)
 assert(
   /^(a clear day|\d+ blocks?)/.test(past.meta),
   `the centre should summarise the day: "${past.meta}"`
@@ -271,10 +294,13 @@ await page.mouse.move(8, 830)
 await page.waitForTimeout(1200)
 const future = await dial()
 console.log('future:', JSON.stringify(future))
-assert(future.date.startsWith('Thu'), `the next-day step should show Thursday: "${future.date}"`)
+assert(
+  future.date.startsWith(dow(FUTURE)),
+  `the next-day step should show ${weekday(FUTURE)}: "${future.date}"`
+)
 assert(!future.hand, 'a future day has no now-hand')
 assert(!future.washInner && !future.washOuter, 'a future day’s wash should be EMPTY')
-assert(future.count == null && /^Thursday, Sep 17/.test(future.task), 'future centre')
+assert(future.count == null && future.task.startsWith(shortDate(FUTURE)), 'future centre')
 assert(
   (await collisions()).length === 0,
   `text collisions (future): ${(await collisions()).join('; ')}`
@@ -312,7 +338,10 @@ await page.waitForTimeout(500)
 await page.click('.seg2 button:has-text("Focus")')
 await page.waitForSelector('.nx-stage')
 await page.waitForTimeout(500)
-assert((await dial()).date.startsWith('Thu'), 'the picked day did not survive Focus → Week → Focus')
+assert(
+  (await dial()).date.startsWith(dow(FUTURE)),
+  'the picked day did not survive Focus → Week → Focus'
+)
 
 /* 5 · back to today restores the live dial */
 phase = 'back'
@@ -331,8 +360,9 @@ assert(
 )
 assert((await ticks()) > 0, 'back on today the stage ticks again')
 
-/* 6 · an all-day badge reads against the day the dial SHOWS: Offsite runs
-   Mon Sep 14 → Wed Sep 16 (today). Pulled last, so no step above sees it. */
+/* 6 · an all-day badge reads against the day the dial SHOWS: Offsite runs from
+   two days back through today (Mon Sep 14 → Wed Sep 16 on the pin). Pulled last,
+   so no step above sees it. */
 phase = 'badges'
 await page.evaluate(
   (events) => window.__mewSimulatePull?.(events),
@@ -343,7 +373,7 @@ await page.evaluate(
       startMin: 0,
       endMin: 0,
       allDay: true,
-      dayKey: '2026-09-14',
+      dayKey: keyOf(SPAN_FROM),
       endDayKey: TODAY,
     },
   ]
@@ -367,24 +397,32 @@ await page.hover('.nx-day .dt')
 await page.click('.nx-day-step.prev')
 await page.click('.nx-day-step.prev')
 await page.waitForTimeout(400)
-assert((await dial()).date.startsWith('Mon'), 'two previous-day steps should show Monday')
-const onMonday = await badge()
-console.log('badge on Monday:', JSON.stringify(onMonday))
 assert(
-  onMonday.label === 'Offsite · all day, through wednesday · calendar',
-  `viewed on Monday the entry runs through wednesday: ${JSON.stringify(onMonday)}`
+  (await dial()).date.startsWith(dow(SPAN_FROM)),
+  `two previous-day steps should show ${weekday(SPAN_FROM)}`
+)
+const onFirstDay = await badge()
+const through = weekday(pinned).toLowerCase() // "wednesday" on the pin
+console.log(`badge on ${weekday(SPAN_FROM)}:`, JSON.stringify(onFirstDay))
+assert(
+  onFirstDay.label === `Offsite · all day, through ${through} · calendar`,
+  `viewed on ${weekday(SPAN_FROM)} the entry runs through ${through}: ${JSON.stringify(onFirstDay)}`
 )
 assert(
-  onMonday.group === 'all-day labels for Monday, September 14',
-  `off today the group names the shown day: ${JSON.stringify(onMonday)}`
+  onFirstDay.group === `all-day labels for ${longDate(SPAN_FROM)}`,
+  `off today the group names the shown day: ${JSON.stringify(onFirstDay)}`
 )
 await page.hover('.dial-badges .dial-badge:not(.more)')
 await page.waitForTimeout(300)
 const readout = await page.evaluate(
   () => document.querySelector('.pri-readout .pri-range')?.textContent?.trim() ?? ''
 )
-console.log('badge hover readout on Monday:', JSON.stringify(readout))
-assert(/→\s*wed/.test(readout), `the hover readout should run → wed on Monday: "${readout}"`)
+const endsOn = dow(pinned).toLowerCase() // "wed" on the pin
+console.log(`badge hover readout on ${weekday(SPAN_FROM)}:`, JSON.stringify(readout))
+assert(
+  new RegExp(`→\\s*${endsOn}`).test(readout),
+  `the hover readout should run → ${endsOn} on ${weekday(SPAN_FROM)}: "${readout}"`
+)
 await page.screenshot({ path: `${outDir}/dayview-past-badge.png` })
 
 console.log(

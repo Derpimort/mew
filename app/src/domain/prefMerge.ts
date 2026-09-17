@@ -57,6 +57,24 @@ export function mergeActivePrefs(
   return out
 }
 
+/** #71: the applied rules nothing local decided — they come from the brain alone.
+    Keyed by prefKey, over exactly the rules mergeActivePrefs keeps, so the
+    console can mark a brain-only row and a forget can reach it. No brain (null
+    or []) → empty. */
+export function brainOnlyPrefKeys(
+  memory: readonly MemoryEvent[],
+  fromBrain: readonly PrefPayload[] | null
+): Set<string> {
+  if (!fromBrain?.length) return new Set()
+  const { live } = localPrefState(memory)
+  const local = new Set(live.map(prefKey))
+  return new Set(
+    mergeActivePrefs(memory, fromBrain)
+      .map(prefKey)
+      .filter((k) => !local.has(k))
+  )
+}
+
 /** What the brain is missing, given its current list: local live rules it
     doesn't hold with the same value (told to MEW while the brain was away, or
     changed since), and forgotten rules it still lists (so its copy can be

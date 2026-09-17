@@ -43,6 +43,11 @@ export interface ScenarioPlace {
   startMin: number
   durationMin: number
   due?: number
+  /** #81: the owner stated this length (the task's durationStated, carried into
+      the quote). Present only when true, so a plan with no stated lengths is
+      byte-identical; the apply hands it to execPlan, where the estimate guard
+      never offers on — and pad never touches — a stated length. */
+  durationStated?: boolean
 }
 
 export interface Scenario {
@@ -322,6 +327,7 @@ function buildDraft(
       startMin: pick.startMin,
       durationMin: t.durationMin,
       ...(t.due != null ? { due: t.due } : {}),
+      ...(t.durationStated ? { durationStated: true } : {}), // #81
     })
     whys.push(pick.why)
     phantoms.push(phantom(t, pick, phantoms.length))
@@ -434,6 +440,7 @@ function buildEnergyFit(
       startMin: pick.startMin,
       durationMin: t.durationMin,
       ...(t.due != null ? { due: t.due } : {}),
+      ...(t.durationStated ? { durationStated: true } : {}), // #81
     })
     phantoms.push(phantom(t, pick, phantoms.length))
   }
@@ -479,6 +486,7 @@ function buildEnergyFit(
           dayOffset,
           startMin: cursor,
           durationMin: at.durationMin,
+          ...(at.durationStated ? { durationStated: true } : {}), // #81
         })
         phantoms.push(
           phantom(
