@@ -476,6 +476,40 @@ describe('#139 — the words a question offers are words the reader accepts', ()
      returns to zero because the bug went away, not because the row did. That is
      the whole reason the expected-fail form was the right one: it created the
      obligation that this line is now discharging. */
+  it('a block past the day words gets NO chip, and the question still names it (#166 part 1)', async () => {
+    /* coderpa's finding on this PR, pinned here rather than left to #166: widening
+       the day-naming rule to "the candidates span days" makes an existing,
+       load-bearing, UNPINNED guard matter in strictly more asks. A block ten days
+       out has no day word — a chip saying "friday 14:00" would reply "on friday"
+       and remove THIS Friday's block, one the owner never named. Dropping its chip
+       is the SAFE failure and #62 says the question must still name it.
+
+       Their mutant, which this test now kills: let a chipless candidate through
+       and the ask ships a chip reading "null 14:00" whose reply is "remove lunch on
+       null at 14:00", while 778 state tests stay green. Both halves are asserted
+       so it cannot pass by dropping the block from the question too. */
+    await fresh([
+      block({ id: 'near', title: 'Lunch', startMin: 720, endMin: 750 }),
+      block({
+        id: 'far',
+        title: 'Lunch',
+        dayKey: addDaysKey(TODAY, 10),
+        startMin: 840,
+        endMin: 870,
+      }),
+    ])
+    await say('remove the lunch')
+    await settle()
+    const ask = chipMsgs().at(-1)!
+    /* the far block has no chip … */
+    expect(ask.choices!.map((c) => c.label)).toEqual(['today 12:00', 'both'])
+    expect(ask.choices!.every((c) => !/null/.test(c.label) && !/null/.test(c.reply))).toBe(true)
+    /* … and the question still names it, in the descriptive form it keeps for a
+       candidate with no chip to speak for it */
+    expect(ask.body).toContain('14:00')
+    expect(ask.body).toMatch(/2 "lunch" blocks ahead/)
+  })
+
   it('the remove ask names a day only when the blocks span days (#161)', async () => {
     /* the other half of the rule, so it cannot be satisfied by naming the day
        everywhere: three lunches on ONE day need no day word, and the question
