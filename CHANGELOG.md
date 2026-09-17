@@ -227,6 +227,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - An item you place from your inbox is saved the way it shows, now held by tests: after a reload its
   block is still in your week, and after "undo that" the item is back in your inbox with no block
   left behind.
+- Tonight's changes are now proven together, not only one by one: journey tests walk one week
+  through an out-of-office label, an evening plan, a block split around a meeting, lunches removed
+  across midnight, the room offer, rolling forward and the dial on a past day. The gaps they found
+  are filed, each held by a test that flips when it's fixed.
 
 ## [0.7.0] — 2026-08-12
 
