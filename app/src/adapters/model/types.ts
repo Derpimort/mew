@@ -320,7 +320,10 @@ export interface ToolExecutor {
       tag?: import('../../domain/types').Tag
       titleQuery?: string
     },
-    op: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
+    op:
+      | { kind: 'shift'; deltaMin: number }
+      | { kind: 'moveToDay'; toDayOffset: number }
+      | { kind: 'setTag'; tag: import('../../domain/types').Tag },
     confirmCount?: number,
     confirmToken?: string
   ): string

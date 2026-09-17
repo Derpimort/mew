@@ -628,7 +628,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'batch_blocks',
     description:
-      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier) or move_to_day (toDayOffset, same clock). Calendar events, fixed-time, done and repeating blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount and confirmToken ONLY when the user just said yes to MEW's batch offer: the yes ends '— yes, all N · TOKEN'; pass N and TOKEN verbatim. If the list changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
+      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier), move_to_day (toDayOffset, same clock) or set_tag (toTag, in place: 'tag all of tomorrow's calls as work'). Calendar events, fixed-time, done and repeating blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount and confirmToken ONLY when the user just said yes to MEW's batch offer: the yes ends '— yes, all N · TOKEN'; pass N and TOKEN verbatim. If the list changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
     parameters: {
       type: 'object',
       properties: {
@@ -646,7 +646,8 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'string',
           description: 'Pick only blocks whose title contains these words',
         },
-        op: { type: 'string', enum: ['shift', 'move_to_day'] },
+        op: { type: 'string', enum: ['shift', 'move_to_day', 'set_tag'] },
+        toTag: { ...TAG_SCHEMA, description: 'For set_tag: the tag every picked block takes' },
         deltaMin: {
           type: 'integer',
           description: 'For shift: minutes to move each block (+60 = an hour later, −30 = earlier)',
@@ -1007,7 +1008,14 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
         return exec.batch(selector, { kind: 'moveToDay', toDayOffset }, confirmCount, confirmToken)
       }
-      return 'nothing to batch — op must be shift or move_to_day'
+      if (o.op === 'set_tag') {
+        const toTag = (['work', 'private', 'health', 'rest'] as const).includes(o.toTag as never)
+          ? (o.toTag as 'work')
+          : undefined
+        if (!toTag) return 'nothing to tag — pass toTag (work, private, health or rest)'
+        return exec.batch(selector, { kind: 'setTag', tag: toTag }, confirmCount, confirmToken)
+      }
+      return 'nothing to batch — op must be shift, move_to_day or set_tag'
     }
     case 'merge_blocks':
       return exec.merge(String(o.query ?? ''), optInt(o.dayOffset, 0, 13), atArg(o.at))

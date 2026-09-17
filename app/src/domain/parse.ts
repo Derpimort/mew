@@ -366,6 +366,35 @@ const BATCH_MOVE = new RegExp(
     String.raw`\s+to\s+(today|tomorrow|(?:on\s+)?[a-z]+day|(?:on\s+)?\d{4}-\d{2}-\d{2})$`
 )
 
+const BATCH_TAG = new RegExp(
+  String.raw`^(?:tag|retag|mark)\s+all\s+(of\s+)?(?:(today's|tomorrow's|[a-z]+day's|\d{4}-\d{2}-\d{2}'s)\s+)?(.+?)` +
+    BATCH_WINDOW +
+    String.raw`\s+as\s+(work|private|health|rest)$`
+)
+
+/* "between 2 and 5pm" is the two-edge window "after 2pm and before 5pm" (#75
+   slice 2): a bare first hour takes the second's half of the day when it comes
+   earlier on the clock ("between 2 and 5pm"), and the other half when it can't
+   ("between 11 and 1pm" is 11am to 1pm) */
+const BETWEEN = new RegExp(String.raw`\bbetween\s+(${BATCH_CLOCK})\s+and\s+(${BATCH_CLOCK})\b`)
+function betweenAsEdges(text: string): string {
+  return text.replace(BETWEEN, (_m, a: string, b: string) => {
+    const from = a.trim()
+    const to = b.trim()
+    const half = to.match(/(am|pm)$/)?.[1]
+    const bareFrom = from.match(/^(\d{1,2})(?::\d{2})?$/)
+    const toHour = Number(to.match(/^(\d{1,2})/)?.[1] ?? NaN)
+    const fromHour = bareFrom ? Number(bareFrom[1]) : NaN
+    let first = from
+    if (half && bareFrom && fromHour >= 1 && fromHour <= 12) {
+      const same = fromHour % 12 <= toHour % 12
+      first = `${from}${same ? half : half === 'pm' ? 'am' : 'pm'}`
+    }
+    /* the clock's optional am/pm can swallow the space after it: give it back */
+    return `after ${first} and before ${to}${b.slice(b.trimEnd().length)}`
+  })
+}
+
 /** "3pm" · "3:30pm" · "15:00" · "noon" → minutes; a bare "3" is ambiguous → null */
 function batchClock(s: string): number | null {
   const t = s.trim().toLowerCase()
@@ -393,6 +422,7 @@ function parseBatch(text: string, now: Date): ScheduleIntent | null {
     confirmToken = yes[2]
     lower = lower.slice(0, yes.index).trim()
   }
+  lower = betweenAsEdges(lower)
   const confirm = {
     ...(confirmCount != null ? { confirmCount } : {}),
     ...(confirmToken ? { confirmToken } : {}),
@@ -467,17 +497,33 @@ function parseBatch(text: string, now: Date): ScheduleIntent | null {
 
   /* a move to another day, same clock: "move all [of] [day's] [my] <tag |
      "title words" | title words blocks | blocks> [window] to <day>" */
-  const moveM = lower.match(BATCH_MOVE)
-  if (moveM) {
-    const [, of, fromDay, whatIn, after, before, toDay] = moveM
-    const toDayOffset = dayOf(toDay)
+  /* the selection a move or a retag names: "[of] [day's] [my] <tag | "title words" |
+     title words blocks | blocks> [window]" (#75 slice 1, shared by slice 2) */
+  const readSelection = (
+    of: string | undefined,
+    fromDay: string | undefined,
+    whatIn: string,
+    after: string | undefined,
+    before: string | undefined
+  ):
+    | { ask: ScheduleIntent }
+    | {
+        sel: {
+          tag?: Tag
+          titleQuery?: string
+          dayOffset?: number
+          afterMin?: number
+          beforeMin?: number
+        }
+      }
+    | null => {
     const fromOffset = dayOf(fromDay)
-    if (toDayOffset == null || (fromDay && fromOffset == null)) return null
+    if (fromDay && fromOffset == null) return null
     const mine = /^my\s+/.test(whatIn)
     const what = whatIn.replace(/^my\s+/, '').trim()
     const quoted = what.match(/^(?:(work|private|health|rest)\s+)?"([^"]*)"(?:\s+blocks?)?$/)
     const bare = what.replace(/\s+blocks?$/, '')
-    const sel: { tag?: Tag; titleQuery?: string } = quoted
+    const named: { tag?: Tag; titleQuery?: string } = quoted
       ? {
           ...(quoted[1] ? { tag: quoted[1] as Tag } : {}),
           ...(quoted[2].trim() ? { titleQuery: quoted[2].trim() } : {}),
@@ -497,21 +543,38 @@ function parseBatch(text: string, now: Date): ScheduleIntent | null {
       !!quoted ||
       /^blocks?$/.test(what) ||
       bare !== what ||
-      sel.tag != null
+      named.tag != null
     if (!signal || !what) return null
     const win = windowOf(after, before)
     if (!win) return null
-    if (win.ask) return win.ask
+    if (win.ask) return { ask: win.ask }
+    return {
+      sel: { ...(fromOffset != null ? { dayOffset: fromOffset } : {}), ...win.window, ...named },
+    }
+  }
+
+  /* a move to another day, same clock: "move all [of] [day's] <selection> to <day>" */
+  const moveM = lower.match(BATCH_MOVE)
+  if (moveM) {
+    const [, of, fromDay, whatIn, after, before, toDay] = moveM
+    const toDayOffset = dayOf(toDay)
+    if (toDayOffset == null) return null
+    const read = readSelection(of, fromDay, whatIn, after, before)
+    if (!read) return null
+    if ('ask' in read) return read.ask
+    return { kind: 'batch', batch: { ...read.sel, op: 'moveToDay', toDayOffset, ...confirm } }
+  }
+
+  /* a retag, in place (#75 slice 2): "tag all [of] [day's] <selection> as <tag>" */
+  const tagM = lower.match(BATCH_TAG)
+  if (tagM) {
+    const [, of, fromDay, whatIn, after, before, toTag] = tagM
+    const read = readSelection(of, fromDay, whatIn, after, before)
+    if (!read) return null
+    if ('ask' in read) return read.ask
     return {
       kind: 'batch',
-      batch: {
-        ...(fromOffset != null ? { dayOffset: fromOffset } : {}),
-        ...win.window,
-        ...sel,
-        op: 'moveToDay',
-        toDayOffset,
-        ...confirm,
-      },
+      batch: { ...read.sel, op: 'setTag', toTag: toTag as Tag, ...confirm },
     }
   }
   return null

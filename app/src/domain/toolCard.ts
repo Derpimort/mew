@@ -112,6 +112,7 @@ const BASE_VERB: Record<string, string> = {
   duplicate: 'duplicating it',
   merge: 'merging them',
   batch: 'moving them',
+  retag: 'tagging them', // #75 slice 2
   relativeMove: 'nudging it',
   split: 'splitting it',
 }
@@ -188,6 +189,7 @@ const FORMATTERS: Record<string, (a: Record<string, unknown>) => ToolCardLabel> 
     return { verb: BASE_VERB.merge, target: what ? (day ? `${what} · ${day}` : what) : undefined }
   },
   batch: (a) => ({ verb: BASE_VERB.batch, target: namedTarget(a.query) }),
+  retag: (a) => ({ verb: BASE_VERB.retag, target: namedTarget(a.query) }),
 }
 
 /** One executor invocation → the card's line. Total: every input shape returns
