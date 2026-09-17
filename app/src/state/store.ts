@@ -95,6 +95,7 @@ import {
 } from '../domain/scheduler'
 import { pastEndNote, plannableLabel, plannableOf } from '../domain/plannable'
 import { correctMeal, mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
+import { CAPTURE_NUDGE_NOTE, DRIFT_OFFER_NOTE } from '../adapters/model/modelNotes'
 import {
   buildCtx,
   evaluateEvent,
@@ -1083,7 +1084,7 @@ function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
     const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
     return week.isFixedTime(c, prefs)
       ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
-      : `${base} (flexible — offer to drift it, don't move it unasked)`
+      : `${base} (flexible${DRIFT_OFFER_NOTE})`
   })
   return ` — note: it overlaps ${parts.join(' and ')}`
 }
@@ -2653,6 +2654,10 @@ export const useMew = create<MewState>((set, get) => {
     let blocks = s.blocks
     const lines: string[] = []
     const mealNotes: string[] = [] // #323: one aside per meal the guardrail moved or named
+    /* #116: a place with no time that today's remaining hours can't hold is
+       named honestly (never back-filled into the morning), with the next open
+       time as the offer */
+    const noRoom: { note: string; offer: ChoiceOption | null }[] = []
     let placedDeep: Block | null = null
     const touchedDays = new Set<string>() // days a rest-pacing pass should re-check (#103)
     /* #322: blocks this run newly PLACED without a stated duration, by focus
@@ -2887,20 +2892,61 @@ export const useMew = create<MewState>((set, get) => {
         )
         continue
       }
-      const placed = week.place(
-        blocks,
-        {
-          title: p.title,
-          tag,
-          dayKey: key,
-          startMin: start,
-          durationMin: prefd.durationMin,
-          protected: prefd.protected ?? !microRest,
-          attention: prefd.attention,
-          due: p.due,
-        },
-        plannableOf(s.settings) // #22: a first-fit fallback stays inside the plannable day
-      )
+      /* #116: an auto-placed block never starts in the past — today's first-fit
+         looks from now, and a day already lived has no slot to find */
+      const planHours = plannableOf(s.settings) // #22: a first-fit fallback stays inside the plannable day
+      const auto = start == null && !bg
+      const placed =
+        auto && key < todayKey
+          ? null
+          : week.place(
+              blocks,
+              {
+                title: p.title,
+                tag,
+                dayKey: key,
+                startMin: start,
+                durationMin: prefd.durationMin,
+                protected: prefd.protected ?? !microRest,
+                attention: prefd.attention,
+                due: p.due,
+              },
+              auto && key === todayKey
+                ? { ...planHours, startMin: Math.max(planHours.startMin, minOfDay(now)) }
+                : planHours
+            )
+      if (!placed && auto && key <= todayKey) {
+        const base = p.title.split('—')[0].trim()
+        const dur = prefd.durationMin ?? 60
+        const from = Math.max(planHours.startMin, minOfDay(now))
+        const tonight =
+          key === todayKey
+            ? pastEndNote(blocks, todayKey, from, dur, planHours, 'today', bufferMin)
+            : null
+        const nextKey = addDaysKey(todayKey, 1)
+        const next = week.findFreeSlot(
+          blocks,
+          nextKey,
+          dur,
+          planHours.startMin,
+          planHours.endMin,
+          bufferMin
+        )
+        const why =
+          key === todayKey
+            ? `No ${dur}-min window is left today for "${base}" inside the hours I plan in (${plannableLabel(planHours)}).`
+            : `${fmtDowLong(key)} has already gone by, so "${base}" needs a day ahead.`
+        noRoom.push({
+          note: `${why}${tonight ? ` ${tonight}` : ''}${next ? ` Tomorrow ${fmtTime(next.startMin)}–${fmtTime(next.endMin)} is open.` : ''}`,
+          offer: next
+            ? {
+                label: `tomorrow ${fmtTime(next.startMin)}`,
+                reply: `block ${dur % 60 === 0 ? `${dur / 60}h` : `${dur} min`} for ${base} tomorrow at ${fmtTime(next.startMin)}`,
+              }
+            : null,
+        })
+        continue
+      }
       if (!placed) {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
         continue
@@ -2944,7 +2990,16 @@ export const useMew = create<MewState>((set, get) => {
       blocks = [...blocks, guard]
       lines.push(`${fmtDowLong(key)} ${f.startMin === 13 * 60 ? 'afternoon ' : ''}kept free`)
     }
-    if (!lines.length) return 'nothing was placed'
+    if (!lines.length) {
+      /* #116: the only ask couldn't fit today — say so and offer the next open
+         time; nothing lands until the owner picks it */
+      if (noRoom.length === 1 && noRoom[0].offer)
+        return execOfferChoices(noRoom[0].note, [
+          noRoom[0].offer,
+          { label: 'not now', reply: 'ok, not now' },
+        ])
+      return noRoom.length ? noRoom.map((r) => r.note).join(' ') : 'nothing was placed'
+    }
 
     /* pacing rest (#103): a long unbroken work run earns one short breather.
        The pass is pure and idempotent — it returns at most one rest per day
@@ -2952,7 +3007,7 @@ export const useMew = create<MewState>((set, get) => {
        stacks rests. A free seam gets an UNPROTECTED micro-rest (≤20m, the same
        absorbable pacing rest a reshape can dissolve); a wall-to-wall run that
        would need a committed block displaced is only OFFERED, never seized. */
-    const paced = paceRest(blocks, touchedDays, todayKey)
+    const paced = paceRest(blocks, touchedDays, todayKey, minOfDay(now))
     blocks = paced.blocks
     const restNotes = paced.notes
     setBlocks(blocks)
@@ -3014,7 +3069,8 @@ export const useMew = create<MewState>((set, get) => {
       mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
     }
     const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
-    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}`
+    const noRoomAside = noRoom.length ? ` ${noRoom.map((r) => r.note).join(' ')}` : ''
+    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}${noRoomAside}`
   }
 
   /* completions through CHAT celebrate in the reply itself — the celebrate
@@ -4153,7 +4209,9 @@ export const useMew = create<MewState>((set, get) => {
       driftNote = d.note
       stuckIds = d.stuckIds
     }
-    const paced = focusWork ? paceRest(blocks, [t.dayKey], todayKey) : { blocks, notes: [] }
+    const paced = focusWork
+      ? paceRest(blocks, [t.dayKey], todayKey, minOfDay(now))
+      : { blocks, notes: [] }
     setBlocks(paced.blocks)
     const choices = stuckIds.length
       ? offerDriftChoices([{ placedId: tail.id, stuckIds }], todayKey)
@@ -4245,7 +4303,7 @@ export const useMew = create<MewState>((set, get) => {
           : b
       )
     }
-    const paced = paceRest(blocks, days, todayKey)
+    const paced = paceRest(blocks, days, todayKey, minOfDay(new Date(s.nowMs)))
     setBlocks(paced.blocks)
     const reach =
       scope === 'series'
@@ -4304,7 +4362,7 @@ export const useMew = create<MewState>((set, get) => {
     set((st) => ({ captures: [...st.captures, capture] }))
     persistCaptures([capture])
     fireEventNudges({ newCapture: capture })
-    return `Captured "${clean}". (The when-&-where nudge with a proposed slot is already posted — don't propose another time yourself.)`
+    return `Captured "${clean}".${CAPTURE_NUDGE_NOTE}`
   }
 
   /* ── recurring-edit scope (#343) ─────────────────────────────────────────
@@ -4984,12 +5042,12 @@ export const useMew = create<MewState>((set, get) => {
               label: `the ${fmtTime(b.startMin)}`,
               reply: `remove ${base} ${fmtTime(b.startMin)}`,
             }))
+      /* #124: the line names the all-chip in its own words — "both" for two,
+         "all of them" for three or more */
+      const everyOne = candidates.length === 2 ? 'both' : 'all of them'
       return execOfferChoices(
-        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`,
-        [
-          ...timeOptions,
-          { label: candidates.length === 2 ? 'both' : 'all of them', reply: `remove all ${base}` },
-        ]
+        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "${everyOne}" to drop them all.`,
+        [...timeOptions, { label: everyOne, reply: `remove all ${base}` }]
       )
     }
     if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
@@ -8093,11 +8151,14 @@ function namesOfBlocks(blocks: Block[], ids: string[]): string[] {
 function paceRest(
   blocks: Block[],
   days: Iterable<string>,
-  todayKey: string
+  todayKey: string,
+  nowMin: number
 ): { blocks: Block[]; notes: string[] } {
   const notes: string[] = []
   for (const key of days) {
-    const r = restInsertion(blocks, key) // #22: the pacing pass keeps the classic day
+    if (key < todayKey) continue // #116: a day already lived gets no breather
+    // #22: the pacing pass keeps the classic day; #116: today's starts from now
+    const r = restInsertion(blocks, key, key === todayKey ? nowMin : 0)
     if (!r) continue
     const when = key === todayKey ? 'today' : fmtDowLong(key)
     if (r.kind === 'place') {

@@ -52,6 +52,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Auto-placement lands on human times: a slot asked for at 10:07 opens at 10:30, or at the next
   quarter that still fits, and every placement path stays on the five-minute grid. Times you name
   yourself are kept exactly.
+- A time MEW picks for you is always still ahead of you. When what you ask for no longer fits in
+  today's hours, MEW says so, names the free time past them and offers tomorrow's first opening as
+  a choice, and a breather is only ever tucked into time still to come.
 
 ### Placing from your inbox leaves a receipt
 - When you place something from your inbox or the loose-threads rail, the conversation now shows its
@@ -128,6 +131,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   time on several days, MEW asks which day with tappable choices ("today 12:00", "thursday 12:00")
   and changes nothing until you pick. Naming the day ("remove the lunch on thursday at 12:00") goes
   straight to that one, and "all" still means all.
+- The question names its all-choice in the choice's own words: "both" for two blocks, "all of
+  them" for three or more.
 
 ### Say the day your way when removing
 - "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at
@@ -182,6 +187,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   connection to the model hiccuped" — and answers the turn itself. Whatever already streamed stays
   exactly as it arrived, and nothing is sent twice behind your back.
 
+### Replies written for you
+- Every reply MEW speaks without a connected model is written for you alone: a captured thought
+  reads just `Captured "call the bank".`, and an overlap a batch change leaves names the block and
+  that it's flexible. A connected model still gets its own guidance behind the scenes.
+
 ### Each rest gets its one gentle ask
 - When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
   and remembers it, across a restart too. A second rest that day still gets its own ask, even
@@ -226,6 +236,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   it came from.
 - MEW opens on about 43 KB less code: the connected-model instructions and the class-merging helper
   used by Settings now load only when those are used, not with every start.
+- The check that keeps the connected-model instructions off the start-up path now has the time it
+  needs on a busy test runner, so it can only fail for a real reason.
 - The release notes guard themselves: a check in CI fails any change that repeats a section or a
   bullet in these notes, so what you read here is written once.
 - Three more midnight details are held by tests: a choice picked in the first seconds after

@@ -11,6 +11,7 @@ import { RITUAL_ASK } from '../../domain/chipEffect' // #94: one home with the c
 import { weekdayOffset } from '../../domain/time'
 import type { PlanMode, ScheduleIntent, Tag } from '../../domain/types'
 import { CHOICES_POSTED } from './choicesPosted'
+import { ownerView } from './modelNotes'
 import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
@@ -88,29 +89,33 @@ export function runIntent(
            reply. A fall-through line (single shape, nothing fits) speaks. */
         return quietIfChoices(out)
       }
-      return exec.plan(
-        places.map((p) => ({
-          title: p.title,
-          tag: p.tag,
-          dayOffset: p.dayOffset ?? 0,
-          startMin: p.startMin,
-          // #323: the deterministic parser only ever reads a time the user typed
-          // ("dinner at 6") — never a reshape — so an explicit time here is stated
-          startStated: p.startMin != null || undefined,
-          durationMin: p.durationMin,
-          // #322: same logic for length — a parsed duration is always the user's
-          // own words, so it's stated (and stated word wins: never auto-padded)
-          durationStated: p.durationMin != null || undefined,
-          protected: p.protected,
-          attention: p.attention,
-          due: p.due,
-          rrule: p.rrule,
-        })),
-        frees.map((f) => ({
-          dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
-          startMin: f.startMin,
-          endMin: f.endMin,
-        }))
+      /* #116: an ask that no longer fits today posts its tomorrow offer as chips;
+         the floor stays quiet then, the chips ARE the reply */
+      return quietIfChoices(
+        exec.plan(
+          places.map((p) => ({
+            title: p.title,
+            tag: p.tag,
+            dayOffset: p.dayOffset ?? 0,
+            startMin: p.startMin,
+            // #323: the deterministic parser only ever reads a time the user typed
+            // ("dinner at 6") — never a reshape — so an explicit time here is stated
+            startStated: p.startMin != null || undefined,
+            durationMin: p.durationMin,
+            // #322: same logic for length — a parsed duration is always the user's
+            // own words, so it's stated (and stated word wins: never auto-padded)
+            durationStated: p.durationMin != null || undefined,
+            protected: p.protected,
+            attention: p.attention,
+            due: p.due,
+            rrule: p.rrule,
+          })),
+          frees.map((f) => ({
+            dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
+            startMin: f.startMin,
+            endMin: f.endMin,
+          }))
+        )
       )
     }
     case 'complete':
@@ -314,17 +319,18 @@ export function createRulesAdapter(now: () => Date, planMode: PlanMode = 'auto')
          ahead of the grammar — parse.ts has no single intent for shrink+place */
       const split = parseSplitAsk(last)
       if (split) {
-        yield runSplit(split, exec, now())
+        yield ownerView(runSplit(split, exec, now()))
         return
       }
       /* the weekly ritual (#304) rides ahead of the grammar the same way —
          to the block clause, "plan my week" reads as placing "my week" */
       if (RITUAL_ASK.test(last)) {
-        yield runRitual(ctx, exec)
+        yield ownerView(runRitual(ctx, exec))
         return
       }
       const intent = ruleParse(last, now())
-      yield runIntent(intent, exec, ctx, last, planMode)
+      /* the floor SPEAKS the tool result, so model-only notes stay out (#119) */
+      yield ownerView(runIntent(intent, exec, ctx, last, planMode))
     },
   }
 }

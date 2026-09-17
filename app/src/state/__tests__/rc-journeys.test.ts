@@ -343,18 +343,20 @@ describe('RC journey 1: an out-of-office week, planned into the evening', () => 
     expect(byId('ooo')).toMatchObject({ allDay: true, dayKey: MON, endDayKey: WED, startMin: 0 })
   })
 
-  it.fails(
-    '#116: a plan that cannot fit before the plannable end never lands earlier today',
-    async () => {
-      await fresh([anchor()], { at: TUE(20, 46) })
-      await say('block 2h for writing')
-      await settle()
-      const writing = blocks().find((b) => b.title === 'writing')
-      expect(writing == null || writing.dayKey !== TODAY || writing.startMin >= 20 * 60 + 46).toBe(
-        true
-      )
-    }
-  )
+  it('#116: a plan that cannot fit before the plannable end never lands earlier today', async () => {
+    await fresh([anchor()], { at: TUE(20, 46) })
+    await say('block 2h for writing')
+    await settle()
+    /* nothing lands; the reply names why and offers tomorrow's opening as a chip */
+    expect(blocks().find((b) => b.title === 'writing')).toBeUndefined()
+    expect(lastMew()).toMatch(
+      /^No 120-min window is left today for "writing" inside the hours I plan in \(8:00–22:30\)\./
+    )
+    expect(chips()).toEqual([
+      ['tomorrow 9:15', 'block 2h for writing tomorrow at 9:15'], // the anchor holds 9:00–9:15
+      ['not now', 'ok, not now'],
+    ])
+  })
 
   it.fails('#117: "tonight" asked at 14:00 lands in the evening', async () => {
     await fresh([anchor()], { at: TUE(14, 0) })
@@ -475,7 +477,7 @@ describe('RC journey 2: a meeting lands on flexible work', () => {
     expect(useMew.getState().captures.map((c) => c.title)).not.toContain('undo that')
   })
 
-  it.fails("#119: a keyless capture reply shows the owner only the owner's line", async () => {
+  it("#119: a keyless capture reply shows the owner only the owner's line", async () => {
     await fresh([deckPolish()], { at: TUE(8, 0) })
     await say('call the bank')
     await settle()
@@ -547,7 +549,7 @@ describe('RC journey 3: same-titled lunches across midnight', () => {
     expect(lunchIds()).toEqual(['l-tue', 'l-wed'])
   })
 
-  it.fails('#124: the ask for three lunches offers "all of them", not "both"', async () => {
+  it('#124: the ask for three lunches offers "all of them", not "both"', async () => {
     await fresh([lunch('l-tue', TODAY), lunch('l-wed', WED), lunch('l-thu', THU)], {
       at: TUE(9, 0),
     })
