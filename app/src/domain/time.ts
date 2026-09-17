@@ -67,6 +67,37 @@ export function fmtTime(min: number): string {
   return `${h}:${String(m).padStart(2, '0')}`
 }
 
+/* ── human start times (#22) ─────────────────────────────────────────
+   Placement by conversation should never be scruffier than placement by mouse
+   (the drag path already snaps to 5 minutes). Two pure rules, one home. */
+
+/** The 5-minute grid every placed start sits on. */
+export const START_GRID_MIN = 5
+
+/** How round a start reads — lower is rounder: 0 = :00, 1 = :30, 2 = :15/:45,
+    3 = another 5-minute mark, 4 = off the grid. */
+export function roundness(min: number): 0 | 1 | 2 | 3 | 4 {
+  const m = ((min % 60) + 60) % 60
+  if (m === 0) return 0
+  if (m === 30) return 1
+  if (m % 15 === 0) return 2
+  return m % START_GRID_MIN === 0 ? 3 : 4
+}
+
+/** The human start for an anchor that may be ragged ("now", an odd block end):
+    a quarter-hour stays exactly where it is (already round — byte-identical);
+    anything else moves FORWARD to the next :00/:30, else the next :15/:45, else
+    the next 5-minute mark — whichever is first to still start by `latestMin`.
+    Null when not even the 5-minute mark fits. */
+export function snapStart(startMin: number, latestMin: number): number | null {
+  if (startMin % 15 === 0) return startMin <= latestMin ? startMin : null
+  for (const step of [30, 15, START_GRID_MIN]) {
+    const at = Math.ceil(startMin / step) * step
+    if (at <= latestMin) return at
+  }
+  return null
+}
+
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const DOW_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']

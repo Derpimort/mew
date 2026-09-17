@@ -54,7 +54,8 @@ describe('the repro, inverted: the evening is visible to every deterministic pat
   it('candidateSlots offers tonight for a 60-min work block', () => {
     const tonight = candidateSlots([homeCall], release, D, NOW).filter((c) => c.dayKey === D)
     expect(tonight.length).toBeGreaterThan(0)
-    expect(tonight[0]).toEqual({ dayKey: D, startMin: NOW, endMin: NOW + 60 })
+    // slice C: the ragged 20:46 anchor lands on the next half-hour
+    expect(tonight[0]).toEqual({ dayKey: D, startMin: 21 * 60, endMin: 22 * 60 })
     // nothing runs past the plannable end, and nothing touches the call
     for (const c of tonight) expect(c.endMin).toBeLessThanOrEqual(22 * 60 + 30)
   })
@@ -67,9 +68,10 @@ describe('the repro, inverted: the evening is visible to every deterministic pat
   })
 
   it('the first-fit fallback finds the evening: windowEnd defaults to the plannable end', () => {
+    // from 21:01 (now + 15) — slice C: at the next half-hour, never 21:01
     expect(findFreeSlot([homeCall], D, 60, NOW + 15)).toEqual({
-      startMin: NOW + 15,
-      endMin: NOW + 75,
+      startMin: 21 * 60 + 30,
+      endMin: 22 * 60 + 30,
     })
     // …and stops there: 22:00 + 60 would run past 22:30
     expect(findFreeSlot([homeCall], D, 60, 22 * 60)).toBeNull()
