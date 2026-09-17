@@ -262,6 +262,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- Tonight's newest features are now held together, not only one at a time: four journeys run a split
+  pair through a batch shift, answer a remove ask in words, retag a day holding a calendar event and
+  a repeating block, and take a week MEW helped build through the weekly review — each step checking
+  both the week and what MEW said. The one thing they found that reads wrong is filed as #149.
 - Two more details of the loose-threads rail are held by tests: a lunch or breather MEW placed for
   you can never be carried forward, so it never turns up in the rail as a follow-up waiting on you,
   and a follow-up you have finished leaves the rail instead of sitting there.
