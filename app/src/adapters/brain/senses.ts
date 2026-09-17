@@ -139,6 +139,18 @@ export function prefPage(p: PrefPayload): BrainPage {
   }
 }
 
+/** A forgotten standing rule (#15): the SAME slug as its prefPage, so the upsert
+    replaces the brain's copy. It drops the 'preference' tag (listPrefs stops
+    returning it) and keeps a plain record that it was let go, in the positive voice. */
+export function forgottenPrefPage(p: Pick<PrefPayload, 'kind' | 'match'>): BrainPage {
+  return {
+    slug: `pref/${p.kind}-${slugify(p.match)}`,
+    type: 'pref',
+    tags: ['mew', 'forgotten-preference', p.kind],
+    body: `${p.match} — let go of this rule; MEW no longer applies it.\n`,
+  }
+}
+
 /** A rule confirmed from repetition (#327) becomes one page, so recall and
     cross-session survival ride the graph. Slug is the match, so re-confirming
     upserts. Local memory is the always-on floor; this only enriches when a

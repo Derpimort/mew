@@ -245,6 +245,7 @@ export type MemoryKind =
   | 'preference' // a stated standing rule (the brain-off home for remember)
   | 'learned_rule' // gbrain Pillar 1 (#327): a rule confirmed from repetition — state, never ages out
   | 'dismissed_rule' // #327: a candidate the user rejected — never offered again
+  | 'forgotten_pref' // #15: a standing rule the owner forgot — a tombstone over the brain's copy
   | 'weekly_summary' // consolidation artifact — old raw events compacted per ISO week
 
 export interface MemoryEvent {
@@ -538,7 +539,7 @@ export interface ScheduleIntent {
       today move needs an absolute target, so the relative math lives there. */
   relStartMin?: number
   /** remove: pin which of several same-named blocks ("22:30"), or drop all */
-  remove?: { at?: string; all?: boolean }
+  remove?: { at?: string; all?: boolean; dayOffset?: number }
   /** edit/remove: the recurring-edit scope a scope word named (#343) — 'this'
       (just this one), 'following' (this & the ones after), 'series' (the whole
       set). Absent on a series block ⇒ the executor asks with chips. */
