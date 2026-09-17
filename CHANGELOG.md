@@ -14,6 +14,15 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+### The dial on any day
+- The Focus dial shows any day, not just today: step through the days from the date line
+  above the clock and see that day's blocks on the same calm face — a lived day wears its full
+  wash, a day ahead stays clear, and the centre names the day with its blocks, committed hours
+  and mews. One click brings you back to today, where the live countdown belongs, and a day
+  picked in Week carries across. On another day the card keeps Done, Hold and Remove.
+- The day-progress wash now holds when half the day is complete: the morning disk stays filled
+  from noon on, and a lived day shows its whole wash.
+
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
