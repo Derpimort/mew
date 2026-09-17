@@ -123,6 +123,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key
   exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
   same wire behaviour as before, held by pinned tests.
+- Two quiet details are now held by tests: the day picker keeps the dial's day selected while the
+  arrow keys move through the month, and a remembered rule with none of your words shows just where
+  it came from.
 
 ### Your stated lengths hold through the plan picker
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
@@ -152,6 +155,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   with a new block uses the same words ("That's your 2nd hour-plus work block this week"), so a
   routine inbox sweep isn't called a deep-work block one message before the offer. "Give them
   room" changes exactly the blocks it named, and the confirmation names them too.
+
+### Overlap on your say-so
+- Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it places
+  the block exactly there, leaves your flexible block where it is, and says the two share that time.
+  Meetings, calls and calendar events are still never covered: MEW names them and asks for another time.
 
 ## [0.7.0] — 2026-08-12
 

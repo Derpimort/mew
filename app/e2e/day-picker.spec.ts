@@ -106,6 +106,17 @@ test.describe('the Focus dial day picker (#23 slice 2)', () => {
     await boot(page)
     await openByKeyboard(page)
     await press(page, 'ArrowRight', localDayKey(1))
+    /* #65 (X2): the roving stop moved, the selection didn't. aria-selected stays on
+       the dial's day (the APG date picker). On a month's last day ArrowRight pages
+       the grid, and today may leave it: then no cell is selected at all. */
+    await expect(page.locator(`.dp td[data-daykey="${localDayKey(1)}"]`)).toHaveAttribute(
+      'aria-selected',
+      'false'
+    )
+    const dialDay = page.locator(`.dp td[data-daykey="${localDayKey(0)}"]`)
+    const shown = await dialDay.count()
+    await expect(page.locator('.dp td[aria-selected="true"]')).toHaveCount(shown)
+    if (shown) await expect(dialDay).toHaveAttribute('aria-selected', 'true')
     await press(page, 'ArrowDown', localDayKey(8))
     await press(page, 'ArrowUp', localDayKey(1))
     await press(page, 'ArrowLeft', localDayKey(0))

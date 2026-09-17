@@ -1078,6 +1078,41 @@ function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   return ` — note: it overlaps ${parts.join(' and ')}`
 }
 
+/** #49: a GRANTED overlap — the owner said, in their own words this turn, that
+    sharing time is fine. It covers their own FLEXIBLE blocks only: fixed-time
+    and [calendar] blocks are scheduled around, never over, so a landing on one
+    is refused (and a grant can't be read as licence to cover a meeting). */
+function grantedOverlap(
+  blocks: Block[],
+  dayKey: string,
+  startMin: number,
+  endMin: number,
+  selfId: string | undefined,
+  prefs: PrefPayload[]
+): { refuse: Block[]; shares: Block[] } {
+  const clash = week.conflictsWith(blocks, dayKey, startMin, endMin, selfId, prefs)
+  return {
+    refuse: clash.filter((c) => week.isFixedTime(c, prefs)),
+    shares: clash.filter((c) => !week.isFixedTime(c, prefs)),
+  }
+}
+/** the receipt of a granted overlap: named plainly, no offer to drift */
+function sharedTimeNote(shares: Block[]): string {
+  if (!shares.length) return ''
+  const names = shares.map(
+    (c) => `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+  )
+  return ` — it shares time with ${names.join(' and ')}, as you said`
+}
+/** why a granted overlap still didn't land: the fixed or calendar block, named */
+function overlapRefusal(title: string, startMin: number, refuse: Block[]): string {
+  const names = refuse.map(
+    (c) =>
+      `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.external ? 'from your calendar' : 'fixed'})`
+  )
+  return `"${title.split('—')[0].trim()}" stays unplaced at ${fmtTime(startMin)}: it would sit over ${names.join(' and ')}, and those are scheduled around, never over — name another time and I'll place it`
+}
+
 /** #324 own-vs-own collision drift — the placement-time sibling of #345's
     edit-time drift-offer. New explicit-time WORK landing on the user's own
     flexible blocks clears them out of its way in the SAME pass (meals re-anchor
@@ -2816,12 +2851,27 @@ export const useMew = create<MewState>((set, get) => {
       }
       if (existing) {
         const landStart = start ?? existing.startMin
+        /* #49: a granted overlap never lands on a fixed or calendar block */
+        const grant = p.allowOverlap
+          ? grantedOverlap(
+              blocks,
+              key,
+              landStart,
+              landStart + (existing.endMin - existing.startMin),
+              existing.id,
+              prefs
+            )
+          : null
+        if (grant?.refuse.length) {
+          lines.push(overlapRefusal(p.title, landStart, grant.refuse))
+          continue
+        }
         blocks = week.move(blocks, existing.id, key, landStart)
         const moved = blocks.find((b) => b.id === existing.id)!
         targetedIds.push(moved.id) // #320
         if (week.isDeep(moved)) placedDeep = moved
         if (moved.tag === 'work' && !week.isBackground(moved)) touchedDays.add(key)
-        const clashPart = collisionNote(moved, key)
+        const clashPart = grant ? sharedTimeNote(grant.shares) : collisionNote(moved, key)
         lines.push(
           `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashPart}`
         )
@@ -2845,6 +2895,15 @@ export const useMew = create<MewState>((set, get) => {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
         continue
       }
+      /* #49: a granted overlap shares time with the owner's flexible blocks as
+         asked (no drift, no offer) — and never lands on a fixed or calendar one */
+      const grant = p.allowOverlap
+        ? grantedOverlap(blocks, key, placed.startMin, placed.endMin, placed.id, prefs)
+        : null
+      if (grant?.refuse.length) {
+        lines.push(overlapRefusal(p.title, placed.startMin, grant.refuse))
+        continue
+      }
       blocks = [...blocks, placed]
       targetedIds.push(placed.id) // #320
       if (week.isDeep(placed)) placedDeep = placed
@@ -2853,7 +2912,7 @@ export const useMew = create<MewState>((set, get) => {
       /* background holds the clock, not the slot — placing one over a meeting
          (or vice versa) is the point, never a collision to warn about; a work
          placement over own flexible blocks drifts them clear (#324) */
-      const clashPart = collisionNote(placed, key)
+      const clashPart = grant ? sharedTimeNote(grant.shares) : collisionNote(placed, key)
       lines.push(
         `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${credit ? ` — ${credit}` : applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashPart}`
       )
@@ -3300,7 +3359,9 @@ export const useMew = create<MewState>((set, get) => {
     relStartMin?: number,
     /* #334: the TARGET block's current start time, pinning which of several
        same-named blocks to move — distinct from toStartMin (its new start). */
-    at?: string
+    at?: string,
+    /* #49: a granted overlap (flexible blocks only) */
+    allowOverlap = false
   ): string {
     const s = get()
     const now = new Date(s.nowMs)
@@ -3328,7 +3389,7 @@ export const useMew = create<MewState>((set, get) => {
     }
     if (!target) return `I couldn't find "${query}" to move — say it another way?`
     const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
-    return moveResolved(target, toKey, toStartMin, relStartMin)
+    return moveResolved(target, toKey, toStartMin, relStartMin, allowOverlap)
   }
 
   /** Move an already-resolved block to (toKey, start) — the shared tail of
@@ -3341,11 +3402,33 @@ export const useMew = create<MewState>((set, get) => {
     target: Block,
     toKey: string,
     toStartMin?: number,
-    relStartMin?: number
+    relStartMin?: number,
+    /* #49: the owner said, this turn, that overlapping is fine (flexible only) */
+    allowOverlap = false
   ): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
+    const grantPrefs = allowOverlap ? activePrefsFrom(s.memory, brainOn() ? brainPrefs : null) : []
+    /* #49: a granted overlap is checked BEFORE anything changes (an external
+       target's detach included): it never lands on a fixed or calendar block */
+    const grantStart =
+      toStartMin ??
+      (relStartMin != null
+        ? Math.max(0, Math.min(24 * 60 - week.duration(target), target.startMin + relStartMin))
+        : undefined)
+    const grant =
+      allowOverlap && grantStart != null
+        ? grantedOverlap(
+            s.blocks,
+            toKey,
+            grantStart,
+            grantStart + week.duration(target),
+            target.id,
+            grantPrefs
+          )
+        : null
+    if (grant?.refuse.length) return overlapRefusal(target.title, grantStart!, grant.refuse)
     /* an imported event CAN be moved — moving it takes ownership: detach from
        the source and tombstone it so a re-sync leaves your placement alone (a
        VAGUE referent onto an external event already refused, upstream) */
@@ -3410,7 +3493,9 @@ export const useMew = create<MewState>((set, get) => {
        the honest place-then-offer note. External/fixed are never moved. */
     let clashPart: string
     let moveStuck: string[] = [] // #12
-    if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
+    if (grant) {
+      clashPart = sharedTimeNote(grant.shares) // #49: as the owner said — no drift, no offer
+    } else if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
       const d = driftReply(moved, landedBlock, todayKey, minOfDay(now), prefs)
       moved = d.blocks
       clashPart = d.note
@@ -5131,13 +5216,13 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('complete', { query: q }, () => execComplete(q, at))
         },
-        move: (q, d, t, rel, at) => {
+        move: (q, d, t, rel, at, allowOverlap) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
           return runToolWithCard('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
-            execMove(q, d, t, rel, at)
+            execMove(q, d, t, rel, at, allowOverlap)
           )
         },
         capture: (t) => {
