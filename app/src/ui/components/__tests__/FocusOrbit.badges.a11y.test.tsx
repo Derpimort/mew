@@ -51,7 +51,7 @@ const render = (
   renderToStaticMarkup(
     <DialBadges
       view={badgeRow(badges, opts.open ?? false)}
-      todayKey={TODAY}
+      dayKey={TODAY}
       rovingId={opts.rovingId ?? null}
       litId={opts.litId ?? null}
       hidden={opts.hidden}

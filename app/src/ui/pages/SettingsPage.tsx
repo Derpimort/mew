@@ -15,6 +15,7 @@ import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
 import { computeInsights, insightsCard } from '../../domain/insights'
+import { energyProfile } from '../../domain/energy'
 import { Button, Segc, Tgl } from '../primitives'
 import { PETS, petById } from '../primitives/pets'
 import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
@@ -240,8 +241,14 @@ function MemoryConsoleFromStore() {
   const forgetStandingPref = useMew((s) => s.forgetStandingPref)
   const data = useMemo(() => {
     const now = new Date(nowMs)
-    const insights = computeInsights(memory, aggregates(memory, now), now)
-    return memoryConsole({ events: memory, prefs: activePrefsFrom(memory, null), insights })
+    const agg = aggregates(memory, now)
+    const insights = computeInsights(memory, agg, now)
+    return memoryConsole({
+      events: memory,
+      prefs: activePrefsFrom(memory, null),
+      insights,
+      energy: energyProfile(memory, agg, now), // #15: the band × task-type rows
+    })
   }, [memory, nowMs])
   return (
     <MemoryConsole
