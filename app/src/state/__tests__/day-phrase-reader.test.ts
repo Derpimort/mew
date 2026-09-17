@@ -150,17 +150,11 @@ const lastMew = () =>
   chat()
     .filter((m) => m.role === 'mew')
     .at(-1)!
-JSON.stringify(
-  [...blocks()]
-    .sort((a, b) => a.id.localeCompare(b.id))
-    .map((b) => [b.id, b.title, b.dayKey, b.startMin, b.endMin, b.status])
-)
 const settle = async () => {
   await Promise.resolve()
   vi.advanceTimersByTime(1)
   await Promise.resolve()
 }
-/** the clock rolls to `d` and the store ticks, as the shell does */
 
 beforeEach(() => {
   vi.useFakeTimers()
