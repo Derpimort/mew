@@ -1036,17 +1036,20 @@ export function seriesMembership(blocks: Block[], block: Block): SeriesMembershi
 }
 
 /** All of the day's non-rest items are done → the day is clear, rest is earned.
-    A holiday label is not an item: it never holds a day open. */
+    A holiday label is not an item: it never holds a day open, and neither does
+    the scaffolding MEW placed itself (a seeded meal, a pacing breather: #123). */
 export function dayClear(blocks: Block[], dayKey: string): boolean {
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => b.tag !== 'rest' && !b.optional && !isAllDay(b)
+    (b) => b.tag !== 'rest' && !b.optional && !isAllDay(b) && !b.placedBy
   )
   return day.length > 0 && day.every((b) => b.status === 'done')
 }
 
+/** The day's unfinished items: the owner's own open blocks. MEW's scaffolding
+    (a seeded lunch) is never "not done" work to close the loop on or carry. */
 export function openItems(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional && !isAllDay(b)
+    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional && !isAllDay(b) && !b.placedBy
   )
 }
 
