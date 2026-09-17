@@ -8,7 +8,7 @@ and MEW's desktop builds use [Calendar Versioning](https://calver.org/) — `YYY
 on (releases up to 0.7.0 used SemVer). The scheme is spelled out in [`.github/RELEASES.md`](.github/RELEASES.md).
 Voice stays positive by design: this log names what MEW gained and what it learned to do better — never what you failed to do.
 
-Versions track the desktop shell (`desktop/tauri.conf.json`); the web app ships from the
+Versions track the desktop shell (`desktop/src-tauri/tauri.conf.json`); the web app ships from the
 same tree (`app/dist`, dockerized) and rides the same notes. How releases are cut lives in
 [`.github/RELEASES.md`](.github/RELEASES.md).
 
@@ -362,8 +362,8 @@ intelligence layer that earns its keep every morning.
 [0.7.0]: https://github.com/Derpimort/mew/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Derpimort/mew/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Derpimort/mew/compare/v0.4.0...v0.5.0
-[0.4.0]: https://github.com/Derpimort/mew/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/Derpimort/mew/compare/v0.2.1...v0.3.0
+[0.4.0]: https://github.com/Derpimort/mew/compare/26024e7...v0.4.0
+[0.3.0]: https://github.com/Derpimort/mew/compare/v0.2.1...26024e7
 [0.2.1]: https://github.com/Derpimort/mew/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Derpimort/mew/compare/v0.1.9...v0.2.0
 [0.1.9]: https://github.com/Derpimort/mew/compare/v0.1.8...v0.1.9

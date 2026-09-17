@@ -1,10 +1,10 @@
 // Cases for the release-version guard. Each one runs the real CLI against a throwaway
 // tauri.conf.json (via --conf) and asserts the exit code + the message, so what CI runs
 // is exactly what is tested. Run: `pnpm --dir desktop test` (or node --test <this file>).
-import { test } from 'node:test'
+import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +13,7 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(HERE, '..', 'check-release-version.mjs')
 const COMMITTED_CONF = join(HERE, '..', '..', 'src-tauri', 'tauri.conf.json')
 const dir = mkdtempSync(join(tmpdir(), 'mew-release-guard-'))
+after(() => rmSync(dir, { recursive: true, force: true }))
 let n = 0
 
 // wix === undefined -> no bundle.windows.wix.version at all
@@ -64,6 +65,12 @@ test('leading-zero month fails in every mode', () => {
   }
 })
 
+test('month 0, month 13 and a year past 2099 are not CalVer', () => {
+  fails(run(conf('2026.0.0', '26.0.0'), '--shape'), /"2026\.0\.0" is not CalVer/, /month 1–12/)
+  fails(run(conf('2026.13.0', '26.13.0'), '--shape'), /"2026\.13\.0" is not CalVer/)
+  fails(run(conf('2100.1.0', '100.1.0'), '--shape'), /"2100\.1\.0" is not CalVer/)
+})
+
 test('leading zeros in patch or rc, and legacy SemVer, are not CalVer', () => {
   fails(run(conf('2026.9.00', '26.9.0'), '--shape'), /is not CalVer/)
   fails(run(conf('2026.9.0-rc.01', '26.9.0'), '--shape'), /is not CalVer/)
@@ -89,6 +96,24 @@ test('tag mismatch fails, and --tag needs a name', () => {
   fails(run(f, '--tag', 'v2026.9.1'), /tag v2026\.9\.1 does not match/, /\(2026\.9\.0\)/)
   fails(run(f, '--tag', 'v2026.10.0'), /does not match/)
   fails(run(f, '--tag'), /--tag needs the tag name/)
+})
+
+test('a malformed tag fails on its own shape, with delete-and-retag advice — never "bump the config"', () => {
+  const f = conf('2026.9.0', '26.9.0')
+  const zeroMonth = run(f, '--tag', 'v2026.09.0') // the likely slip: the branch is v2026.09-rc1
+  fails(zeroMonth, /tag v2026\.09\.0 is not CalVer/, /git push origin :refs\/tags\/v2026\.09\.0/, /tag v2026\.9\.0/)
+  assert.doesNotMatch(zeroMonth.out, /Bump the config/)
+  fails(run(f, '--tag', 'v0.7.0'), /tag v0\.7\.0 is not CalVer/)
+  // an rc config points the retag at the clean version, after the promotion bump
+  const rc = run(conf('2026.9.0-rc.1', '26.9.0'), '--tag', 'v2026.09.0')
+  fails(rc, /tag v2026\.9\.0 once the promotion has bumped the config to it/)
+})
+
+test('one mode per run: a stray second mode or argument fails instead of passing as the first', () => {
+  const f = conf('2026.9.0-rc.1', '26.9.0')
+  fails(run(f, '--shape', '--promotion'), /unexpected argument\(s\): --promotion/)
+  fails(run(f, '--promotion', 'extra'), /unexpected argument\(s\): extra/)
+  fails(run(conf('2026.9.0', '26.9.0'), '--tag', 'v2026.9.0', '--shape'), /unexpected argument\(s\): --shape/)
 })
 
 test('unknown mode, unreadable config and a config without a version fail', () => {

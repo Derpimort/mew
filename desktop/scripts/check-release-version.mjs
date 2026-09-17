@@ -24,7 +24,9 @@
 //   versions are numeric only, so the prerelease is dropped). Bump both together.
 //
 // Every mode first checks that shape + the MSI mapping, then:
-//   --shape           Nothing more. Run on every desktop PR and on dry-run builds.
+//   --shape           Nothing more. ci.yml's `release-guard` job runs it (with this
+//                     file's own cases) on every PR that touches the config or the
+//                     guard; desktop.yml runs it before every build (tag or dry-run).
 //   --promotion       Fail if the committed version is a prerelease (-rc.N). Run on
 //                     a v*-rc* → main promotion PR: main must always carry a clean
 //                     release version, and the bump to it belongs in the promotion,
@@ -60,7 +62,15 @@ for (let i = 0; i < argv.length; i++) {
     rest.push(argv[i])
   }
 }
-const [mode, arg] = rest
+const [mode, arg, ...extra] = rest
+// one mode per run — `--shape --promotion` must not pass as `--shape`
+const stray = mode === '--tag' ? extra : rest.slice(1)
+if (stray.length) {
+  fail(
+    `unexpected argument(s): ${stray.join(' ')}. One mode per run: ` +
+      `--shape | --promotion | --tag vYYYY.M.PATCH`,
+  )
+}
 
 let config
 try {
@@ -76,9 +86,10 @@ if (typeof version !== 'string' || version.length === 0) {
 const match = CALVER.exec(version)
 if (!match) {
   fail(
-    `${conf} version "${version}" is not CalVer. Expected YYYY.M.PATCH or YYYY.M.PATCH-rc.N ` +
-      `with no leading zeros — 2026.9.0 or 2026.9.0-rc.1, never 2026.09.0 (semver rejects it) ` +
-      `and never SemVer like 0.7.0. The installers + updater manifest are stamped from this field.`,
+    `${conf} version "${version}" is not CalVer. Expected YYYY.M.PATCH or YYYY.M.PATCH-rc.N: ` +
+      `a four-digit year, month 1–12 without a leading zero, PATCH ≥ 0, rc N ≥ 1 — ` +
+      `2026.9.0 or 2026.9.0-rc.1, never 2026.09.0 (semver rejects it) and never SemVer like ` +
+      `0.7.0. The installers + updater manifest are stamped from this field.`,
   )
 }
 const [, year, month, patch, rc] = match
@@ -115,6 +126,16 @@ if (mode === '--shape') {
 } else if (mode === '--tag') {
   const tag = (arg ?? '').replace(/^v/, '')
   if (!tag) fail('--tag needs the tag name, e.g. --tag v2026.9.0')
+  // the tag's own shape first: a zero-padded month (v2026.09.0, after the branch name
+  // v2026.09-rc1) is the likely slip, and "bump the config to 2026.09.0" would be wrong advice
+  if (!CALVER.test(tag)) {
+    fail(
+      `tag v${tag} is not CalVer (vYYYY.M.PATCH — month 1–12 without a leading zero; the RC ` +
+        `branch is vYYYY.MM-rcN but the tag is not). Delete it — git push origin ` +
+        `:refs/tags/v${tag} — and tag v${version.split('-')[0]}` +
+        `${rc !== undefined ? ' once the promotion has bumped the config to it' : ''}.`,
+    )
+  }
   if (version !== tag) {
     fail(
       `tag v${tag} does not match ${conf} (${version}). ` +

@@ -109,7 +109,7 @@ Windows MSI cannot take a `2026` major (WiX caps it at 255), so `bundle.windows.
 
 ```bash
 V=<target>                                                # YYYY.M.PATCH, e.g. 2026.9.0
-W=$(node -e 'const [y,m,p]=process.argv[1].split(".");console.log(`${y-2000}.${m}.${p}`)' "$V")   # 2026.9.0 -> 26.9.0
+W=$(node -e 'const [y,m,p]=process.argv[1].split("-")[0].split(".");console.log(`${y-2000}.${m}.${p}`)' "$V")   # 2026.9.0 -> 26.9.0 (an rc target drops its -rc.N)
 # the top-level "version" is the only key at 2-space indent; the MSI version sits under bundle.windows.wix
 sed -i.bak 's/^  "version": *"[^"]*"/  "version": "'"$V"'"/' "$TAURI_CONF" && rm "$TAURI_CONF.bak"
 sed -i.bak '/"wix": {/,/}/ s/"version": *"[^"]*"/"version": "'"$W"'"/' "$TAURI_CONF" && rm "$TAURI_CONF.bak"
