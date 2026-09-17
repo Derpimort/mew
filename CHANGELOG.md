@@ -288,6 +288,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- Two more chip families are held by tests: typing "keep both" or "drop Groceries" when MEW offers
+  those choices, and "give them room" or "leave as-is" when it offers to resize, each does exactly
+  what tapping would — the acknowledgment changes nothing, the action changes only what the chip
+  named, and neither ever lands in your inbox. And when two choices read the same way, MEW asks
+  again rather than picking a third one for you.
 - The two newest things in this release are now held together with everything else: a sweep over a
   repeating run is asked about before anything moves, its list is read back row by row against the
   week, and taking it back says what actually came back — a length, a name or a move, each in its
