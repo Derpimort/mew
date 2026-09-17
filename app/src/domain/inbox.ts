@@ -17,9 +17,10 @@
    fresh profile, no rules) it degrades to the honest floor — the soonest clear
    slot that fits — exactly the keyless "next fitting slot" the spec names. */
 
-import type { Block, InboxItem, MemoryEvent, Tag, TimeWindow } from './types'
+import type { Block, InboxItem, MemoryEvent, PlannableHours, Tag, TimeWindow } from './types'
+import { DEFAULT_PLANNABLE_HOURS } from './types'
 import { addDaysKey, dayKey, fmtDowLong, fmtTime, minOfDay } from './time'
-import { DAY_END, DAY_START, findFreeSlot, nextFreeSlot } from './week'
+import { findFreeSlot, nextFreeSlot } from './week'
 import { aggregates } from './memory'
 import {
   BAND_TO_WINDOW,
@@ -71,14 +72,14 @@ const WINDOW_WORD: Record<TimeWindow, string> = {
 /** the windows a preference walks through, clock order */
 const WINDOW_ORDER: TimeWindow[] = ['morning', 'afternoon', 'evening']
 
-/** A window's placement range, clamped to the app's day (DAY_START..DAY_END) —
+/** A window's placement range, clamped to the plannable day (#22) —
     built from #321's bands so the inbox and the energy model agree on the edges
     (midday+late both fall in the afternoon window). Empty (from ≥ to) ⇒ the
     window doesn't fit inside the day and is skipped. */
-function windowRange(w: TimeWindow): { from: number; to: number } {
+function windowRange(w: TimeWindow, hours: PlannableHours): { from: number; to: number } {
   const bands = ENERGY_BANDS.filter((b) => BAND_TO_WINDOW[b.band] === w)
-  const from = Math.max(DAY_START, Math.min(...bands.map((b) => b.from)))
-  const to = Math.min(DAY_END, Math.max(...bands.map((b) => b.to)))
+  const from = Math.max(hours.startMin, Math.min(...bands.map((b) => b.from)))
+  const to = Math.min(hours.endMin, Math.max(...bands.map((b) => b.to)))
   return { from, to }
 }
 
@@ -117,7 +118,8 @@ function slotInWindows(
   todayKey: string,
   nowMin: number,
   durationMin: number,
-  preferred: readonly TimeWindow[]
+  preferred: readonly TimeWindow[],
+  hours: PlannableHours
 ): { dayKey: string; startMin: number } | null {
   if (!preferred.length) return null
   const pool = blocks as Block[]
@@ -125,7 +127,7 @@ function slotInWindows(
     const key = addDaysKey(todayKey, off)
     for (const w of WINDOW_ORDER) {
       if (!preferred.includes(w)) continue
-      const { from, to } = windowRange(w)
+      const { from, to } = windowRange(w, hours)
       const start = off === 0 ? Math.max(from, nowMin + NOW_GAP_MIN) : from
       if (start + durationMin > to) continue
       const slot = findFreeSlot(pool, key, durationMin, start, to)
@@ -179,8 +181,9 @@ export function fitOffers(
   blocks: readonly Block[],
   memory: readonly MemoryEvent[],
   now: Date,
-  opts?: { energyFit?: boolean }
+  opts?: { energyFit?: boolean; hours?: PlannableHours }
 ): InboxOffer[] {
+  const hours = opts?.hours ?? DEFAULT_PLANNABLE_HOURS // #22: the owner's plannable day
   const todayKey = dayKey(now)
   const nowMin = minOfDay(now)
   const learned = confirmedRulesFrom(memory)
@@ -212,10 +215,18 @@ export function fitOffers(
     if (ruleFirm) preferred = [res.spec.window as TimeWindow]
     else if (profile) preferred = preferredWindows(cls, profile)
 
-    let slot = slotInWindows(blocks, todayKey, nowMin, durationMin, preferred)
+    let slot = slotInWindows(blocks, todayKey, nowMin, durationMin, preferred, hours)
     let fitsEnergy = slot != null
     if (!slot) {
-      slot = nextFreeSlot([...blocks], todayKey, nowMin + NOW_GAP_MIN, durationMin, HORIZON_DAYS)
+      slot = nextFreeSlot(
+        [...blocks],
+        todayKey,
+        nowMin + NOW_GAP_MIN,
+        durationMin,
+        HORIZON_DAYS,
+        0,
+        hours
+      )
       fitsEnergy = false
     }
     if (!slot) continue // the horizon is full — no honest slot to offer

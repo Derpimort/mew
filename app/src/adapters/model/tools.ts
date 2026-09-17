@@ -361,7 +361,8 @@ export const MEW_TOOLS: NeutralTool[] = [
         window: {
           type: 'string',
           enum: ['morning', 'afternoon', 'evening'],
-          description: 'Optional preferred time of day',
+          description:
+            'Optional preferred time of day — "tonight", "this evening" and "after dinner" are evening',
         },
       },
       required: ['title', 'durationMin'],

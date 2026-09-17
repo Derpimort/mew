@@ -150,7 +150,8 @@ describe('rescueOptions — viability, computed at post time', () => {
   it('no-viable-shift: a day with no free air its size still offers split + roll', () => {
     const block = mk({}) // 120 min
     const m = meeting({})
-    const wall = mk({ id: 'w', title: 'Wall to wall', startMin: 660, endMin: 18 * 60 + 30 })
+    // #22: wall to wall means through the plannable end, 22:30
+    const wall = mk({ id: 'w', title: 'Wall to wall', startMin: 660, endMin: 22 * 60 + 30 })
     const blocks = [block, m, wall]
     const opts = rescueOptions(blocks, { meeting: m, block }, TODAY, nowMin)
     expect(opts.map((o) => o.id)).toEqual(['split', 'roll'])
@@ -198,7 +199,7 @@ describe('rescueOptions — viability, computed at post time', () => {
       id: 'ft',
       dayKey: '2026-06-10',
       startMin: 8 * 60,
-      endMin: 18 * 60 + 30,
+      endMin: 22 * 60 + 30, // #22: full through the plannable end
     })
     const opts = rescueOptions([block, m, fullTomorrow], { meeting: m, block }, TODAY, nowMin)
     expect(opts.map((o) => o.id)).not.toContain('roll')
