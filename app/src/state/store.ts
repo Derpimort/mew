@@ -5033,12 +5033,12 @@ export const useMew = create<MewState>((set, get) => {
               label: `the ${fmtTime(b.startMin)}`,
               reply: `remove ${base} ${fmtTime(b.startMin)}`,
             }))
+      /* #124: the line names the all-chip in its own words — "both" for two,
+         "all of them" for three or more */
+      const everyOne = candidates.length === 2 ? 'both' : 'all of them'
       return execOfferChoices(
-        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`,
-        [
-          ...timeOptions,
-          { label: candidates.length === 2 ? 'both' : 'all of them', reply: `remove all ${base}` },
-        ]
+        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "${everyOne}" to drop them all.`,
+        [...timeOptions, { label: everyOne, reply: `remove all ${base}` }]
       )
     }
     if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`

@@ -549,7 +549,7 @@ describe('RC journey 3: same-titled lunches across midnight', () => {
     expect(lunchIds()).toEqual(['l-tue', 'l-wed'])
   })
 
-  it.fails('#124: the ask for three lunches offers "all of them", not "both"', async () => {
+  it('#124: the ask for three lunches offers "all of them", not "both"', async () => {
     await fresh([lunch('l-tue', TODAY), lunch('l-wed', WED), lunch('l-thu', THU)], {
       at: TUE(9, 0),
     })

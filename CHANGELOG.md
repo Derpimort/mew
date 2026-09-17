@@ -128,6 +128,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   time on several days, MEW asks which day with tappable choices ("today 12:00", "thursday 12:00")
   and changes nothing until you pick. Naming the day ("remove the lunch on thursday at 12:00") goes
   straight to that one, and "all" still means all.
+- The question names its all-choice in the choice's own words: "both" for two blocks, "all of
+  them" for three or more.
 
 ### Say the day your way when removing
 - "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at
