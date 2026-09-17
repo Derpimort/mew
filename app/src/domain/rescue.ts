@@ -8,7 +8,8 @@
 
 import type { Block, ChatChoice } from './types'
 import { addDaysKey, dayWord, fmtShortDate, fmtTime } from './time'
-import { DAY_START, conflictsWith, dayEndMin, duration, findFreeSlot, isFixedTime } from './week'
+import { conflictsWith, dayEndMin, duration, findFreeSlot, isFixedTime } from './week'
+import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
 
 export interface RescueConflict {
   /** The inbound/updated external event — someone else's meeting, never moved. */
@@ -112,7 +113,8 @@ export function rescueOptions(
   blocks: Block[],
   conflict: RescueConflict,
   todayKey: string,
-  nowMin: number
+  nowMin: number,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: the owner's plannable day
 ): ChatChoice[] {
   const { meeting, block } = conflict
   const day = dayWord(block.dayKey, todayKey)
@@ -123,8 +125,9 @@ export function rescueOptions(
 
   const others = blocks.filter((b) => b.id !== block.id)
   const from =
-    block.dayKey === todayKey ? Math.max(DAY_START, Math.ceil(nowMin / 5) * 5) : DAY_START
-  const slot = findFreeSlot(others, block.dayKey, dur, from, dayEndMin(blocks, block.dayKey))
+    block.dayKey === todayKey ? Math.max(hours.startMin, Math.ceil(nowMin / 5) * 5) : hours.startMin
+  const end = Math.max(hours.endMin, dayEndMin(blocks, block.dayKey))
+  const slot = findFreeSlot(others, block.dayKey, dur, from, end)
   if (slot) {
     out.push({
       id: 'shift',
@@ -150,7 +153,7 @@ export function rescueOptions(
 
   const rollKey = addDaysKey(block.dayKey, 1)
   const rollDay = dayWord(rollKey, todayKey)
-  if (rollDay && findFreeSlot(blocks, rollKey, dur, 9 * 60)) {
+  if (rollDay && findFreeSlot(blocks, rollKey, dur, 9 * 60, hours.endMin)) {
     out.push({
       id: 'roll',
       label: `roll to ${rollDay}`,

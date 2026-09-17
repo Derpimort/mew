@@ -2,6 +2,7 @@
    source of truth; everything here is synchronous and side-effect free. */
 
 import type { Block, Capture, PrefPayload, Tag } from './types'
+import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
 import { flexOverride, parseTimeValue } from './prefs'
 import { addDaysKey, fmtTime, uid } from './time'
 
@@ -11,6 +12,8 @@ export function isBackground(b: Block): boolean {
   return b.attention === 'background'
 }
 
+/* The classic working day: close-the-loop (dayEndMin) and the load math read
+   it. Placement reads the plannable hours instead (#22) — the evening exists. */
 export const DAY_START = 8 * 60
 export const DAY_END = 18 * 60 + 30
 export const LOAD_SCALE_MIN = 10 * 60 // week-rail bars are % of a 10h day
@@ -142,8 +145,8 @@ export function findFreeSlot(
   blocks: Block[],
   dayKey: string,
   durationMin: number,
-  windowStart = DAY_START,
-  windowEnd = DAY_END,
+  windowStart = DEFAULT_PLANNABLE_HOURS.startMin,
+  windowEnd = DEFAULT_PLANNABLE_HOURS.endMin,
   /* #302: EXTERNAL meetings inflate by bufferMin (via busySpan) so an
      auto-slotted placement keeps clear of a meeting's edges; default 0 ⇒
      byte-identical. Inflate THEN sort — a left-inflated meeting can precede an
@@ -180,12 +183,13 @@ export function nextFreeSlot(
   fromMin: number,
   durationMin: number,
   horizonDays = 13,
-  bufferMin = 0
+  bufferMin = 0,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: the owner's plannable day
 ): { dayKey: string; startMin: number } | null {
   for (let off = 0; off <= horizonDays; off++) {
     const key = addDaysKey(todayKey, off)
-    const windowStart = off === 0 ? Math.max(DAY_START, fromMin) : DAY_START
-    const slot = findFreeSlot(blocks, key, durationMin, windowStart, DAY_END, bufferMin)
+    const windowStart = off === 0 ? Math.max(hours.startMin, fromMin) : hours.startMin
+    const slot = findFreeSlot(blocks, key, durationMin, windowStart, hours.endMin, bufferMin)
     if (slot) return { dayKey: key, startMin: slot.startMin }
   }
   return null
@@ -299,7 +303,8 @@ export function tightMeetingJunction(
 export function nextSlotAfter(
   blocks: Block[],
   b: Block,
-  fromMin: number
+  fromMin: number,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: the owner's plannable day
 ): { dayKey: string; startMin: number } | null {
   const from = Math.max(b.startMin, fromMin)
   const today = findFreeSlot(
@@ -307,11 +312,11 @@ export function nextSlotAfter(
     b.dayKey,
     duration(b),
     from,
-    Math.max(DAY_END, 22 * 60 + 30)
+    hours.endMin
   )
   if (today) return { dayKey: b.dayKey, startMin: today.startMin }
   const tomorrow = addDaysKey(b.dayKey, 1)
-  const slot = findFreeSlot(blocks, tomorrow, duration(b), 9 * 60)
+  const slot = findFreeSlot(blocks, tomorrow, duration(b), 9 * 60, hours.endMin)
   return slot ? { dayKey: tomorrow, startMin: slot.startMin } : null
 }
 
@@ -332,12 +337,16 @@ export interface PlaceSpec {
 }
 
 /** Place a block; when no explicit time, the first free slot wins. Returns null if the day is full. */
-export function place(blocks: Block[], spec: PlaceSpec): Block | null {
+export function place(
+  blocks: Block[],
+  spec: PlaceSpec,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: first-fit looks inside the plannable day
+): Block | null {
   let startMin = spec.startMin
   let endMin = spec.endMin
   const dur = spec.durationMin ?? (startMin != null && endMin != null ? endMin - startMin : 60)
   if (startMin == null) {
-    const slot = findFreeSlot(blocks, spec.dayKey, dur)
+    const slot = findFreeSlot(blocks, spec.dayKey, dur, hours.startMin, hours.endMin)
     if (!slot) return null
     startMin = slot.startMin
     endMin = slot.endMin

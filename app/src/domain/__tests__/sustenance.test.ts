@@ -388,8 +388,8 @@ describe('scheduler seam — non-meal scoring is byte-identical', () => {
     const ranked = scoreSlots([], { title: 'deep work', tag: 'work', durationMin: 60 }, D, NOW)
     expect(ranked[0].startMin).toBeLessThan(12 * 60)
     expect(ranked[0].why).toContain('morning fit')
-    // the widened meal horizon never leaks: non-meal candidates end by DAY_END
-    for (const c of ranked) expect(c.endMin).toBeLessThanOrEqual(18 * 60 + 30)
+    // the widened meal horizon never leaks: non-meal candidates end by the plannable end (#22)
+    for (const c of ranked) expect(c.endMin).toBeLessThanOrEqual(22 * 60 + 30)
   })
 })
 

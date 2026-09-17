@@ -71,7 +71,8 @@ describe('week model', () => {
   })
 
   it('returns null when the day cannot hold the duration', () => {
-    const blocks = [mk({ startMin: 8 * 60, endMin: 18 * 60 })]
+    // #22: the default window runs to the plannable end (22:30), so "full" means through 22:00
+    const blocks = [mk({ startMin: 8 * 60, endMin: 22 * 60 })]
     expect(findFreeSlot(blocks, D, 60)).toBeNull()
   })
 
@@ -920,8 +921,8 @@ describe('nextFreeSlot — the cross-day "next free slot" search (#335)', () => 
   })
 
   it('rolls forward to the next day when today is packed to the cap', () => {
-    // fill the whole working day so nothing fits today → the search steps to D+1
-    const full = [mk({ startMin: 8 * 60, endMin: 18 * 60 + 30 })]
+    // fill the whole plannable day (#22: 8:00–22:30) so nothing fits today → the search steps to D+1
+    const full = [mk({ startMin: 8 * 60, endMin: 22 * 60 + 30 })]
     const slot = nextFreeSlot(full, D, 8 * 60, 60)
     expect(slot).toEqual({ dayKey: '2026-06-10', startMin: 8 * 60 })
   })
@@ -938,10 +939,10 @@ describe('nextFreeSlot — the cross-day "next free slot" search (#335)', () => 
   })
 
   it('returns null when nothing fits inside the horizon', () => {
-    // every day full across a 1-day horizon
+    // every plannable day (#22: 8:00–22:30) full across a 1-day horizon
     const wall = [
-      mk({ dayKey: D, startMin: 8 * 60, endMin: 18 * 60 + 30 }),
-      mk({ dayKey: '2026-06-10', startMin: 8 * 60, endMin: 18 * 60 + 30 }),
+      mk({ dayKey: D, startMin: 8 * 60, endMin: 22 * 60 + 30 }),
+      mk({ dayKey: '2026-06-10', startMin: 8 * 60, endMin: 22 * 60 + 30 }),
     ]
     expect(nextFreeSlot(wall, D, 8 * 60, 60, 1)).toBeNull()
   })

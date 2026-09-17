@@ -88,8 +88,8 @@ describe('fitOffers — the keyless floor (no learned signal)', () => {
   })
 
   it('honors the duration hint and rolls to a later day when today is full', () => {
-    // fill today wall-to-wall so a 90-min block cannot land today
-    const full = [blk({ startMin: 8 * 60, endMin: 18 * 60 + 30 })]
+    // fill today wall-to-wall (#22: through the plannable end) so a 90-min block cannot land today
+    const full = [blk({ startMin: 8 * 60, endMin: 22 * 60 + 30 })]
     const offers = fitOffers([item({ id: 'x', durationMin: 90 })], full, [], NOW)
     expect(offers).toHaveLength(1)
     expect(offers[0].durationMin).toBe(90)

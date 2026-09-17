@@ -24,12 +24,12 @@ import { fromDayKey, weekKeys } from './time'
 import {
   blocksForDay,
   conflictsWith,
-  DAY_END,
   DAY_START,
   duration,
   findFreeSlot,
   type PlaceSpec,
 } from './week'
+import { DEFAULT_PLANNABLE_HOURS } from './types'
 
 /** Where a draft anchor may land, per window — the app's own 12:00/17:00 edges
     (energy.ts / scheduler.windowOf), capped at a civilized evening so a draft
@@ -159,7 +159,9 @@ export function weekScaffold(
       return
     }
 
-    const bounds = window ? WINDOW_BOUNDS[window] : { start: DAY_START, end: DAY_END }
+    const bounds = window
+      ? WINDOW_BOUNDS[window]
+      : { start: DEFAULT_PLANNABLE_HOURS.startMin, end: DEFAULT_PLANNABLE_HOURS.endMin } // #22
     for (let j = 0; j < days.length; j++) {
       const dayKey = days[(i + j) % days.length]
       const slot = findFreeSlot(phantoms, dayKey, dur, bounds.start, bounds.end)

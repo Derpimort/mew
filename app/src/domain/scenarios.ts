@@ -11,6 +11,7 @@
 import type { Block, PrefPayload, Tag } from './types'
 import { addDaysKey } from './time'
 import { conflictsWith } from './week'
+import { CLASSIC_DAY } from './plannable'
 import type { ScoreWeights, SlotCandidate, TimeWindow } from './scheduler'
 import { scoreSlots, windowOf } from './scheduler'
 import { mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
@@ -303,7 +304,8 @@ function buildDraft(
         profile.weights,
         opts.horizonDays,
         undefined, // mealBase: scenarios keep the circadian default (#298)
-        opts.bufferMin ?? 0 // #302: inherit the meeting buffer through the seam
+        opts.bufferMin ?? 0, // #302: inherit the meeting buffer through the seam
+        CLASSIC_DAY // #22: the weekly ritual shapes the classic working day
       ),
       t,
       profile.bias,
@@ -414,7 +416,8 @@ function buildEnergyFit(
         ENERGY_FIT_WEIGHTS,
         opts.horizonDays,
         undefined,
-        opts.bufferMin ?? 0
+        opts.bufferMin ?? 0,
+        CLASSIC_DAY // #22
       ),
       win ? { ...t, window: win } : t,
       undefined,
@@ -462,7 +465,8 @@ function buildEnergyFit(
       ENERGY_FIT_WEIGHTS,
       opts.horizonDays,
       undefined,
-      opts.bufferMin ?? 0
+      opts.bufferMin ?? 0,
+      CLASSIC_DAY // #22
     )
     const slot = run[0]
     if (slot) {

@@ -9,13 +9,13 @@
    execPlan/execMove rewire to consult it, and rest-block auto-insertion are
    slice 2 — see the ADR's impl plan. */
 import type { Block, PrefPayload, Tag, TimeWindow } from './types'
+import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
 import { addDaysKey } from './time'
 import { mealAdjacencyPenalty, mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
 import {
   blocksForDay,
   conflictsWith,
   DAY_END,
-  DAY_START,
   duration,
   freeWindows,
   isBackground,
@@ -88,18 +88,20 @@ export function candidateSlots(
   todayKey: string,
   nowMin: number,
   horizonDays = 7,
-  /* #298: dinner's circadian window ends 20:30, past the working-day cap —
-     the meal seam widens the horizon; every other caller keeps DAY_END */
-  dayEndMin: number = DAY_END,
+  /* #22: the plannable day's end (the evening exists); the meal seam may
+     widen it for a dinner window that runs later */
+  dayEndMin: number = DEFAULT_PLANNABLE_HOURS.endMin,
   /* #302: forwarded to freeWindows so candidates keep MEW's meeting buffer;
      default 0 ⇒ unchanged (the seam lives in freeWindows) */
-  bufferMin = 0
+  bufferMin = 0,
+  /* #22: the plannable day's start — 08:00 by default, byte-identical */
+  dayStartMin: number = DEFAULT_PLANNABLE_HOURS.startMin
 ): { dayKey: string; startMin: number; endMin: number }[] {
   const out: { dayKey: string; startMin: number; endMin: number }[] = []
   const lastDay = q.due != null ? 0 : horizonDays // a same-day due confines to today
   for (let d = 0; d <= lastDay; d++) {
     const day = addDaysKey(todayKey, d)
-    const from = d === 0 ? Math.max(DAY_START, nowMin) : DAY_START
+    const from = d === 0 ? Math.max(dayStartMin, nowMin) : dayStartMin
     for (const w of freeWindows(blocks, day, from, dayEndMin, bufferMin)) {
       const starts = new Set<number>()
       if (w.startMin + q.durationMin <= w.endMin) starts.add(w.startMin) // tight pack
@@ -174,6 +176,15 @@ function timeOfDayScore(q: SlotQuery, startMin: number): number {
    window keeps the plain `timeOfDayScore` term. */
 const OFF_WINDOW = 0.05
 
+/* #22: past the classic working day (DAY_END) a candidate EXISTS but ranks
+   low. Under the default weights an in-day candidate never scores below 0.265
+   (tod 0.4 · rest 0.3 · pref 0) and a damped late one never above 0.237
+   (0.675 × 0.35), so whenever the day still has room inside 08:00–18:30 the
+   pick stays byte-identical. The evening leads when the ask names it (window
+   'evening' — "tonight", "after dinner"), a remembered rule points there, or a
+   meal window anchors it (the meal seam scores on its own terms). */
+const LATE_DAMP = 0.35
+
 /** in-window = the whole meal fits inside one of its windows */
 function inMealWindow(
   wins: readonly MealWindow[],
@@ -210,7 +221,9 @@ export function scoreSlots(
   mealBase?: readonly MealWindow[],
   /* #302: forwarded through candidateSlots to freeWindows so ranked candidates
      keep MEW's meeting buffer; default 0 ⇒ unchanged */
-  bufferMin = 0
+  bufferMin = 0,
+  /* #22: the owner's plannable day — the candidate span, start to end */
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS
 ): SlotCandidate[] {
   /* #298: meal anchoring engages only on a meal-classified title with the
      `when` left open — a stated q.window outranks the class default, and a
@@ -221,8 +234,8 @@ export function scoreSlots(
      never overlap — meal anchoring only engages when q.window is unset, and a
      firm window sets q.window — so at most one collapse applies to a candidate. */
   const firmWindow = q.window != null && q.windowFirm === true
-  const dayEnd = mealWins ? Math.max(DAY_END, ...mealWins.map((w) => w.endMin)) : DAY_END
-  return candidateSlots(blocks, q, todayKey, nowMin, horizonDays, dayEnd, bufferMin)
+  const dayEnd = mealWins ? Math.max(hours.endMin, ...mealWins.map((w) => w.endMin)) : hours.endMin
+  return candidateSlots(blocks, q, todayKey, nowMin, horizonDays, dayEnd, bufferMin, hours.startMin)
     .map((c) => {
       const inWin = mealWins ? inMealWindow(mealWins, c) : false
       const tod = mealWins
@@ -247,6 +260,8 @@ export function scoreSlots(
       } else if (tod >= 1) {
         reasons.push(`${preferredWindow(q)} fit`)
       }
+      if (!mealWins && c.endMin > DAY_END && q.window !== 'evening' && pref <= 0.5)
+        score *= LATE_DAMP
       if (pref >= 1) reasons.push('matches your rule')
       if (rest >= 1) reasons.push('breathing room')
       else if (rest < 0.6) reasons.push('back-to-back')
@@ -336,7 +351,11 @@ export interface RestInsertion {
     only way in is to displace a committed block, `suggest` instead: MEW offers
     it in chat rather than seizing time. `freeWindows` already excludes fixed,
     external, optional and background blocks, so a placed rest never overlaps. */
-export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | null {
+export function restInsertion(
+  blocks: Block[],
+  dayKey: string,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: seams inside the plannable day
+): RestInsertion | null {
   const work = committedWork(blocks, dayKey)
   if (!work.length) return null
   /* a run is the unbroken non-rest stretch (dayShape's notion: errands abutting
@@ -360,7 +379,7 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
      first, so an internal split wins over the gap right after the stretch; a
      sliver only counts if it clears the floor. The run being continuous means
      internal gaps are <RUN_GAP, so the usual seam is the air just after it. */
-  const fits = freeWindows(blocks, dayKey, DAY_START, DAY_END)
+  const fits = freeWindows(blocks, dayKey, hours.startMin, hours.endMin)
     .filter((w) => w.startMin >= run.startMin && w.startMin <= run.endMin)
     .filter((w) => w.endMin - w.startMin >= PACING_REST_FLOOR)
     .sort((a, b) => a.startMin - b.startMin)

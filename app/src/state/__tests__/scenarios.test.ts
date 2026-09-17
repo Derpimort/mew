@@ -5447,7 +5447,10 @@ describe('#293 — plan mode scenario picker', () => {
     useMew.getState().updateSettings({ planMode: 'off' })
     await say(BRAINDUMP)
     expect(chat().some((m) => (m.scenarios?.length ?? 0) > 0)).toBe(false)
-    expect(lastMsg().body).toMatch(/^Done — /) // placed in one pass, today's behavior
+    /* placed in one pass. #22: the evening is real now, so all six land
+       Tuesday (none "couldn't hold — the day is full" while 18:30–22:30 sat
+       empty) and the day-load kindness line leads the reply */
+    expect(lastMsg().body).toMatch(/^(Done — |that's \S+h of work against your usual)/)
     expect(useMew.getState().blocks.some((b) => b.title === 'deck')).toBe(true)
 
     await fresh(TUE(9, 40))
