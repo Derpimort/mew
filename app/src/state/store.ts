@@ -4998,7 +4998,8 @@ export const useMew = create<MewState>((set, get) => {
                  busy line claims a retry, because only the local adapter
                  retries (the SDK's backoff) — remote fails fast to this floor
                  by design (#156), so its copy never claims a retry that didn't
-                 happen. */
+                 happen. A dropped reply (2xx, then the connection broke) claims
+                 none on either side: the SDK never retries a started stream. */
               const local = failed.includes('ollama')
               const kind = classifyFailure(lastModelErr)
               post([
@@ -5013,7 +5014,9 @@ export const useMew = create<MewState>((set, get) => {
                           ? local
                             ? `(the local model was busy — I retried, then handled it myself.)`
                             : `(the model was busy — I handled this one myself.)`
-                          : `(I couldn't reach the model just now — I handled this myself.)`
+                          : kind === 'dropped'
+                            ? `(the connection to the model hiccuped — I handled this one myself.)`
+                            : `(I couldn't reach the model just now — I handled this myself.)`
                 ),
               ])
             }

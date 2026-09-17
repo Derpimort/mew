@@ -12,6 +12,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+### Straight talk when a reply drops
+- When the connection to the model drops after a reply has begun, MEW names it for what it is —
+  "the connection to the model hiccuped" — and answers the turn itself. Whatever already streamed
+  stays exactly as it arrived, and nothing is sent twice behind your back.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
