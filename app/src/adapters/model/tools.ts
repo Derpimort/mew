@@ -628,7 +628,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'batch_blocks',
     description:
-      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier), move_to_day (toDayOffset, same clock) or set_tag (toTag, in place: 'tag all of tomorrow's calls as work'). Calendar events, fixed-time, done and repeating blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount and confirmToken ONLY when the user just said yes to MEW's batch offer: the yes ends '— yes, all N · TOKEN'; pass N and TOKEN verbatim. If the list changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
+      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier), move_to_day (toDayOffset, same clock) or set_tag (toTag, in place: 'tag all of tomorrow's calls as work'). Calendar events, fixed-time and done blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A repeating block waits for a scope: with no scope MEW asks which occurrences are meant and nothing moves until the user answers; pass scope to act on it. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount and confirmToken ONLY when the user just said yes to MEW's batch offer: the yes ends '— yes, all N · TOKEN'; pass N and TOKEN verbatim. If the list changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
     parameters: {
       type: 'object',
       properties: {
@@ -665,6 +665,12 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'string',
           description:
             "ONLY after the user said yes to MEW's batch offer: the token after the '·' in that yes, verbatim",
+        },
+        scope: {
+          type: 'string',
+          enum: ['this', 'following', 'series'],
+          description:
+            "Which occurrences of a repeating block the sweep means, when the user has said: 'this' just this one, 'following' this one and the ones after, 'series' the whole set. Leave it out and MEW asks with chips before it touches a series. A move_to_day only accepts 'this' — a series keeps its own days.",
         },
       },
       required: ['op'],
@@ -998,22 +1004,38 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         typeof o.confirmToken === 'string' && o.confirmToken.trim()
           ? o.confirmToken.trim()
           : undefined
+      /* #75 slice 3: which occurrences of a repeating block the sweep means */
+      const scope = (['this', 'following', 'series'] as const).includes(o.scope as never)
+        ? (o.scope as 'this' | 'following' | 'series')
+        : undefined
       if (o.op === 'shift') {
         const deltaMin = optInt(o.deltaMin, -720, 720)
         if (!deltaMin) return 'nothing to shift — pass deltaMin (+ later, − earlier)'
-        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount, confirmToken)
+        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount, confirmToken, scope)
       }
       if (o.op === 'move_to_day') {
         const toDayOffset = optInt(o.toDayOffset, 0, 13)
         if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
-        return exec.batch(selector, { kind: 'moveToDay', toDayOffset }, confirmCount, confirmToken)
+        return exec.batch(
+          selector,
+          { kind: 'moveToDay', toDayOffset },
+          confirmCount,
+          confirmToken,
+          scope
+        )
       }
       if (o.op === 'set_tag') {
         const toTag = (['work', 'private', 'health', 'rest'] as const).includes(o.toTag as never)
           ? (o.toTag as 'work')
           : undefined
         if (!toTag) return 'nothing to tag — pass toTag (work, private, health or rest)'
-        return exec.batch(selector, { kind: 'setTag', tag: toTag }, confirmCount, confirmToken)
+        return exec.batch(
+          selector,
+          { kind: 'setTag', tag: toTag },
+          confirmCount,
+          confirmToken,
+          scope
+        )
       }
       return 'nothing to batch — op must be shift, move_to_day or set_tag'
     }

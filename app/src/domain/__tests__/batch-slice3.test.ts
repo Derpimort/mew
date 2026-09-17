@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 import type { Block } from '../types'
 import { batchToken, planBatch } from '../batch'
 import { parseCommand } from '../parse'
+import { chipReplyEffect, chipStillMeans } from '../chipEffect'
 
 const TUE = '2026-06-09'
 const WED = '2026-06-10'
@@ -193,6 +194,39 @@ describe('planBatch — the three answers', () => {
   })
 })
 
+describe('the invariant the store leans on', () => {
+  it("once an answer is given, no plan ever reports a 'repeating' skip again", () => {
+    /* the store's series question is raised by exactly that reason, so if a plan
+       could still report it WITH a scope, a pick would re-ask forever. Every
+       scope × every op, over a pool that also holds a calendar occurrence, a
+       done one and a fixed-time one. */
+    const [tue, wed, thu] = series()
+    const pool = [
+      tue,
+      { ...wed, external: { calId: 'c', eventId: 'e' } },
+      { ...thu, status: 'done' as const },
+      block({ id: 'call', title: 'Client call', dayKey: TUE, startMin: 10 * 60 }),
+      block({
+        id: 'standup',
+        title: 'Standup',
+        dayKey: TUE,
+        startMin: 11 * 60,
+        recurringBlockId: 'r2',
+      }),
+    ]
+    const ops = [
+      { kind: 'shift' as const, deltaMin: 30 },
+      { kind: 'moveToDay' as const, toDayKey: THU },
+      { kind: 'setTag' as const, tag: 'work' as const },
+    ]
+    for (const scope of ['this', 'following', 'series'] as const)
+      for (const op of ops)
+        expect(
+          planBatch(pool, { dayKey: TUE }, op, [], scope).skipped.map((s) => s.reason)
+        ).not.toContain('repeating')
+  })
+})
+
 describe('planBatch — the laws still hold across a series', () => {
   it('a move onto one day is refused past this occurrence: a series keeps its days', () => {
     const whole = planBatch(
@@ -309,5 +343,41 @@ describe('the keyless grammar carries a scope word on a batch ask', () => {
     expect(cmd.kind).toBe('batch')
     expect(cmd.seriesScope).toBe('series')
     expect(cmd.batch).toMatchObject({ op: 'setTag', toTag: 'work', titleQuery: 'calls' })
+  })
+})
+
+describe('a scope chip is re-checked at midnight like every other chip (#94/#96)', () => {
+  const TUE_2350 = new Date(2026, 5, 9, 23, 50)
+  const WED_0005 = new Date(2026, 5, 10, 0, 5)
+  const pool = () => [
+    ...series(),
+    block({ id: 'deck-wed', title: 'Deck', dayKey: WED, startMin: 17 * 60, endMin: 18 * 60 }),
+  ]
+
+  it('the scope word never hides the day the ask names: a weekday still means it', () => {
+    /* the phrase is lifted off before the grammar reads the ask, so the effect a
+       chip carries is the same with or without it */
+    const plain = 'push all health after 15:00 on thursday later by 30 min'
+    for (const phrase of ['just this one', 'this and following', 'across the whole series']) {
+      expect(chipReplyEffect(pool(), `${plain} ${phrase}`, TUE_2350)).toEqual(
+        chipReplyEffect(pool(), plain, TUE_2350)
+      )
+      expect(chipStillMeans(pool(), `${plain} ${phrase}`, TUE_2350, WED_0005)).toBe(true)
+    }
+  })
+
+  it('and a scope chip offered for "today" stops meaning the same after midnight, so MEW re-offers', () => {
+    const reply = 'push all health after 15:00 today later by 30 min across the whole series'
+    expect(chipStillMeans(pool(), reply, TUE_2350, WED_0005)).toBe(false)
+  })
+
+  it('a scope answer rides alongside a yes, count and token intact', () => {
+    const cmd = parseCommand(
+      'push all health after 15:00 on thursday later by 30 min across the whole series — yes, all 4 · k7f2',
+      NOW
+    )
+    expect(cmd.kind).toBe('batch')
+    expect(cmd.seriesScope).toBe('series')
+    expect(cmd.batch).toMatchObject({ confirmCount: 4, confirmToken: 'k7f2', op: 'shift' })
   })
 })

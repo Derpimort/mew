@@ -217,7 +217,9 @@ export function runIntent(
           },
           op,
           bt.confirmCount,
-          bt.confirmToken
+          bt.confirmToken,
+          /* #75 slice 3: the scope word a chip re-issued ("just this one") */
+          intent.seriesScope
         )
       )
     }
