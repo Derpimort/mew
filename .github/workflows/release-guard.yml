@@ -1,7 +1,9 @@
 name: release-guard
 
 # Release-version guard (CalVer, see .github/RELEASES.md): the config shape, the MSI
-# version mapping and the guard's own cases, on every PR that touches them.
+# version mapping and the guard's own cases, on every PR that touches them — and the
+# release-notes guard: [Unreleased] must never repeat a section or a bullet (a keep-both
+# CHANGELOG re-sync did exactly that on the v2026.09 RC; it is the release body).
 # desktop.yml's `check` job only fires on PRs into main, so without this a PR into
 # the RC could break tauri.conf.json or the guard unnoticed until promotion. ~20s.
 #
@@ -17,6 +19,7 @@ on:
       - 'desktop/src-tauri/tauri.conf.json'
       - 'desktop/package.json'
       - 'desktop/scripts/**'
+      - 'CHANGELOG.md'
       - '.github/workflows/release-guard.yml'
   workflow_dispatch:
 
@@ -32,3 +35,5 @@ jobs:
         with: { node-version: 22 }
       - run: node desktop/scripts/check-release-version.mjs --shape
       - run: node --test desktop/scripts/__tests__/check-release-version.test.mjs
+      - run: node desktop/scripts/check-changelog.mjs CHANGELOG.md
+      - run: node --test desktop/scripts/__tests__/check-changelog.test.mjs

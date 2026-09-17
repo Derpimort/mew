@@ -209,6 +209,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   it came from.
 - MEW opens on about 43 KB less code: the connected-model instructions and the class-merging helper
   used by Settings now load only when those are used, not with every start.
+- The release notes guard themselves: a check in CI fails any change that repeats a section or a
+  bullet in these notes, so what you read here is written once.
 - Three more midnight details are held by tests: a choice picked in the first seconds after
   midnight, before MEW's clock catches up, checks against the new day, a choice that lengthens a
   block checks its day too, and a "done" choice keeps pointing at the block it was offered for even
