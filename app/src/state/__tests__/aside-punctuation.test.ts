@@ -247,4 +247,58 @@ describe('#126 — a question aside keeps its "?" and nothing after it', () => {
     expect(reply).toMatch(/ Tucked a \d+-min breather into today at \d+:\d\d\.$/)
     expect(reply).not.toContain('?.')
   })
+
+  it('two days at once: the statement sentence comes first, the question stands last (#143 review Q1)', async () => {
+    /* the pacing pass walks the days it touched, so the question ("today runs …
+       unbroken?") is raised BEFORE the breather it tucked into Wednesday — the
+       reply still reads as one statement sentence, then the question */
+    await fresh(
+      [
+        block({ id: 'a', title: 'Deck', startMin: 8 * 60, endMin: 17 * 60 + 30, protected: false }),
+        block({
+          id: 'b',
+          title: 'Budget',
+          dayKey: '2026-06-10',
+          startMin: 9 * 60,
+          endMin: 11 * 60,
+          protected: false,
+        }),
+      ],
+      [],
+      'local'
+    )
+    let reply = ''
+    scriptedModel.midTurn = (exec) => {
+      reply = exec.plan(
+        [
+          {
+            title: 'report',
+            tag: 'work',
+            dayOffset: 0,
+            startMin: 17 * 60 + 30,
+            startStated: true,
+            durationMin: 60,
+            durationStated: true,
+          },
+          {
+            title: 'review',
+            tag: 'work',
+            dayOffset: 1,
+            startMin: 11 * 60,
+            startStated: true,
+            durationMin: 60,
+            durationStated: true,
+          },
+        ],
+        []
+      )
+    }
+    await say('put the report at 5:30 today and the review at 11 tomorrow')
+    await settle()
+    expect(reply).toContain(
+      ' Tucked a 15-min breather into Wednesday at 12:00. Today runs 8:00–18:30 unbroken — want me to make room for a short breather?'
+    )
+    expect(reply).toMatch(/breather\?$/)
+    expect(reply).not.toContain('?.')
+  })
 })
