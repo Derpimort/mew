@@ -13,7 +13,7 @@ the human docs — read those for the *what*, this is the *how we work*:
 Feature intent → a specced `[dev]` issue → an isolated build → review → merge.
 
 - **`/dev-plan`** turns a request into a claimable `[dev]` issue (spec + acceptance + architecture placement). One issue per feature; new angles are comments, not duplicates.
-- **`/dev-code`** claims an issue, builds it in a **git worktree** (`.worktrees/dev-<n>`), runs the gates, opens a PR into the active RC branch (`v*-rc`).
+- **`/dev-code`** claims an issue, builds it in a **git worktree** (`.worktrees/dev-<n>`), runs the gates, opens a PR into the active RC branch (`v*-rc*`, named `vYYYY.MM-rcN`, e.g. `v2026.09-rc1`).
 - **`/dev-review`** audits the PR against `code_review_framework.md` + the product laws.
 
 ## The merge bar (non-negotiable)
@@ -27,17 +27,17 @@ Positive-only voice (a *mew* = a completion; no streaks/shame) · the store exec
 ## Orchestrating a build (multi-lane)
 
 - **≤2 build lanes at a time**, paired by **disjoint file territory** so they don't collide on `store.ts`/`week.ts` (e.g. one lane on `scheduler.ts`+`execPlan`, another on `recurrence.ts`+`execEdit`/`execRemove`). Longest pole first.
-- Each lane branches from the freshest `v*-rc` and, at PR time, **merges the fresh base** (merge commit, never force-push) and reconciles — conflicts are usually small and additive (enum unions, adjacent lines).
-- **An agent merges feature PRs into `v*-rc` itself** (`gh pr merge --squash`, **never** `--admin`). **Merges to `main` are the owner's click** — it's branch-protected and requires a review you can't self-issue. This self-merge lane assumes **write access** (maintainer-run agents); external contributors fork + PR, and a maintainer merges.
+- Each lane branches from the freshest `v*-rc*` and, at PR time, **merges the fresh base** (merge commit, never force-push) and reconciles — conflicts are usually small and additive (enum unions, adjacent lines).
+- **An agent merges feature PRs into `v*-rc*` itself** (`gh pr merge --squash`, **never** `--admin`). **Merges to `main` are the owner's click** — it's branch-protected and requires a review you can't self-issue. This self-merge lane assumes **write access** (maintainer-run agents); external contributors fork + PR, and a maintainer merges.
 - The loop is **notification-driven**: lane-completion events + a branch-merge monitor drive it. Scheduled wakeups / cron are unreliable (sometimes environment-blocked) — treat them as a fallback only, and keep shell commands simple (compound `git fetch` + `gh` chains can be blocked).
 - A lane killed mid-work (e.g. a session-limit reset) leaves its changes **staged** in its worktree — recover it (commit, sync base, open the PR) rather than rebuilding from scratch.
 - Before reporting status, **re-check GitHub** — the owner may have merged or acted between turns.
 
 ## Releasing (the gitflow)
 
-Feature PRs → `v*-rc` (quick gate: tsc · vitest · lint · prettier). The promotion PR **`v*-rc → main`** runs the heavy suite (e2e · Lighthouse · desktop `cargo` build · ui-overlap · bundle-size · audit). A **`v*` tag** on `main` triggers `desktop.yml` → installers + the GitHub Release.
+Feature PRs → `v*-rc*` (the RC branch is `vYYYY.MM-rcN`, e.g. `v2026.09-rc1`; quick gate: tsc · vitest · lint · prettier). The promotion PR **`v*-rc* → main`** runs the heavy suite (e2e · Lighthouse · desktop `cargo` build · ui-overlap · bundle-size · audit). A **`v*` tag** on `main` triggers `desktop.yml` → installers + the GitHub Release.
 
-**Release-version rule (learned from the v0.6.0 near-miss).** tauri-action stamps the installers **and** the updater manifest from `desktop/src-tauri/tauri.conf.json`, **not** the git tag. So in the promotion PR, **bump the config from `x.y.z-rc.N` to the clean `x.y.z`** and add the `CHANGELOG [x.y.z]` section (the release body reads from it) *before* tagging — or the release ships mislabeled artifacts. This is enforced by `desktop/scripts/check-release-version.mjs` (`--promotion` on the promotion PR fails on a prerelease version; `--tag` on the release fails if the tag ≠ the config). Auto-update also needs the `TAURI_SIGNING_PRIVATE_KEY` secret — unset → self-update stays dormant (installers still ship).
+**Release-version rule (learned from the v0.6.0 near-miss; CalVer since 2026.9.0).** Versions are `YYYY.M.PATCH` (no leading zero in the month; `PATCH` counts that month's releases), the RC branch is `vYYYY.MM-rcN` and its config reads `YYYY.M.PATCH-rc.N`. tauri-action stamps the installers **and** the updater manifest from `desktop/src-tauri/tauri.conf.json`, **not** the git tag. So in the promotion PR, **bump the config from `YYYY.M.PATCH-rc.N` to the clean `YYYY.M.PATCH`**, keep `bundle.windows.wix.version` at `(YYYY-2000).M.PATCH` (WiX caps the MSI major at 255: `2026.9.0` → `26.9.0`), mirror `desktop/package.json`, and add the `CHANGELOG [YYYY.M.PATCH]` section (the release body reads from it) *before* tagging `vYYYY.M.PATCH` — or the release ships mislabeled artifacts. Enforced by `desktop/scripts/check-release-version.mjs` (every mode checks the CalVer shape + MSI mapping first): `--shape` in ci.yml's `release-guard` job on any PR touching the config or the guard, and before every desktop build; `--promotion` on the promotion PR (also fails on a prerelease); `--tag` on the release (also fails on a malformed tag or tag ≠ config). Full scheme + worked example: `.github/RELEASES.md`. Auto-update also needs the `TAURI_SIGNING_PRIVATE_KEY` secret — unset → self-update stays dormant (installers still ship).
 
 ## gbrain — the vision
 
