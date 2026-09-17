@@ -20,6 +20,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
 
+### Screenshots that hold on any weekday
+- The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on
+  a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
+  `SHOOT_DATE` probes another day when you want to look.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
