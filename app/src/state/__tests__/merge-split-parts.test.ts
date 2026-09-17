@@ -304,6 +304,42 @@ describe('#121 — a split pair merges back into one block', () => {
     )
   })
 
+  it('a split pair beside a different block sharing a word: the refusal names two blocks, not three', async () => {
+    await fresh([
+      block({
+        id: 'p1',
+        title: 'Deck polish',
+        startMin: 9 * 60,
+        endMin: 10 * 60,
+        protected: false,
+      }),
+      block({
+        id: 'p2',
+        title: 'Deck polish (part 2)',
+        startMin: 10 * 60 + 30,
+        endMin: 11 * 60,
+        protected: false,
+      }),
+      block({
+        id: 'r',
+        title: 'Deck review',
+        startMin: 11 * 60,
+        endMin: 12 * 60,
+        protected: false,
+      }),
+    ])
+    await say('merge my two deck blocks')
+    await settle()
+    expect(lastMew()).toBe(
+      "Deck polish and Deck review are different blocks — name the one whose parts you want joined, and I'll merge them. Everything stays as it is for now."
+    )
+    expect(
+      blocks()
+        .map((b) => b.id)
+        .sort()
+    ).toEqual(['p1', 'p2', 'r'])
+  })
+
   it('#108 holds: different blocks that share a word still never merge', async () => {
     await fresh([
       block({ id: 'p', title: 'Deck polish', startMin: 9 * 60, endMin: 10 * 60, protected: false }),
