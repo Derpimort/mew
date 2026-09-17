@@ -3,17 +3,43 @@
    — inbound events land tagged by the source calendar's default tag
    — MEW blocks flow out per the routing matrix (details / "Busy" / nothing)
    — MEW's own pushed events are never pulled back in (mewBlockId marker)
-   — external blocks are never pushed back out. */
+   — external blocks are never pushed back out, and no all-day entry ever is. */
 
-import type { Block, ConnectedCalendar, RoutingMatrix } from '../../domain/types'
+import type { Block, ConnectedCalendar, RoutingMatrix, Tag } from '../../domain/types'
 import { project } from '../../domain/project'
 import { addDaysKey, dayKey, mondayOf, uid } from '../../domain/time'
+import { isAllDay } from '../../domain/week'
 import type { CalendarAccount, PushEventBody, RemoteEvent, SyncEntry } from './types'
 
 /* ── sync window: this week (Mon) through +14 days ───────────────────── */
 export function syncWindow(now: Date): { startKey: string; endKey: string } {
   const startKey = dayKey(mondayOf(now))
   return { startKey, endKey: addDaysKey(startKey, 21) }
+}
+
+/* ── all-day entries (#27) ───────────────────────────────────────────────
+   Tag-neutral: a holiday is not "work" because it arrived on a work calendar,
+   so it never takes the calendar's default tag — one fixed tag, which every
+   all-day reader ignores anyway. On the week model an all-day entry is a zero
+   clock span, whatever the wire carried. */
+const ALL_DAY_TAG: Tag = 'private'
+const FULL_DAY_END = 23 * 60 + 59
+
+/** The legacy shape a pre-#27 pull minted from an all-day event: 0:00–23:59. */
+function isFullDaySpan(startMin: number, endMin: number): boolean {
+  return startMin === 0 && endMin === FULL_DAY_END
+}
+
+/** The kind fields a pull writes for one event. All-day → the flag (+ its
+    inclusive last day). A timed event in the legacy full-day shape carries
+    allDay: false — the calendar itself says timed, so the load heal must never
+    reclassify it. Every other timed event carries neither field. */
+function kindFields(e: RemoteEvent): Pick<Block, 'allDay' | 'endDayKey'> {
+  if (e.allDay)
+    return e.endDayKey && e.endDayKey > e.dayKey
+      ? { allDay: true, endDayKey: e.endDayKey }
+      : { allDay: true }
+  return isFullDaySpan(e.startMin, e.endMin) ? { allDay: false } : {}
 }
 
 /* ── inbound: merge remote events into the week ──────────────────────── */
@@ -56,8 +82,9 @@ export function mergePull(
     const key = `${b.external.calId}:${b.external.eventId}`
     const e = remote.get(key)
     if (!e) {
-      /* inside the window and absent remotely → the event was deleted */
-      if (b.dayKey >= window.startKey && b.dayKey < window.endKey) {
+      /* inside the window and absent remotely → the event was deleted. A
+         multi-day span that began before the window still reaches into it */
+      if ((b.endDayKey ?? b.dayKey) >= window.startKey && b.dayKey < window.endKey) {
         removed++
         continue
       }
@@ -65,21 +92,34 @@ export function mergePull(
       continue
     }
     remote.delete(key)
+    const startMin = e.allDay ? 0 : e.startMin
+    const endMin = e.allDay ? 0 : e.endMin
+    const kind = kindFields(e)
+    const kindChanged = isAllDay(b) !== !!e.allDay
     if (
       b.title !== e.title ||
       b.dayKey !== e.dayKey ||
-      b.startMin !== e.startMin ||
-      b.endMin !== e.endMin ||
-      (b.optional ?? false) !== (e.optional ?? false)
+      b.startMin !== startMin ||
+      b.endMin !== endMin ||
+      (b.optional ?? false) !== (e.optional ?? false) ||
+      kindChanged ||
+      b.endDayKey !== kind.endDayKey
     ) {
       updated++
+      const { allDay: _kind, endDayKey: _last, ...rest } = b
       out.push({
-        ...b,
+        ...rest,
         title: e.title,
         dayKey: e.dayKey,
-        startMin: e.startMin,
-        endMin: e.endMin,
+        startMin,
+        endMin,
         optional: e.optional,
+        /* the kind flipped: all-day turns tag-neutral, timed takes the
+           calendar's default back */
+        ...(kindChanged ? { tag: e.allDay ? ALL_DAY_TAG : (tagFor.get(e.calId) ?? 'work') } : {}),
+        /* a block that was ever classified keeps an explicit verdict, so a
+           healed block the calendar calls timed is never healed again */
+        ...(b.allDay != null && !e.allDay ? { allDay: false } : kind),
       })
     } else {
       out.push(b)
@@ -91,16 +131,17 @@ export function mergePull(
     out.push({
       id: uid(),
       title: e.title,
-      tag: tagFor.get(e.calId) ?? 'work',
+      tag: e.allDay ? ALL_DAY_TAG : (tagFor.get(e.calId) ?? 'work'),
       dayKey: e.dayKey,
-      startMin: e.startMin,
-      endMin: e.endMin,
+      startMin: e.allDay ? 0 : e.startMin,
+      endMin: e.allDay ? 0 : e.endMin,
       protected: false,
       status: 'open',
       calendarRefs: [e.calId],
       estimateSource: 'user',
       external: { calId: e.calId, eventId: e.eventId },
       ...(e.optional ? { optional: true } : {}),
+      ...kindFields(e),
     })
   }
 
@@ -128,6 +169,25 @@ export function adoptOrphanedExternals(
     return { ...rest, calendarRefs: b.calendarRefs.filter((id) => live.has(id)) }
   })
   return adopted ? { blocks: out, adopted } : { blocks, adopted: 0 }
+}
+
+/* ── repair: heal all-day entries a pre-#27 pull stored as 0:00–23:59 ──
+   Before #27 an all-day event arrived clamped into a timed full-day block —
+   it hijacked the dial's countdown, inflated the day's hours and fired false
+   conflict nudges. Every stored external block of that shape becomes the
+   all-day label it always was, on load, with no re-sync. Once: only a block
+   never classified (allDay undefined) qualifies; a later pull that finds one
+   really timed writes allDay: false, so the heal never re-applies to it. Runs
+   BEFORE the orphan sweep — a healed label adopted as native must still never
+   be pushed. Same array back when nothing heals. */
+export function healAllDayBlocks(blocks: Block[]): { blocks: Block[]; healed: number } {
+  let healed = 0
+  const out = blocks.map((b) => {
+    if (!b.external || b.allDay !== undefined || !isFullDaySpan(b.startMin, b.endMin)) return b
+    healed++
+    return { ...b, tag: ALL_DAY_TAG, startMin: 0, endMin: 0, allDay: true }
+  })
+  return healed ? { blocks: out, healed } : { blocks, healed: 0 }
 }
 
 /* ── repair: forget ledger entries whose remote copy was deleted ───────
@@ -223,6 +283,7 @@ export function planPush(
     for (const ev of project(blocks, matrix, cal.id)) {
       const block = byId.get(ev.blockId)
       if (!block || block.external) continue // never push external events back
+      if (isAllDay(block)) continue // nor an all-day label — even one adopted as native (#27)
       if (ev.dayKey < window.startKey || ev.dayKey >= window.endKey) continue
       desired.set(`${ev.blockId}:${cal.id}`, {
         calId: cal.id,

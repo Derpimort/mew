@@ -4,8 +4,9 @@
    Loop prevention: every event MEW pushes carries extendedProperties.private
    .mewBlockId, and pull skips anything carrying it. */
 
-import { dayKey, fromDayKey, minOfDay } from '../../domain/time'
+import { fromDayKey } from '../../domain/time'
 import { isTauri, oauthLoopback } from '../desktop'
+import { mapGoogleEvent, type GEvent } from './googleEvent'
 import type { CalendarAccount, PushEventBody, RemoteCalendar, RemoteEvent } from './types'
 import { ReauthRequiredError } from './types'
 
@@ -58,24 +59,11 @@ function loadGis(): Promise<GisOauth2> {
   return gisLoading
 }
 
-/* ── time mapping (local wall-clock ↔ RFC3339) ───────────────────────── */
+/* ── time mapping (local wall-clock → RFC3339; inbound lives in googleEvent) ── */
 function toISO(day: string, min: number): string {
   const d = fromDayKey(day)
   d.setMinutes(min)
   return d.toISOString()
-}
-function fromISO(iso: string): { dayKey: string; min: number } {
-  const d = new Date(iso)
-  return { dayKey: dayKey(d), min: minOfDay(d) }
-}
-
-interface GEvent {
-  id: string
-  status?: string
-  summary?: string
-  start?: { dateTime?: string; date?: string }
-  end?: { dateTime?: string; date?: string }
-  extendedProperties?: { private?: Record<string, string> }
 }
 
 export class GoogleAccount implements CalendarAccount {
@@ -202,20 +190,8 @@ export class GoogleAccount implements CalendarAccount {
         `/calendars/${encodeURIComponent(calId)}/events?${params}`
       )
       for (const e of data.items ?? []) {
-        if (e.status === 'cancelled') continue
-        if (!e.start?.dateTime || !e.end?.dateTime) continue // all-day events stay out of the week model
-        const start = fromISO(e.start.dateTime)
-        const end = fromISO(e.end.dateTime)
-        out.push({
-          eventId: e.id,
-          calId,
-          title: e.summary ?? '(untitled)',
-          dayKey: start.dayKey,
-          startMin: start.min,
-          // multi-day spans clamp to their first day
-          endMin: end.dayKey === start.dayKey ? end.min : 23 * 60 + 59,
-          mewBlockId: e.extendedProperties?.private?.mewBlockId,
-        })
+        const ev = mapGoogleEvent(e, calId) // pure + tested: all-day arrives, never dropped
+        if (ev) out.push(ev)
       }
       pageToken = data.nextPageToken
     } while (pageToken)

@@ -18,6 +18,7 @@ import {
   dayEndMin,
   duration,
   findFreeSlot,
+  isAllDay,
   isBackground,
   isFixedTime,
   openItems,
@@ -88,7 +89,7 @@ export function findHeavyDay(
   let heaviest: { dayKey: string; plannedH: number } | null = null
   for (let i = 0; i <= 2; i++) {
     const key = addDaysKey(todayKey, i)
-    const open = blocksForDay(blocks, key).some((b) => b.status === 'open')
+    const open = blocksForDay(blocks, key).some((b) => b.status === 'open' && !isAllDay(b))
     if (!open) continue
     const plannedH = Math.round((plannedDeepMin(blocks, key) / 60) * 2) / 2
     if (plannedH > realisticBestH * 1.2 && (!heaviest || plannedH > heaviest.plannedH)) {
@@ -112,15 +113,18 @@ function findRestCollision(
         b.status === 'open' &&
         b.protected &&
         !b.optional &&
+        !isAllDay(b) &&
         (b.tag === 'rest' || (b.tag === 'private' && b.endMin - b.startMin >= 30))
     )
     for (const rest of rests) {
+      /* an all-day label never "runs over your lunch" — it holds no time (#27) */
       const intruder = day.find(
         (b) =>
           b.id !== rest.id &&
           b.status === 'open' &&
           b.tag === 'work' &&
           !b.optional &&
+          !isAllDay(b) &&
           overlaps(b.startMin, b.endMin, rest.startMin, rest.endMin)
       )
       if (intruder) return { rest, intruder }
@@ -252,7 +256,7 @@ export function buildCtx(
   /* a big fixed event that wrapped in the last 12 minutes, with the user not
      inside anything else and no review/rest cushion already following it —
      the moment a post-meeting buffer is worth offering */
-  const dayBlocks = blocksForDay(t.blocks, t.todayKey)
+  const dayBlocks = blocksForDay(t.blocks, t.todayKey).filter((b) => !isAllDay(b))
   const justEndedFixed =
     live.current == null
       ? (dayBlocks.find(
@@ -356,7 +360,7 @@ function earlyFinish(
   if (!done || done.dayKey !== t.todayKey || t.nowMin < done.startMin || t.nowMin >= done.endMin) {
     return none
   }
-  const day = blocksForDay(t.blocks, t.todayKey)
+  const day = blocksForDay(t.blocks, t.todayKey).filter((b) => !isAllDay(b))
 
   /* the "reclaimed" window is only what's actually free. completing a meeting
      that never happened, mid-rest, with three other things booked over the

@@ -19,6 +19,7 @@ import {
   DAY_START,
   duration,
   freeWindows,
+  isAllDay,
   isBackground,
   isFixedTime,
   move,
@@ -126,7 +127,7 @@ function restScore(
   cand: { dayKey: string; startMin: number; endMin: number }
 ): number {
   const work = blocksForDay(blocks, cand.dayKey).filter(
-    (b) => b.status === 'open' && !isBackground(b) && b.tag !== 'rest'
+    (b) => b.status === 'open' && !isBackground(b) && b.tag !== 'rest' && !isAllDay(b)
   )
   const before = work
     .filter((b) => b.endMin <= cand.startMin)
@@ -300,11 +301,12 @@ const PACING_REST_FLOOR = 10
 /** <15m of air doesn't break a run — same continuity notion as dayShape */
 const RUN_GAP = 15
 
-/** the committed work that forms a run: open, focus, non-rest, non-optional —
-    the same set the day's load and streak math already trust. */
+/** the committed work that forms a run: open, focus, non-rest, non-optional,
+    never an all-day label — the same set the day's load and streak math trust. */
 function committedWork(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest'
+    (b) =>
+      b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest' && !isAllDay(b)
   )
 }
 
@@ -318,7 +320,7 @@ interface WorkRun {
     the run, so a day that's broken up yields only short runs and no insertion. */
 function workRuns(blocks: Block[], dayKey: string): WorkRun[] {
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b)
+    (b) => b.status === 'open' && !b.optional && !isBackground(b) && !isAllDay(b)
   )
   const runs: WorkRun[] = []
   let cur: WorkRun | null = null

@@ -8,7 +8,7 @@
 
 import type { Block, ChatChoice } from './types'
 import { addDaysKey, dayWord, fmtShortDate, fmtTime } from './time'
-import { conflictsWith, dayEndMin, duration, findFreeSlot, isFixedTime } from './week'
+import { conflictsWith, dayEndMin, duration, findFreeSlot, isAllDay, isFixedTime } from './week'
 import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
 
 export interface RescueConflict {
@@ -36,6 +36,8 @@ export function rescueKey(c: RescueConflict): `rescue:${string}` {
       (an untouched event re-pulled every 5 minutes is not a landing);
     — past days never rescue — the day is lived, not re-planned;
     — external-vs-external never rescues (two meetings are not MEW's to solve);
+    — an all-day entry never rescues: a holiday labels the day, it lands on
+      nothing (#27 — no "civic holiday landed on your deck");
     — the displaced block must be something MEW may move: open, work-tagged,
       not from a calendar, not fixed-time (a 1:1 is scheduled around, never
       shifted). conflictsWith supplies the open/time-holding/non-background
@@ -49,7 +51,7 @@ export function detectRescues(
   const prev = new Map(prevBlocks.filter((b) => b.external).map((b) => [extKey(b), b]))
   const out: RescueConflict[] = []
   for (const ev of nextBlocks) {
-    if (!ev.external || ev.dayKey < todayKey) continue
+    if (!ev.external || isAllDay(ev) || ev.dayKey < todayKey) continue
     const was = prev.get(extKey(ev))
     const changed =
       !was ||
