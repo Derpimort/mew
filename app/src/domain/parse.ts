@@ -896,7 +896,8 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     const query = cleanTitle(
       stripTimeWords(rest)
         .replace(/\b(?:with|and)\s+(?:the\s+)?(?:next|other)\s+one\b/g, ' ')
-        .replace(/\b(?:together|into\s+one|blocks?|my|the|both|two|all|these|those|on|of)\b/g, ' ')
+        .replace(/\bblocks?\s+of\b/g, ' ') // "two blocks of deck", never the "of" inside a title
+        .replace(/\b(?:together|into\s+one|blocks?|my|the|both|two|all|these|those|on)\b/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
     )

@@ -265,6 +265,19 @@ describe('the keyless grammar — merge / join / combine', () => {
     expect(parseCommand('combine the two calls', NOW).kind).not.toBe('merge')
   })
 
+  it('an "of" inside a title stays: "proof of concept", "end of day review" (peer review of #108)', () => {
+    expect(parseCommand('merge my two proof of concept blocks', NOW)).toEqual({
+      kind: 'merge',
+      query: 'proof of concept',
+      merge: {},
+    })
+    expect(parseCommand('join the end of day review blocks', NOW)).toEqual({
+      kind: 'merge',
+      query: 'end of day review',
+      merge: {},
+    })
+  })
+
   it('"combine two blocks of deck into one" names the deck, not "of deck"', () => {
     expect(parseCommand('combine two blocks of deck into one', NOW)).toEqual({
       kind: 'merge',
