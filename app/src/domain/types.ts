@@ -137,10 +137,17 @@ export type NudgeId =
     one slot per landing so several live conflicts dedupe independently, one
     day-load guard (#301) — `dayload:<dayKey>`, its `key` holding the todayKey
     it fired on, so the same over-line day speaks at most once per calendar day
-    — or a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
-    day so a re-pull of the same tight pair never re-observes it. */
+    — a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
+    day so a re-pull of the same tight pair never re-observes it — or one rest
+    block asked about by protect-rest (#14) — `rest:<blockId>|<dayKey>`, so each
+    rest gets its one ask. */
 export type FiredKey =
-  NudgeId | 'sustenance' | `rescue:${string}` | `dayload:${string}` | `buffer:${string}`
+  | NudgeId
+  | 'sustenance'
+  | `rescue:${string}`
+  | `dayload:${string}`
+  | `buffer:${string}`
+  | `rest:${string}`
 
 /** Per-slot last-fired marker (ts + contextual key). The engine's dedupe
     state, persisted through `Settings.nudgeLastFired` so once-per-day rituals
@@ -487,6 +494,7 @@ export interface ScheduleIntent {
     | 'relmove'
     | 'split'
     | 'merge'
+    | 'batch'
     | 'remember'
     | 'chat'
     | 'insights'
@@ -589,6 +597,23 @@ export interface ScheduleIntent {
       the first keeps its id and spans the run. The target is the `query`; `at`
       pins the run's first block, `dayOffset` its day. */
   merge?: { dayOffset?: number }
+  /** batch (#75): one op over the blocks a selector picks on one day — a shift
+      by minutes ("push everything after 3pm back an hour") or a move to another
+      day ("move all of today's work to tomorrow"). A wide batch is offered with
+      the exact list first; `confirmCount` and `confirmToken` are the count and
+      the list token the owner said yes to. */
+  batch?: {
+    dayOffset?: number
+    afterMin?: number
+    beforeMin?: number
+    tag?: Tag
+    titleQuery?: string
+    op: 'shift' | 'moveToDay'
+    deltaMin?: number
+    toDayOffset?: number
+    confirmCount?: number
+    confirmToken?: string
+  }
   /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
       blocks of this focus class up to how the kind really runs. The union is
       spelled inline (not imported from energy) to keep types.ts a leaf. */

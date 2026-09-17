@@ -14,6 +14,7 @@
    preference, read-only views, the room offer's own pad — resolve to null. */
 
 import type { Block, ScheduleIntent } from './types'
+import { selectBatch } from './batch'
 import { parseCommand } from './parse'
 import { parseTimeValue } from './prefs'
 import { parseSplitAsk } from './rescue'
@@ -180,6 +181,31 @@ export function chipReplyEffect(
         around,
         tailMin: sp.tailMin ?? null,
         seriesScope: ask.seriesScope ?? null,
+      }
+    }
+    case 'batch': {
+      /* execBatch's resolution (#75): the selector's day and a move's day made
+         absolute, and the blocks that selector picks. A confirm that names its
+         days as weekdays ("… on thursday", "move all thursday's work to friday")
+         still acts after midnight; one that says "today" or "tomorrow" does not. */
+      const bt = ask.batch
+      if (!bt) return { kind: 'batch', day: todayKey }
+      const sel = {
+        dayKey: addDaysKey(todayKey, bt.dayOffset ?? 0),
+        afterMin: bt.afterMin,
+        beforeMin: bt.beforeMin,
+        tag: bt.tag,
+        titleQuery: bt.titleQuery?.trim() || undefined,
+      }
+      return {
+        kind: 'batch',
+        dayKey: sel.dayKey,
+        selected: selectBatch(blocks, sel).map((b) => b.id),
+        op: bt.op,
+        deltaMin: bt.op === 'shift' ? (bt.deltaMin ?? 0) : null,
+        toDayKey: bt.op === 'moveToDay' ? addDaysKey(todayKey, bt.toDayOffset ?? 0) : null,
+        confirmCount: bt.confirmCount ?? null,
+        confirmToken: bt.confirmToken ?? null,
       }
     }
     case 'plan':

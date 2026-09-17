@@ -101,6 +101,15 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
   and MEW names both, so a merged block never loses one of its names.
 
+### Change several blocks at once, with a yes first
+- Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
+  lines it up in one go. When it touches three or more blocks, or moves anything to another day,
+  MEW first shows the day, exactly which blocks move where, which stay put and what they would share
+  time with, and nothing changes until you say yes. Your yes moves exactly that list: if the week
+  changes first, MEW shows you the new one. One "undo that" puts them all back. Calendar events,
+  fixed calls, done blocks and repeating blocks keep their place, and so does any block whose new
+  time would sit over one.
+
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
   now asks with up to three tappable choices: move the work to its next clean slot, drop the
@@ -172,6 +181,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - When the connection to the model drops after a reply has begun, MEW names it for what it is — "the
   connection to the model hiccuped" — and answers the turn itself. Whatever already streamed stays
   exactly as it arrived, and nothing is sent twice behind your back.
+
+### Each rest gets its one gentle ask
+- When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
+  and remembers it, across a restart too. A second rest that day still gets its own ask, even
+  while the first one's question stands, and tomorrow starts fresh.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as

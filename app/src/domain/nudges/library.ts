@@ -340,7 +340,8 @@ export const NUDGES: NudgeDef[] = [
         footnote: `The WHO defines burnout as chronic workplace stress that never got successfully managed — so rest gets scheduled and protected like work. (WHO ICD-11; Eagle Hill, 2025)`,
         actions: [{ id: 'keeprest', label: 'Keep it', kind: 'primary' }],
         payload: { restId: rest.id },
-        key: rest.dayKey,
+        /* the same rest-block key as the collision line (#14): one ask per rest */
+        key: `${rest.id}|${rest.dayKey}`,
       }
     },
   },
