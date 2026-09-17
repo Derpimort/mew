@@ -262,6 +262,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- Two more details of the loose-threads rail are held by tests: a lunch or breather MEW placed for
+  you can never be carried forward, so it never turns up in the rail as a follow-up waiting on you,
+  and a follow-up you have finished leaves the rail instead of sitting there.
 - Six more details of tonight's work are now held by tests: a breather MEW tucks in for pacing
   still reads as flexible, a rest you said never moves reads as fixed, a day holding nothing but
   MEW's own meals never reads as clear, a re-planned lunch keeps the length you said and stays
