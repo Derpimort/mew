@@ -1,0 +1,45 @@
+# Accepted-risk register for the Rust lockfile, read by
+#   osv-scanner scan source --lockfile desktop/src-tauri/Cargo.lock
+# CI's Rust gate is `cargo audit` (.github/workflows/audit.yml: fails on vulnerabilities,
+# warns on unmaintained/unsound). This file keeps the OSV view of the same lockfile honest:
+# every finding we knowingly ship is named here with its reason and a review date, so the
+# scan reports "No issues found" only because each item was looked at — never because the
+# gate was loosened. A real vulnerability is never listed here; it gets bumped instead
+# (rustls RUSTSEC-2026-0285 → 0.23.45, anyhow → 1.0.103, event-listener → 5.4.2 in the
+# same change). Re-check this list on every tauri bump: all of it is the tauri 2.11 Linux
+# GTK stack (gtk/glib 0.18) and tauri-utils' urlpattern.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+ignoreUntil = 2026-12-31
+reason = "glib 0.18.5 — informational 'unsound' (VariantStrIter). Pinned by tauri 2.11's GTK stack (gtk 0.18 → atk/gdk/webkit2gtk 0.18); the fix is glib 0.20, unreachable until tauri moves its gtk-rs line. MEW never calls glib::VariantStrIter. (OSV also lists it as GHSA-wrw7-89jp-8q8g; the alias is covered by this entry.)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+ignoreUntil = 2026-12-31
+reason = "proc-macro-error 1.0.4 — unmaintained. Compile-time only: pulled by glib-macros 0.18.5 (proc-macro) via the tauri 2.11 GTK stack; no runtime code. Leaves with glib 0.20."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+ignoreUntil = 2026-12-31
+reason = "unic-char-property 0.9.0 — unmaintained. Pulled by urlpattern 0.3.0 ← tauri-utils 2.9.3 (tauri-build/tauri-codegen capability + URL-pattern parsing at build time). Fix lands upstream when tauri-utils replaces urlpattern's unic-* with icu."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+ignoreUntil = 2026-12-31
+reason = "unic-char-range 0.9.0 — unmaintained; same urlpattern ← tauri-utils 2.9.3 chain as RUSTSEC-2025-0081."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+ignoreUntil = 2026-12-31
+reason = "unic-common 0.9.0 — unmaintained; same urlpattern ← tauri-utils 2.9.3 chain as RUSTSEC-2025-0081."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+ignoreUntil = 2026-12-31
+reason = "unic-ucd-ident 0.9.0 — unmaintained; same urlpattern ← tauri-utils 2.9.3 chain as RUSTSEC-2025-0081."
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+ignoreUntil = 2026-12-31
+reason = "unic-ucd-version 0.9.0 — unmaintained; same urlpattern ← tauri-utils 2.9.3 chain as RUSTSEC-2025-0081."

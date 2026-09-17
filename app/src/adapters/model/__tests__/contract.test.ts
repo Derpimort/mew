@@ -129,12 +129,23 @@ function captureFetch(respond: () => Response | Promise<Response>) {
 const reject400 = () =>
   new Response(JSON.stringify({ error: { message: 'nope' } }), { status: 400 })
 
+/* An OpenAI-compatible SSE body the way the live servers send it: the content
+   deltas, then ONE terminal chunk carrying `finish_reason: "stop"`, then
+   `[DONE]`. Ollama's /v1/chat/completions emits exactly that terminal chunk;
+   @ai-sdk/openai-compatible ≥ 3.0.4x treats a stream that ends without any
+   finish reason as an InvalidResponseDataError (surfaced as a turn error), so
+   a fixture that skipped it would fail on the SDK's contract, not on ours. */
 function sseResponse(lines: string[]) {
   const enc = new TextEncoder()
+  const terminal = lines.some(
+    (l) => l.includes('"finish_reason"') && !l.includes('"finish_reason":null')
+  )
+    ? []
+    : [oaFinish('stop')]
   return new Response(
     new ReadableStream({
       start(c) {
-        for (const l of lines) c.enqueue(enc.encode(`data: ${l}\n\n`))
+        for (const l of [...lines, ...terminal]) c.enqueue(enc.encode(`data: ${l}\n\n`))
         c.enqueue(enc.encode('data: [DONE]\n\n'))
         c.close()
       },
@@ -142,6 +153,15 @@ function sseResponse(lines: string[]) {
     { status: 200, headers: { 'content-type': 'text/event-stream' } }
   )
 }
+/** the terminal chunk of an OpenAI-compatible stream (empty delta, the reason it stopped) */
+const oaFinish = (reason: string) =>
+  JSON.stringify({
+    id: '1',
+    object: 'chat.completion.chunk',
+    created: 0,
+    model: 'm',
+    choices: [{ index: 0, delta: {}, finish_reason: reason }],
+  })
 const oaChunk = (text: string) =>
   JSON.stringify({
     id: '1',
