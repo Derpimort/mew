@@ -162,7 +162,13 @@ export interface ToolExecutor {
       a series block and the executor asks with this/following/series chips. */
   remove(
     query: string,
-    opts?: { at?: string; all?: boolean; scope?: 'this' | 'following' | 'series' }
+    opts?: {
+      at?: string
+      all?: boolean
+      scope?: 'this' | 'following' | 'series'
+      /** #62: days from today of the one to remove — with `at`, pins one occurrence */
+      dayOffset?: number
+    }
   ): string
   /** Read-only day x-ray: dead gaps, overlong streaks, missing buffers, load. */
   analyze(dayOffset: number): string

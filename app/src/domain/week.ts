@@ -714,6 +714,10 @@ export interface RemovalOpts {
   /** Remove every match, not just one — only when the user explicitly says
       "both/all/every" ("drop both prod release blocks"). */
   all?: boolean
+  /** A day-key pin (#62): only blocks on this day are candidates. Lets a reply
+      name one occurrence when the same title sits at the same time on several
+      days ("remove the lunch on thursday at 12:00"). */
+  day?: string
 }
 
 /** Resolve which open, ahead blocks a removal actually touches — pure, so the
@@ -728,7 +732,9 @@ export function resolveRemoval(
   opts: RemovalOpts,
   todayKey: string
 ): { remove: Block[]; candidates: Block[] } {
-  const matches = findAllByQuery(blocks, query).filter((b) => b.dayKey >= todayKey)
+  const matches = findAllByQuery(blocks, query).filter(
+    (b) => b.dayKey >= todayKey && (opts.day == null || b.dayKey === opts.day)
+  )
   if (matches.length <= 1) return { remove: matches, candidates: [] }
 
   const at = opts.at != null ? parseTimeValue(opts.at) : null
@@ -736,7 +742,13 @@ export function resolveRemoval(
     const pinned = matches.filter((b) => b.startMin === at)
     /* an `at` that hits nothing is a miss, not a license to drop all — report
        the matches so the caller can ask which one they meant */
-    return pinned.length ? { remove: pinned, candidates: [] } : { remove: [], candidates: matches }
+    if (!pinned.length) return { remove: [], candidates: matches }
+    /* #62: a time pins a start MINUTE, not a day. The same title at 12:00 on
+       several days is several blocks the owner didn't single out, so ask
+       (unless they said all). Removing them all was silent data loss. */
+    const days = new Set(pinned.map((b) => b.dayKey))
+    if (days.size > 1 && !opts.all) return { remove: [], candidates: pinned }
+    return { remove: pinned, candidates: [] }
   }
 
   if (opts.all) return { remove: matches, candidates: [] }

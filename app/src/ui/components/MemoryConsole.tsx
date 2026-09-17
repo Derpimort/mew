@@ -76,17 +76,14 @@ export function MemoryConsole({
                 your rhythm
               </div>
               {data.rhythm.map((r) => (
-                <div key={r.claim} data-claim={r.claim} className="set-row">
+                <div key={`${r.claim}:${r.label}`} data-claim={r.claim} className="set-row">
                   <div style={{ minWidth: 0 }}>
                     <div className="rt">{r.label}</div>
                     <div className="rs">{r.value}</div>
                   </div>
                 </div>
               ))}
-              <div style={SRC}>
-                more of your rhythm — deep work vs admin by energy — arrives with energy-aware
-                scheduling.
-              </div>
+              <div style={SRC}>from what you finished in the last four weeks, on this device.</div>
             </>
           )}
 

@@ -116,7 +116,13 @@ export function consolidate(
   const floor = addDaysKey(dayKey(today), -CONSOLIDATE_AFTER_DAYS)
   const kept: MemoryEvent[] = []
   const old: MemoryEvent[] = []
-  const STATE_KINDS = new Set(['weekly_summary', 'preference', 'learned_rule', 'dismissed_rule'])
+  const STATE_KINDS = new Set([
+    'weekly_summary',
+    'preference',
+    'learned_rule',
+    'dismissed_rule',
+    'forgotten_pref', // #15: a forget must outlive compaction, or the brain's copy returns
+  ])
   for (const e of events) {
     /* state, not history — a standing/learned rule (or a recorded dismissal)
        never ages out; compacting it would un-teach MEW (#327). */
