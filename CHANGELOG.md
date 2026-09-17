@@ -58,7 +58,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 ### The evening exists
 - MEW now plans inside the hours you actually keep: placement, suggestions and free-slot searches
   read your **plannable hours** rather than stopping at 18:30, and when nothing fits inside them
-  MEW says so plainly and names the open air past them. Its own morning scaffold and the weekly
+  MEW says so plainly and names the free time past them. Its own morning scaffold and the weekly
   ritual keep the classic day.
 - **Plannable hours** have their own row in Settings → Nudges & notifications, independent of
   quiet hours: two 24h fields on a five-minute grid, steppable from the keyboard and named for
