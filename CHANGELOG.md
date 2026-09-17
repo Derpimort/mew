@@ -55,6 +55,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - A time MEW picks for you is always still ahead of you. When what you ask for no longer fits in
   today's hours, MEW says so, names the free time past them and offers tomorrow's first opening as
   a choice, and a breather is only ever tucked into time still to come.
+- Say "tonight", "this evening" or "after dinner" and MEW places it in the evening: from 18:30,
+  inside your plannable hours, and after your dinner when you said so. The title keeps only the
+  task, and when the evening is full MEW offers tomorrow evening.
 
 ### Placing from your inbox leaves a receipt
 - When you place something from your inbox or the loose-threads rail, the conversation now shows its

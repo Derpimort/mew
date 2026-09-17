@@ -538,6 +538,11 @@ export interface ScheduleIntent {
     /** A standing recurrence (DAILY/WEEKLY) — execPlan expands it into one
         block per occurrence, all linked by recurringBlockId (#159). */
     rrule?: Rrule
+    /** #117: "tonight" / "this evening" / "after dinner" with no clock time —
+        placed in the evening, from the classic day's end */
+    window?: 'evening'
+    /** #117: "after dinner" — the evening, and after that day's dinner too */
+    afterDinner?: boolean
   }[]
   frees?: { dayKey: string; startMin: number; endMin: number; label: string }[]
   /* complete / move / remove */

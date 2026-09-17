@@ -72,7 +72,11 @@ export function runIntent(
          same the model reads from its tool description: three items on
          'auto', two on 'always', never on 'off'. */
       const unpinned = (p: (typeof places)[number]) =>
-        p.startMin == null && p.dayOffset == null && !p.rrule && p.attention !== 'background'
+        p.startMin == null &&
+        p.dayOffset == null &&
+        !p.rrule &&
+        p.attention !== 'background' &&
+        p.window == null // #117: "tonight" is the owner's own word on when
       const floor = planMode === 'always' ? 2 : 3
       if (planMode !== 'off' && !frees.length && places.length >= floor && places.every(unpinned)) {
         const out = exec.proposeScenarios(
@@ -109,6 +113,8 @@ export function runIntent(
             attention: p.attention,
             due: p.due,
             rrule: p.rrule,
+            window: p.window,
+            afterDinner: p.afterDinner,
           })),
           frees.map((f) => ({
             dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,

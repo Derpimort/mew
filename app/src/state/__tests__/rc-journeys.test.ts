@@ -358,7 +358,7 @@ describe('RC journey 1: an out-of-office week, planned into the evening', () => 
     ])
   })
 
-  it.fails('#117: "tonight" asked at 14:00 lands in the evening', async () => {
+  it('#117: "tonight" asked at 14:00 lands in the evening', async () => {
     await fresh([anchor()], { at: TUE(14, 0) })
     await say('block 2h for writing tonight')
     await settle()
@@ -367,7 +367,7 @@ describe('RC journey 1: an out-of-office week, planned into the evening', () => 
     )
   })
 
-  it.fails('#117: "this evening" stays out of the title', async () => {
+  it('#117: "this evening" stays out of the title', async () => {
     await fresh([anchor()], { at: TUE(14, 0) })
     await say('block 1h for reading this evening')
     await settle()
