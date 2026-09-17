@@ -123,6 +123,7 @@ import {
   batchAdminRule,
   deepWorkAnytime,
   parseTimeValue,
+  matchesPref,
   resolveTaskSpec,
   type LearnedRule,
 } from '../domain/prefs'
@@ -517,12 +518,13 @@ export interface MewState {
   openWeeklyReview(): WeeklyReview
   /** Close the weekly review surface ("leave them" / Esc). */
   closeWeeklyReview(): void
-  /** Roll the owner-SELECTED carried blocks forward into `targetWeekKey`, through
-      the executor (the normal plan path) — never a direct mutation. Only ids that
-      pass isRollCandidate move (own + flexible + open): a mew, an external event,
-      or a fixed-time block handed in is refused at the gate, so nothing rolls
-      that the owner didn't pick from a legitimate carried set. Human-in-the-loop
-      by construction. */
+  /** Roll the owner-SELECTED carried blocks forward into `targetWeekKey` — each
+      lands on its same weekday and the original is marked rolled (week.roll, the
+      evening roll's primitive), so it leaves the carried set and one "undo that"
+      takes the whole roll back (#19). Only ids that pass isRollCandidate move
+      (own + flexible + open): a mew, an external event, or a fixed-time block
+      handed in is refused at the gate, so nothing rolls that the owner didn't
+      pick from a legitimate carried set. Human-in-the-loop by construction. */
   rollForward(blockIds: string[], targetWeekKey: string): void
   /** Draft the owner's learned week-shape for `targetWeekKey` (#349) — confirmed
       rules, their recurrences, and learned energy bands, laid AROUND existing/
@@ -6561,8 +6563,8 @@ export const useMew = create<MewState>((set, get) => {
        A read-only presenter over the LOCAL week + memory (no key, no I/O), the
        memory-console discipline: openWeeklyReview computes and returns the shape
        AND flips the surface open; the UI re-derives it live so a roll re-renders.
-       rollForward is the ONLY write, and it never mutates directly — it re-places
-       the owner-selected blocks through the executor's plan path. */
+       rollForward is the ONLY write: the owner's pick, rolled through the same
+       week.roll primitive the evening wind-down and an interrupt use (#19). */
     openWeeklyReview() {
       const s = get()
       const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
@@ -6587,35 +6589,163 @@ export const useMew = create<MewState>((set, get) => {
       const picked = s.blocks.filter((b) => want.has(b.id) && isRollCandidate(b, prefs))
       if (!picked.length) return
 
-      /* re-place each pick on its SAME weekday in the target week and let the
-         executor's scorer time it — meals re-anchor via the circadian oracle,
-         everything else lands rest-aware and conflict-free (no startMin means
-         "you pick the slot"). This goes through execPlan, the normal plan path:
-         tools are the only mutation door, so a tool card records the roll and
-         undo reaches it, exactly like a typed plan. */
-      const places: PlaceSpec[] = picked.map((b) => {
-        const weekdayIdx = (fromDayKey(b.dayKey).getDay() + 6) % 7 // Mon=0 … Sun=6
-        const targetDay = addDaysKey(targetWeekKey, weekdayIdx)
+      /* #19: a roll MOVES the work, the way the evening wind-down and an
+         interrupt already do. week.roll marks the original rolled and links it
+         (rolledToId) to a fresh copy, so it leaves this week's carried list for
+         good and can never roll twice. It deliberately skips execPlan: a plan
+         place is re-resolved through confirmed rules (one rolled Gym under a
+         recurring rule became a year of them) and de-duped by title (next week's
+         same-named block was re-slotted while nothing landed). The copy is the
+         block as it is (length, tag, protection, attention), timed on its SAME
+         weekday by the oracle a plan uses: the owner's rules, the circadian meal
+         seam, rest-aware and conflict-free. */
+      const learned = learnedRules(s)
+      const hours = plannableOf(s.settings) // #22: the owner's plannable day
+      const bufferMin = s.settings.meetingBufferMin ?? 0 // #302
+      let blocks = s.blocks
+      const places: PlaceSpec[] = [] // what landed, for the tool card
+      const landed: string[] = []
+      const withSeries: string[] = []
+      const rolledOriginals: Block[] = [] // every original this roll marks rolled
+      const noRoom: { name: string; toKey: string }[] = []
+      const workDays = new Set<string>()
+      for (const b of picked) {
+        const name = b.title.split('—')[0].trim()
+        const toKey = addDaysKey(targetWeekKey, (fromDayKey(b.dayKey).getDay() + 6) % 7) // Mon=0 … Sun=6
         const dayOffset = Math.round(
-          (fromDayKey(targetDay).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000
+          (fromDayKey(toKey).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000
         )
-        return {
+        /* a series occurrence whose own series already comes back that day rides
+           with it: linked to that occurrence, never a twin beside it */
+        const next = b.recurringBlockId
+          ? blocks.find(
+              (x) =>
+                x.recurringBlockId === b.recurringBlockId &&
+                x.dayKey === toKey &&
+                x.status === 'open'
+            )
+          : undefined
+        if (next) {
+          blocks = blocks.map((x) =>
+            x.id === b.id ? { ...x, status: 'rolled' as const, rolledToId: next.id } : x
+          )
+          withSeries.push(name)
+          rolledOriginals.push(b)
+          continue
+        }
+        const durationMin = week.duration(b)
+        let startMin: number | undefined
+        if (week.isBackground(b)) {
+          startMin = b.startMin // holds the clock, not a slot: same time, that day
+        } else {
+          /* a confirmed rule's window stays firm (#328); none of its other fields
+             re-resolve a roll. No `due` in the query (the oracle confines a due
+             to today): a slot that still ends by the block's own due wins. */
+          const rule = learned.find((r) => matchesPref(b.title, r.match))
+          const q: SlotQuery = {
+            title: b.title,
+            tag: b.tag,
+            durationMin,
+            ...(rule?.window ? { window: rule.window, windowFirm: true } : {}),
+          }
+          const onDay = scoreSlots(
+            blocks,
+            q,
+            todayKey,
+            minOfDay(now),
+            prefs,
+            undefined, // weights: the default profile
+            dayOffset, // horizon: reach the target day
+            undefined, // mealBase: the circadian default (#298)
+            bufferMin,
+            hours
+          ).filter((c) => c.dayKey === toKey)
+          const due = b.due
+          const byDue = due != null ? onDay.find((c) => c.endMin <= due) : undefined
+          startMin = (byDue ?? onDay[0])?.startMin
+        }
+        if (startMin == null) {
+          noRoom.push({ name, toKey })
+          continue
+        }
+        const rolled = week.roll(blocks, b.id, toKey, startMin)
+        const copyId = rolled.rolled!.id
+        /* a fresh session of the same work: not a second member of a series,
+           and not already started */
+        blocks = rolled.blocks.map((x) => {
+          if (x.id !== copyId) return x
+          const { recurringBlockId: _series, rrule: _rrule, startedAt: _started, ...copy } = x
+          return copy
+        })
+        places.push({
           title: b.title,
           tag: b.tag,
           dayOffset,
-          durationMin: week.duration(b),
+          startMin,
+          durationMin,
           protected: b.protected,
           ...(b.attention ? { attention: b.attention } : {}),
-        }
-      })
-      runToolWithCard('plan', { places, frees: [] }, () => execPlan(places, []))
+        })
+        if (b.tag === 'work' && !week.isBackground(b)) workDays.add(toKey)
+        landed.push(name)
+        rolledOriginals.push(b)
+      }
 
-      const names = picked.map((b) => b.title.split('—')[0].trim())
-      post([
-        mewMsg(
-          `Rolled forward — ${joinHuman(names)} now ${picked.length === 1 ? 'lives' : 'live'} in next week. Nothing else moved.`
-        ),
-      ])
+      const parts: string[] = []
+      if (landed.length)
+        parts.push(
+          `${joinHuman(landed)} now ${landed.length === 1 ? 'lives' : 'live'} in next week`
+        )
+      if (withSeries.length)
+        parts.push(
+          `${joinHuman(withSeries)} already ${withSeries.length === 1 ? 'comes back with its' : 'come back with their'} series`
+        )
+      const lines: string[] = []
+      if (parts.length) lines.push(`Rolled forward — ${parts.join('; ')}. Nothing else moved.`)
+      if (noRoom.length) {
+        const days = [...new Set(noRoom.map((r) => fmtDowLong(r.toKey)))]
+        const names = noRoom.map((r) => r.name)
+        lines.push(
+          `${joinHuman(days)} next week ${days.length === 1 ? 'is' : 'are'} full, so ${joinHuman(names)} ${names.length === 1 ? 'stays' : 'stay'} carried for now.`
+        )
+      }
+      const reply = lines.join(' ')
+
+      if (blocks !== s.blocks) {
+        /* the roll lands outside any turn: snapshot so one "undo that" takes the
+           whole roll back (the copies AND the marks), held across the next
+           turn's fresh-exchange reset (#293, the scenario-pick pattern) */
+        snapshotForUndo()
+        pickSnapshotHolds = true
+        const commit = () => {
+          setBlocks(blocks)
+          /* a review roll is a roll: logged and ingested exactly like the evening
+             wind-down roll and an interrupt, once per original it marks, so the
+             carry ratio, the energy profile and the roll insights all see it.
+             Inside the snapshot, so "undo that" drops these events too. */
+          for (const b of rolledOriginals) {
+            const evTs = nowFn() // one ts for the event and its brain offer
+            ingestBlockEvent(b, 'rolled', minOfDay(new Date(evTs)), evTs)
+            logMemory({
+              kind: 'rolled',
+              dayKey: b.dayKey,
+              tag: b.tag,
+              plannedMin: week.duration(b),
+              deep: week.isDeep(b),
+              title: b.title,
+              startMin: b.startMin,
+              endMin: b.endMin,
+              ts: evTs,
+            })
+          }
+          return reply
+        }
+        if (places.length) runToolWithCard('plan', { places, frees: [] }, commit)
+        else commit()
+      }
+      post([mewMsg(reply)])
+      /* the day-load meter (#301) still looks at every day the roll filled */
+      if (workDays.size) offerDayLoadGuard(workDays, todayKey)
     },
 
     updateSettings(patch) {
