@@ -20,6 +20,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
 
+### A real choice when a block can't make way
+- When new work lands on one of your own flexible blocks and that block has nowhere clean to go,
+  MEW now asks with three tappable choices: move the work to its next clean slot, drop the
+  flexible block, or keep both. Nothing moves until you pick, and every choice does exactly
+  what it says, with or without a model key.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
