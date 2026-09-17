@@ -136,6 +136,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   straight to that one, and "all" still means all.
 - The question names its all-choice in the choice's own words: "both" for two blocks, "all of
   them" for three or more.
+- Answer that question in words too: typing "all of them", "both", "the thursday one" or a choice's
+  own label does exactly what tapping that choice does, and never lands in your inbox.
 
 ### Say the day your way when removing
 - "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at

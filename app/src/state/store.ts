@@ -195,7 +195,7 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive } from '../domain/choices'
+import { choicesActive, scenariosActive, typedRemoveAnswer } from '../domain/choices'
 import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -5902,6 +5902,11 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      /* #131: a typed answer to a live remove ask is that chip's pick — the
+         same path as the tap, #94's pick-time re-check included — never a new
+         ask or a thought for the inbox */
+      const typed = typedRemoveAnswer(get().chat, trimmed)
+      if (typed) return get().pickChoice(typed.msgId, typed.choiceId)
       syncTurnClock() // #96: one today for the parse, the executors and the model
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
