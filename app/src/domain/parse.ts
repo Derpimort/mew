@@ -740,11 +740,22 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
         .replace(/^(?:both|all|every|each|the|my)\s+/i, '')
         .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, '')
     )
+    /* #62: a day word pins which day ("remove the lunch on thursday at 12:00") —
+       the time alone can hit the same title on several days */
+    const day = parseDayOffset(dropM[1], now)
     if (q)
       return {
         kind: 'remove',
         query: q,
-        ...(at || all ? { remove: { ...(at ? { at } : {}), ...(all ? { all: true } : {}) } } : {}),
+        ...(at || all || day
+          ? {
+              remove: {
+                ...(at ? { at } : {}),
+                ...(all ? { all: true } : {}),
+                ...(day ? { dayOffset: day.offset } : {}),
+              },
+            }
+          : {}),
       }
   }
 

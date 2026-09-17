@@ -400,6 +400,11 @@ export const MEW_TOOLS: NeutralTool[] = [
           description:
             'Remove every match, not just one. Default false; set true only on an explicit "both/all".',
         },
+        dayOffset: {
+          type: 'integer',
+          description:
+            "Days from today of the one to remove (0 = today). Pass it with `at` when the same title sits at the same time on several days, so only that day's block goes",
+        },
         scope: SCOPE_SCHEMA,
       },
       required: ['query'],
@@ -757,7 +762,13 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const at = atArg(o.at)
       const all = o.all === true
       const scope = recurScope(o.scope)
-      return exec.remove(String(o.query ?? ''), { at, all, ...(scope ? { scope } : {}) })
+      const dayOffset = optInt(o.dayOffset, 0, 13)
+      return exec.remove(String(o.query ?? ''), {
+        at,
+        all,
+        ...(scope ? { scope } : {}),
+        ...(dayOffset != null ? { dayOffset } : {}),
+      })
     }
     case 'clear_blocks': {
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const

@@ -20,6 +20,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
 
+### Removing one block removes one block
+- "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the
+  same time on several days, MEW asks which day with tappable choices ("today 12:00",
+  "thursday 12:00") and changes nothing until you pick. Naming the day ("remove the lunch on
+  thursday at 12:00") goes straight to that one, and "all" still means all.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
