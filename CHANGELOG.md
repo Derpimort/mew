@@ -164,6 +164,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   whole again, a removed lunch is back. It works without a connected model too, and "undo that"
   never lands in your inbox as a thought. Undo takes back the latest change, in your very next
   message.
+- And MEW now tells you what it put back, in the words of the thing that changed: a block that moved
+  goes back where it was, a length you changed comes back as a length, a name as a name, and a tag as
+  a tag. Tagging a few blocks and taking it back reads "put two tags back" — never "back where they
+  were", for blocks that never moved.
 
 ### Ask about any stretch of time
 - Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three
@@ -277,6 +281,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- One more detail of a change that spans days is held by tests: when the blocks that STAY put are
+  the ones on other days, each still reads with its own day, so the list you approve can be checked
+  against your week afterwards.
 - Tonight's newest features are now held together, not only one at a time: four journeys run a split
   pair through a batch shift, answer a remove ask in words, retag a day holding a calendar event and
   a repeating block, and take a week MEW helped build through the weekly review — each step checking
