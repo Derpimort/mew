@@ -40,6 +40,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   same time on several days, MEW asks which day with tappable choices ("today 12:00",
   "thursday 12:00") and changes nothing until you pick. Naming the day ("remove the lunch on
   thursday at 12:00") goes straight to that one, and "all" still means all.
+### A real choice when a block can't make way
+- When new work lands on one of your own flexible blocks and that block has nowhere clean to go,
+  MEW now asks with up to three tappable choices: move the work to its next clean slot, drop the
+  flexible block, or keep both. Nothing moves until you pick, and every choice does exactly
+  what it says, with or without a model key.
 
 ## [0.7.0] — 2026-08-12
 

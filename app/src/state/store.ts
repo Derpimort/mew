@@ -28,6 +28,7 @@ import {
   rescueOptions,
   withinDayWords,
 } from '../domain/rescue'
+import { parseCommand } from '../domain/parse'
 import {
   addDaysKey,
   dayKey,
@@ -1006,7 +1007,7 @@ function driftReply(
   todayKey: string,
   nowMin: number,
   prefs: PrefPayload[]
-): { blocks: Block[]; note: string; driftedIds: string[] } {
+): { blocks: Block[]; note: string; driftedIds: string[]; stuckIds: string[] } {
   const res = driftCollisions(blocks, placed, todayKey, nowMin, prefs)
   let next = blocks
   const driftedIds: string[] = []
@@ -1025,14 +1026,18 @@ function driftReply(
   const driftPart = moved.length ? ` — moved ${moved.join(', ')} to clear ${placedBase}` : ''
   // external/fixed never move — the same honest note clashNote has always given
   const fixedPart = clashNote(res.fixed, prefs)
-  const stuckPart = res.stuck.length
-    ? ` — note: ${res.stuck
-        .map((b) => b.title.split('—')[0].trim())
-        .join(
-          ' and '
-        )} still overlaps ${placedBase} with no clean slot to drift to — offer to shift the work, drop it, or keep the overlap (don't leave it unasked)`
+  /* #12: no clean slot to drift to — the note states the fact only; the
+     executor's offerDriftChoices turns it into a real choice (chips) */
+  const stuckNames = res.stuck.map((b) => b.title.split('—')[0].trim())
+  const stuckPart = stuckNames.length
+    ? ` — ${stuckNames.join(' and ')} still ${stuckNames.length === 1 ? 'shares' : 'share'} that time`
     : ''
-  return { blocks: next, note: `${driftPart}${fixedPart}${stuckPart}`, driftedIds }
+  return {
+    blocks: next,
+    note: `${driftPart}${fixedPart}${stuckPart}`,
+    driftedIds,
+    stuckIds: res.stuck.map((b) => b.id),
+  }
 }
 
 function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = false): WeekContext {
@@ -1772,6 +1777,102 @@ export const useMew = create<MewState>((set, get) => {
      on. Under the ask setting, under the pad floor, or with a stated duration,
      this says nothing. */
   let pendingEstimateMsgs: ChatMessage[] = []
+
+  /* No clean drift (#12): new explicit work landed on the owner's own flexible
+     blocks and one of them has nowhere clean to go. The owner gets ONE chips
+     message with the honest ways forward: shift the work to its next clean
+     slot, drop the flexible block, or keep both. Every chip's reply is a plain
+     ask the executor runs (so it's keyless-safe: the rules floor parses each
+     one), and a chip is offered only when that exact reply resolves to exactly
+     its block through the same resolvers the executor uses. A pick can never
+     touch a block its label didn't name. Nothing moves until a pick. Parked
+     like the day-load chips (#301) so the ask lands after the turn's reply.
+     Returns whether chips went out, so the reply can say the options are on
+     screen. */
+  let pendingDriftMsgs: ChatMessage[] = []
+  function offerDriftChoices(
+    stuck: { placedId: string; stuckIds: string[] }[],
+    todayKey: string
+  ): boolean {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const hours = plannableOf(s.settings)
+    const base = (b: Block) => b.title.split('\u2014')[0].trim()
+    const msgs: ChatMessage[] = []
+    for (const rec of stuck) {
+      const placed = s.blocks.find((b) => b.id === rec.placedId)
+      if (!placed) continue
+      const flex = rec.stuckIds
+        .map((id) => s.blocks.find((b) => b.id === id))
+        .filter(
+          (b): b is Block =>
+            b != null &&
+            b.status === 'open' &&
+            b.dayKey === placed.dayKey &&
+            b.startMin < placed.endMin &&
+            b.endMin > placed.startMin
+        )
+      if (!flex.length) continue // resolved in the meantime — nothing to ask
+      const choices: ChatChoice[] = []
+
+      /* shift the work: its next clean slot at or after where it asked to be */
+      const slot = week.nextSlotAfter(s.blocks, placed, placed.startMin, hours)
+      const toDay = slot ? dayWord(slot.dayKey, todayKey) : null
+      if (slot && toDay) {
+        const reply = `move the ${base(placed)} at ${fmtTime(placed.startMin)} to ${toDay} at ${fmtTime(slot.startMin)}`
+        const ask = parseCommand(reply, now)
+        const hit =
+          ask.kind === 'move' && ask.at
+            ? week.findTarget(s.blocks, ask.query ?? '', todayKey, {
+                at: parseTimeValue(ask.at),
+              })
+            : null
+        const landsOn =
+          ask.toDayKey != null && /^\d+$/.test(ask.toDayKey)
+            ? addDaysKey(todayKey, Number(ask.toDayKey))
+            : null
+        if (
+          hit?.status === 'ok' &&
+          hit.block.id === placed.id &&
+          landsOn === slot.dayKey &&
+          ask.toStartMin === slot.startMin
+        )
+          choices.push({
+            id: 'shift',
+            label: `move ${base(placed)} to ${toDay === 'today' ? '' : `${toDay} `}${fmtTime(slot.startMin)}`,
+            reply,
+          })
+      }
+
+      /* drop the flexible block: only a one-off (a series asks this/following/
+         series first) that its own reply singles out */
+      for (const b of flex.slice(0, 3)) {
+        if (b.recurringBlockId) continue
+        const reply = `remove the ${base(b)} at ${fmtTime(b.startMin)}`
+        const ask = parseCommand(reply, now)
+        if (ask.kind !== 'remove') continue
+        const r = week.resolveRemoval(s.blocks, ask.query ?? '', ask.remove ?? {}, todayKey)
+        if (r.remove.length === 1 && r.remove[0].id === b.id && !r.candidates.length)
+          choices.push({ id: `drop-${b.id}`, label: `drop ${base(b)}`, reply })
+      }
+
+      if (!choices.length) continue // no exact way to act — the plain note stands
+      choices.push({ id: 'keep', label: 'keep both', reply: 'ok, keep both as they are' })
+      const overlapStart = Math.max(placed.startMin, Math.min(...flex.map((b) => b.startMin)))
+      const overlapEnd = Math.min(placed.endMin, Math.max(...flex.map((b) => b.endMin)))
+      const names = [...flex.map(base), base(placed)] // "a, b and c", however many are stuck
+      msgs.push(
+        choicesMsg(
+          `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} share ${fmtTime(overlapStart)}\u2013${fmtTime(overlapEnd)}, with no clean slot to drift to. How should it go?`,
+          choices
+        )
+      )
+    }
+    if (!msgs.length) return false
+    if (turnInFlight) pendingDriftMsgs.push(...msgs)
+    else queueMicrotask(() => post(msgs))
+    return true
+  }
   let pendingEstimatePad: { ids: string[]; factor: number; focusClass: FocusClass } | null = null
   function offerEstimateGuard(
     placed: { id: string; focusClass: FocusClass }[],
@@ -2350,6 +2451,13 @@ export const useMew = create<MewState>((set, get) => {
       pendingEstimateMsgs = []
       post(msgs)
     }
+    /* the no-clean-drift ask (#12) rides the same beat: it's a direct question
+       about this turn's own placement, so it comes after the reply too */
+    if (pendingDriftMsgs.length) {
+      const msgs = pendingDriftMsgs
+      pendingDriftMsgs = []
+      post(msgs)
+    }
   }
 
   function setBlocks(blocks: Block[]) {
@@ -2412,9 +2520,11 @@ export const useMew = create<MewState>((set, get) => {
        clear in this same pass and names what moved (external/fixed stay put, an
        honest note); every other placement keeps the place-then-offer note
        (#102). `blocks` must already hold `landed`. Mutates blocks + touchedDays. */
+    const stuckDrifts: { placedId: string; stuckIds: string[] }[] = [] // #12
     const collisionNote = (landed: Block, key: string): string => {
       if (landed.tag === 'work' && !week.isBackground(landed)) {
         const d = driftReply(blocks, landed, todayKey, minOfDay(now), prefs)
+        if (d.stuckIds.length) stuckDrifts.push({ placedId: landed.id, stuckIds: d.stuckIds })
         blocks = d.blocks
         for (const id of d.driftedIds) {
           const b = blocks.find((x) => x.id === id)
@@ -2690,6 +2800,8 @@ export const useMew = create<MewState>((set, get) => {
       }
     }
     setBlocks(blocks)
+    /* #12: any own flexible block left overlapping gets a real choice (chips) */
+    const driftAsk = stuckDrifts.length ? offerDriftChoices(stuckDrifts, todayKey) : false
 
     /* referent (#320): a single-block plan is the one unambiguous "it" — set it.
        A multi-block plan or a kept-free window is ambiguous by construction, so
@@ -2742,7 +2854,8 @@ export const useMew = create<MewState>((set, get) => {
       const joined = joinHuman(mealNotes)
       mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
     }
-    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}`
+    const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
+    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}`
   }
 
   /* completions through CHAT celebrate in the reply itself — the celebrate
@@ -3183,10 +3296,12 @@ export const useMew = create<MewState>((set, get) => {
        drifts them clear in the same pass and names what moved; other moves keep
        the honest place-then-offer note. External/fixed are never moved. */
     let clashPart: string
+    let moveStuck: string[] = [] // #12
     if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
       const d = driftReply(moved, landedBlock, todayKey, minOfDay(now), prefs)
       moved = d.blocks
       clashPart = d.note
+      moveStuck = d.stuckIds
     } else {
       const landed = week.conflictsWith(
         moved,
@@ -3200,7 +3315,10 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(moved)
     noteReferentId(target.id) // the turn touched one block — "it" now points here
-    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}`
+    const moveAsk = moveStuck.length
+      ? offerDriftChoices([{ placedId: target.id, stuckIds: moveStuck }], todayKey)
+      : false
+    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}${moveAsk ? ' The options for that overlap are on screen.' : ''}`
   }
 
   /* ── granular calendar ops (#335) ────────────────────────────────────────
@@ -3357,10 +3475,12 @@ export const useMew = create<MewState>((set, get) => {
     /* the copy is a placement, so it drifts own flexible work and words fixed/
        external clashes exactly like plan/move (#324) — never moving a neighbor. */
     let note: string
+    let copyStuck: string[] = [] // #12
     if (made.tag === 'work' && !week.isBackground(made)) {
       const d = driftReply(blocks, made, todayKey, minOfDay(now), prefs)
       blocks = d.blocks
       note = d.note
+      copyStuck = d.stuckIds
     } else {
       const clash = week.isBackground(made)
         ? []
@@ -3369,8 +3489,11 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(blocks)
     noteReferentId(made.id) // the fresh copy is now "it"
+    const copyAsk = copyStuck.length
+      ? offerDriftChoices([{ placedId: made.id, stuckIds: copyStuck }], todayKey)
+      : false
     const when = toKey === todayKey ? 'today' : fmtDowLong(toKey)
-    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}`
+    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}${copyAsk ? ' The options for that overlap are on screen.' : ''}`
   }
 
   /** Move a block relative to where it is now, with no absolute time (#335).
