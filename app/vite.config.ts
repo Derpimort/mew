@@ -24,10 +24,13 @@ export default defineConfig({
     },
   },
   test: {
-    /* unit/integration suites live beside the code they cover, under src/. The
-       e2e suite is a separate runner (pnpm e2e / Playwright) — never collected
-       here, even though it shares the .spec naming. */
-    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    /* unit/integration suites live beside the code they cover, under src/, plus
+       the gate scripts' own policy tests (scripts/__tests__: the bundle and
+       lighthouse budgets), which sat outside this glob and never ran (#80).
+       Coverage still counts src/** only (vitest.config.ts). The e2e suite is a
+       separate runner (pnpm e2e / Playwright) — never collected here, even
+       though it shares the .spec naming. */
+    include: ['src/**/*.{test,spec}.{ts,tsx}', 'scripts/__tests__/*.test.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
   },
   build: {
