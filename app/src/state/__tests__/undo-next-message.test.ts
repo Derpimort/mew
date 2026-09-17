@@ -471,6 +471,27 @@ describe('#130 — a held undo acts only while the week is what the change left'
     expect(blocks().find((b) => b.id === 'email')!.status).toBe('done')
   })
 
+  it("the owner's own toggles count too: a protect or an attention change in between declines", async () => {
+    for (const toggle of ['protect', 'attention'] as const) {
+      await fresh([block({ id: 'email', title: 'Email', startMin: 510, endMin: 540 })])
+      await say('block 1h for deck at 15:00')
+      await settle()
+      if (toggle === 'protect') useMew.getState().toggleProtected('email')
+      else useMew.getState().setAttention('email', 'background')
+      await settle()
+      const email = () => blocks().find((b) => b.id === 'email')!
+
+      await say('undo that')
+      await settle()
+      expect(lastMew(), toggle).toBe(
+        "something else changed since, so I can't take that back cleanly: Email changed."
+      )
+      if (toggle === 'protect') expect(email().protected).toBe(false)
+      else expect(email().attention).toBe('background')
+      expect(blocks().map((b) => b.title)).toContain('deck')
+    }
+  })
+
   it('only a tick in between: the undo still takes the change back', async () => {
     await fresh([standup()])
     await say('block 1h for deck at 15:00')

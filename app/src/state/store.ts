@@ -3124,8 +3124,9 @@ export const useMew = create<MewState>((set, get) => {
      whole, so it acts only while the week is still exactly what that change
      left. A calendar sync, a checkbox, a capture or any other change since would
      be swept back with it, so the undo declines and changes nothing. Compared by
-     what the owner sees (a block's title, day, time and status; an inbox item's
-     status; the completion ledger), never by clock ticks or nudge bookkeeping. */
+     what the owner can change on a block (its title, day, time, status, tag,
+     protection, attention, optional flag, due and start; an inbox item's status;
+     the completion ledger), never by clock ticks or nudge bookkeeping. */
   type WeekMark = {
     blocks: Map<string, { sig: string; title: string; status: string; external: boolean }>
     captures: Map<string, { status: string; title: string }>
@@ -3139,7 +3140,19 @@ export const useMew = create<MewState>((set, get) => {
         s.blocks.map((b) => [
           b.id,
           {
-            sig: `${b.title}|${b.dayKey}|${b.startMin}|${b.endMin}|${b.status}`,
+            sig: [
+              b.title,
+              b.dayKey,
+              b.startMin,
+              b.endMin,
+              b.status,
+              b.tag,
+              b.protected,
+              b.attention ?? '',
+              b.optional ?? false,
+              b.due ?? '',
+              b.startedAt ?? '',
+            ].join('|'),
             title: baseOf(b.title),
             status: b.status,
             external: !!b.external,
@@ -5446,7 +5459,13 @@ export const useMew = create<MewState>((set, get) => {
     const snap = preMutationSnapshot
     if (!snap)
       return `nothing to undo right now — I can take back my last change in your very next message.`
-    const since = undoLeft ? changedSince(undoLeft) : []
+    /* a snapshot with no mark of the week its change left can't be checked:
+       fail closed rather than restore blind (#130 review) */
+    if (!undoLeft) {
+      preMutationSnapshot = null
+      return `nothing to undo right now — I can take back my last change in your very next message.`
+    }
+    const since = changedSince(undoLeft)
     if (since.length) {
       /* #130: restoring the snapshot would sweep these back too — decline, change nothing */
       preMutationSnapshot = null
