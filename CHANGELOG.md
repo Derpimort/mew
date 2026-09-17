@@ -103,6 +103,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
   Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
   and MEW names both, so a merged block never loses one of its names.
+- A block you split merges back: "merge my two deck polish blocks" joins Deck polish and Deck
+  polish (part 2) into one Deck polish again. While the meeting you split around still sits between
+  them, MEW names it and both pieces stay.
 
 ### Change several blocks at once, with a yes first
 - Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
@@ -131,6 +134,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   time on several days, MEW asks which day with tappable choices ("today 12:00", "thursday 12:00")
   and changes nothing until you pick. Naming the day ("remove the lunch on thursday at 12:00") goes
   straight to that one, and "all" still means all.
+- The question names its all-choice in the choice's own words: "both" for two blocks, "all of
+  them" for three or more.
 
 ### Say the day your way when removing
 - "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at
@@ -194,6 +199,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
   and remembers it, across a restart too. A second rest that day still gets its own ask, even
   while the first one's question stands, and tomorrow starts fresh.
+- When you place work over a rest, the reply names the time it runs over ("it runs over your
+  evening walk 18:00–18:45"), so a rest you chose to keep is never covered without a word. The
+  rest stays where it is.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
@@ -234,6 +242,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   it came from.
 - MEW opens on about 43 KB less code: the connected-model instructions and the class-merging helper
   used by Settings now load only when those are used, not with every start.
+- The check that keeps the connected-model instructions off the start-up path now has the time it
+  needs on a busy test runner, so it can only fail for a real reason.
 - The release notes guard themselves: a check in CI fails any change that repeats a section or a
   bullet in these notes, so what you read here is written once.
 - Three more midnight details are held by tests: a choice picked in the first seconds after

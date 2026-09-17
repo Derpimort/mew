@@ -415,10 +415,13 @@ describe('RC journey 2: a meeting lands on flexible work', () => {
     ])
     expect(dayRows(TODAY)).toEqual(SPLIT)
 
-    /* merge never joins across the calendar meeting (its reply is #121's) */
+    /* merge never joins across the calendar meeting, and says so (#121) */
     await say('merge my two deck polish blocks')
     await settle()
     expect(dayRows(TODAY)).toEqual(SPLIT)
+    expect(lastMew()).toBe(
+      'Design sync 9:30–10:15 (from your calendar) sits between them today, so everything stays as it is.'
+    )
 
     /* keyed: a move of part 2 and its undo in one turn put the week back exactly */
     await keyed()
@@ -435,21 +438,18 @@ describe('RC journey 2: a meeting lands on flexible work', () => {
     expect(dayRows(TODAY)).toEqual(SPLIT)
   })
 
-  it.fails(
-    '#121: once the meeting is gone, the split pair merges back into one block',
-    async () => {
-      await splitAroundTheMeeting()
-      useMew.getState().simulatePull([])
-      await settle()
-      await say('merge my two deck polish blocks')
-      await settle()
-      expect(
-        blocks()
-          .filter((b) => b.title.startsWith('Deck polish'))
-          .map((b) => [b.startMin, b.endMin])
-      ).toEqual([[540, 660]])
-    }
-  )
+  it('#121: once the meeting is gone, the split pair merges back into one block', async () => {
+    await splitAroundTheMeeting()
+    useMew.getState().simulatePull([])
+    await settle()
+    await say('merge my two deck polish blocks')
+    await settle()
+    expect(
+      blocks()
+        .filter((b) => b.title.startsWith('Deck polish'))
+        .map((b) => [b.startMin, b.endMin])
+    ).toEqual([[540, 660]])
+  })
 
   it.fails(
     '#120: "undo that", the message after the split was picked, takes the split back',
@@ -549,7 +549,7 @@ describe('RC journey 3: same-titled lunches across midnight', () => {
     expect(lunchIds()).toEqual(['l-tue', 'l-wed'])
   })
 
-  it.fails('#124: the ask for three lunches offers "all of them", not "both"', async () => {
+  it('#124: the ask for three lunches offers "all of them", not "both"', async () => {
     await fresh([lunch('l-tue', TODAY), lunch('l-wed', WED), lunch('l-thu', THU)], {
       at: TUE(9, 0),
     })
