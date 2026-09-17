@@ -50,6 +50,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   and MEW passes it along to the brain exactly once. A rule you forget stays forgotten with
   the brain on. And "what I've picked up about you" now shows your rhythm by energy: where your
   deep work, admin and health blocks actually get finished.
+### Feature proofs that run again
+- The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in
+  proofs run green again with no API key, on the same pinned day and shared harness as the
+  canon gate. Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ## [0.7.0] — 2026-08-12
 
