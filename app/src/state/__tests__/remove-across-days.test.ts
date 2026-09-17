@@ -365,3 +365,55 @@ describe('#62 review — a model dayOffset out of range is ignored, never clampe
     expect(lunchIds()).toEqual(['tue', 'wed'])
   })
 })
+
+/* #72 — a day phrase is the day, not the title: "this thursday", "thursday's" and
+   "next thursday" used to leave "lunch this" / "'s lunch" / "lunch next" as the
+   query, so nothing was found and nothing removed. Through the real store,
+   keyless, asked on Tuesday. */
+describe('#72 — remove by a day phrase finds the block', () => {
+  it('"remove the lunch this thursday at 12:00" removes exactly Thursday\'s Lunch', async () => {
+    await fresh(threeLunches())
+    await say('remove the lunch this thursday at 12:00')
+    await settle()
+    expect(lunchIds()).toEqual(['tue', 'wed'])
+    expect(chat()[chat().length - 1].body).toMatch(/^Removed — /)
+    expect(chipMsgs()).toHaveLength(0)
+  })
+
+  it('"remove thursday\'s lunch" removes the one Thursday Lunch', async () => {
+    await fresh(threeLunches())
+    await say("remove thursday's lunch")
+    await settle()
+    expect(lunchIds()).toEqual(['tue', 'wed'])
+    expect(chat()[chat().length - 1].body).toMatch(/^Removed — /)
+  })
+
+  it('"remove thursday\'s lunch" with two Lunches that Thursday asks which, and removes nothing', async () => {
+    await fresh([
+      ...threeLunches(),
+      lunch('thu-late', THU, { startMin: 19 * 60, endMin: 19 * 60 + 45 }),
+    ])
+    await say("remove thursday's lunch")
+    await settle()
+    expect(lunchIds()).toEqual(['thu', 'thu-late', 'tue', 'wed'])
+    const ask = chipMsgs()
+    expect(ask).toHaveLength(1)
+    // only Thursday's two are offered — the other days' Lunches never appear
+    expect(ask[0].body).toMatch(/^2 "lunch" blocks ahead/)
+  })
+
+  it('"remove the lunch next thursday at 12:00" finds the title and asks with day chips', async () => {
+    await fresh(threeLunches())
+    await say('remove the lunch next thursday at 12:00')
+    await settle()
+    expect(lunchIds()).toEqual(['thu', 'tue', 'wed']) // unpinned: nothing goes before a pick
+    const ask = chipMsgs()
+    expect(ask).toHaveLength(1)
+    expect(ask[0].choices!.map((c) => c.label)).toEqual([
+      'today 12:00',
+      'tomorrow 12:00',
+      'thursday 12:00',
+      'all of them',
+    ])
+  })
+})

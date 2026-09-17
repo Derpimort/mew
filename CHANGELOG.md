@@ -41,6 +41,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   "thursday 12:00") and changes nothing until you pick. Naming the day ("remove the lunch on
   thursday at 12:00") goes straight to that one, and "all" still means all.
 
+### Say the day your way when removing
+- "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday
+  at 12:00" now find the block. The day phrase is read as the day, so only the title is looked up,
+  and when the same time repeats across days MEW still asks which with day choices.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar

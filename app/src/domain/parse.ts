@@ -44,17 +44,30 @@ function parseDayOffset(text: string, now: Date): { offset: number; matched: str
     must never become one; nor does "next <weekday>" (this week's or the one
     after is the owner's call). Unpinned is always safe: a time that repeats
     across days asks with day chips, and those chips speak "on <weekday>". */
+const REMOVE_DOW =
+  '(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)'
+
 function removeDayPin(text: string, now: Date): number | null {
   const lower = text.toLowerCase()
   if (/\btoday\b/.test(lower)) return 0
   if (/\btomorrow\b/.test(lower)) return 1
-  const DOW =
-    '(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)'
   const m =
-    lower.match(new RegExp(`\\bon\\s+${DOW}\\b`)) ??
-    lower.match(new RegExp(`\\b${DOW}'s\\b`)) ??
-    lower.match(new RegExp(`\\S\\s+this\\s+${DOW}\\b`))
+    lower.match(new RegExp(`\\bon\\s+${REMOVE_DOW}\\b`)) ??
+    lower.match(new RegExp(`\\b${REMOVE_DOW}['’]s\\b`)) ??
+    lower.match(new RegExp(`\\S\\s+this\\s+${REMOVE_DOW}\\b`))
   return m ? weekdayOffset(m[1], now) : null
+}
+
+/** #72: the day phrases a remove reads as a DAY are not part of the title —
+    "this <weekday>" past the phrase's first word and a possessive "<weekday>'s"
+    (both pin, above), plus "next <weekday>" (a day, left unpinned). Lift each
+    out whole, so "the lunch this thursday" asks for "lunch", never "lunch this".
+    A weekday word outside those phrases ("the friday demo", "Sun salutation")
+    is untouched here — it stays the title's, exactly as before. */
+function stripRemoveDayPhrases(text: string): string {
+  return text
+    .replace(new RegExp(`(\\S)\\s+(?:this|next)\\s+${REMOVE_DOW}\\b`, 'gi'), '$1 ')
+    .replace(new RegExp(`\\b${REMOVE_DOW}['’]s\\b`, 'gi'), ' ')
 }
 
 function parseTime(text: string): number | null {
@@ -755,7 +768,7 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     const at =
       atMin != null ? `${Math.floor(atMin / 60)}:${String(atMin % 60).padStart(2, '0')}` : undefined
     const q = cleanTitle(
-      stripTimeWords(dropM[1])
+      stripTimeWords(stripRemoveDayPhrases(dropM[1]))
         .replace(/\b\d{1,2}:\d{2}\b(?:\s*(?:-|–|to)\s*\d{1,2}(?::\d{2})?)?/g, ' ') // bare clock / range
         .replace(/^(?:both|all|every|each|the|my)\s+/i, '')
         .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, '')
