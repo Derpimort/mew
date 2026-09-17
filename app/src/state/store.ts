@@ -31,6 +31,7 @@ import {
 import {
   addDaysKey,
   dayKey,
+  dayWord,
   fmtDowLong,
   fmtLongDate,
   fmtShortDate,
@@ -3986,10 +3987,12 @@ export const useMew = create<MewState>((set, get) => {
 
   function execRemove(
     query: string,
-    opts: { at?: string; all?: boolean; scope?: RecurScope } = {}
+    opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = {}
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
+    /* #62: a named day pins which occurrence; a time alone never reaches across days */
+    const day = opts.dayOffset != null ? addDaysKey(todayKey, opts.dayOffset) : undefined
     /* #343: "the whole series" (scope:'series') sweeps the linked set exactly as
        an explicit all does — both flow through seriesOf below. */
     const scope = opts.scope
@@ -4011,7 +4014,7 @@ export const useMew = create<MewState>((set, get) => {
       ;({ remove: matches, candidates } = week.resolveRemoval(
         s.blocks,
         query,
-        { at: opts.at, all: wholeSeries },
+        { at: opts.at, all: wholeSeries, day },
         todayKey
       ))
       /* no OPEN target by that name — it may name DONE block(s). The cage lifts
@@ -4022,7 +4025,7 @@ export const useMew = create<MewState>((set, get) => {
         const atMin = opts.at ? parseTimeValue(opts.at) : null
         const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone: true })
         const hits = r.status === 'ok' ? [r.block] : r.status === 'ambiguous' ? r.candidates : []
-        doneProposal = hits.filter((b) => b.status === 'done')
+        doneProposal = hits.filter((b) => b.status === 'done' && (day == null || b.dayKey === day))
       }
     }
     if (doneProposal.length) return proposeDoneRemoval(baseOf(query), doneProposal, todayKey)
@@ -4060,19 +4063,37 @@ export const useMew = create<MewState>((set, get) => {
          too. Each reply is a complete remove the parser (and any model) acts
          on; times dedupe because `at` pins by start minute — one chip removes
          exactly what typing that time would. ≤5 chips: 4 times + the sweep. */
+      /* #62: when the SAME time repeats across days, a time-only chip would
+         match every one of them again, so each block gets a chip that names
+         its day ("remove lunch on thursday at 12:00"). Distinct times keep the
+         time-only chips (each is already exact). A block past the day words
+         (7+ days out) gets no chip, since its reply would land on the wrong day;
+         the question text still names it. */
+      const timeRepeatsAcrossDays = candidates.some((b) =>
+        candidates.some((c) => c !== b && c.startMin === b.startMin && c.dayKey !== b.dayKey)
+      )
       const seen = new Set<string>()
-      const timeOptions = candidates
-        .filter((b) => {
-          const t = fmtTime(b.startMin)
-          if (seen.has(t)) return false
-          seen.add(t)
-          return true
-        })
-        .slice(0, 4)
-        .map((b) => ({
-          label: `the ${fmtTime(b.startMin)}`,
-          reply: `remove ${base} ${fmtTime(b.startMin)}`,
-        }))
+      const timeOptions = timeRepeatsAcrossDays
+        ? candidates
+            .map((b) => ({ b, word: dayWord(b.dayKey, todayKey) }))
+            .filter((x): x is { b: Block; word: string } => x.word != null)
+            .slice(0, 4)
+            .map(({ b, word }) => ({
+              label: `${word} ${fmtTime(b.startMin)}`,
+              reply: `remove ${base} ${word === 'today' || word === 'tomorrow' ? word : `on ${word}`} at ${fmtTime(b.startMin)}`,
+            }))
+        : candidates
+            .filter((b) => {
+              const t = fmtTime(b.startMin)
+              if (seen.has(t)) return false
+              seen.add(t)
+              return true
+            })
+            .slice(0, 4)
+            .map((b) => ({
+              label: `the ${fmtTime(b.startMin)}`,
+              reply: `remove ${base} ${fmtTime(b.startMin)}`,
+            }))
       return execOfferChoices(
         `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`,
         [
