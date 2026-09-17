@@ -178,6 +178,38 @@ describe('between / from … to — inclusive, either order', () => {
   })
 })
 
+describe('a weekday at the far end runs on from the start (peer review #69)', () => {
+  it.each([
+    // asked on Wednesday, Sep 16 — the weekdays spoken name one run of days, in order
+    ['how much gym from monday to friday', '2026-09-14', '2026-09-18', 'from Sep 14 to Sep 18'],
+    ['between tuesday and thursday', '2026-09-15', '2026-09-17', 'from Sep 15 to Sep 17'],
+    ['from friday to monday', '2026-09-11', '2026-09-14', 'from Sep 11 to Sep 14'],
+    ['between monday and monday', '2026-09-14', '2026-09-21', 'from Sep 14 to Sep 21'],
+    ['from yesterday to friday', '2026-09-15', '2026-09-18', 'from Sep 15 to Sep 18'],
+    ['from august 3 to friday', '2026-08-03', '2026-08-07', 'from Aug 3 to Aug 7'],
+  ])('%s', (q, from, to, label) => {
+    expect(span(q, '2026-09-16')).toEqual([from, to, label])
+  })
+})
+
+describe('"the past month" / "the past year" — a trailing stretch of one', () => {
+  it.each([
+    ['how much gym over the past month', '2026-08-18', '2026-09-17', 'the past month'],
+    ['the last month', '2026-08-18', '2026-09-17', 'the past month'],
+    ['in the past year', '2025-09-18', '2026-09-17', 'the past year'],
+  ])('%s', (q, from, to, label) => {
+    const r = rangeFromQuestion(q, THU)
+    expect([r.fromDayKey, r.toDayKey, r.label]).toEqual([from, to, label])
+    expect(r.capped).toBe(false)
+  })
+
+  it('"last month" alone stays the calendar month, and "the past week" stays last week', () => {
+    expect(span('gym last month')).toEqual(['2026-08-01', '2026-08-31', 'last month'])
+    expect(rangeFromQuestion('in the past week', THU).kind).toBe('week')
+    expect(rangeFromQuestion('in the past week', THU).label).toBe('last week')
+  })
+})
+
 describe('month and year boundaries', () => {
   const TUE_JAN5 = '2027-01-05'
 

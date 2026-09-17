@@ -6,10 +6,16 @@
 
    The phrasings, first match wins in this order:
      between <date> and <date> · from <date> to|until|through <date> (or "now")
-                                        → that span, inclusive, either order
+                                        → that span, inclusive, either order; a
+                                          weekday at the far end is the first one
+                                          on or after the start ("from monday to
+                                          friday" asked Wednesday is this Mon–Fri)
      since <date>                       → <date> through today
      the last|past|previous N days|weeks|months|years ("a couple of", "a few")
                                         → the trailing stretch, ending today
+     the past|last|previous month|year  → the trailing month / year, ending today
+                                          ("last month" alone stays the calendar
+                                          month; "the past week" stays last week)
      this|last month · this|last year   → that calendar month / year
      in|during|throughout <month> [year] · in|during|throughout <year>
                                         → that calendar month / year
@@ -288,9 +294,18 @@ interface Matcher {
     Aug 3–17). */
 function span(aText: string, bText: string, todayKey: string): Hit | null {
   const a = resolveDate(aText, todayKey)
-  const b = /^now$/i.test(bText.trim())
-    ? { start: todayKey, end: todayKey }
-    : resolveDate(bText, todayKey)
+  const bt = bText.trim().toLowerCase()
+  const bWeekday = WEEKDAYS.indexOf(bt)
+  let b: DateSpan | null
+  if (/^now$/.test(bt)) b = { start: todayKey, end: todayKey }
+  else if (a && bWeekday >= 0) {
+    /* a weekday at the far end runs on from the start ("from monday to friday"
+       is one Mon–Fri, never the latest Friday swapped before the latest Monday) */
+    let ahead = (bWeekday - fromDayKey(a.start).getDay() + 7) % 7
+    if (ahead === 0 && WEEKDAYS.includes(aText.trim().toLowerCase())) ahead = 7
+    const key = addDaysKey(a.start, ahead)
+    b = { start: key, end: key }
+  } else b = resolveDate(bText, todayKey)
   if (!a || !b) return null
   let from = a.start
   let to = b.end
@@ -344,6 +359,15 @@ const MATCHERS: Matcher[] = [
             ? addDaysKey(today, -(7 * n - 1))
             : addDaysKey(addMonths(today, unit === 'month' ? -n : -12 * n), 1)
       return { from, to: today, label: `the last ${spell(n)} ${unit}${n === 1 ? '' : 's'}` }
+    },
+  },
+  {
+    /* "the past month" / "over the last year": a trailing stretch of one */
+    re: new RegExp(`\\b${PRE}the\\s+(?:last|past|previous)\\s+(month|year)${END}`, 'gi'),
+    read: (m, today) => {
+      const unit = m[1].toLowerCase()
+      const from = addDaysKey(addMonths(today, unit === 'month' ? -1 : -12), 1)
+      return { from, to: today, label: `the past ${unit}` }
     },
   },
   {

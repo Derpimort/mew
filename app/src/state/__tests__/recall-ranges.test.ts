@@ -260,6 +260,32 @@ describe('brain off: the on-device floor answers any stretch', () => {
   })
 })
 
+describe('peer review #69 — spans that must read right', () => {
+  it('"from monday to friday" asked Thursday sums this Mon–Fri — never a swapped stretch', async () => {
+    await fresh([
+      gym('2026-09-11'), // last Friday: outside
+      gym('2026-09-13'), // Sunday: outside
+      gym('2026-09-14'),
+      gym('2026-09-15'),
+      gym('2026-09-16'),
+      gym('2026-09-17'),
+    ])
+    expect(await ask('how much time did gym take from monday to friday')).toBe(
+      'gym from Sep 14 to Sep 18: 4h across 4 blocks · 4h done.'
+    )
+  })
+
+  it('a year still ahead answers "still ahead" even with its first week already planned', async () => {
+    await fresh(
+      [gym('2026-12-21'), gym('2027-01-02', { status: 'open' })],
+      new Date(2026, 11, 28, 10, 0)
+    )
+    const reply = await ask('how much time did gym take in 2027')
+    expect(reply).toBe("Jan 1, 2027 is still ahead, so there's nothing to look back on yet.")
+    expect(reply).not.toMatch(/\dh/)
+  })
+})
+
 describe('the pre-#8 phrasings answer exactly as before', () => {
   it('"last week" and no phrase keep their words, tails and all', async () => {
     await fresh([gym('2026-09-08'), gym('2026-09-11'), gym('2026-09-16')])
