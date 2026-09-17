@@ -109,7 +109,7 @@ import {
   prefPage,
   slugify,
 } from '../adapters/brain/senses'
-import { mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
+import { brainOnlyPrefKeys, mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
 import {
   adoptSidecarSnapshot,
   effectiveBrain,
@@ -234,13 +234,19 @@ export type { SidecarStatus } from '../adapters/brain/sidecar'
    remember/forget and on (re)connect. What APPLIES is always the merge with local
    memory (activePrefsFrom): local rules and forgets win, and brain-only rules join. */
 let brainPrefs: PrefPayload[] | null = null
+/* #71: every write to the cache is mirrored into state, so the memory console (a
+   React surface) re-renders when the brain's list lands or changes */
+function setBrainPrefs(prefs: PrefPayload[] | null): void {
+  brainPrefs = prefs
+  if (useMew.getState().brainPrefs !== prefs) useMew.setState({ brainPrefs: prefs })
+}
 function refreshBrainPrefs(): void {
   if (!brainOn()) {
-    brainPrefs = null
+    setBrainPrefs(null)
     return
   }
   void brain.listPrefs().then((prefs) => {
-    brainPrefs = prefs
+    setBrainPrefs(prefs)
     replayLocalPrefs(prefs)
   })
 }
@@ -279,7 +285,7 @@ function replayLocalPrefs(fromBrain: PrefPayload[]): void {
     // re-read the brain's copy; no second replay, the ledger already holds these
     if (wrote)
       void brain.listPrefs().then((prefs) => {
-        brainPrefs = prefs
+        setBrainPrefs(prefs)
       })
   })()
 }
@@ -294,6 +300,21 @@ export function activePrefsFrom(
      it held anything, dropping rules told to MEW while it was away and bringing
      back rules the owner had forgotten. */
   return mergeActivePrefs(memory, fromBrain)
+}
+
+/** #71: the standing rulebook the owner sees — exactly what the planners read
+    (the merge with the brain's list when a brain answered, local memory alone
+    otherwise), plus which of those rules come from the brain alone. One selector
+    for the memory console and the keyless "what do you know about me?" reply. */
+export function standingRulebook(s: Pick<MewState, 'memory' | 'settings' | 'brainPrefs'>): {
+  prefs: PrefPayload[]
+  brainOnly: Set<string>
+} {
+  const fromBrain = brainIsOn(s.settings) ? s.brainPrefs : null
+  return {
+    prefs: activePrefsFrom(s.memory, fromBrain),
+    brainOnly: brainOnlyPrefKeys(s.memory, fromBrain),
+  }
 }
 
 /** the same rulebook, rendered for the context block */
@@ -380,6 +401,10 @@ export interface MewState {
       beat). Settings renders it so a dead built-in brain is visibly dead —
       the user can always answer "is my brain on?" (#249). */
   brainSidecar: SidecarStatus
+  /** Non-persisted (#71): the brain's copy of the standing rulebook, as last
+      listed this session (null until a brain answers, or with the brain off).
+      Mirrors the store's cache so the memory console can show brain-only rules. */
+  brainPrefs: PrefPayload[] | null
 
   engine: EngineState
   lastActivityMs: number
@@ -1123,7 +1148,7 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
     knownLines: consoleSummary(
       memoryConsole({
         events: s.memory,
-        prefs: activePrefsFrom(s.memory, null),
+        ...standingRulebook(s), // #71: the card's rulebook, brain rows only once it answered
         insights,
         energy: energyProfile(s.memory, agg, now), // #15: rhythm rows, parity with the card
       })
@@ -4080,7 +4105,15 @@ export const useMew = create<MewState>((set, get) => {
       along), so a preview is sized and windowed the way the apply will be.
       Every scenario is validated against the live week at post time — the
       engine is conflict-free by construction, the gate keeps that checked. */
-  function execProposeScenarios(prompt: string, specs: ScenarioTaskSpec[]): string {
+  function execProposeScenarios(
+    prompt: string,
+    specs: (ScenarioTaskSpec & { durationStated?: boolean })[],
+    /* #81: a stale plan's re-offer re-quotes the STORED places — their lengths
+       are already the honest quote (pre-sized under "always", as asked
+       otherwise), so each carries its own stated flag and nothing is pre-sized
+       a second time */
+    requote = false
+  ): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -4104,8 +4137,10 @@ export const useMew = create<MewState>((set, get) => {
           ...(t.due != null ? { due: t.due } : {}),
           // a stated window, else a confirmed rule's — the engine honors both
           ...(r.spec.window ? { window: r.spec.window } : {}),
-          // #322: a length in the ask is the user's word — "always" leaves it be
-          ...(t.durationMin != null ? { durationStated: true } : {}),
+          // #322: a length in the ask is the user's word — "always" leaves it be.
+          // A re-quote (#81) keeps each place's own flag instead: every stored
+          // place has a length, but only the stated ones were the owner's word.
+          ...((requote ? t.durationStated : t.durationMin != null) ? { durationStated: true } : {}),
         }
       })
     if (!tasks.length) return 'nothing to propose — name the tasks and I will lay out the week.'
@@ -4124,7 +4159,9 @@ export const useMew = create<MewState>((set, get) => {
        preview AND the applied quote both carry honest lengths. off/ask ⇒ absent
        ⇒ scenarios are byte-identical to today. */
     const estimateFactor =
-      s.settings.estimateAutosize === 'always' ? estimateFactorByTag(s.memory, now) : undefined
+      s.settings.estimateAutosize === 'always' && !requote // #81: never pre-size a quote twice
+        ? estimateFactorByTag(s.memory, now)
+        : undefined
     const all = generateScenarios(s.blocks, tasks, {
       nowMin: minOfDay(now),
       todayKey,
@@ -4695,6 +4732,7 @@ export const useMew = create<MewState>((set, get) => {
     queuedSpeak: null,
     lastReferent: null,
     brainSidecar: 'off',
+    brainPrefs: null,
 
     engine: { lastFired: {}, lastDriftBlockId: null },
     lastActivityMs: nowFn(),
@@ -5505,7 +5543,9 @@ export const useMew = create<MewState>((set, get) => {
             tag: p.tag,
             durationMin: p.durationMin,
             ...(p.due != null ? { due: p.due } : {}),
-          }))
+            ...(p.durationStated ? { durationStated: true } : {}), // #81
+          })),
+          true // #81: a re-quote of the stored lengths
         )
         if (!offer.startsWith(CHOICES_POSTED)) post([mewMsg(offer)])
         return

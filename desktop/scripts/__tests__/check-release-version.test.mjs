@@ -91,11 +91,34 @@ test('mismatched MSI version fails in every mode, including a prerelease left on
   fails(run(conf('2026.9.0-rc.1', '26.9.0-rc.1'), '--tag', 'v2026.9.0-rc.1'), /maps to "26\.9\.0"/)
 })
 
-test('tag mismatch fails, and --tag needs a name', () => {
+test('tag mismatch fails and offers both fixes; --tag needs a name (a flag is not one)', () => {
   const f = conf('2026.9.0', '26.9.0')
-  fails(run(f, '--tag', 'v2026.9.1'), /tag v2026\.9\.1 does not match/, /\(2026\.9\.0\)/)
-  fails(run(f, '--tag', 'v2026.10.0'), /does not match/)
+  const patch = run(f, '--tag', 'v2026.9.1')
+  fails(patch, /tag v2026\.9\.1 does not match/, /\(2026\.9\.0\)/)
+  // fix (a): the config is right -> delete THIS tag and tag the config's version
+  assert.match(patch.out, /delete the tag \(git push origin :refs\/tags\/v2026\.9\.1; git tag -d v2026\.9\.1\) and tag v2026\.9\.0;/)
+  // fix (b): the tag is right -> bump the config, and the MSI version moves with it
+  assert.match(patch.out, /bump the config to 2026\.9\.1 \(and bundle\.windows\.wix\.version to 26\.9\.1\), then re-tag v2026\.9\.1\./)
+  fails(run(f, '--tag', 'v2026.10.0'), /does not match/, /wix\.version to 26\.10\.0/)
+  // same MSI version on both sides: no MSI advice
+  const pre = run(f, '--tag', 'v2026.9.0-rc.1')
+  fails(pre, /does not match/, /bump the config to 2026\.9\.0-rc\.1, then re-tag/)
+  assert.doesNotMatch(pre.out, /wix\.version to/)
+  // an rc config never gets "tag v2026.9.0-rc.1": the retag waits for the promotion bump
+  fails(run(conf('2026.9.0-rc.1', '26.9.0'), '--tag', 'v2026.9.1'), /and tag v2026\.9\.0 once the promotion has bumped the config to it;/)
   fails(run(f, '--tag'), /--tag needs the tag name/)
+  fails(run(f, '--tag', '--shape'), /--tag needs the tag name/)
+  fails(run(f, '--tag', '--promotion'), /--tag needs the tag name/)
+})
+
+test('a wrongly prefixed tag is named as given — the delete command must hit the real ref', () => {
+  const f = conf('2026.9.0', '26.9.0')
+  const upper = run(f, '--tag', 'V2026.9.0')
+  fails(upper, /tag V2026\.9\.0 is not CalVer/, /git push origin :refs\/tags\/V2026\.9\.0 — and tag v2026\.9\.0\./)
+  assert.doesNotMatch(upper.out, /vV2026/)
+  const bare = run(f, '--tag', '2026.09.0')
+  fails(bare, /tag 2026\.09\.0 is not CalVer/, /:refs\/tags\/2026\.09\.0 —/)
+  assert.doesNotMatch(bare.out, /v2026\.09\.0/)
 })
 
 test('a malformed tag fails on its own shape, with delete-and-retag advice — never "bump the config"', () => {
