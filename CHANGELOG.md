@@ -244,6 +244,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   only your own blocks with the same tag, across free time: when a call, a calendar event, a done
   block or any other block sits between them, MEW names it and everything stays as it is, and
   calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
+  Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
+  and MEW names both, so a merged block never loses one of its names.
 
 ## [0.7.0] — 2026-08-12
 
