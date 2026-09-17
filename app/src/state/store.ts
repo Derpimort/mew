@@ -3380,7 +3380,13 @@ export const useMew = create<MewState>((set, get) => {
     includeDone: boolean,
     reissue: (b: Block) => string,
     /* #73: a day the ask named pins the target to that day's blocks */
-    onDay?: string
+    onDay?: string,
+    /* #160: the day to NAME in a miss. Deliberately separate from onDay, which
+       some callers default (the rescue split passes today), so only a day the
+       owner actually said reaches the sentence — otherwise a miss on an ask that
+       named no day reads "I couldn't find X on today", which is both wrong and
+       not English. */
+    askedDay?: string
   ): { block: Block } | { reply: string } {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
@@ -3415,8 +3421,18 @@ export const useMew = create<MewState>((set, get) => {
             : op === 'split'
               ? 'to split'
               : 'to change'
+    /* #160: a day the ask named belongs in the miss too. Without it, "move the
+       gym on friday" with gyms on Wednesday and Thursday reads `I couldn't find
+       "gym"` — wrong about the one thing the parser got right, and it tells an
+       owner looking at two gyms that they have none. */
+    const word = askedDay ? dayWord(askedDay, todayKey) : null
+    const when = !askedDay
+      ? ''
+      : word === 'today' || word === 'tomorrow'
+        ? ` ${word}`
+        : ` on ${fmtDowLong(askedDay)}` // weekdays read capitalised, as everywhere else MEW names one
     return {
-      reply: `I couldn't find "${query}"${at ? ` at ${at}` : ''} ${verb} — say it another way?`,
+      reply: `I couldn't find "${query}"${at ? ` at ${at}` : ''}${when} ${verb} — say it another way?`,
     }
   }
 
@@ -3576,11 +3592,18 @@ export const useMew = create<MewState>((set, get) => {
        same-named blocks to move — distinct from toStartMin (its new start). */
     at?: string,
     /* #49: a granted overlap (flexible blocks only) */
-    allowOverlap = false
+    allowOverlap = false,
+    /* #160: the TARGET block's own day, when the ask named one ("move the gym on
+       wednesday to 15:00"). It pins which of several same-titled blocks to move,
+       exactly as remove's own day pin has since #72 — and it rides the `onDay`
+       parameter #73 already built into resolvePrecise for split, rather than a
+       second narrowing path that could disagree with it. */
+    fromDayOffset?: number
   ): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
+    const fromDay = fromDayOffset != null ? addDaysKey(todayKey, fromDayOffset) : undefined
     const res = resolveTarget(query, 'move')
     if ('reply' in res) return res.reply
     let target: Block | undefined
@@ -3597,12 +3620,19 @@ export const useMew = create<MewState>((set, get) => {
         'move',
         at,
         false, // a done block isn't moved — it's in the past, completed
-        (b) => `move ${baseOf(query)} at ${fmtTime(b.startMin)} ${dest}`
+        (b) => `move ${baseOf(query)} at ${fmtTime(b.startMin)} ${dest}`,
+        fromDay,
+        fromDay // the move's day pin only exists when the ask named one
       )
       if ('reply' in r) return r.reply
       target = r.block
     }
-    if (!target) return `I couldn't find "${query}" to move — say it another way?`
+    /* #160: a day the ask named appears in the miss as well, so the reply is not
+       wrong about the one thing the parser got right */
+    if (!target)
+      return fromDay
+        ? `I couldn't find "${query}" on ${dayWord(fromDay, todayKey) ?? fmtDowLong(fromDay)} to move — say it another way?`
+        : `I couldn't find "${query}" to move — say it another way?`
     const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
     return moveResolved(target, toKey, toStartMin, relStartMin, allowOverlap)
   }
@@ -5329,7 +5359,20 @@ export const useMew = create<MewState>((set, get) => {
         [...timeOptions, { label: everyOne, reply: `remove all ${base}` }]
       )
     }
-    if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
+    /* #160: when a day was named and understood, the reply that explains the miss
+       says so. Without it, "remove the gym on friday" with gyms on Wednesday and
+       Thursday answers `I couldn't find "gym"` — wrong about the one thing the
+       parser got right, and it reads as "you have no gym" to an owner looking at
+       two of them. */
+    if (!matches.length) {
+      const w = dayWord(day ?? '', todayKey)
+      const when = !day
+        ? ' ahead'
+        : w === 'today' || w === 'tomorrow'
+          ? ` ${w}`
+          : ` on ${fmtDowLong(day)}`
+      return `I couldn't find "${query}"${when} to remove — say it another way?`
+    }
     /* "drop all the gym sessions" (#159): an explicit all over a recurring block
        removes the WHOLE linked series (every open occurrence, past or ahead),
        not just the ahead substring matches — so the recurringBlockId drops with
@@ -6188,13 +6231,13 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('complete', { query: q }, () => execComplete(q, at))
         },
-        move: (q, d, t, rel, at, allowOverlap) => {
+        move: (q, d, t, rel, at, allowOverlap, fromDayOffset) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
           return runChange('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
-            execMove(q, d, t, rel, at, allowOverlap)
+            execMove(q, d, t, rel, at, allowOverlap, fromDayOffset)
           )
         },
         capture: (t) => {

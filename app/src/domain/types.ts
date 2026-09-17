@@ -552,6 +552,14 @@ export interface ScheduleIntent {
       exactly one (#334). Distinct from toStartMin (a move's new start) and from
       edit.startMin (a retime); remove keeps its own `remove.at`. */
   at?: string
+  /** move: the TARGET block's own day, when the ask named one ("move the gym on
+      wednesday to 15:00"). #160: move now reads the same day phrases remove has
+      read since #72 — today/tomorrow, "on <weekday>", "<weekday>'s", "this
+      <weekday>" — through the same reader, so one vocabulary addresses a block
+      whichever verb is acting on it. Distinct from toDayKey, which is where the
+      block is going. A weekday at the FRONT of a title ("the friday demo") is
+      the title's and never a day, on both verbs: #72's decision, pinned. */
+  fromDayOffset?: number
   toDayKey?: string
   toStartMin?: number
   /** move: a relative start shift in minutes (#320): "30 min earlier" (−30),

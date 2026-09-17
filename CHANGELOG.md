@@ -158,6 +158,16 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   12:00" now find the block. The day phrase is read as the day, so only the title is looked up, and
   when the same time repeats across days MEW still asks which with day choices.
 
+### Say the day your way when moving, too
+- "Move the gym on wednesday to 15:00" now lands on Wednesday's gym. The day words removing has read
+  all along — today, tomorrow, on thursday, thursday's gym, the gym this thursday — point a move at a
+  block too, and they do it through the one reader both verbs share, so a phrase that addresses a
+  block keeps addressing it whichever verb you reach for. A weekday at the front of a title stays the
+  title's: "move the friday demo to 10:00" is still about the demo of that name.
+- And when the day you named holds nothing by that name, MEW says the day back to you — it couldn't
+  find the gym on Wednesday — so you can see which day it looked at and say it another way. Removing
+  names the day the same way.
+
 ### Undo takes back what MEW just did
 - Say "undo that" right after MEW changes your week (something you typed, asked a connected model
   for, or picked from a choice) and that change comes back: a moved block returns, a split block is
