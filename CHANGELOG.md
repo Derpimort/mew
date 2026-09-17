@@ -279,6 +279,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ### Under the hood
 
+- A reply that ends by asking you something ends with its question mark, never "?.", and a question
+  stands as its own sentence after the notes before it.
 - Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key
   exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
   same wire behaviour as before, held by pinned tests.
