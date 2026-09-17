@@ -140,3 +140,97 @@ describe('chipStillMeans — offered Tuesday, picked Wednesday 00:05', () => {
     expect(chipStillMeans(later, 'ok, keep both as they are', TUE, WED)).toBe(true)
   })
 })
+
+/* ── peer review of #98 (coderpa): every kind that acts is modelled ──── */
+
+describe('chipReplyEffect — which-block, series-scope and placing replies', () => {
+  const twins = [
+    block({ id: 'gym-tue', title: 'gym', startMin: 18 * 60, endMin: 19 * 60 }),
+    block({
+      id: 'gym-wed',
+      title: 'gym',
+      dayKey: '2026-06-10',
+      startMin: 18 * 60,
+      endMin: 19 * 60,
+    }),
+  ]
+
+  it('complete / edit / resize reach a target the way their executors do, so a day later they reach another block', () => {
+    expect(chipReplyEffect(twins, 'done with gym at 18:00', TUE)).toEqual({
+      kind: 'complete',
+      target: 'gym-tue',
+    })
+    for (const reply of [
+      'done with gym at 18:00',
+      'make gym at 18:00 90 min',
+      'rename gym at 18:00 to lifting',
+    ]) {
+      expect(chipStillMeans(twins, reply, TUE, WED), reply).toBe(false)
+    }
+  })
+
+  it('duplicate: its landing day is absolute — "tomorrow" moves a day, a weekday holds', () => {
+    const later = [block({ id: 'deck', dayKey: '2026-06-10' })]
+    expect(chipReplyEffect(later, 'duplicate the Deck polish to tomorrow', TUE)).toMatchObject({
+      kind: 'duplicate',
+      target: 'deck',
+      toKey: '2026-06-10',
+    })
+    expect(chipStillMeans(later, 'duplicate the Deck polish to tomorrow', TUE, WED)).toBe(false)
+    expect(chipStillMeans(later, 'duplicate the Deck polish to thursday', TUE, WED)).toBe(true)
+  })
+
+  it('a plan: a place with a relative day moves a day, a weekday-named one holds', () => {
+    expect(chipStillMeans([], 'block 1h for the budget review tomorrow at 9', TUE, WED)).toBe(false)
+    expect(chipStillMeans([], 'block 1h for the budget review on thursday at 9', TUE, WED)).toBe(
+      true
+    )
+  })
+
+  it('relmove: "the next free slot" searches from today, so it never still means across a day; "later" on a future block does', () => {
+    const later = [block({ id: 'deck', dayKey: '2026-06-10' })]
+    expect(chipReplyEffect(later, 'move the Deck polish to the next free slot', TUE)).toMatchObject(
+      {
+        kind: 'relmove',
+        target: 'deck',
+      }
+    )
+    expect(chipStillMeans(later, 'move the Deck polish to the next free slot', TUE, WED)).toBe(
+      false
+    )
+    expect(chipStillMeans(later, 'push the Deck polish later', TUE, WED)).toBe(true)
+  })
+
+  it('fail closed: a kind that acts without a modelled target (clear) carries its day', () => {
+    const e = chipReplyEffect([block({})], 'clear today', TUE)
+    expect(e?.kind).toBe('clear')
+    expect(chipStillMeans([block({})], 'clear today', TUE, WED)).toBe(false)
+  })
+
+  it('the weekly ritual ask means the week it is spoken in', () => {
+    expect(chipStillMeans([], 'plan my week', TUE, WED)).toBe(true)
+    const sunday = new Date(2026, 5, 14, 17, 0)
+    const monday = new Date(2026, 5, 15, 0, 5)
+    expect(chipStillMeans([], 'plan my week', sunday, monday)).toBe(false)
+  })
+
+  it('a move pins its target by `at` among same-named blocks on one day (Q5)', () => {
+    const sameDay = [
+      block({ id: 'deck-am', dayKey: '2026-06-10', startMin: 9 * 60, endMin: 10 * 60 }),
+      block({ id: 'deck-pm', dayKey: '2026-06-10', startMin: 14 * 60, endMin: 15 * 60 }),
+    ]
+    expect(
+      chipReplyEffect(sameDay, 'move the Deck polish at 14:00 to thursday', TUE)
+    ).toMatchObject({ target: 'deck-pm' })
+  })
+
+  it('a split "tomorrow" places its tail a day on (Q3)', () => {
+    expect(
+      chipReplyEffect(
+        [block({ id: 'deck', dayKey: '2026-06-10' })],
+        'split the Deck polish around 9:30-10:15 tomorrow, keep 45m after',
+        TUE
+      )
+    ).toMatchObject({ kind: 'split', target: 'deck', dayKey: '2026-06-10' })
+  })
+})

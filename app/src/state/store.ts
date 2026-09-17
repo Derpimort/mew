@@ -815,7 +815,14 @@ function dropReplySinglesOut(
   id: string
 ): boolean {
   const e = chipReplyEffect(blocks, reply, now, todayKey) // #94: the one chip resolver
-  return e?.kind === 'remove' && e.remove.length === 1 && e.remove[0] === id && !e.candidates.length
+  return (
+    e?.kind === 'remove' &&
+    Array.isArray(e.remove) &&
+    e.remove.length === 1 &&
+    e.remove[0] === id &&
+    Array.isArray(e.candidates) &&
+    !e.candidates.length
+  )
 }
 
 /** The #293 scenario-picker message shape — the chips pattern with cards:

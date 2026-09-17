@@ -7,6 +7,7 @@ import { ritualTasks } from '../../domain/nudges/weekly'
 import { inferTag, parseCommand as ruleParse } from '../../domain/parse'
 import { normalizeRrule } from '../../domain/recurrence'
 import { parseSplitAsk, type SplitAsk } from '../../domain/rescue'
+import { RITUAL_ASK } from '../../domain/chipEffect' // #94: one home with the chip resolver
 import { weekdayOffset } from '../../domain/time'
 import type { PlanMode, ScheduleIntent, Tag } from '../../domain/types'
 import {
@@ -247,9 +248,9 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
 }
 
 /* "plan my week" / "plan the week" — the weekly ritual's ask (#304), typed or
-   via the Sunday chip. Deliberately narrow: "plan my day" and every phrase
-   carrying its own items stay with the grammar. */
-const RITUAL_ASK = /^\s*plan\s+(?:my|the)\s+week\b/i
+   via the Sunday chip — is RITUAL_ASK, kept in domain/chipEffect.ts so a picked
+   ritual chip resolves by the same words (#94). Deliberately narrow: "plan my
+   day" and every phrase carrying its own items stay with the grammar. */
 
 /** The keyless ritual route (#304): skip the shaping questions (a floor has
     none to ask) and go straight to the picker with the standing defaults —

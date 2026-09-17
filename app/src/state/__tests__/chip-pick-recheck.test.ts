@@ -333,3 +333,65 @@ describe('#94 — a chip that still means what it offered acts as before', () =>
     expect(chat().some((m) => /^That choice was offered on/.test(m.body))).toBe(false)
   })
 })
+
+/* ── peer review of #98 (coderpa): which-block and series-scope chips ── */
+
+describe('#94 — which-block (#334) and series-scope (#343) chips re-check too: their target lookup counts from the pick day', () => {
+  const gym = (id: string, dayKey: string, startMin = 18 * 60) =>
+    block({ id, title: 'gym', tag: 'health', dayKey, startMin, endMin: startMin + 60 })
+  /** two gyms today (so the name alone asks which) and one tomorrow at 18:00 */
+  const gyms = () => [gym('gym-am', TODAY, 7 * 60), gym('gym-tue', TODAY), gym('gym-wed', WED)]
+
+  it('"done with gym" offered Tuesday morning, "the 18:00" picked at Wed 00:05: Wednesday\'s gym is never marked done, and Tuesday\'s stays open', async () => {
+    await fresh(gyms(), [], TUE(6, 0))
+    await useMew.getState().speak('done with gym')
+    await settle()
+    const offer = chipMsgs().at(-1)!
+    const evening = offer.choices!.find((c) => /18:00/.test(c.reply))!
+    expect(evening.reply).toBe('done with gym at 18:00')
+    rollTo(WED_0005)
+    await expectStalePick(offer.id, evening.id, evening.label)
+    expect(blocks().filter((b) => b.status === 'done')).toHaveLength(0)
+  })
+
+  it('"make gym 90 min" offered Tuesday, picked after midnight: Wednesday\'s gym keeps its hour', async () => {
+    await fresh(gyms(), [], TUE(6, 0))
+    await useMew.getState().speak('make gym 90 min')
+    await settle()
+    const offer = chipMsgs().at(-1)!
+    const evening = offer.choices!.find((c) => /18:00/.test(c.reply))!
+    rollTo(WED_0005)
+    await expectStalePick(offer.id, evening.id, evening.label)
+    expect(blocks().find((b) => b.id === 'gym-wed')).toMatchObject({
+      startMin: 18 * 60,
+      endMin: 19 * 60,
+    })
+  })
+
+  it('"standup should be 10:00-10:30" → "just this one" offered Tuesday, picked after midnight: next Tuesday\'s standup keeps its time', async () => {
+    const rrule = { freq: 'WEEKLY' as const, interval: 1 }
+    const standups = ['2026-06-09', '2026-06-16', '2026-06-23'].map((dayKey, i) =>
+      block({
+        id: `s${i}`,
+        title: 'Standup',
+        dayKey,
+        startMin: 9 * 60,
+        endMin: 9 * 60 + 30,
+        recurringBlockId: 's',
+        rrule,
+      })
+    )
+    await fresh(standups)
+    await useMew.getState().speak('standup should be 10:00-10:30')
+    await settle()
+    const offer = chipMsgs().at(-1)!
+    const justThis = offer.choices!.find((c) => c.label === 'just this one')!
+    rollTo(WED_0005)
+    await expectStalePick(offer.id, justThis.id, 'just this one')
+    expect(
+      blocks()
+        .filter((b) => b.title === 'Standup')
+        .every((b) => b.startMin === 9 * 60)
+    ).toBe(true)
+  })
+})
