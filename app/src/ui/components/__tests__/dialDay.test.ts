@@ -10,6 +10,7 @@ import type { Block } from '../../../domain/types'
 import { dayFill, dialFocusOrder, radiiFor, resolveLabels, visibleOrbit } from '../orbitGeometry'
 import {
   dayLine,
+  dayRelation,
   daySummary,
   daySummaryLine,
   dayTitle,
@@ -36,6 +37,16 @@ function mk(over: Partial<Block>): Block {
     ...over,
   }
 }
+
+describe('dayRelation — a lived day, today, or a day ahead', () => {
+  it('splits on the calendar key, across month and year edges', () => {
+    expect(dayRelation(TODAY, TODAY)).toBe('today')
+    expect(dayRelation('2026-09-15', TODAY)).toBe('past')
+    expect(dayRelation('2026-09-17', TODAY)).toBe('future')
+    expect(dayRelation('2025-12-31', TODAY)).toBe('past')
+    expect(dayRelation('2027-01-01', TODAY)).toBe('future')
+  })
+})
 
 describe('washMinute — the day wash, per case', () => {
   it('today fills to the now notch (unchanged)', () => {

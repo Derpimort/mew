@@ -43,6 +43,7 @@ import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
 import {
   dayLine,
+  dayRelation,
   daySummary,
   daySummaryLine,
   dayTitle,
@@ -201,6 +202,7 @@ export function FocusOrbit() {
      (the tick, the hand, running, the countdown) belongs to today alone. */
   const viewDayKey = focusedDayKey ?? todayKey
   const isToday = viewDayKey === todayKey
+  const relation = dayRelation(viewDayKey, todayKey) // a lived day, today, or a day ahead
   /* 1s clock: countdown + the rolling mapping both stay fresh between store
      ticks — today only; another day has no now to keep fresh */
   useEffect(() => {
@@ -331,7 +333,8 @@ export function FocusOrbit() {
     badges.length > 0 ? (
       <DialBadges
         view={badgeView}
-        todayKey={todayKey}
+        dayKey={viewDayKey}
+        dayName={isToday ? undefined : spokenDay(viewDayKey)}
         rovingId={rovingId}
         litId={hover ?? cardId}
         hidden={cardId != null}
@@ -920,7 +923,7 @@ export function FocusOrbit() {
             variant="center"
             block={cardBlock}
             isNow={cardBlock.id === focusId}
-            offDay={!isToday}
+            offDay={relation === 'today' ? undefined : relation}
             pinned
             onClose={() => setCardId(null)}
             style={{ left: OG.cx + OG.ox, top: OG.cy }}
@@ -954,7 +957,7 @@ export function FocusOrbit() {
               <>
                 <span className="pri-range">
                   all day
-                  {hb.endDayKey && hb.endDayKey > todayKey && (
+                  {hb.endDayKey && hb.endDayKey > viewDayKey && (
                     <span className="xd">→ {fmtDow(hb.endDayKey).toLowerCase()}</span>
                   )}
                 </span>
@@ -1002,12 +1005,15 @@ export function FocusOrbit() {
   )
 }
 
-/** The dial's all-day badges (#27): today's day labels as pills above the
+/** The dial's all-day badges (#27): the shown day's labels as pills above the
     centre stack — never ring wedges. Props in, markup out: FocusOrbit owns the
-    state; a badge joins the dial's roving tab stop and opens the same card. */
+    state; a badge joins the dial's roving tab stop and opens the same card.
+    Everything is measured against the day the dial shows (#23), so a label reads
+    on any day exactly as it would if that day were today. */
 export function DialBadges({
   view,
-  todayKey,
+  dayKey,
+  dayName,
   rovingId,
   litId,
   hidden,
@@ -1020,7 +1026,10 @@ export function DialBadges({
   onMore,
 }: {
   view: { shown: Block[]; more: number }
-  todayKey: string
+  /** the day the dial shows — "through <day>" is measured against it */
+  dayKey: string
+  /** off today, how the group names its day ("Monday, September 14"); absent on today */
+  dayName?: string
   /** the dial's single tab stop — a badge holds it when it's the keyboard anchor */
   rovingId: string | null
   /** the badge hovered or open, drawn lit */
@@ -1039,7 +1048,7 @@ export function DialBadges({
     <div
       className="dial-badges"
       role="group"
-      aria-label="today's all-day labels"
+      aria-label={dayName ? `all-day labels for ${dayName}` : "today's all-day labels"}
       style={hidden ? { opacity: 0, pointerEvents: 'none' } : undefined}
       onClick={(e) => e.stopPropagation()}
     >
@@ -1051,7 +1060,7 @@ export function DialBadges({
           }
           role="button"
           tabIndex={rovingId === b.id ? 0 : -1}
-          aria-label={badgeAriaLabel(b, todayKey)}
+          aria-label={badgeAriaLabel(b, dayKey)}
           title={b.title}
           ref={badgeRef?.(b.id)}
           onMouseEnter={() => onHover?.(b.id)}
@@ -1069,7 +1078,7 @@ export function DialBadges({
           type="button"
           className="dial-badge more"
           aria-expanded={false}
-          aria-label={`${view.more} more all-day labels today — show them all`}
+          aria-label={`${view.more} more all-day labels ${dayName ? `for ${dayName}` : 'today'} — show them all`}
           onClick={() => onMore?.()}
         >
           +{view.more} more

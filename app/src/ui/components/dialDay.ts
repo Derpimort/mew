@@ -15,11 +15,21 @@ import {
 } from '../../domain/time'
 import { blocksForDay, duration, isAllDay, isBackground } from '../../domain/week'
 
+/** Where the shown day sits against today: a lived day, today, or a day ahead.
+    The off-today rules split on it — the wash, and the card's actions (a mew is
+    only ever credited on a lived day). */
+export type DayRelation = 'past' | 'today' | 'future'
+export function dayRelation(viewDayKey: string, todayKey: string): DayRelation {
+  if (viewDayKey === todayKey) return 'today'
+  return viewDayKey < todayKey ? 'past' : 'future'
+}
+
 /** The minute that drives the day wash: today fills to now; a lived day is
     full; a day ahead is empty. */
 export function washMinute(viewDayKey: string, todayKey: string, nowMin: number): number {
-  if (viewDayKey === todayKey) return nowMin
-  return viewDayKey < todayKey ? 24 * 60 : 0
+  const rel = dayRelation(viewDayKey, todayKey)
+  if (rel === 'today') return nowMin
+  return rel === 'past' ? 24 * 60 : 0
 }
 
 /** The date line above the dial — the exact format the live clock already

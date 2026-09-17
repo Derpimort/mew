@@ -6,12 +6,17 @@
        stand, the hand sweeps, the stage ticks every second
      · a past day (Tuesday): no now-hand, the wash is FULL, no countdown, the
        centre names the day with its summary, the stage stops ticking, the
-       dial's name says the day, a block card offers Done/Hold/Remove but never
-       Start now/Interrupt/Move
-     · a future day (Thursday): no hand, the wash is EMPTY, same resting centre
+       dial's name says the day, a block card never offers Start now,
+       Interrupt or Move
+     · a future day (Thursday): no hand, the wash is EMPTY, same resting centre;
+       an open block's card keeps Hold and Remove but never offers Done — a mew
+       is credited when a block is finished, never before it happens
      · "back to today" restores the live countdown; the picked day survives a
        trip through Week and back
      · zero text collisions on the past and the future day
+     · an all-day badge reads against the SHOWN day: a Mon–Wed entry viewed on
+       Monday runs "through wednesday" (its name and the hover readout), the
+       group names Monday, and on Wednesday itself it runs through nothing
    Usage: node scripts/shoot-dayview.mjs [baseUrl] */
 
 import { chromium } from 'playwright-core'
@@ -276,17 +281,20 @@ assert(
 )
 await page.screenshot({ path: `${outDir}/dayview-future.png` })
 
-/* an OPEN block off today keeps Done, Hold and Remove — and only those */
+/* an OPEN block on a day ahead keeps Hold and Remove — and never Done */
 if (future.arcs > 0) {
   await openArcCard()
   const actions = await page.$$eval('.nx-card.center .cacts button', (bs) =>
     bs.map((b) => b.textContent?.trim())
   )
   console.log('future card actions:', JSON.stringify(actions))
-  assert(actions.includes('Done — a mew'), `an open block off today should offer Done: ${actions}`)
+  assert(
+    !actions.some((a) => /done/i.test(a ?? '')),
+    `a block on a day ahead must never offer Done (a mew before it happens): ${actions}`
+  )
   assert(
     actions.some((a) => /hold/i.test(a ?? '')) && actions.includes('Remove'),
-    `an open block off today should keep Hold and Remove: ${actions}`
+    `an open block on a day ahead should keep Hold and Remove: ${actions}`
   )
   assert(
     !actions.some((a) => /start now|interrupt|^move$/i.test(a ?? '')),
@@ -323,7 +331,63 @@ assert(
 )
 assert((await ticks()) > 0, 'back on today the stage ticks again')
 
+/* 6 · an all-day badge reads against the day the dial SHOWS: Offsite runs
+   Mon Sep 14 → Wed Sep 16 (today). Pulled last, so no step above sees it. */
+phase = 'badges'
+await page.evaluate(
+  (events) => window.__mewSimulatePull?.(events),
+  [
+    {
+      eventId: 'dv-offsite',
+      title: 'Offsite',
+      startMin: 0,
+      endMin: 0,
+      allDay: true,
+      dayKey: '2026-09-14',
+      endDayKey: TODAY,
+    },
+  ]
+)
+const badge = () =>
+  page.evaluate(() => {
+    const b = document.querySelector('.dial-badges .dial-badge:not(.more)')
+    return {
+      label: b?.getAttribute('aria-label') ?? null,
+      group: document.querySelector('.dial-badges')?.getAttribute('aria-label') ?? null,
+    }
+  })
+await page.waitForSelector('.dial-badges .dial-badge', { timeout: 5000 })
+const onToday = await badge()
+console.log('badge on today (its last day):', JSON.stringify(onToday))
+assert(
+  onToday.label === 'Offsite · all day · calendar' && onToday.group === "today's all-day labels",
+  `on its last day (today) the entry runs through nothing: ${JSON.stringify(onToday)}`
+)
+await page.hover('.nx-day .dt')
+await page.click('.nx-day-step.prev')
+await page.click('.nx-day-step.prev')
+await page.waitForTimeout(400)
+assert((await dial()).date.startsWith('Mon'), 'two previous-day steps should show Monday')
+const onMonday = await badge()
+console.log('badge on Monday:', JSON.stringify(onMonday))
+assert(
+  onMonday.label === 'Offsite · all day, through wednesday · calendar',
+  `viewed on Monday the entry runs through wednesday: ${JSON.stringify(onMonday)}`
+)
+assert(
+  onMonday.group === 'all-day labels for Monday, September 14',
+  `off today the group names the shown day: ${JSON.stringify(onMonday)}`
+)
+await page.hover('.dial-badges .dial-badge:not(.more)')
+await page.waitForTimeout(300)
+const readout = await page.evaluate(
+  () => document.querySelector('.pri-readout .pri-range')?.textContent?.trim() ?? ''
+)
+console.log('badge hover readout on Monday:', JSON.stringify(readout))
+assert(/→\s*wed/.test(readout), `the hover readout should run → wed on Monday: "${readout}"`)
+await page.screenshot({ path: `${outDir}/dayview-past-badge.png` })
+
 console.log(
-  'dial on any day: steps (keyboard + pointer), past full / future empty wash, no hand or tick off today, resting centre, card actions, week round-trip, back to today — proven'
+  'dial on any day: steps (keyboard + pointer), past full / future empty wash, no hand or tick off today, resting centre, card actions (no Done ahead), week round-trip, back to today, all-day badges against the shown day — proven'
 )
 await browser.close()
