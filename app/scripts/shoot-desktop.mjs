@@ -1,118 +1,104 @@
-/* Desktop-shell proof: stubs window.__TAURI__ (exactly what withGlobalTauri
-   provides) before the app boots, so the Tauri-only surfaces render in a
-   plain headless browser: the first-boot restore offer in chat, and the
-   Settings "Desktop auto-backup" row. Also proves the backup write path
-   fires through the stub. Usage: node scripts/shoot-desktop.mjs [baseUrl] */
+/* Desktop-shell proof: with the shell stubbed before boot (lib/tauri-stub.mjs),
+   the Tauri-only surfaces render in a plain headless browser. It covers the
+   first-boot restore offer in chat, the Settings "Desktop auto-backup" row, a
+   restore that round-trips through the real store, and the backup write path
+   (the window's close request flushes a pending snapshot through the stub,
+   instead of sitting out the 30s coalescer).
+   Owns canon: shots/desktop-1-restore-offer.png · shots/desktop-2-settings-row.png ·
+               shots/desktop-3-restored.png
+   Usage: node scripts/shoot-desktop.mjs [baseUrl]  (default http://localhost:5199) */
 
-import { chromium } from 'playwright-core'
-import { findChromium } from './lib/chromium.mjs'
-import { mkdirSync } from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
+import {
+  assertBuild,
+  baseUrl,
+  boot,
+  checks,
+  launch,
+  shot,
+  say,
+  shotsDir,
+  until,
+} from './lib/harness.mjs'
+import { SHOOT_DATE } from './lib/shootClock.mjs'
+import { installTauriStub } from './lib/tauri-stub.mjs'
 
-const base = process.argv[2] ?? 'http://localhost:5251'
-const exe = findChromium()
-const outDir = path.resolve('shots')
-mkdirSync(outDir, { recursive: true })
+const base = baseUrl()
+await assertBuild(base)
+const out = shotsDir()
+const { browser, page, pageErrors } = await launch()
+const { check, finish } = checks()
 
-const browser = await chromium.launch({ executablePath: exe })
-const ctx = await browser.newContext({ viewport: { width: 1280, height: 840 } })
-const page = await ctx.newPage()
-page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
-
-await page.addInitScript(() => {
-  const files = new Map([
-    [
-      'MEW/mew-backup.json',
-      JSON.stringify({
-        blocks: [
-          {
-            id: 'restored-1',
-            title: 'the restored block — deep work',
-            tag: 'work',
-            dayKey: new Date().toISOString().slice(0, 10),
-            startMin: 540,
-            endMin: 660,
-            status: 'open',
-          },
-        ],
-        captures: [],
-        chat: [],
-        memory: [],
-        settings: null,
-      }),
-    ],
-    ['MEW/mew-backup-2026-06-08.json', '{}'],
-  ])
-  window.__TAURI_INTERNALS__ = {}
-  window.__TAURI__ = {
-    fs: {
-      mkdir: async () => {},
-      writeTextFile: async (p, c) => {
-        files.set(p, c)
-        window.__backupWrites = (window.__backupWrites ?? 0) + 1
-      },
-      readTextFile: async (p) => {
-        if (!files.has(p)) throw new Error('ENOENT')
-        return files.get(p)
-      },
-      readDir: async (dir) =>
-        [...files.keys()]
-          .filter((p) => p.startsWith(dir + '/'))
-          .map((p) => ({ name: p.slice(dir.length + 1) })),
-      remove: async (p) => files.delete(p),
+/* a backup from the day before the pinned canon day, holding one block on it */
+const backup = {
+  blocks: [
+    {
+      id: 'restored-1',
+      title: 'the restored block — deep work',
+      tag: 'work',
+      dayKey: SHOOT_DATE,
+      startMin: 13 * 60,
+      endMin: 15 * 60,
+      protected: true,
+      status: 'open',
+      calendarRefs: [],
+      estimateSource: 'user',
     },
-    path: {
-      BaseDirectory: { Document: 6 },
-      documentDir: async () => '/home/user/Documents',
-      join: async (...xs) => xs.join('/'),
-    },
-    opener: { openPath: async () => {} },
-    window: {
-      getCurrentWindow: () => ({ onCloseRequested: async () => {}, destroy: async () => {} }),
-    },
-  }
-})
-
-await page.goto(`${base}/?t=9:40`)
-await page.waitForSelector('.nx-count', { timeout: 15000 })
-await page.waitForTimeout(2500)
-
-/* 1 · first-boot restore offer (empty profile → seed + offer) */
-const offerEl = page.locator('.tui-nudge', { hasText: 'Documents/MEW' })
-const offer = await offerEl.textContent().catch(() => null)
-console.log('restore offer:', offer?.trim().slice(0, 110) ?? 'NOT FOUND')
-if (!offer) {
-  console.log('✗ restore offer missing')
-  process.exit(1)
+  ],
+  captures: [],
+  chat: [],
+  memory: [],
+  settings: null,
 }
-await offerEl.scrollIntoViewIfNeeded()
-await page.screenshot({ path: `${outDir}/desktop-1-restore-offer.png` })
+const prior = new Date(`${SHOOT_DATE}T12:00:00`)
+prior.setDate(prior.getDate() - 1)
+const priorKey = `${prior.getFullYear()}-${String(prior.getMonth() + 1).padStart(2, '0')}-${String(prior.getDate()).padStart(2, '0')}`
 
-/* 2 · Settings row, desktop only */
-await page.click('text=settings')
+await page.addInitScript(installTauriStub, {
+  files: {
+    'MEW/mew-backup.json': JSON.stringify(backup),
+    [`MEW/mew-backup-${priorKey}.json`]: JSON.stringify(backup),
+  },
+})
+await boot(page, base)
+
+/* 1 · first-boot restore offer (an empty profile finds the backup) */
+const offerEl = page.locator('.tui-nudge', { hasText: 'Documents/MEW' })
+const offer = await until(() => offerEl.textContent(), 8000)
+console.log('restore offer:', offer?.trim().slice(0, 110) ?? 'NOT FOUND')
+check(!!offer, 'first boot offers the backup found in Documents/MEW')
+check(!!offer?.includes(priorKey), 'the offer names the backup date')
+await offerEl.scrollIntoViewIfNeeded().catch(() => {})
+await shot(page, `${out}/desktop-1-restore-offer.png`)
+
+/* 2 · the Settings row exists only on the desktop */
+await page.click('.navlink:has-text("settings")')
 await page.waitForSelector('.set-card h2')
-const row = await page.textContent('text=Desktop auto-backup').catch(() => null)
-console.log('settings row:', row ? 'present' : 'NOT FOUND')
-if (!row) process.exit(1)
-await page.screenshot({ path: `${outDir}/desktop-2-settings-row.png` })
+const row = page.locator('.set-row', { hasText: 'Desktop auto-backup' })
+check((await row.count()) === 1, 'Settings shows the Desktop auto-backup row')
+await row.scrollIntoViewIfNeeded().catch(() => {})
+await shot(page, `${out}/desktop-2-settings-row.png`)
 
-/* 3 · accept restores the week through the real store */
+/* 3 · accepting restores the week through the real store */
 await page.click('text=back to your week')
-await page.locator('.tui-nudge', { hasText: 'Documents/MEW' }).locator('.tui-btn.pri').click() // "bring it back"
-await page.waitForTimeout(1200)
-const log = await page.textContent('.session-scroll')
-const restored = log?.includes('Restored —')
-console.log('restore round-trip:', restored ? '✓ Restored — message in chat' : '✗ missing')
-await page.screenshot({ path: `${outDir}/desktop-3-restored.png` })
+await page.locator('.tui-nudge', { hasText: 'Documents/MEW' }).locator('.tui-btn.pri').click()
+const restored = await until(
+  async () => (await page.textContent('.session-scroll'))?.includes('Restored —'),
+  8000
+)
+check(!!restored, 'bring it back → "Restored —" in chat')
+await shot(page, `${out}/desktop-3-restored.png`)
 
-/* 4 · auto-backup write fired through the stub after a change */
-await page.fill('.prompt-row input, .prompt-row textarea', 'block 30m for inbox today at 16:30')
-await page.press('.prompt-row input, .prompt-row textarea', 'Enter')
-await page.waitForTimeout(31_000)
-const writes = await page.evaluate(() => window.__backupWrites ?? 0)
-console.log(`backup writes after change + 30s: ${writes}`)
+/* 4 · a change marks the snapshot dirty; the close request flushes it to disk */
+const before = await page.evaluate(() => window.__tauri.writes)
+await say(page, 'block 30m for inbox today at 16:30')
+await until(async () => (await page.textContent('.session-scroll'))?.includes('inbox'), 5000)
+await page.evaluate(() => window.__tauri.requestClose())
+const wrote = await until(
+  async () => (await page.evaluate(() => window.__tauri.writes)) > before,
+  5000
+)
+check(!!wrote, 'the close request writes the backup through the shell (fs.writeTextFile)')
+const latest = await page.evaluate(() => window.__tauri.files.get('MEW/mew-backup.json') ?? '')
+check(latest.includes('inbox'), 'the written backup carries the new block')
 
-await browser.close()
-if (!restored || writes < 1) process.exit(1)
-console.log('✓ desktop surfaces verified →', outDir)
+await finish(browser, pageErrors, `✓ desktop surfaces verified → ${out}`)
