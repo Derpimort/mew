@@ -47,7 +47,8 @@ updater keeps ordering releases correctly (`2026.9.0` > `0.7.0`).
   version already has no prerelease, so it does not move at promotion.
 
 `desktop/scripts/check-release-version.mjs` enforces all of it, and every mode first checks the
-CalVer shape + the MSI mapping: `--shape` runs in ci.yml's `release-guard` job on every PR that
+CalVer shape + the MSI mapping: `--shape` runs in the `release-guard` workflow
+(`.github/workflows/release-guard.yml`, its own so a desktop-only change skips the app's gates) on every PR that
 touches `tauri.conf.json`, `desktop/package.json` or the guard (together with the guard's own
 cases), and before every desktop build (tag or dry-run); `--promotion` on the `v*-rc*` → `main` PR
 (also rejects a prerelease); `--tag vYYYY.M.PATCH` on the tag push (also requires a well-formed tag

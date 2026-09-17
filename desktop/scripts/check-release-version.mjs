@@ -24,7 +24,7 @@
 //   versions are numeric only, so the prerelease is dropped). Bump both together.
 //
 // Every mode first checks that shape + the MSI mapping, then:
-//   --shape           Nothing more. ci.yml's `release-guard` job runs it (with this
+//   --shape           Nothing more. The `release-guard` workflow runs it (with this
 //                     file's own cases) on every PR that touches the config or the
 //                     guard; desktop.yml runs it before every build (tag or dry-run).
 //   --promotion       Fail if the committed version is a prerelease (-rc.N). Run on
