@@ -2654,7 +2654,7 @@ export const useMew = create<MewState>((set, get) => {
        would need a committed block displaced is only OFFERED, never seized. */
     const restNotes: string[] = []
     for (const key of touchedDays) {
-      const r = restInsertion(blocks, key, plannableOf(s.settings))
+      const r = restInsertion(blocks, key) // #22: the pacing pass keeps the classic day
       if (!r) continue
       const when = key === todayKey ? 'today' : fmtDowLong(key)
       if (r.kind === 'place') {

@@ -15,6 +15,9 @@ import { CLASSIC_DAY, airPastEnd, pastEndNote, plannableLabel, plannableOf } fro
 import { rescueOptions } from '../rescue'
 import { fitOffers } from '../inbox'
 import { scaffoldDay } from '../sustenance'
+import { weekScaffold } from '../scaffold'
+import { fromDayKey, weekKey, weekKeys } from '../time'
+import type { MemoryEvent } from '../types'
 
 const D = '2026-07-25'
 const NEXT = '2026-07-26'
@@ -176,12 +179,16 @@ describe('the owner’s plannable hours thread through every domain path', () =>
     expect(place([wall], spec)!.startMin).toBe(19 * 60 + 30)
   })
 
-  it('restInsertion finds its seam inside the hours', () => {
+  it('the pacing rest is MEW-initiated: a wall-to-wall classic day is offered a breather, not handed one at 18:30', () => {
     const run = mk({ title: 'All day', startMin: 8 * 60, endMin: 18 * 60 + 30 })
-    // the plannable evening holds the breather right after the stretch…
-    expect(restInsertion([run], D)).toMatchObject({ kind: 'place', startMin: 18 * 60 + 30 })
-    // …the classic day ends with the run, so it can only offer
-    expect(restInsertion([run], D, CLASSIC_DAY)!.kind).toBe('suggest')
+    expect(restInsertion([run], D)).toMatchObject({
+      kind: 'suggest',
+      startMin: 8 * 60,
+      endMin: 18 * 60 + 30,
+    })
+    // a seam inside the classic day is still taken, exactly as before
+    const shorter = mk({ title: 'Long stretch', startMin: 8 * 60, endMin: 17 * 60 })
+    expect(restInsertion([shorter], D)).toMatchObject({ kind: 'place', startMin: 17 * 60 })
   })
 
   it('rescue shift reaches the evening; roll reads the hours for the next day', () => {
@@ -218,6 +225,32 @@ describe('the owner’s plannable hours thread through every domain path', () =>
       hours: { startMin: 8 * 60, endMin: 18 * 60 },
     })
     expect(tomorrow[0].dayKey).toBe(NEXT)
+  })
+
+  it('a window-less weekly draft stays in the classic day — never an evening block unasked', () => {
+    const target = weekKey(new Date('2026-07-22T09:00:00')) // Mon 2026-07-20
+    const days = weekKeys(fromDayKey(target))
+    const rule: MemoryEvent = {
+      id: 'r1',
+      ts: 1,
+      kind: 'learned_rule',
+      dayKey: '2026-07-07',
+      rule: { match: 'errands', tag: 'private', durationMin: 60 },
+    } as MemoryEvent
+    const now = new Date('2026-07-15T09:00:00')
+    // every classic day full, the evening open: nothing is drafted into it
+    const full = days.map((k) =>
+      mk({ title: 'Offsite', dayKey: k, startMin: 8 * 60, endMin: 21 * 60 + 30 })
+    )
+    expect(weekScaffold([rule], full, target, now)).toEqual([])
+    const classicFull = days.map((k) =>
+      mk({ title: 'Offsite', dayKey: k, startMin: 8 * 60, endMin: 18 * 60 })
+    )
+    expect(weekScaffold([rule], classicFull, target, now)).toEqual([])
+    // with room inside the classic day, the draft lands there as before
+    const drafts = weekScaffold([rule], [], target, now)
+    expect(drafts).toHaveLength(1)
+    expect(drafts[0].endMin!).toBeLessThanOrEqual(18 * 60 + 30)
   })
 
   it('the autonomous morning scaffold keeps the classic span — a packed day stays quiet', () => {

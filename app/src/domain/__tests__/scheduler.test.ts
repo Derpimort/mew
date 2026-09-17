@@ -271,13 +271,13 @@ describe('scheduler — restInsertion (pacing rest in a long run, #103)', () => 
   })
 
   it('only offers (suggest) when a wall-to-wall run leaves no room without displacing work', () => {
-    // work fills the whole day to its end (#22: the plannable end, 22:30) — no free seam at or after the run
-    const run = mk({ title: 'All day', startMin: 8 * 60, endMin: 22 * 60 + 30 })
+    // work fills the whole day to its end — no free seam at or after the run
+    const run = mk({ title: 'All day', startMin: 8 * 60, endMin: 18 * 60 + 30 })
     const r = restInsertion([run], D)
     expect(r).not.toBeNull()
     expect(r!.kind).toBe('suggest')
     expect(r!.startMin).toBe(8 * 60)
-    expect(r!.endMin).toBe(22 * 60 + 30)
+    expect(r!.endMin).toBe(18 * 60 + 30)
   })
 
   it('the inserted breather is short and absorbable (≤20 min)', () => {

@@ -16,6 +16,7 @@ import {
   blocksForDay,
   conflictsWith,
   DAY_END,
+  DAY_START,
   duration,
   freeWindows,
   isBackground,
@@ -373,11 +374,7 @@ function gridUp(min: number): number {
     only way in is to displace a committed block, `suggest` instead: MEW offers
     it in chat rather than seizing time. `freeWindows` already excludes fixed,
     external, optional and background blocks, so a placed rest never overlaps. */
-export function restInsertion(
-  blocks: Block[],
-  dayKey: string,
-  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: seams inside the plannable day
-): RestInsertion | null {
+export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | null {
   const work = committedWork(blocks, dayKey)
   if (!work.length) return null
   /* a run is the unbroken non-rest stretch (dayShape's notion: errands abutting
@@ -402,7 +399,10 @@ export function restInsertion(
      first, so an internal split wins over the gap right after the stretch; a
      sliver only counts if it clears the floor. The run being continuous means
      internal gaps are <RUN_GAP, so the usual seam is the air just after it. */
-  const fits = freeWindows(blocks, dayKey, hours.startMin, hours.endMin)
+  /* #22: a MEW-initiated pass — it seeks seams in the classic day only, so a
+     wall-to-wall 8:00–18:30 stretch is still OFFERED a breather, never handed
+     one in the evening unasked (placement on request reads plannable hours) */
+  const fits = freeWindows(blocks, dayKey, DAY_START, DAY_END)
     .map((w) => ({ startMin: gridUp(w.startMin), endMin: w.endMin }))
     .filter((w) => w.startMin >= run.startMin && w.startMin <= runEnd)
     .filter((w) => w.endMin - w.startMin >= PACING_REST_FLOOR)
