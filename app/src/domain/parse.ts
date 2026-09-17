@@ -347,6 +347,15 @@ const BATCH_SHIFT = new RegExp(
     BATCH_WINDOW +
     String.raw`(?:\s+(today|tomorrow|on\s+(?:[a-z]+|\d{4}-\d{2}-\d{2})))?\s+(.+)$`
 )
+/* a shift's tail, read strictly: an amount and a direction ("back an hour",
+   "30 min earlier", "later by 60 min"), then optionally the day. Any other word
+   left over ("after lunch", "this afternoon") means the ask isn't one MEW can
+   line up exactly, so it asks rather than guess the whole day */
+const SHIFT_AMOUNT = String.raw`(?:\d+(?:\.\d+)?\s*(?:h|hr|hrs|hours?|m|mins?|minutes?)?|an\s+hour|half\s+an\s+hour)`
+const SHIFT_DIR = String.raw`(?:later|back|backwards?|forward|out|delayed?|earlier|sooner|up)`
+const BATCH_SHIFT_TAIL = new RegExp(
+  String.raw`^(?:${SHIFT_DIR}\s+(?:by\s+)?${SHIFT_AMOUNT}|${SHIFT_AMOUNT}\s+${SHIFT_DIR})(?:\s+(today|tomorrow|on\s+(?:[a-z]+|\d{4}-\d{2}-\d{2})))?$`
+)
 const BATCH_MOVE = new RegExp(
   String.raw`^move\s+all\s+(of\s+)?(?:(today's|tomorrow's|[a-z]+day's|\d{4}-\d{2}-\d{2}'s)\s+)?(.+?)` +
     BATCH_WINDOW +
@@ -423,12 +432,19 @@ function parseBatch(text: string, now: Date): ScheduleIntent | null {
   const shiftM = lower.match(BATCH_SHIFT)
   const deltaMin = shiftM ? parseTimeShift(shiftM[8]) : null
   if (shiftM && deltaMin != null) {
-    const [, who, tag, quoted, blocks, after, before, day] = shiftM
+    const [, who, tag, quoted, blocks, after, before, dayBefore, tail] = shiftM
     if (who === 'all' && !tag && quoted == null && !blocks && after == null && before == null)
       return null
     const win = windowOf(after, before)
     if (!win) return null
     if (win.ask) return win.ask
+    const strict = tail.match(BATCH_SHIFT_TAIL)
+    if (!strict || (dayBefore && strict[1]))
+      return {
+        kind: 'chat',
+        reply: `I can move them together with a start time and a day, like "push everything after 3pm back an hour tomorrow".`,
+      }
+    const day = dayBefore ?? strict[1]
     const dayOffset = dayOf(day)
     if (day && dayOffset == null) return null
     return {

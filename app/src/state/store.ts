@@ -3821,10 +3821,12 @@ export const useMew = create<MewState>((set, get) => {
     ]
       .filter(Boolean)
       .join(' ')
+    /* every offer and receipt names its day, so the day a yes acts on is on
+       screen before the yes */
     const change =
       op.kind === 'shift'
-        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'}`
-        : `to ${dayName(op.toDayKey)}`
+        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'} ${onDay(sel.dayKey)}`
+        : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
     const why = (sk: BatchSkip): string =>
       sk.reason === 'calendar'
         ? 'from your calendar'
@@ -3881,7 +3883,7 @@ export const useMew = create<MewState>((set, get) => {
       ]
         .filter(Boolean)
         .join(' and ')
-      const words = sel.titleQuery ? `"${sel.titleQuery.replace(/"/g, '')}"` : ''
+      const words = sel.titleQuery ? `"${sel.titleQuery.replace(/["“”]/g, '')}"` : ''
       const yes = ` — yes, all ${n} · ${token}`
       let reply: string
       if (op.kind === 'shift') {

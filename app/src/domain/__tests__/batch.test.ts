@@ -43,6 +43,23 @@ describe('selectBatch — what the selector picks', () => {
     expect(ids(selectBatch(day, { dayKey: TODAY }))).toEqual(['early', 'deck', 'run'])
   })
 
+  it('title words match with quotes aside, so a re-ask that drops them still picks the same blocks', () => {
+    const books = [
+      block({ id: 'dw', title: 'Read "Deep Work"', tag: 'private' }),
+      block({
+        id: 'x',
+        title: 'Read the news',
+        tag: 'private',
+        startMin: 17 * 60,
+        endMin: 18 * 60,
+      }),
+    ]
+    expect(ids(selectBatch(books, { dayKey: TODAY, titleQuery: 'read deep work' }))).toEqual(['dw'])
+    expect(ids(selectBatch(books, { dayKey: TODAY, titleQuery: 'Read "Deep Work"' }))).toEqual([
+      'dw',
+    ])
+  })
+
   it('a tag and title words narrow it further', () => {
     expect(ids(selectBatch(day, { dayKey: TODAY, tag: 'health' }))).toEqual(['run'])
     expect(ids(selectBatch(day, { dayKey: TODAY, titleQuery: 'dEcK' }))).toEqual(['deck'])
@@ -250,6 +267,11 @@ describe('the keyless batch grammar', () => {
     ['move all my blocks to friday', { op: 'moveToDay', toDayOffset: 3 }],
     ['move all blocks to friday', { op: 'moveToDay', toDayOffset: 3 }],
     ['move all my work to friday', { tag: 'work', op: 'moveToDay', toDayOffset: 3 }],
+    ['push everything back an hour tomorrow', { dayOffset: 1, op: 'shift', deltaMin: 60 }],
+    [
+      'push all work back 30 min on thursday',
+      { dayOffset: 2, tag: 'work', op: 'shift', deltaMin: 30 },
+    ],
   ])('"%s"', (text, batch) => {
     expect(parseCommand(text, NOW)).toEqual({ kind: 'batch', batch })
   })
@@ -261,9 +283,23 @@ describe('the keyless batch grammar', () => {
     })
   })
 
-  it('a date past two weeks, or one already gone, is no batch day', () => {
+  it('a date past two weeks, one already gone, or one that never exists is no batch day', () => {
     expect(parseCommand("move all today's work to 2026-06-30", NOW).kind).not.toBe('batch')
     expect(parseCommand("move all today's work to 2026-06-08", NOW).kind).not.toBe('batch')
+    /* May 41st would roll over to June 10, inside the window: still no day */
+    expect(parseCommand("move all today's work to 2026-05-41", NOW).kind).not.toBe('batch')
+    expect(parseCommand('push everything on 2026-05-41 back an hour', NOW).kind).not.toBe('batch')
+  })
+
+  it.each([
+    'push everything after lunch back 30 min',
+    'push everything this afternoon back an hour',
+    'push everything tomorrow back an hour on thursday',
+  ])('a shift with words MEW cannot place asks for a start time and a day: "%s"', (text) => {
+    expect(parseCommand(text, NOW)).toEqual({
+      kind: 'chat',
+      reply: `I can move them together with a start time and a day, like "push everything after 3pm back an hour tomorrow".`,
+    })
   })
 
   it('a title that starts with "all" stays a single-block move', () => {

@@ -252,7 +252,7 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     expect(snapshot()).toBe(before)
     const offer = chipMsgs().at(-1)!
     expect(offer.body).toBe(
-      'move 3 blocks 60 min later? Deck 15:00→16:00 · Email 17:00→18:00 · Notes 18:00→19:00. Client call 15:30 (fixed) and Quarterly planning 20:00 (from your calendar) stay where they are.'
+      'move 3 blocks 60 min later today? Deck 15:00→16:00 · Email 17:00→18:00 · Notes 18:00→19:00. Client call 15:30 (fixed) and Quarterly planning 20:00 (from your calendar) stay where they are.'
     )
     expect(offer.choices!.map((c) => c.label)).toEqual(['do it', 'not now'])
     expect(offer.choices![0].reply).toMatch(
@@ -272,7 +272,7 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     expect(at('call')).toEqual([TODAY, 15 * 60 + 30, 15 * 60 + 45])
     expect(at('mtg')).toEqual([TODAY, 20 * 60, 20 * 60 + 30])
     expect(lastMew()).toBe(
-      'Moved 3 blocks 60 min later — Deck 15:00→16:00 · Email 17:00→18:00 · Notes 18:00→19:00. Client call 15:30 (fixed) and Quarterly planning 20:00 (from your calendar) stay where they are.'
+      'Moved 3 blocks 60 min later today — Deck 15:00→16:00 · Email 17:00→18:00 · Notes 18:00→19:00. Client call 15:30 (fixed) and Quarterly planning 20:00 (from your calendar) stay where they are.'
     )
   })
 
@@ -305,7 +305,7 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     expect(offered).toMatch(/^The options are on screen as clickable chips/)
     /* a yes without the list token names no list: offered again, nothing moves */
     expect(countOnly).toMatch(/^The options are on screen as clickable chips/)
-    expect(moved).toMatch(/^Moved 3 blocks 60 min later — /)
+    expect(moved).toMatch(/^Moved 3 blocks 60 min later today — /)
     expect(undone).toMatch(/^Undone — /)
     expect(snapshot()).toBe(before)
   })
@@ -333,7 +333,7 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     await pick('do it')
     expect(snapshot()).toBe(before)
     expect(chipMsgs().at(-1)!.body).toMatch(
-      /^the week changed since then — move 2 blocks 60 min later\?/
+      /^the week changed since then — move 2 blocks 60 min later today\?/
     )
   })
 })
@@ -363,7 +363,7 @@ describe('#75 — narrow batches, collisions, and a pick after midnight', () => 
     await settle()
     expect(snapshot()).toBe(before)
     expect(chipMsgs().at(-1)!.body).toBe(
-      'move 2 blocks 30 min later? Probe alpha 19:00→19:30 · Probe gamma 21:00→21:30. Client call 20:30 (fixed) and Probe beta 20:00 (would sit over Client call 20:30–20:45) stay where they are.'
+      'move 2 blocks 30 min later today? Probe alpha 19:00→19:30 · Probe gamma 21:00→21:30. Client call 20:30 (fixed) and Probe beta 20:00 (would sit over Client call 20:30–20:45) stay where they are.'
     )
     await pick('do it')
     expect(at('pa')).toEqual([TODAY, 19 * 60 + 30, 20 * 60])
@@ -457,7 +457,7 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
     await settle()
     expect(snapshot()).toBe(before)
     expect(chipMsgs().at(-1)!.body).toMatch(
-      /^the week changed since then — move 3 blocks 60 min later\? Deck 15:00→16:00 · file the taxes 16:30→17:30 · Email 17:00→18:00\./
+      /^the week changed since then — move 3 blocks 60 min later today\? Deck 15:00→16:00 · file the taxes 16:30→17:30 · Email 17:00→18:00\./
     )
   })
 
@@ -473,7 +473,9 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
       'local'
     )
     const offer = await offerKeyed({ titleQuery: 'work' }, { kind: 'moveToDay', toDayOffset: 1 })
-    expect(offer.body).toBe('move 2 blocks to tomorrow? Homework help 9:00 · Workout 11:00.')
+    expect(offer.body).toBe(
+      'move 2 blocks from today to tomorrow? Homework help 9:00 · Workout 11:00.'
+    )
     expect(offer.choices![0].reply).toMatch(
       /^move all today's "work" to tomorrow — yes, all 2 · [a-z0-9]+$/
     )
@@ -531,13 +533,67 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
     }
   )
 
+  it('Z1: a trailing day is the day it acts on, and the offer names it before the yes', async () => {
+    const both = [TODAY, WED].flatMap((d) => [
+      deck(`deck-${d}`, 9 * 60, 10 * 60, { dayKey: d }),
+      deck(`email-${d}`, 11 * 60, 12 * 60, { title: 'Email', dayKey: d }),
+      deck(`notes-${d}`, 13 * 60, 14 * 60, { title: 'Notes', dayKey: d }),
+    ])
+    await fresh(both)
+    await say('push everything back an hour tomorrow')
+    await settle()
+    expect(chipMsgs().at(-1)!.body).toBe(
+      'move 3 blocks 60 min later tomorrow? Deck 9:00→10:00 · Email 11:00→12:00 · Notes 13:00→14:00.'
+    )
+    await pick('do it')
+    expect(lastMew()).toMatch(/^Moved 3 blocks 60 min later tomorrow — /)
+    expect(at(`deck-${WED}`)).toEqual([WED, 10 * 60, 11 * 60])
+    expect(at(`deck-${TODAY}`)).toEqual([TODAY, 9 * 60, 10 * 60])
+    expect(at(`notes-${TODAY}`)).toEqual([TODAY, 13 * 60, 14 * 60])
+  })
+
+  it('Z1: a shift MEW cannot place exactly asks, and nothing moves', async () => {
+    await fresh(afternoon())
+    const before = snapshot()
+    await say('push everything after lunch back 30 min')
+    await settle()
+    expect(snapshot()).toBe(before)
+    expect(chipMsgs()).toHaveLength(0)
+    expect(lastMew()).toMatch(/^I can move them together with a start time and a day/)
+  })
+
+  it('Z2: a keyed offer for title words in quotes, tapped on the keyless floor, moves the blocks it listed', async () => {
+    await fresh(
+      [
+        deck('dw1', 9 * 60, 10 * 60, { title: 'Read "Deep Work"', tag: 'private' }),
+        deck('dw2', 20 * 60, 21 * 60, { title: 'Read "Deep Work"', tag: 'private' }),
+        deck('news', 12 * 60, 13 * 60, { title: 'Read the news', tag: 'private' }),
+      ],
+      [],
+      'local'
+    )
+    const offer = await offerKeyed(
+      { titleQuery: 'Read "Deep Work"' },
+      { kind: 'moveToDay', toDayOffset: 1 }
+    )
+    expect(offer.choices![0].reply).toMatch(
+      /^move all today's "Read Deep Work" to tomorrow — yes, all 2 · [a-z0-9]+$/
+    )
+    await pick('do it')
+    expect(at('dw1')).toEqual([WED, 9 * 60, 10 * 60])
+    expect(at('dw2')).toEqual([WED, 20 * 60, 21 * 60])
+    expect(at('news')).toEqual([TODAY, 12 * 60, 13 * 60])
+  })
+
   it('Y2: a move names its day plainly, and past this week with its date', async () => {
     await fresh([deck('d1', 9 * 60, 10 * 60), deck('d2', 11 * 60, 12 * 60, { title: 'Email' })])
     await say("move all of today's work to friday")
     await settle()
-    expect(chipMsgs().at(-1)!.body).toBe('move 2 blocks to Friday? Deck 9:00 · Email 11:00.')
+    expect(chipMsgs().at(-1)!.body).toBe(
+      'move 2 blocks from today to Friday? Deck 9:00 · Email 11:00.'
+    )
     await pick('do it')
-    expect(lastMew()).toBe('Moved 2 blocks to Friday — Deck 9:00 · Email 11:00.')
+    expect(lastMew()).toBe('Moved 2 blocks from today to Friday — Deck 9:00 · Email 11:00.')
     expect(at('d1')).toEqual([FRI, 9 * 60, 10 * 60])
 
     await fresh(
@@ -546,7 +602,9 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
       'local'
     )
     const offer = await offerKeyed({ tag: 'work' }, { kind: 'moveToDay', toDayOffset: 8 })
-    expect(offer.body).toBe('move 2 blocks to Wednesday, Jun 17? Deck 9:00 · Email 11:00.')
+    expect(offer.body).toBe(
+      'move 2 blocks from today to Wednesday, Jun 17? Deck 9:00 · Email 11:00.'
+    )
   })
 
   it('Y4: "move all hands to friday" moves the All hands block, as before', async () => {
@@ -568,7 +626,7 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
     await pick('do it')
     expect(snapshot()).toBe(before)
     expect(chipMsgs().at(-1)!.body).toMatch(
-      /^the week changed since then — move 1 block 60 min later\? Deck 15:00→16:00\./
+      /^the week changed since then — move 1 block 60 min later today\? Deck 15:00→16:00\./
     )
   })
 
@@ -581,7 +639,7 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
     await say("move all of today's work to tomorrow")
     await settle()
     expect(chipMsgs().at(-1)!.body).toBe(
-      'move 2 blocks to tomorrow? Deck 9:00 · Email 11:00. Deck 9:00 would share time with Gym 9:00–10:00.'
+      'move 2 blocks from today to tomorrow? Deck 9:00 · Email 11:00. Deck 9:00 would share time with Gym 9:00–10:00.'
     )
   })
 })

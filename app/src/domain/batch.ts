@@ -16,7 +16,8 @@ export interface BatchSelector {
   /** blocks starting before this minute */
   beforeMin?: number
   tag?: Tag
-  /** a few title words, matched like list/targets do (case-insensitive substring) */
+  /** a few title words, matched like list/targets do (case-insensitive
+      substring), quotes aside */
   titleQuery?: string
 }
 
@@ -60,14 +61,16 @@ export interface BatchPlan {
 /** The blocks a selector picks: that day's time-holding blocks (all-day labels
     aside), filtered by tag, start window and title words, in time order. */
 export function selectBatch(blocks: Block[], sel: BatchSelector): Block[] {
-  const q = sel.titleQuery?.trim().toLowerCase()
+  /* quotes aside, so title words survive a re-ask that can't carry them */
+  const unquoted = (s: string) => s.replace(/["“”]/g, '').toLowerCase()
+  const q = sel.titleQuery ? unquoted(sel.titleQuery).trim() : undefined
   return blocksForDay(blocks, sel.dayKey).filter(
     (b) =>
       !isAllDay(b) &&
       (sel.tag == null || b.tag === sel.tag) &&
       (sel.afterMin == null || b.startMin >= sel.afterMin) &&
       (sel.beforeMin == null || b.startMin < sel.beforeMin) &&
-      (!q || b.title.toLowerCase().includes(q))
+      (!q || unquoted(b.title).includes(q))
   )
 }
 

@@ -101,8 +101,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 ### Change several blocks at once, with a yes first
 - Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
   lines it up in one go. When it touches three or more blocks, or moves anything to another day,
-  MEW first shows exactly which blocks move where, which stay put and what they would share time
-  with, and nothing changes until you say yes. Your yes moves exactly that list: if the week
+  MEW first shows the day, exactly which blocks move where, which stay put and what they would share
+  time with, and nothing changes until you say yes. Your yes moves exactly that list: if the week
   changes first, MEW shows you the new one. One "undo that" puts them all back. Calendar events,
   fixed calls, done blocks and repeating blocks keep their place, and so does any block whose new
   time would sit over one.
