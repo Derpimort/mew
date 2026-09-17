@@ -56,4 +56,16 @@ describe('X-Wing KEM (ml_kem768_x25519) keeps the 0.6.1 wire format', () => {
     ])
     expect(hex(port.kemDecapsulate(kemCt, secretKey))).toBe(hex(sharedSecret))
   })
+
+  it('the port IS this KEM, not a same-sized look-alike: it opens the 0.6.1 ciphertext, and the library opens its', () => {
+    /* sizes and a self round-trip cannot tell X-Wing from another ML-KEM-768 + X25519
+       combiner (KitchenSink has the same lengths). The recorded 0.6.1 secret is the
+       only thing that does — through the port's own decapsulate, and back the other way. */
+    const port = createNobleCrypto()
+    const { publicKey, secretKey } = ml_kem768_x25519.keygen(seed)
+    const { cipherText } = ml_kem768_x25519.encapsulate(publicKey, encapsRandomness)
+    expect(hex(port.kemDecapsulate(cipherText, secretKey))).toBe(KNOWN.ssHex)
+    const { kemCt, sharedSecret } = port.kemEncapsulate(publicKey)
+    expect(hex(ml_kem768_x25519.decapsulate(kemCt, secretKey))).toBe(hex(sharedSecret))
+  })
 })
