@@ -5447,24 +5447,27 @@ describe('#293 — plan mode scenario picker', () => {
     useMew.getState().updateSettings({ planMode: 'off' })
     await say(BRAINDUMP)
     expect(chat().some((m) => (m.scenarios?.length ?? 0) > 0)).toBe(false)
-    /* placed in one pass. #22: the evening is real now, so all six land
-       Tuesday (before, two "couldn't hold — the day is full" while 18:30–22:30
-       sat empty) and the day-load kindness line leads the reply */
+    /* placed in one pass. #22: the evening is real now, so five land Tuesday
+       (before, two "couldn't hold — the day is full" while 18:30–22:30 sat
+       empty) and the day-load kindness line leads the reply. #116: the sixth
+       has no hour left today from 9:40, so it's named with tomorrow's opening,
+       never back-filled into 8:00–9:00, which had already gone by */
     expect(lastMsg().body).toMatch(
       /^that's \S+h of work against your usual \S+ — want me to keep it kind\?$/
     )
-    for (const title of [
-      'deck',
-      'budget review',
-      'gym session',
-      'inbox sweep',
-      'errands',
-      'reading time',
-    ])
+    for (const title of ['deck', 'budget review', 'gym session', 'inbox sweep', 'errands'])
       expect(
         useMew.getState().blocks.some((b) => b.title === title && b.dayKey === dayKey(TUE(9, 40))),
         title
       ).toBe(true)
+    expect(useMew.getState().blocks.some((b) => b.title === 'reading time')).toBe(false)
+    expect(
+      chat().some((m) =>
+        m.body.includes(
+          'No 60-min window is left today for "reading time" inside the hours I plan in (8:00–22:30).'
+        )
+      )
+    ).toBe(true)
 
     await fresh(TUE(9, 40))
     useMew.getState().updateSettings({ planMode: 'always' })
