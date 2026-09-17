@@ -141,6 +141,9 @@ describe('since <date> — every date shape, through today', () => {
     ['since last year', '2025-09-17', 'since Jan 1, 2025'], // capped: see below
     ['since 2 weeks ago', '2026-09-03', 'since Sep 3'],
     ['since three days ago', '2026-09-14', 'since Sep 14'],
+    ['since 2 months ago', '2026-07-17', 'since Jul 17'],
+    ['since a year ago', '2025-09-17', 'since Sep 17, 2025'],
+    ['since December 2025', '2025-12-01', 'since Dec 1, 2025'],
     ['since the 20th', '2026-08-20', 'since Aug 20'], // Sep 20 hasn't come yet
     ['since the 31st', '2026-08-31', 'since Aug 31'], // September has no 31st
     ['since October 5', '2025-10-05', 'since Oct 5, 2025'], // no year: its latest occurrence
@@ -200,6 +203,14 @@ describe('month and year boundaries', () => {
     expect(span('last year', TUE_JAN5)).toEqual(['2026-01-01', '2026-12-31', 'last year'])
   })
 
+  it('whole months across New Year: "between November and February" asked in December is last winter', () => {
+    expect(span('between November and February', '2026-12-10')).toEqual([
+      '2025-11-01',
+      '2026-02-28',
+      'from Nov 1, 2025 to Feb 28',
+    ])
+  })
+
   it('a span that crosses New Year reads last winter, not a year the wrong way round', () => {
     // asked Dec 25: Dec 20 this year is after Jan 5 this year — the tighter reading wins
     expect(span('between Dec 20 and Jan 5', '2026-12-25')).toEqual([
@@ -248,6 +259,7 @@ describe('garbage never guesses — it falls through to the week grammar', () =>
     "today's deck",
     'in smarch',
     'since 3',
+    'since the 45th',
   ])('%s', (q) => {
     const { range, rest } = readRange(q, THU)
     expect(range.kind).toBe('week')
