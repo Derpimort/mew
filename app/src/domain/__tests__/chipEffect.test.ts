@@ -234,3 +234,35 @@ describe('chipReplyEffect — which-block, series-scope and placing replies', ()
     ).toMatchObject({ kind: 'split', target: 'deck', dayKey: '2026-06-10' })
   })
 })
+
+/* ── peer re-review of #98 (coderpa): V8 and V9 ────────────────────────── */
+
+describe('chipReplyEffect — a real resize reply, and a done block the offer meant', () => {
+  const twins = (tueStatus: Block['status']) => [
+    block({ id: 'gym-tue', title: 'gym', startMin: 18 * 60, endMin: 19 * 60, status: tueStatus }),
+    block({
+      id: 'gym-wed',
+      title: 'gym',
+      dayKey: '2026-06-10',
+      startMin: 18 * 60,
+      endMin: 19 * 60,
+    }),
+  ]
+
+  it('V8: "make gym at 18:00 30 min longer" is a resize, and a day later it reaches Wednesday\'s gym', () => {
+    expect(chipReplyEffect(twins('open'), 'make gym at 18:00 30 min longer', TUE)).toMatchObject({
+      kind: 'resize',
+      target: 'gym-tue',
+      resize: { relDurationMin: 30 },
+    })
+    expect(chipStillMeans(twins('open'), 'make gym at 18:00 30 min longer', TUE, WED)).toBe(false)
+  })
+
+  it("V9: a complete whose offered block was marked done before the pick still reads Tuesday's, so the stale pick is refused", () => {
+    expect(chipReplyEffect(twins('done'), 'done with gym at 18:00', TUE)).toEqual({
+      kind: 'complete',
+      target: 'gym-tue',
+    })
+    expect(chipStillMeans(twins('done'), 'done with gym at 18:00', TUE, WED)).toBe(false)
+  })
+})
