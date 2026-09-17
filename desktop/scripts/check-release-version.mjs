@@ -161,3 +161,5 @@ if (mode === '--shape') {
       `--shape | --promotion | --tag vYYYY.M.PATCH`,
   )
 }
+
+// #85 negative proof (throwaway PR, never merged): a desktop-only change must run release-guard and not ci.yml
