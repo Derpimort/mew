@@ -174,16 +174,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-/** Picks `choiceId` on `msg` after the clock rolled, and pins the stale shape:
-    nothing moved, no reply spoken, the chip spent, MEW's line names the day. */
-
 /* ── fixtures ─────────────────────────────────────────────────────── */
-
-/** #12's drift week: Groceries (90, flexible) at 14:00 today, today walled from
-    15:30, tomorrow one free hour at 9:00, so new work on 14:00 can shift to
-    tomorrow 9:00 while Groceries has nowhere clean to go. */
-
-/** #301's lived history: 15 days of 300 completed work minutes → the line at 345. */
 
 /** #286: a meeting pulled onto today's Deck polish (9:00–11:00) at 9:30–10:15 */
 async function rescueOffer() {
@@ -195,7 +186,6 @@ async function rescueOffer() {
   return chipMsgs()[0]
 }
 
-/* ── offered Tuesday, picked Wednesday 00:05: nothing moves ──────────── */
 /* ── the four audited families ────────────────────────────────────── */
 
 const say = (text: string) => useMew.getState().speak(text)
@@ -289,6 +279,47 @@ describe("#139 — a typed chip label is that chip's pick, in every family", () 
     /* today's occurrence is in two pieces around the gap; tomorrow's is whole */
     expect(blocks().filter((b) => b.dayKey === TODAY && b.title.startsWith('Gym'))).toHaveLength(2)
     expect(at('g2')).toEqual([WED, 9 * 60, 11 * 60])
+    expect(captures()).toEqual([])
+  })
+
+  it("the batch scope ask (#150, the RC's newest chips): typed, it answers the sweep", async () => {
+    /* #150 landed a FIFTH family after this slice was written, and it speaks two
+         of the same words as the split's scope ask. The resolver reads whatever
+         labels the LIVE ask carries rather than keying on a family, so the newest
+         chip in the RC answers to its own words — pinned here because the owner
+         will meet this ask first, and a fix for "typing a chip label works" that
+         failed on it would be worse than no fix. */
+    await fresh([
+      block({
+        id: 'g1',
+        title: 'Gym',
+        tag: 'health',
+        startMin: 18 * 60,
+        endMin: 19 * 60,
+        recurringBlockId: 'r1',
+      }),
+      block({
+        id: 'g2',
+        title: 'Gym',
+        tag: 'health',
+        dayKey: WED,
+        startMin: 18 * 60,
+        endMin: 19 * 60,
+        recurringBlockId: 'r1',
+      }),
+    ])
+    await say('push all health after 4pm today later by 30 min')
+    await settle()
+    expect(labels()).toEqual(['just this one', 'this & the ones after', 'the whole series'])
+    await say('the whole series')
+    await settle()
+    /* two occurrences is a narrow change, so the answer acts straight away — and
+       the receipt names each row with its own day, #150's own copy fix */
+    expect(lastBody()).toBe(
+      'Moved 2 blocks 30 min later — Gym today 18:00→18:30 · Gym tomorrow 18:00→18:30.'
+    )
+    expect(at('g1')).toEqual([TODAY, 18 * 60 + 30, 19 * 60 + 30])
+    expect(at('g2')).toEqual([WED, 18 * 60 + 30, 19 * 60 + 30])
     expect(captures()).toEqual([])
   })
 })
