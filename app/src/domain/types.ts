@@ -487,6 +487,7 @@ export interface ScheduleIntent {
     | 'relmove'
     | 'split'
     | 'merge'
+    | 'batch'
     | 'remember'
     | 'chat'
     | 'insights'
@@ -589,6 +590,23 @@ export interface ScheduleIntent {
       the first keeps its id and spans the run. The target is the `query`; `at`
       pins the run's first block, `dayOffset` its day. */
   merge?: { dayOffset?: number }
+  /** batch (#75): one op over the blocks a selector picks on one day — a shift
+      by minutes ("push everything after 3pm back an hour") or a move to another
+      day ("move all of today's work to tomorrow"). A wide batch is offered with
+      the exact list first; `confirmCount` and `confirmToken` are the count and
+      the list token the owner said yes to. */
+  batch?: {
+    dayOffset?: number
+    afterMin?: number
+    beforeMin?: number
+    tag?: Tag
+    titleQuery?: string
+    op: 'shift' | 'moveToDay'
+    deltaMin?: number
+    toDayOffset?: number
+    confirmCount?: number
+    confirmToken?: string
+  }
   /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
       blocks of this focus class up to how the kind really runs. The union is
       spelled inline (not imported from energy) to keep types.ts a leaf. */

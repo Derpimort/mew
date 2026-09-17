@@ -3,7 +3,7 @@
    produces the same ScheduleIntent through strict tool use. */
 
 import type { ScheduleIntent, Tag } from './types'
-import { weekdayOffset } from './time'
+import { dayKey, fromDayKey, weekdayOffset } from './time'
 import { parseClockRange } from './split'
 
 const PARTS: Record<string, { start: number; end: number }> = {
@@ -323,6 +323,193 @@ export function referentQuery(phrase: string): string | null {
   if (af) return `@after:${anchorText(af[5])}`
   const bf = p.match(BEFORE_ONE)
   if (bf) return `@before:${anchorText(bf[5])}`
+  return null
+}
+
+/* batch (#75): wide changes, keyless.
+   · a shift: "push everything after 3pm back an hour", "pull all work before
+     noon 30 min earlier", "push all "deck" after 9:00 and before 12:00 on
+     thursday later by 30 min"
+   · a move to another day: "move all of today's work to tomorrow", "move all
+     thursday's deck review blocks to friday", "move all my blocks to friday"
+   Each needs a batch word: "everything", a tag, quoted title words, "blocks",
+   "my", a start window, a day's possessive or "of". So "push all hands back an
+   hour" and "move all hands to friday" stay single-block moves. A confirm chip
+   re-asks in these words for every selector a batch can hold (both edges, quoted
+   title words, a date past this week), ending " — yes, all N · TOKEN": the count
+   and the list token the owner said yes to. */
+const BATCH_TAGS: Tag[] = ['work', 'private', 'health', 'rest']
+const BATCH_YES = /\s*[—–-]+\s*yes,?\s+all\s+(\d+)(?:\s*·\s*([a-z0-9]+))?\s*$/
+const BATCH_CLOCK = String.raw`noon|\d{1,2}(?::\d{2})?\s*(?:am|pm)?`
+const BATCH_WINDOW = String.raw`(?:\s+after\s+(${BATCH_CLOCK}))?(?:\s+(?:and\s+)?before\s+(${BATCH_CLOCK}))?`
+const BATCH_SHIFT = new RegExp(
+  String.raw`^(?:push|move|shift|bring|pull)\s+(everything|all(?:\s+(work|private|health|rest))?(?:\s+"([^"]*)")?(?:\s+(blocks))?)` +
+    BATCH_WINDOW +
+    String.raw`(?:\s+(today|tomorrow|on\s+(?:[a-z]+|\d{4}-\d{2}-\d{2})))?\s+(.+)$`
+)
+/* a shift's tail, read strictly: an amount and a direction ("back an hour",
+   "30 min earlier", "later by 60 min"), then optionally the day. Any other word
+   left over ("after lunch", "this afternoon") means the ask isn't one MEW can
+   line up exactly, so it asks rather than guess the whole day */
+const SHIFT_AMOUNT = String.raw`(?:\d+(?:\.\d+)?\s*(?:h|hr|hrs|hours?|m|mins?|minutes?)?|an\s+hour|half\s+an\s+hour)`
+const SHIFT_DIR = String.raw`(?:later|back|backwards?|forward|out|delayed?|earlier|sooner|up)`
+const BATCH_SHIFT_TAIL = new RegExp(
+  String.raw`^(?:${SHIFT_DIR}\s+(?:by\s+)?${SHIFT_AMOUNT}|${SHIFT_AMOUNT}\s+${SHIFT_DIR})(?:\s+(today|tomorrow|on\s+(?:[a-z]+|\d{4}-\d{2}-\d{2})))?$`
+)
+const BATCH_MOVE = new RegExp(
+  String.raw`^move\s+all\s+(of\s+)?(?:(today's|tomorrow's|[a-z]+day's|\d{4}-\d{2}-\d{2}'s)\s+)?(.+?)` +
+    BATCH_WINDOW +
+    String.raw`\s+to\s+(today|tomorrow|(?:on\s+)?[a-z]+day|(?:on\s+)?\d{4}-\d{2}-\d{2})$`
+)
+
+/** "3pm" · "3:30pm" · "15:00" · "noon" → minutes; a bare "3" is ambiguous → null */
+function batchClock(s: string): number | null {
+  const t = s.trim().toLowerCase()
+  if (t === 'noon') return 12 * 60
+  const m = t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/)
+  if (!m) return null
+  const h = Number(m[1])
+  const min = m[2] ? Number(m[2]) : 0
+  if (min > 59) return null
+  if (m[3]) {
+    if (h < 1 || h > 12) return null
+    return ((h % 12) + (m[3] === 'pm' ? 12 : 0)) * 60 + min
+  }
+  if (m[2] || h >= 13) return h <= 23 ? h * 60 + min : null
+  return null
+}
+
+function parseBatch(text: string, now: Date): ScheduleIntent | null {
+  let lower = text.trim().toLowerCase()
+  let confirmCount: number | undefined
+  let confirmToken: string | undefined
+  const yes = lower.match(BATCH_YES)
+  if (yes && yes.index != null) {
+    confirmCount = Number(yes[1])
+    confirmToken = yes[2]
+    lower = lower.slice(0, yes.index).trim()
+  }
+  const confirm = {
+    ...(confirmCount != null ? { confirmCount } : {}),
+    ...(confirmToken ? { confirmToken } : {}),
+  }
+  /* a day word, weekday or (for a day past this week) a date, as days from today */
+  const dayOf = (phrase: string | undefined): number | undefined => {
+    if (!phrase) return undefined
+    const p = phrase.replace(/^on\s+/, '').replace(/'s$/, '')
+    if (/^\d{4}-\d{2}-\d{2}$/.test(p)) {
+      const today = dayKey(now)
+      if (dayKey(fromDayKey(p)) !== p) return undefined
+      const off = Math.round((fromDayKey(p).getTime() - fromDayKey(today).getTime()) / 86_400_000)
+      return off >= 0 && off <= 13 ? off : undefined
+    }
+    const d = parseDayOffset(p, now)
+    return d ? d.offset : undefined
+  }
+  /* a start window; a bare hour ("after 3") is 3am or 3pm: ask, rather than read
+     a block called "everything after 3" */
+  const windowOf = (after?: string, before?: string) => {
+    const bare = [after, before].find((c) => c != null && /^\d{1,2}$/.test(c.trim()))
+    if (bare)
+      return {
+        ask: {
+          kind: 'chat' as const,
+          reply: `after ${bare.trim()}am or ${bare.trim()}pm? say "after ${bare.trim()}pm" and I'll line them up.`,
+        },
+      }
+    const afterMin = after != null ? batchClock(after) : undefined
+    const beforeMin = before != null ? batchClock(before) : undefined
+    if (afterMin === null || beforeMin === null) return null
+    return {
+      window: {
+        ...(afterMin != null ? { afterMin } : {}),
+        ...(beforeMin != null ? { beforeMin } : {}),
+      },
+    }
+  }
+
+  /* a shift: minutes later or earlier, the same day */
+  const shiftM = lower.match(BATCH_SHIFT)
+  const deltaMin = shiftM ? parseTimeShift(shiftM[8]) : null
+  if (shiftM && deltaMin != null) {
+    const [, who, tag, quoted, blocks, after, before, dayBefore, tail] = shiftM
+    if (who === 'all' && !tag && quoted == null && !blocks && after == null && before == null)
+      return null
+    const win = windowOf(after, before)
+    if (!win) return null
+    if (win.ask) return win.ask
+    const strict = tail.match(BATCH_SHIFT_TAIL)
+    if (!strict || (dayBefore && strict[1]))
+      return {
+        kind: 'chat',
+        reply: `I can move them together with a start time and a day, like "push everything after 3pm back an hour tomorrow".`,
+      }
+    const day = dayBefore ?? strict[1]
+    const dayOffset = dayOf(day)
+    if (day && dayOffset == null) return null
+    return {
+      kind: 'batch',
+      batch: {
+        ...(dayOffset != null ? { dayOffset } : {}),
+        ...win.window,
+        ...(tag ? { tag: tag as Tag } : {}),
+        ...(quoted?.trim() ? { titleQuery: quoted.trim() } : {}),
+        op: 'shift',
+        deltaMin,
+        ...confirm,
+      },
+    }
+  }
+
+  /* a move to another day, same clock: "move all [of] [day's] [my] <tag |
+     "title words" | title words blocks | blocks> [window] to <day>" */
+  const moveM = lower.match(BATCH_MOVE)
+  if (moveM) {
+    const [, of, fromDay, whatIn, after, before, toDay] = moveM
+    const toDayOffset = dayOf(toDay)
+    const fromOffset = dayOf(fromDay)
+    if (toDayOffset == null || (fromDay && fromOffset == null)) return null
+    const mine = /^my\s+/.test(whatIn)
+    const what = whatIn.replace(/^my\s+/, '').trim()
+    const quoted = what.match(/^(?:(work|private|health|rest)\s+)?"([^"]*)"(?:\s+blocks?)?$/)
+    const bare = what.replace(/\s+blocks?$/, '')
+    const sel: { tag?: Tag; titleQuery?: string } = quoted
+      ? {
+          ...(quoted[1] ? { tag: quoted[1] as Tag } : {}),
+          ...(quoted[2].trim() ? { titleQuery: quoted[2].trim() } : {}),
+        }
+      : /^blocks?$/.test(what)
+        ? {}
+        : BATCH_TAGS.includes(bare as Tag)
+          ? { tag: bare as Tag }
+          : { titleQuery: bare }
+    /* "move all hands to friday" is one block called All hands, not a batch */
+    const signal =
+      !!of ||
+      !!fromDay ||
+      mine ||
+      after != null ||
+      before != null ||
+      !!quoted ||
+      /^blocks?$/.test(what) ||
+      bare !== what ||
+      sel.tag != null
+    if (!signal || !what) return null
+    const win = windowOf(after, before)
+    if (!win) return null
+    if (win.ask) return win.ask
+    return {
+      kind: 'batch',
+      batch: {
+        ...(fromOffset != null ? { dayOffset: fromOffset } : {}),
+        ...win.window,
+        ...sel,
+        op: 'moveToDay',
+        toDayOffset,
+        ...confirm,
+      },
+    }
+  }
   return null
 }
 
@@ -715,6 +902,11 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
           : ('upcoming' as const)
     return { kind: 'clear', scope }
   }
+
+  /* batch (#75) rides ahead of the single-block moves: "push everything after
+     3pm back an hour" is a wide change, never a block called "everything" */
+  const batchAsk = parseBatch(trimmed, now)
+  if (batchAsk) return batchAsk
 
   /* relative move (#320): "move it 30 min earlier", "push it back an hour",
      "the deck 30 min later". A direction word + amount is the signal; gate off
