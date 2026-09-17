@@ -22,29 +22,14 @@ on:
     paths:
       - 'app/**'
       - '.github/workflows/ci.yml'
-      # the release-version guard's inputs (see the release-guard job)
-      - 'desktop/src-tauri/tauri.conf.json'
-      - 'desktop/package.json'
-      - 'desktop/scripts/**'
+      # the release-version guard has its own workflow (release-guard.yml) with the
+      # desktop paths, so a desktop-only change does not run the app's gates
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  # Release-version guard (CalVer, see .github/RELEASES.md): the config shape, the MSI
-  # version mapping and the guard's own cases, on every PR that touches them.
-  # desktop.yml's `check` job only fires on PRs into main, so without this a PR into
-  # the RC could break tauri.conf.json or the guard unnoticed until promotion. ~20s.
-  release-guard:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with: { node-version: 22 }
-      - run: node desktop/scripts/check-release-version.mjs --shape
-      - run: node --test desktop/scripts/__tests__/check-release-version.test.mjs
-
   # Strict typecheck — tsc -b across the app/ project references, no errors.
   typecheck:
     runs-on: ubuntu-latest
