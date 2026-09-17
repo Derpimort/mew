@@ -2277,7 +2277,21 @@ export const useMew = create<MewState>((set, get) => {
     })
     burnSustenanceKey(todayKey, s.nowMs)
     if (!specs.length) return // fed (or wall-to-wall): nothing to add, nothing to say
+    const before = new Set(get().blocks.map((b) => b.id))
     runToolWithCard('plan', { places: specs, frees: [] }, () => execPlan(specs, []))
+    /* #123: the meals (and any breather) this pass placed are MEW's scaffolding,
+       never the owner's work to carry into next week */
+    const placed = get().blocks.filter((b) => !before.has(b.id) && !b.placedBy)
+    if (placed.length) {
+      const ids = new Set(placed.map((b) => b.id))
+      setBlocks(
+        get().blocks.map((b) =>
+          ids.has(b.id)
+            ? { ...b, placedBy: b.tag === 'rest' ? ('pacing' as const) : ('sustenance' as const) }
+            : b
+        )
+      )
+    }
     post([mewMsg(scaffoldLine(specs))])
   }
 
@@ -8282,6 +8296,7 @@ function paceRest(
         startMin: r.startMin,
         endMin: r.endMin,
         protected: false,
+        placedBy: 'pacing', // #123: MEW's own pacing, never carried work
       })
       if (rest) {
         blocks = [...blocks, rest]
