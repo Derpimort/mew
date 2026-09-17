@@ -400,6 +400,11 @@ export const MEW_TOOLS: NeutralTool[] = [
           description:
             'Remove every match, not just one. Default false; set true only on an explicit "both/all".',
         },
+        dayOffset: {
+          type: 'integer',
+          description:
+            "Days from today of the one to remove (0 = today). Pass it with `at` when the same title sits at the same time on several days, so only that day's block goes",
+        },
         scope: SCOPE_SCHEMA,
       },
       required: ['query'],
@@ -454,14 +459,14 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'query_brain',
     description:
-      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'how were my gym sessions last week', 'when did I last meet Y', 'what happened with Z'. Time sums come from real blocks of the week the question names — 'last week' / 'N weeks ago' reach back through kept history, no time phrase means the current week; recall comes from the brain. NOT for the live moment — the week context already says what's now and next.",
+      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'how were my gym sessions last week', 'how much gym since August 1', 'what did the deck cost over the last three weeks', 'when did I last meet Y', 'what happened with Z'. Time sums come from real blocks of the stretch the question names — 'last week' / 'N weeks ago', 'the last N days|weeks|months', 'this|last month', 'in August', 'since <date>', 'between <date> and <date>', 'yesterday' reach back through kept history (the most recent year at most), no time phrase means the current week; recall comes from the brain. NOT for the live moment — the week context already says what's now and next.",
     parameters: {
       type: 'object',
       properties: {
         question: {
           type: 'string',
           description:
-            "The question, naming the project/person/task it's about — keep the user's own time phrase ('last week', 'two weeks ago') in it",
+            "The question, naming the project/person/task it's about — keep the user's own time phrase ('last week', 'since August 1', 'the last three weeks') in it",
         },
       },
       required: ['question'],
@@ -757,7 +762,17 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const at = atArg(o.at)
       const all = o.all === true
       const scope = recurScope(o.scope)
-      return exec.remove(String(o.query ?? ''), { at, all, ...(scope ? { scope } : {}) })
+      /* #62: out of range is IGNORED, never clamped — a clamped 14 would pin day
+         13 and remove a block nobody named; unpinned, a repeated time asks */
+      const d = o.dayOffset
+      const dayOffset =
+        typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 13 ? d : undefined
+      return exec.remove(String(o.query ?? ''), {
+        at,
+        all,
+        ...(scope ? { scope } : {}),
+        ...(dayOffset != null ? { dayOffset } : {}),
+      })
     }
     case 'clear_blocks': {
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
