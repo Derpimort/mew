@@ -29,7 +29,7 @@ import {
   findFreeSlot,
   type PlaceSpec,
 } from './week'
-import { DEFAULT_PLANNABLE_HOURS } from './types'
+import { CLASSIC_DAY } from './plannable'
 
 /** Where a draft anchor may land, per window — the app's own 12:00/17:00 edges
     (energy.ts / scheduler.windowOf), capped at a civilized evening so a draft
@@ -159,9 +159,11 @@ export function weekScaffold(
       return
     }
 
+    /* #22: a routine-work proposal stays in the classic day — the evening is
+       for placement the owner asks for, never a draft MEW rounds up unasked */
     const bounds = window
       ? WINDOW_BOUNDS[window]
-      : { start: DEFAULT_PLANNABLE_HOURS.startMin, end: DEFAULT_PLANNABLE_HOURS.endMin } // #22
+      : { start: CLASSIC_DAY.startMin, end: CLASSIC_DAY.endMin }
     for (let j = 0; j < days.length; j++) {
       const dayKey = days[(i + j) % days.length]
       const slot = findFreeSlot(phantoms, dayKey, dur, bounds.start, bounds.end)

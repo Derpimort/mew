@@ -289,6 +289,18 @@ describe('#22 AC6 — plannable hours stand apart from quiet hours', () => {
     )
   })
 
+  it('the pacing pass stays MEW-initiated: a wall-to-wall classic day is offered a breather, none placed at 18:30', async () => {
+    await fresh([homeCall()], TUE(7, 30)) // a seeded week, so the turn reaches the model
+    const out = await viaTool((exec) =>
+      exec.plan(
+        [{ title: 'Build day', tag: 'work', dayOffset: 0, startMin: 8 * 60, durationMin: 630 }],
+        []
+      )
+    )
+    expect(out).toContain('runs 8:00–18:30 unbroken — want me to make room for a short breather?')
+    expect(blocks().some((b) => b.title === 'Breather')).toBe(false)
+  })
+
   it('moveToNextFree reaches the evening instead of rolling to tomorrow', async () => {
     const reading = block({
       id: 'read',

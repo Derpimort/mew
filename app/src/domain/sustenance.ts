@@ -355,7 +355,7 @@ export function scaffoldDay(
      scaffold never displaces committed work. Past insertions still pace the
      walk but aren't emitted: placing a breather behind the clock is a lie. */
   for (;;) {
-    const r = restInsertion(working, todayKey, CLASSIC_DAY)
+    const r = restInsertion(working, todayKey)
     if (!r || r.kind !== 'place') break
     const breather: ScaffoldPlacement = {
       title: 'Breather',
