@@ -141,6 +141,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   (after midnight, "today" is a new day) checks again first: it runs only while it still points at
   the block it was offered for, and otherwise MEW names that block and everything stays as it is.
 
+### Every choice keeps the day it was offered
+- The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
+  work to its next clean slot) keep the day they were offered. Picked after midnight, a choice
+  checks first: it acts while it still reaches the same block on the same day and time, and
+  otherwise MEW says which day it was offered on and everything stays as it is. A choice named for
+  a weekday ("move it to thursday") keeps working the next day.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
