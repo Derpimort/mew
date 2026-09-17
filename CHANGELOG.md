@@ -3,7 +3,9 @@
 All notable changes to MEW are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and MEW's desktop builds adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+and MEW's desktop builds use [Calendar Versioning](https://calver.org/) — `YYYY.M.PATCH`, a valid
+[semver](https://semver.org/spec/v2.0.0.html) so the updater keeps ordering releases — from 2026.9.0
+on (releases up to 0.7.0 used SemVer). The scheme is spelled out in [`.github/RELEASES.md`](.github/RELEASES.md).
 Voice stays positive by design: this log names what MEW gained and what it learned to do better — never what you failed to do.
 
 Versions track the desktop shell (`desktop/tauri.conf.json`); the web app ships from the
@@ -11,6 +13,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 [`.github/RELEASES.md`](.github/RELEASES.md).
 
 ## [Unreleased]
+
+### Versioning by the calendar
+- MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
+  `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
+  MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
+  any build or tag — documented in `.github/RELEASES.md`.
 
 ## [0.7.0] — 2026-08-12
 
@@ -350,7 +358,11 @@ intelligence layer that earns its keep every morning.
   release build (#144).
 - "Update later" no longer silently restores a backup; the retime `startMin` is now `const` (#138).
 
-[Unreleased]: https://github.com/Derpimort/mew/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Derpimort/mew/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Derpimort/mew/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/Derpimort/mew/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/Derpimort/mew/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/Derpimort/mew/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Derpimort/mew/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Derpimort/mew/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Derpimort/mew/compare/v0.1.9...v0.2.0

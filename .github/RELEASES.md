@@ -17,17 +17,52 @@ How MEW ships, and how a release entry becomes a GitHub Release.
 Both surfaces share one source of release notes: the [`CHANGELOG.md`](../CHANGELOG.md) at the
 repo root, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## Versioning: CalVer (since 2026.9.0)
+
+MEW's desktop version is the **calendar**: `YYYY.M.PATCH`. It is still a valid semver, so the
+updater keeps ordering releases correctly (`2026.9.0` > `0.7.0`).
+
+| Piece | Shape | Example: first release of September 2026 |
+|---|---|---|
+| RC branch | `vYYYY.MM-rcN` — month zero-padded, `N` counts the RCs | `v2026.09-rc1` |
+| `version` in `desktop/src-tauri/tauri.conf.json` on the RC | `YYYY.M.PATCH-rc.N` | `2026.9.0-rc.1` |
+| `version` after the promotion PR (on `main`) | `YYYY.M.PATCH` | `2026.9.0` |
+| Release tag | `vYYYY.M.PATCH`, must equal the config | `v2026.9.0` |
+| `bundle.windows.wix.version` (the MSI's version) | `(YYYY-2000).M.PATCH`, prerelease dropped | `26.9.0` |
+| `version` in `desktop/package.json` | mirrors the config, same string | `2026.9.0-rc.1` → `2026.9.0` |
+
+- **No leading zero in the version's month** (`2026.9.0`, never `2026.09.0`): semver forbids
+  leading zeros in numeric identifiers and Tauri parses the field as semver. The RC *branch* keeps
+  the zero-padded month because it is a label, not a version.
+- **`PATCH` counts the releases within the month.** The second September release is `2026.9.1`
+  (RC branch `v2026.09-rc2`, MSI `26.9.1`); the first October release resets to `2026.10.0`.
+- **The MSI needs its own version.** WiX's ProductVersion caps the major and minor at 255, so a
+  bare `2026` fails the Windows build. `bundle.windows.wix.version` overrides it with
+  `(YYYY-2000).M.PATCH` — bump it together with `version`; the guard fails on a mismatch. NSIS,
+  deb and dmg take the full CalVer version.
+
+`desktop/scripts/check-release-version.mjs` enforces all of it: `--shape` on every desktop PR and
+dry-run build (CalVer shape + MSI mapping), `--promotion` on the `v*-rc*` → `main` PR (also rejects
+a prerelease), `--tag vYYYY.M.PATCH` on the tag push (also requires tag == config). Its cases live in
+`desktop/scripts/__tests__/check-release-version.test.mjs` (`pnpm --dir desktop test`).
+
+Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and changelog sections stand.
+
 ## Cutting a release (maintainer)
 
 1. **Move `[Unreleased]` into a version.** In `CHANGELOG.md`, rename the `[Unreleased]` heading
-   to the new version with today's date (`## [0.1.10] — 2026-06-19`), then open a fresh empty
+   to the new version with today's date (`## [2026.9.0] — 2026-09-18`), then open a fresh empty
    `[Unreleased]` above it. Update the link-reference block at the bottom: add the new version's
-   `compare` link and re-point `[Unreleased]` to `vX.Y.Z...HEAD`.
-2. **Bump the shell version** to match in `desktop/tauri.conf.json` and `desktop/package.json`.
-3. **Tag and push:**
+   `compare` link and re-point `[Unreleased]` to `vYYYY.M.PATCH...HEAD`.
+2. **Bump the shell version to the clean `YYYY.M.PATCH`** in the promotion PR, before any tag:
+   `version` **and** `bundle.windows.wix.version` (`(YYYY-2000).M.PATCH`) in
+   `desktop/src-tauri/tauri.conf.json`, plus `version` in `desktop/package.json`. Then
+   `node desktop/scripts/check-release-version.mjs --promotion` must pass — the installers and
+   the updater manifest are stamped from the config, not the tag.
+3. **Tag and push** (the tag must equal the config; `--tag` re-checks it before building):
    ```sh
-   git tag v0.1.10
-   git push origin v0.1.10
+   git tag v2026.9.0
+   git push origin v2026.9.0
    ```
    The tag triggers the `release` matrix (installers + updater manifest into a draft) and the
    live model-contract `smoke` job.
@@ -35,8 +70,8 @@ repo root, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
    version's `CHANGELOG.md` section as the release body so users see the same story everywhere:
    ```sh
    # after `publish` flips the draft live (or against the draft, before)
-   awk '/^## \[0.1.10\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
-     | gh release edit v0.1.10 --repo Derpimort/mew --notes-file -
+   awk '/^## \[2026.9.0\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md \
+     | gh release edit v2026.9.0 --repo Derpimort/mew --notes-file -
    ```
    The `awk` slices out just that version's block (everything between its `## [version]` heading
    and the next `## [`), which is exactly the GitHub Release body.
