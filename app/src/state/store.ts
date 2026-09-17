@@ -1881,13 +1881,32 @@ export const useMew = create<MewState>((set, get) => {
       }
 
       /* drop the flexible block: only a one-off (a series asks this/following/
-         series first) that its own reply singles out */
+         series first) that its own reply singles out. The reply names its DAY
+         (#62's day pin: "today", "tomorrow", "on thursday"), so a same-titled
+         block at the same time on another day no longer hides the chip. Past the
+         day words (a week or more out) it stays day-less, and the exactness guard
+         below withholds it whenever that could reach another day. */
       for (const b of flex.slice(0, 3)) {
         if (b.recurringBlockId) continue
-        const reply = `remove the ${base(b)} at ${fmtTime(b.startMin)}`
+        const word = dayWord(b.dayKey, todayKey)
+        const onDay =
+          word == null ? '' : word === 'today' || word === 'tomorrow' ? ` ${word}` : ` on ${word}`
+        const reply = `remove the ${base(b)}${onDay} at ${fmtTime(b.startMin)}`
         const ask = parseCommand(reply, now)
         if (ask.kind !== 'remove') continue
-        const r = week.resolveRemoval(s.blocks, ask.query ?? '', ask.remove ?? {}, todayKey)
+        /* the guard resolves the reply exactly as execRemove will: its day pin
+           becomes the resolver's day, so the prediction is the removal */
+        const pin = ask.remove ?? {}
+        const r = week.resolveRemoval(
+          s.blocks,
+          ask.query ?? '',
+          {
+            at: pin.at,
+            all: pin.all,
+            day: pin.dayOffset != null ? addDaysKey(todayKey, pin.dayOffset) : undefined,
+          },
+          todayKey
+        )
         if (r.remove.length === 1 && r.remove[0].id === b.id && !r.candidates.length)
           choices.push({ id: `drop-${b.id}`, label: `drop ${base(b)}`, reply })
       }

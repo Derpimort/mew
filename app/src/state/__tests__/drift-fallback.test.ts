@@ -230,7 +230,11 @@ describe('#12 — no clean drift: a real choice, not prose', () => {
         label: 'move release review to tomorrow 9:00',
         reply: 'move the release review at 14:00 to tomorrow at 9:00',
       },
-      { id: 'drop-groceries', label: 'drop Groceries', reply: 'remove the Groceries at 14:00' },
+      {
+        id: 'drop-groceries',
+        label: 'drop Groceries',
+        reply: 'remove the Groceries today at 14:00', // names its day (#62's pin)
+      },
       { id: 'keep', label: 'keep both', reply: 'ok, keep both as they are' },
     ])
 
@@ -317,7 +321,11 @@ describe('#12 — each chip does exactly what it says, through the executor', ()
 /* ── exactness + the other paths ──────────────────────────────────── */
 
 describe('#12 — never a chip that could touch a block it did not name', () => {
-  it('a same-titled Groceries at 14:00 later in the week keeps the drop chip off (its reply would remove both)', async () => {
+  /* #12 follow-up: the drop reply names its day ("today"), so #62's day pin
+     singles out exactly this Groceries. A same-titled one at the same time on
+     another day used to hide the chip; now it shows, and still touches only
+     the block it names. */
+  it('a same-titled Groceries at 14:00 later in the week no longer hides the drop chip — it names its day and removes only that one', async () => {
     await fresh([
       ...week0(),
       block({
@@ -333,7 +341,55 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
     await say(PLACE)
     await settle()
     const offer = chipMsgs()[0]
-    expect(offer.choices!.map((c) => c.id)).toEqual(['shift', 'keep'])
+    expect(offer.choices!.map((c) => c.id)).toEqual(['shift', 'drop-groceries', 'keep'])
+    expect(offer.choices!.find((c) => c.id === 'drop-groceries')!.reply).toBe(
+      'remove the Groceries today at 14:00'
+    )
+    const before = JSON.parse(snapshot()) as unknown[][]
+
+    await useMew.getState().pickChoice(offer.id, 'drop-groceries')
+    await settle()
+
+    expect(byId('groceries')).toBeUndefined() // today's went
+    expect(byId('groceries-thu')).toBeDefined() // Thursday's never did
+    const after = JSON.parse(snapshot()) as unknown[][]
+    expect(after).toEqual(before.filter((r) => r[0] !== 'groceries'))
+  })
+
+  it('keyed: the same day-named drop chip, even with the same-titled block later in the week', async () => {
+    await fresh(
+      [
+        ...week0(),
+        block({
+          id: 'groceries-thu',
+          title: 'Groceries',
+          tag: 'private',
+          dayKey: THU,
+          startMin: 14 * 60,
+          endMin: 15.5 * 60,
+          protected: false,
+        }),
+      ],
+      'local'
+    )
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [
+          {
+            title: 'release review',
+            tag: 'work',
+            dayOffset: 0,
+            startMin: 14 * 60,
+            durationMin: 60,
+          },
+        ],
+        []
+      )
+    }
+    await say('put the release review at 2pm today')
+    await settle()
+    const drop = chipMsgs()[0].choices!.find((c) => c.id === 'drop-groceries')
+    expect(drop?.reply).toBe('remove the Groceries today at 14:00')
   })
 
   /* peer review of #63 (coderpa): the shift chip's exactness guard, pinned. A
@@ -387,23 +443,18 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
   })
 
   it('with neither an exact shift nor an exact drop, no chips: the plain fact stands', async () => {
+    /* Wednesday is full (no shift), and Groceries is one occurrence of a series,
+       which never gets a drop chip (a series asks this / following / series first) */
     await fresh([
-      ...week0().filter((b) => b.id !== 'wed-wall'),
+      ...week0()
+        .filter((b) => b.id !== 'wed-wall')
+        .map((b) => (b.id === 'groceries' ? { ...b, recurringBlockId: 'groceries-weekly' } : b)),
       block({
         id: 'wed-full',
         title: 'Workshop',
         dayKey: WED,
         startMin: 8 * 60,
         endMin: 22.5 * 60,
-      }),
-      block({
-        id: 'groceries-thu',
-        title: 'Groceries',
-        tag: 'private',
-        dayKey: THU,
-        startMin: 14 * 60,
-        endMin: 15.5 * 60,
-        protected: false,
       }),
     ])
     await say(PLACE)

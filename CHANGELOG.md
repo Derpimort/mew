@@ -82,6 +82,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   at 12:00" now find the block. The day phrase is read as the day, so only the title is looked up,
   and when the same time repeats across days MEW still asks which with day choices.
 
+### The drop choice names its day
+- When a block can't make way and MEW offers to drop it, that choice now names the day ("remove the
+  Groceries today at 14:00"). So it shows up even when the same block sits at the same time on
+  another day, and picking it removes only the one you're looking at.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
