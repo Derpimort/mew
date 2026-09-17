@@ -118,6 +118,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
   same wire behaviour as before, held by pinned tests.
 
+### Your stated lengths hold through the plan picker
+- A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
+  length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
+  size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
