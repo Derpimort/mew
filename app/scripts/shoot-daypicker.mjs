@@ -45,6 +45,23 @@ const addMonths = (d, n) => {
 const weekday = (d) => d.toLocaleDateString('en-US', { weekday: 'long' }) // "Monday"
 const month = (d, style) => d.toLocaleDateString('en-US', { month: style }) // "September" | "Sep"
 const dateLine = (d) => `${weekday(d).slice(0, 3)} · ${month(d, 'short')} ${d.getDate()}` // "Wed · Sep 16"
+/** the day keys of d's month grid, exactly as dayPickerKeys.monthGrid lays it out:
+    whole Monday-first weeks, from the Monday on or before the 1st through the week
+    that holds the month's last day (28, 35 or 42 cells) */
+const monthGridKeys = (d) => {
+  const first = new Date(d.getFullYear(), d.getMonth(), 1, 12)
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12)
+  const cursor = new Date(first)
+  cursor.setDate(first.getDate() - ((first.getDay() + 6) % 7))
+  const keys = []
+  while (cursor <= last) {
+    for (let i = 0; i < 7; i++) {
+      keys.push(keyOf(cursor))
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  }
+  return keys
+}
 const PICKED = dayAt(-2) // two ArrowLefts back from today
 console.log('pinned day:', SHOOT_DATE, PROBING ? '(probe)' : '(the pin)')
 const browser = await chromium.launch({ executablePath: findChromium(), args: ['--disable-gpu'] })
@@ -261,7 +278,12 @@ const layering = await page.evaluate(() => {
 })
 console.log('layering:', JSON.stringify(layering))
 assert(layering.inside, 'the picker must sit inside the stage')
-assert(layering.cells === 35 && layering.covered.length === 0, `covered days: ${layering.covered}`)
+/* the pinned month's grid size is 28, 35 or 42 cells — derived, never September's 35 */
+const gridCells = monthGridKeys(pinned).length
+assert(
+  layering.cells === gridCells && layering.covered.length === 0,
+  `cells ${layering.cells}/${gridCells}, covered days: ${layering.covered}`
+)
 const openHits = await collisions('.nx-clock')
 assert(openHits.length === 0, `text collisions in the open header: ${openHits.join('; ')}`)
 await cropShot('daypicker-today.png')
@@ -308,7 +330,13 @@ await page.waitForTimeout(350)
 const light = await state()
 console.log('light:', JSON.stringify(light))
 assert(light.selected.join() === keyOf(LANDED), 'reopens on the picked day')
-assert(light.current.join() === TODAY, 'today stays marked off today')
+/* today is marked only when the picked day's month grid reaches today (a picked
+   Oct 30 shows October, whose last row ends Sun Nov 1, so a Nov 2 today isn't on it) */
+const todayOnGrid = monthGridKeys(LANDED).includes(TODAY)
+assert(
+  light.current.join() === (todayOnGrid ? TODAY : ''),
+  `today stays marked off today: ${light.current.join() || '(none)'}, expected ${todayOnGrid ? TODAY : '(none: not on this grid)'}`
+)
 const lightHits = await collisions('.nx-clock')
 assert(lightHits.length === 0, `text collisions (light, off today): ${lightHits.join('; ')}`)
 await cropShot('daypicker-away-light.png')
