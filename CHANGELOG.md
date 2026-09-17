@@ -210,6 +210,15 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Groceries. Each turn, typed or tapped, now starts from one clock, so the words you use, the choice
   checks, the tools that act and the model's view of your week all agree on what today is.
 
+### Type what a choice says, or tap it — either way it does the same thing
+- Whatever MEW puts on screen as choices, typing one of them word for word now does exactly what
+  tapping it does: "roll to tomorrow" when a meeting lands on your work, "tomorrow 9:15" when today
+  has no room left, "do it" on a change MEW is about to make, "just this one" when a repeating block
+  is split. Before, only a remove question read typed answers; elsewhere the words on screen did
+  nothing, and some of them quietly became thoughts in your inbox. A typed choice goes through the
+  same checks as a tap, so one offered yesterday still says so instead of acting on the wrong day,
+  and it only counts while those choices are still live and the words are the whole message.
+
 ### Every choice keeps the day it was offered
 - The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
   work to its next clean slot, pick which of two same-named blocks you meant, or apply an edit to
