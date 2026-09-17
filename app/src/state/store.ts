@@ -195,7 +195,7 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive } from '../domain/choices'
+import { choicesActive, scenariosActive, typedRemoveAnswer } from '../domain/choices'
 import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -1080,13 +1080,37 @@ function nudgeMsg(n: NudgeInstance): ChatMessage {
     (#102: an explicit time is the user's judgment — place it, then offer). */
 function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   if (!clash.length) return ''
-  const parts = clash.map((c) => {
-    const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
-    return week.isFixedTime(c, prefs)
-      ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
-      : `${base} (flexible${DRIFT_OFFER_NOTE})`
-  })
-  return ` — note: it overlaps ${parts.join(' and ')}`
+  /* a protected rest isn't "flexible": protect-rest owns it, so it's named the
+     way #122 names it, with no offer to drift it */
+  const rests = clash.filter((c) => !week.isFixedTime(c, prefs) && isProtectedRest(c))
+  const parts = clash
+    .filter((c) => !rests.includes(c))
+    .map((c) => {
+      const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+      return week.isFixedTime(c, prefs)
+        ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
+        : `${base} (flexible${DRIFT_OFFER_NOTE})`
+    })
+  return `${parts.length ? ` — note: it overlaps ${parts.join(' and ')}` : ''}${restRunsOver(rests)}`
+}
+
+/** A protected rest: sacred time protect-rest owns, never moved by a placement
+    and never called flexible (#122) */
+function isProtectedRest(b: Block): boolean {
+  return b.tag === 'rest' && b.protected
+}
+
+/** #122's words for the protected rest a change runs over ('' when none):
+    " — it runs over your evening walk 18:00–18:45" */
+function restRunsOver(rests: Block[]): string {
+  return rests.length
+    ? ` — it runs over your ${andList(
+        rests.map(
+          (r) =>
+            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
+        )
+      )}`
+    : ''
 }
 
 /** #49: a GRANTED overlap — the owner said, in their own words this turn, that
@@ -1167,14 +1191,7 @@ function driftReply(
   /* #122: work over a protected rest stays where it was asked and the rest
      stays too, so the reply names the time it runs over; a rest the owner kept
      after protect-rest's one ask would otherwise go unmentioned */
-  const restPart = res.rests.length
-    ? ` — it runs over your ${andList(
-        res.rests.map(
-          (r) =>
-            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
-        )
-      )}`
-    : ''
+  const restPart = restRunsOver(res.rests)
   return {
     blocks: next,
     note: `${driftPart}${fixedPart}${stuckPart}${restPart}`,
@@ -2831,6 +2848,15 @@ export const useMew = create<MewState>((set, get) => {
                 b.title.split('—')[0].trim().toLowerCase() === reBase
             )
           : undefined
+      /* #135: a re-plan has ONE length for choosing its slot and for the block
+         that lands there: the length the owner stated this turn, else the block's
+         own. Scoring with one and moving with the other landed it over the next
+         block */
+      const replanLen = existing
+        ? p.durationStated && p.durationMin != null
+          ? p.durationMin
+          : existing.endMin - existing.startMin
+        : undefined
       /* the deterministic floor: with no explicit/ruled time (and not a
          background hold), the scoring oracle (#80) picks the slot —
          conflict-free by construction and rest-aware — so even a model that
@@ -2853,7 +2879,7 @@ export const useMew = create<MewState>((set, get) => {
         const q: SlotQuery = {
           title: p.title,
           tag,
-          durationMin: prefd.durationMin ?? 60,
+          durationMin: replanLen ?? prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
           /* #328: a confirmed window is FIRM here — the scorer collapses
              off-window, so "deck → mornings" lands in the morning. No confirmed
@@ -2887,9 +2913,7 @@ export const useMew = create<MewState>((set, get) => {
          domain, so keyed and keyless behave identically. */
       if (start != null && !bg && p.startMin != null && mealClassOf(p.title)) {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
-        const durationMin = existing
-          ? existing.endMin - existing.startMin
-          : (prefd.durationMin ?? 60)
+        const durationMin = replanLen ?? prefd.durationMin ?? 60
         const fix = correctMeal(
           occupied,
           key,
@@ -2909,20 +2933,13 @@ export const useMew = create<MewState>((set, get) => {
         const landStart = start ?? existing.startMin
         /* #49: a granted overlap never lands on a fixed or calendar block */
         const grant = p.allowOverlap
-          ? grantedOverlap(
-              blocks,
-              key,
-              landStart,
-              landStart + (existing.endMin - existing.startMin),
-              existing.id,
-              prefs
-            )
+          ? grantedOverlap(blocks, key, landStart, landStart + replanLen!, existing.id, prefs)
           : null
         if (grant?.refuse.length) {
           lines.push(overlapRefusal(p.title, landStart, grant.refuse))
           continue
         }
-        blocks = week.move(blocks, existing.id, key, landStart)
+        blocks = week.move(blocks, existing.id, key, landStart, replanLen)
         const moved = blocks.find((b) => b.id === existing.id)!
         targetedIds.push(moved.id) // #320
         if (week.isDeep(moved)) placedDeep = moved
@@ -3117,18 +3134,10 @@ export const useMew = create<MewState>((set, get) => {
         }
       }
     }
-    let pacing = ''
-    if (restNotes.length) {
-      const joined = joinHuman(restNotes)
-      pacing = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const pacing = asideSentences(restNotes)
     /* #323: the meal guardrail's asides — a moved or kept meal named once, in
        the same positive voice as the pacing note above */
-    let mealAside = ''
-    if (mealNotes.length) {
-      const joined = joinHuman(mealNotes)
-      mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const mealAside = asideSentences(mealNotes)
     const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
     const noRoomAside = noRoom.length ? ` ${noRoom.map((r) => r.note).join(' ')}` : ''
     return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}${noRoomAside}`
@@ -4396,9 +4405,7 @@ export const useMew = create<MewState>((set, get) => {
     const choices = stuckIds.length
       ? offerDriftChoices([{ placedId: tail.id, stuckIds }], todayKey)
       : false
-    const pacing = paced.notes.length
-      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
-      : ''
+    const pacing = asideSentences(paced.notes)
     const onWhen = when === 'today' ? '' : ` on ${when}`
     const between = aroundName ? `, around ${aroundName}` : `, leaving ${gapName} free`
     return `Split — ${base} now runs ${fmtTime(geo.head.startMin)}–${fmtTime(geo.head.endMin)}${onWhen}, and ${tail.title} picks up ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}${between}${driftNote}.${pacing}${choices ? ' The options for that overlap are on screen.' : ''}`
@@ -4492,9 +4499,7 @@ export const useMew = create<MewState>((set, get) => {
     const kept = whole.length
       ? ` ${joinHuman(whole).charAt(0).toUpperCase()}${joinHuman(whole).slice(1)} had no room for it, so ${whole.length === 1 ? 'that one stays' : 'those stay'} whole.`
       : ''
-    const pacing = paced.notes.length
-      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
-      : ''
+    const pacing = asideSentences(paced.notes)
     return `Split — ${base} ${reach}: ${splitCount} block${splitCount === 1 ? '' : 's'} now pause ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)} and pick up again after.${kept}${pacing}`
   }
 
@@ -5930,8 +5935,24 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      /* #131: a typed answer to a live remove ask is that chip's pick — the
+         same path as the tap, #94's pick-time re-check included — never a new
+         ask or a thought for the inbox */
       syncTurnClock() // #96: one today for the parse, the executors and the model
+      const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
+      if (typed) {
+        /* a count word that doesn't fit the ask ("both" for three) is answered
+           plainly: nothing changes, and it's never a thought for the inbox. It
+           is still a message, so an older undo hold lets go here (#130) */
+        if (snapshotHolds) snapshotHolds = false
+        else preMutationSnapshot = null
+        /* the ask's own chips ride the line home: the answer settled the ones
+           above, so these are how a tap — or "the thursday one" — still lands */
+        post([typed.choices ? choicesMsg(typed.clarify, typed.choices) : mewMsg(typed.clarify)])
+        return
+      }
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
       /* "undo that" reaches MEW's last change through this one message (#120,
@@ -8379,6 +8400,20 @@ function paceRest(
     }
   }
   return { blocks, notes }
+}
+
+/** Asides as sentences (#126): the statements joined into one sentence with its
+    period, and a note that already ends a sentence ("want me to make room for a
+    short breather?") standing as its own, never given a second mark ("?.") */
+function asideSentences(notes: string[]): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+  const ends = (s: string) => /[?!.]$/.test(s)
+  const statements = notes.filter((s) => !ends(s))
+  const parts = [
+    ...(statements.length ? [`${cap(joinHuman(statements))}.`] : []),
+    ...notes.filter(ends).map(cap),
+  ]
+  return parts.length ? ` ${parts.join(' ')}` : ''
 }
 
 function joinHuman(parts: string[]): string {
