@@ -31,9 +31,11 @@
 //                     a v*-rc* → main promotion PR: main must always carry a clean
 //                     release version, and the bump to it belongs in the promotion,
 //                     before any tag.
-//   --tag vX.Y.Z      Fail unless the committed version === the tag (sans leading
-//                     'v'). Run on a release tag push: the artifacts build from the
-//                     config, so the tag they publish under must match it exactly.
+//   --tag vX.Y.Z      Fail unless the tag is itself CalVer (a zero-padded month gets
+//                     delete-and-retag advice, never "bump the config") AND equals the
+//                     committed version (sans leading 'v'). Run on a release tag push:
+//                     the artifacts build from the config, so the tag they publish
+//                     under must match it exactly. A mismatch names both fixes.
 // Options:
 //   --conf <path>     Config to check (default: desktop/src-tauri/tauri.conf.json,
 //                     relative to the repo root — CI runs from there). The cases in
@@ -124,23 +126,31 @@ if (mode === '--shape') {
   console.log(shapeOk)
   console.log(`✓ ${conf} is a clean release version (${version})`)
 } else if (mode === '--tag') {
-  const tag = (arg ?? '').replace(/^v/, '')
-  if (!tag) fail('--tag needs the tag name, e.g. --tag v2026.9.0')
+  // the tag exactly as given: the delete command must name the real ref, and a wrong
+  // prefix (V2026.9.0) is reported as the tag it is, not rebuilt as vV2026.9.0
+  const raw = arg ?? ''
+  if (!raw || raw.startsWith('--')) fail('--tag needs the tag name, e.g. --tag v2026.9.0')
+  const tag = raw.replace(/^v/, '')
+  const clean = version.split('-')[0]
+  const retag = `tag v${clean}${rc !== undefined ? ' once the promotion has bumped the config to it' : ''}`
   // the tag's own shape first: a zero-padded month (v2026.09.0, after the branch name
   // v2026.09-rc1) is the likely slip, and "bump the config to 2026.09.0" would be wrong advice
   if (!CALVER.test(tag)) {
     fail(
-      `tag v${tag} is not CalVer (vYYYY.M.PATCH — month 1–12 without a leading zero; the RC ` +
+      `tag ${raw} is not CalVer (vYYYY.M.PATCH — month 1–12 without a leading zero; the RC ` +
         `branch is vYYYY.MM-rcN but the tag is not). Delete it — git push origin ` +
-        `:refs/tags/v${tag} — and tag v${version.split('-')[0]}` +
-        `${rc !== undefined ? ' once the promotion has bumped the config to it' : ''}.`,
+        `:refs/tags/${raw} — and ${retag}.`,
     )
   }
   if (version !== tag) {
+    const [, tYear, tMonth, tPatch] = CALVER.exec(tag)
+    const tagWix = `${Number(tYear) - 2000}.${tMonth}.${tPatch}`
     fail(
-      `tag v${tag} does not match ${conf} (${version}). ` +
-        `Bump the config to ${tag} and re-tag: the installers + updater manifest are ` +
-        `versioned from the config, so a mismatch ships mislabeled artifacts.`,
+      `tag ${raw} does not match ${conf} (${version}): the installers + updater manifest are ` +
+        `versioned from the config, so a mismatch ships mislabeled artifacts. Either fix works — ` +
+        `if the config is right, delete the tag (git push origin :refs/tags/${raw}; git tag -d ${raw}) ` +
+        `and ${retag}; if the tag is right, bump the config to ${tag}` +
+        `${tagWix !== wix ? ` (and bundle.windows.wix.version to ${tagWix})` : ''}, then re-tag ${raw}.`,
     )
   }
   console.log(shapeOk)
