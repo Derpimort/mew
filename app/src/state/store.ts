@@ -1880,6 +1880,17 @@ export const useMew = create<MewState>((set, get) => {
      like the day-load chips (#301) so the ask lands after the turn's reply.
      Returns whether chips went out, so the reply can say the options are on
      screen. */
+  /* One clock per turn (#96). The store clock (nowMs) only moves on a tick —
+     every 5 s, on visibility, on the shell's tick — while a turn can start in the
+     seconds after midnight before one lands. Everything a turn resolves (the rules
+     floor's day words, every executor's todayKey, the model's week context) reads
+     nowMs, so bring it to now once, first. Forward only: the store clock never
+     runs backwards under a turn. */
+  function syncTurnClock() {
+    const now = nowFn()
+    if (now > get().nowMs) set({ nowMs: now })
+  }
+
   let pendingDriftMsgs: ChatMessage[] = []
   function offerDriftChoices(
     stuck: { placedId: string; stuckIds: string[] }[],
@@ -5024,6 +5035,7 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      syncTurnClock() // #96: one today for the parse, the executors and the model
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
@@ -5293,7 +5305,9 @@ export const useMew = create<MewState>((set, get) => {
         }
         const ctx = weekContext(get(), recallLines, recallDegraded)
         const thread = buildThread(get().chat)
-        const adapters = selectAdapters(get().settings, () => new Date(nowFn()))
+        /* #96: the rules floor counts day words ("on thursday") from the SAME clock
+           every executor resolves them against — never the wall clock beside it */
+        const adapters = selectAdapters(get().settings, () => new Date(get().nowMs))
         const failed: string[] = []
         let lastModelErr: unknown = null // why a model adapter threw, for honest fallback copy
 

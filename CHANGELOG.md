@@ -128,6 +128,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
   length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
   size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
+### Midnight means the same day to every part of a turn
+- In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's
+  Groceries. Each turn now starts from one clock, so the words you type, the tools that act on
+  them and the model's view of your week all agree on what today is.
+
 ### The weekly review's roll really moves your work
 - Rolling carried work forward now moves it: the block lands on the same weekday next week and
   leaves this week's carried list, so it's never offered twice, and one "undo that" brings the
