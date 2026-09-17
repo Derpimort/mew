@@ -113,6 +113,23 @@ describe('typedChipLabel (#139)', () => {
     expect(typedChipLabel([both], 'the 8:30')).toEqual({ msgId: 'm1', choiceId: 'loose' })
   })
 
+  it('an ambiguous EXACT match refuses instead of falling through to a looser one', () => {
+    /* coderpa's green on #159, with their own proof: two chips reading "8:30"
+       exactly, and a third whose looser reading also collides. Falling through
+       would answer with the THIRD chip — the owner types words two chips carry
+       exactly and MEW picks a different one. Contrived on purpose; the one-match
+       law is for contrived cases, and the pass BOUNDARY needs it as much as the
+       inside of a pass does. */
+    const ask = mew('m1', [
+      { id: 'first', label: '8:30', reply: 'move the gym — first' },
+      { id: 'second', label: '8:30', reply: 'move the gym — second' },
+      { id: 'looser', label: 'the 8:30', reply: 'move the gym — looser' },
+    ])
+    expect(typedChipLabel([ask], '8:30')).toBeNull()
+    /* the looser chip still answers to its own whole label */
+    expect(typedChipLabel([ask], 'the 8:30')).toEqual({ msgId: 'm1', choiceId: 'looser' })
+  })
+
   it('a label read loosely still refuses when it points at more than one chip', () => {
     const twins = mew('m1', [
       { id: 'wed', label: 'the 8:30 (Wednesday)', reply: 'move it — wed' },
