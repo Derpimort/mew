@@ -3106,15 +3106,17 @@ export const useMew = create<MewState>((set, get) => {
     captures: Capture[]
     memory: MewState['memory']
   } | null = null
-  /* a scenario pick applies OUTSIDE any turn (#293) — the user's very next
-     message ("undo that") must still reach it, so this flag carries the pick's
-     snapshot across exactly one speak() entry instead of the usual fresh-
-     exchange reset. One turn only: the moment that next turn runs (mutating or
-     not), the ordinary #162 lifecycle owns the snapshot again. */
-  let pickSnapshotHolds = false
+  /* the owner's very next message reaches MEW's last change (#120): a change
+     made in a turn (typed, keyed or a picked chip) or by a tap outside any turn
+     (#293: a scenario pick, a drag, a confirmed remove) keeps its snapshot across
+     exactly one speak() entry, so "undo that" right after takes it back. One
+     message only: the entry after that clears it, and a change made in the
+     meantime replaces it, so an undo always takes back the newest change. */
+  let snapshotHolds = false
   function snapshotForUndo() {
     const s = get()
     preMutationSnapshot = { blocks: s.blocks, captures: s.captures, memory: s.memory }
+    snapshotHolds = true
   }
 
   /* ── conversational referents (#320) ────────────────────────────────────
@@ -3306,14 +3308,13 @@ export const useMew = create<MewState>((set, get) => {
   /** Delete blocks the user explicitly confirmed removing (chat chip or block
       card, one path) — including DONE ones, whose completion event is dropped
       too so history stays honest and mews-today (derived) recounts. Snapshots
-      for undo and holds it across the next typed turn (the pickScenario pattern),
+      for undo, which holds across the next typed turn like every change (#120),
       so "undo that" restores the block AND its mew. Runs outside a chat turn. */
   function removeBlocksConfirmed(ids: string[]): void {
     const s = get()
     const targets = s.blocks.filter((b) => ids.includes(b.id))
     if (!targets.length) return
     snapshotForUndo()
-    pickSnapshotHolds = true // survive the next turn's fresh-exchange reset, so "undo that" reaches it
     const todayKey = dayKey(new Date(s.nowMs))
     /* drop each removed DONE block's completion event — one per block, matched
        the way toggleComplete's un-complete does (dayKey + planned length), each
@@ -5112,11 +5113,9 @@ export const useMew = create<MewState>((set, get) => {
     if (!placed) return false
     const todayKey = dayKey(new Date(s.nowMs))
     /* #21: the tool path every placement takes — a receipt card in the log and
-       ONE undo. A capture is placed by a tap, outside any chat turn, so the
-       snapshot holds across the owner's next message ("undo that"), exactly as a
-       scenario pick's does (#293); undo returns the capture to the inbox. */
+       ONE undo. Its snapshot holds across the owner's next message ("undo
+       that"), like every change's (#120); undo returns the capture to the inbox. */
     snapshotForUndo()
-    pickSnapshotHolds = true
     const utcDay = (k: string) => {
       const [y, m, d] = k.split('-').map(Number)
       return Date.UTC(y, m - 1, d) / 86_400_000
@@ -5368,7 +5367,8 @@ export const useMew = create<MewState>((set, get) => {
      finds none and says so (one step back, not a history rewind). */
   function execUndo(): string {
     const snap = preMutationSnapshot
-    if (!snap) return `nothing to undo yet — I haven't changed the week this turn.`
+    if (!snap)
+      return `nothing to undo right now — I can take back my last change in your very next message.`
     const s = get()
 
     const snapBlockIds = new Set(snap.blocks.map((b) => b.id))
@@ -5732,11 +5732,10 @@ export const useMew = create<MewState>((set, get) => {
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
-      /* a fresh exchange — "undo that" reaches only this turn's last action
-         (#162). The one exception: a scenario pick just applied outside any
-         turn (#293) — its snapshot survives THIS entry so the immediate
-         "undo that" can take the picked plan back. */
-      if (pickSnapshotHolds) pickSnapshotHolds = false
+      /* "undo that" reaches MEW's last change through this one message (#120,
+         #162, #293): a snapshot taken before this entry survives it once, and
+         one older than that clears here */
+      if (snapshotHolds) snapshotHolds = false
       else preMutationSnapshot = null
       /* fresh cancel handle for this turn; .signal rides into the adapter so a
          user 'stop' aborts the live stream/fetch (#117) */
@@ -6390,7 +6389,6 @@ export const useMew = create<MewState>((set, get) => {
       const updated = get().chat.find((m) => m.id === msgId)
       if (updated) persistChat([updated]) // delta putChat, same as pickChoice
       snapshotForUndo() // "undo that" must reach the applied plan (#162)
-      pickSnapshotHolds = true // …across the next turn's fresh-exchange reset (#293)
       try {
         const line = runToolWithCard('plan', { places: scenario.places, frees: [] }, () =>
           execPlan(scenario.places, [])
@@ -7272,7 +7270,6 @@ export const useMew = create<MewState>((set, get) => {
       } else {
         reply = moveResolved(target, toDayKey, toStartMin)
       }
-      pickSnapshotHolds = true
       post([mewMsg(reply)])
       return resized ? 'resized' : 'moved'
     },
@@ -7535,7 +7532,6 @@ export const useMew = create<MewState>((set, get) => {
            whole roll back (the copies AND the marks), held across the next
            turn's fresh-exchange reset (#293, the scenario-pick pattern) */
         snapshotForUndo()
-        pickSnapshotHolds = true
         const commit = () => {
           setBlocks(blocks)
           /* a review roll is a roll: logged and ingested exactly like the evening

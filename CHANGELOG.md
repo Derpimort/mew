@@ -136,6 +136,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   12:00" now find the block. The day phrase is read as the day, so only the title is looked up, and
   when the same time repeats across days MEW still asks which with day choices.
 
+### Undo takes back what MEW just did
+- Say "undo that" right after MEW changes your week (something you typed, asked a connected model
+  for, or picked from a choice) and that change comes back: a moved block returns, a split block is
+  whole again, a removed lunch is back. It works without a connected model too, and "undo that"
+  never lands in your inbox as a thought. Undo takes back the latest change, in your very next
+  message.
+
 ### Ask about any stretch of time
 - Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three
   weeks", "this month", "in March", "between Aug 3 and Aug 17" or "yesterday" all answer with real
