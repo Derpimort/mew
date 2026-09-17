@@ -77,6 +77,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   "the connection to the model hiccuped" — and answers the turn itself. Whatever already streamed
   stays exactly as it arrived, and nothing is sent twice behind your back.
 
+### Say the day your way when removing
+- "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday
+  at 12:00" now find the block. The day phrase is read as the day, so only the title is looked up,
+  and when the same time repeats across days MEW still asks which with day choices.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
