@@ -272,6 +272,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- A test that sits outside its group now fails the lint gate instead of running quietly: such a
+  test still passes, it just reports without the name that tells you which behaviour broke. The
+  check is a small script with no new dependency, so the release's proven set of packages is
+  untouched.
 - One more detail of a change that spans days is held by tests: when the blocks that STAY put are
   the ones on other days, each still reads with its own day, so the list you approve can be checked
   against your week afterwards.
