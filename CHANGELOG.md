@@ -31,6 +31,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   closes the calendar, leaving the dial exactly as it was.
 - The day-progress wash now holds when half the day is complete: the morning disk stays filled
   from noon on, and a lived day shows its whole wash.
+### Ask about any stretch of time
+- Ask MEW about any stretch of your history, not just one week: "since August 1", "the last
+  three weeks", "this month", "in March", "between Aug 3 and Aug 17" or "yesterday" all answer
+  with real sums from your own blocks, on this device, with or without the brain connected. A
+  very long stretch is answered for its most recent year, and "last week" reads just as before.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
@@ -67,6 +72,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in
   proofs run green again with no API key, on the same pinned day and shared harness as the
   canon gate. Their screenshots are current, and the Google sign-in proof runs fully offline.
+### Straight talk when a reply drops
+- When the connection to the model drops after a reply has begun, MEW names it for what it is —
+  "the connection to the model hiccuped" — and answers the turn itself. Whatever already streamed
+  stays exactly as it arrived, and nothing is sent twice behind your back.
 
 ## [0.7.0] — 2026-08-12
 
