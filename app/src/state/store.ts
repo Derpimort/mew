@@ -38,6 +38,7 @@ import {
   fromDayKey,
   inQuietHours,
   minOfDay,
+  snapStart,
   spell,
   stripWeekPhrase,
   uid,
@@ -4198,26 +4199,27 @@ export const useMew = create<MewState>((set, get) => {
       key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0
     )
     const ceil = notAfterMin ?? hours.endMin
-    const fit = week
-      .freeWindows(s.blocks, key, floor, ceil, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
-    if (fit) {
-      return `Clear window ${label}: ${fmtTime(fit.startMin)}–${fmtTime(fit.startMin + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
+    /* #22: the window a model will place at starts at a human time — the first
+       free gap whose snapped start still holds the duration */
+    const firstFit = (k: string, from: number, to: number): number | null => {
+      for (const w of week.freeWindows(s.blocks, k, from, to, bufferMin)) {
+        const at = snapStart(w.startMin, w.endMin - durationMin)
+        if (at != null) return at
+      }
+      return null
+    }
+    const fit = firstFit(key, floor, ceil)
+    if (fit != null) {
+      return `Clear window ${label}: ${fmtTime(fit)}–${fmtTime(fit + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
     }
     /* honest alternatives: same day without the ceiling, then tomorrow */
-    const later = week
-      .freeWindows(s.blocks, key, floor, hours.endMin, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
+    const later = firstFit(key, floor, hours.endMin)
     const nextKey = addDaysKey(key, 1)
-    const nextDay = week
-      .freeWindows(s.blocks, nextKey, 9 * 60, hours.endMin, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
+    const nextDay = firstFit(nextKey, 9 * 60, hours.endMin)
     const alts = [
-      later
-        ? `later ${label} ${fmtTime(later.startMin)}–${fmtTime(later.startMin + durationMin)}`
-        : null,
-      nextDay
-        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}`
+      later != null ? `later ${label} ${fmtTime(later)}–${fmtTime(later + durationMin)}` : null,
+      nextDay != null
+        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay)}–${fmtTime(nextDay + durationMin)}`
         : null,
     ].filter(Boolean)
     const options = alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''

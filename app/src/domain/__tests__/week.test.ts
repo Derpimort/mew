@@ -388,7 +388,8 @@ describe('week model', () => {
         endMin: 20 * 60 + 5,
       })
       const next = nextSlotAfter([board, rest], board, 19 * 60 + 50)
-      expect(next).toMatchObject({ dayKey: D, startMin: 20 * 60 + 5 })
+      // later in the evening, after the break (ends 20:05) — #22: at the round 20:30
+      expect(next).toMatchObject({ dayKey: D, startMin: 20 * 60 + 30 })
     })
 
     it('falls to tomorrow morning when the evening is full', () => {
@@ -540,9 +541,10 @@ describe('week model', () => {
       const own = mk({ id: 'own', startMin: 9 * 60, endMin: 9 * 60 + 30 })
       const m = meeting({ id: 'm', startMin: 9 * 60 + 10, endMin: 9 * 60 + 40 }) // buffer 30 → [8:40,10:10]
       // sorting by inflated start is what keeps the 60-min fit off the meeting's buffer
+      // #22: clear of the buffer (ends 10:10), at the round 10:30
       expect(findFreeSlot([own, m], D, 60, 8 * 60, 18 * 60, 30)).toEqual({
-        startMin: 10 * 60 + 10,
-        endMin: 11 * 60 + 10,
+        startMin: 10 * 60 + 30,
+        endMin: 11 * 60 + 30,
       })
     })
   })

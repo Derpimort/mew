@@ -192,7 +192,7 @@ describe('#22 AC1 — asked at 20:46, tonight has room', () => {
     await fresh([homeCall()], TUE(20, 46))
     const out = await viaTool((exec) => exec.suggestSlots('prod release', 'work', 60))
     expect(out).toMatch(/^Best slots for "prod release", highest first: tomorrow 8:00–9:00/)
-    expect(out).toContain('Tonight is open too: 20:46–21:46.')
+    expect(out).toContain('Tonight is open too: 21:00–22:00.') // slice C: a round start
     expect(out).not.toMatch(/held/)
   })
 
@@ -201,7 +201,7 @@ describe('#22 AC1 — asked at 20:46, tonight has room', () => {
     const out = await viaTool((exec) =>
       exec.suggestSlots('prod release', 'work', 60, undefined, 'evening')
     )
-    expect(out).toMatch(/^Best slots for "prod release", highest first: today 20:46–21:46/)
+    expect(out).toMatch(/^Best slots for "prod release", highest first: today 21:00–22:00/)
     expect(out).not.toContain('Tonight is open too') // already on the list
   })
 

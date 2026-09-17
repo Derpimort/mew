@@ -10,7 +10,7 @@
    slice 2 — see the ADR's impl plan. */
 import type { Block, PrefPayload, Tag, TimeWindow } from './types'
 import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
-import { addDaysKey } from './time'
+import { addDaysKey, roundness, snapStart, START_GRID_MIN } from './time'
 import { mealAdjacencyPenalty, mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
 import {
   blocksForDay,
@@ -104,7 +104,11 @@ export function candidateSlots(
     const from = d === 0 ? Math.max(dayStartMin, nowMin) : dayStartMin
     for (const w of freeWindows(blocks, day, from, dayEndMin, bufferMin)) {
       const starts = new Set<number>()
-      if (w.startMin + q.durationMin <= w.endMin) starts.add(w.startMin) // tight pack
+      /* tight pack, at a human start (#22): a quarter-hour stays put; a ragged
+         anchor (now, an odd block end) moves on to :00/:30, :15/:45, or the
+         5-minute grid — the first that still fits */
+      const tight = snapStart(w.startMin, w.endMin - q.durationMin)
+      if (tight != null) starts.add(tight)
       for (let s = Math.ceil(w.startMin / STEP) * STEP; s + q.durationMin <= w.endMin; s += STEP)
         starts.add(s)
       for (const startMin of [...starts].sort((a, b) => a - b)) {
@@ -274,8 +278,21 @@ export function scoreSlots(
       }
     })
     .sort(
-      (a, b) => b.score - a.score || a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin
+      (a, b) =>
+        b.score - a.score ||
+        a.dayKey.localeCompare(b.dayKey) ||
+        halfHourOf(a.startMin) - halfHourOf(b.startMin) ||
+        roundness(a.startMin) - roundness(b.startMin) ||
+        a.startMin - b.startMin
     )
+}
+
+/* #22 tie-break: among equal scores the earlier half-hour still wins, and
+   inside one half-hour the rounder start does — :15 shares a bucket with the
+   :30 after it and :45 with the :00 after it, so :00 beats :45, :30 beats :15,
+   and a quarter beats any other 5-minute mark. Earliest-wins is otherwise kept. */
+function halfHourOf(startMin: number): number {
+  return Math.floor((startMin + 15) / 30)
 }
 
 /* ── rest insertion (#103) — the #80 follow-up ────────────────────────
@@ -342,6 +359,11 @@ export interface RestInsertion {
   why: string
 }
 
+/** the next 5-minute mark at or after `min` — on-grid minutes stay put */
+function gridUp(min: number): number {
+  return Math.ceil(min / START_GRID_MIN) * START_GRID_MIN
+}
+
 /** The pacing-rest pass over one already-placed day. Pure + idempotent: returns
     at most one rest for the LONGEST over-cap run that has no break, and nothing
     once a rest sits inside that run (re-running a reshape can't stack rests).
@@ -372,7 +394,8 @@ export function restInsertion(
   /* idempotent: any rest inside the run OR touching its edge (the breather we
      tuck right after a stretch sits at run.endMin) already paces it — re-running
      a reshape must never stack a second. Inclusive bounds make adjacency count. */
-  if (rests.some((r) => r.startMin <= run.endMin && r.endMin >= run.startMin)) return null
+  const runEnd = gridUp(run.endMin) // #22: a breather after a ragged run starts on the grid
+  if (rests.some((r) => r.startMin <= runEnd && r.endMin >= run.startMin)) return null
 
   /* candidate seams: free gaps from inside the run through the moment it ends —
      never before it (a breather ahead of the work breaks nothing). Leftmost
@@ -380,7 +403,8 @@ export function restInsertion(
      sliver only counts if it clears the floor. The run being continuous means
      internal gaps are <RUN_GAP, so the usual seam is the air just after it. */
   const fits = freeWindows(blocks, dayKey, hours.startMin, hours.endMin)
-    .filter((w) => w.startMin >= run.startMin && w.startMin <= run.endMin)
+    .map((w) => ({ startMin: gridUp(w.startMin), endMin: w.endMin }))
+    .filter((w) => w.startMin >= run.startMin && w.startMin <= runEnd)
     .filter((w) => w.endMin - w.startMin >= PACING_REST_FLOOR)
     .sort((a, b) => a.startMin - b.startMin)
 

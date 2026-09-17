@@ -4,7 +4,7 @@
 import type { Block, Capture, PrefPayload, Tag } from './types'
 import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
 import { flexOverride, parseTimeValue } from './prefs'
-import { addDaysKey, fmtTime, uid } from './time'
+import { addDaysKey, fmtTime, snapStart, uid } from './time'
 
 /** Background holds the clock, not the user — a different axis from
     optional (which holds no time at all). Undefined ⇒ focus. */
@@ -160,14 +160,17 @@ export function findFreeSlot(
     .filter((b) => (!b.optional || isFixedTime(b)) && !isBackground(b))
     .map((b) => busySpan(b, bufferMin))
     .sort((a, b) => a.startMin - b.startMin)
+  /* #22: every gap's start snaps to a human time (snapStart) — a quarter-hour
+     cursor stays put, so already-round inputs land byte-identically */
   let cursor = windowStart
   for (const b of day) {
     if (b.endMin <= cursor) continue
-    if (b.startMin - cursor >= durationMin) break
+    const fit = snapStart(cursor, Math.min(b.startMin, windowEnd) - durationMin)
+    if (fit != null) return { startMin: fit, endMin: fit + durationMin }
     cursor = Math.max(cursor, b.endMin)
   }
-  if (cursor + durationMin > windowEnd) return null
-  return { startMin: cursor, endMin: cursor + durationMin }
+  const fit = snapStart(cursor, windowEnd - durationMin)
+  return fit == null ? null : { startMin: fit, endMin: fit + durationMin }
 }
 
 /** The soonest genuinely clear window of `durationMin`, scanning `todayKey`
