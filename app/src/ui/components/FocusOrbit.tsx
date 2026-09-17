@@ -8,7 +8,7 @@
    chip under the task lets it run in background. Those clicks write `attention`
    on the block — that's the whole mechanism. */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMew, useLive, clockNow } from '../../state/store'
 import type { Block } from '../../domain/types'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
@@ -38,6 +38,7 @@ import {
   wrapLabel,
 } from './orbitGeometry'
 import { BlockCard } from './BlockCard'
+import { DayPicker } from './DayPicker'
 import { ThreadRail } from './ThreadRail'
 import StaggeredText from '../react-bits/staggered-text'
 import {
@@ -58,22 +59,39 @@ import {
     The date line is also the day header (#23): ‹ › step the dial to the day
     before or after, and away from today the live time gives way to a way back.
     The steps sit outside the date's flow and stay invisible until the date is
-    hovered or a step is focused, so today's clock renders exactly as before. */
+    hovered or a step is focused, so today's clock renders exactly as before.
+    The date itself is the day picker's trigger (slice 2): a real button whose
+    calendar glyph shows with the steps, and whose name starts with the date it
+    shows (WCAG 2.5.3). "current time" names the time readout alone, so the
+    trigger never borrows that tooltip. */
 function NxClock({
   now,
   viewDayKey,
+  todayKey,
   isToday,
   onStep,
   onToday,
+  onPick,
 }: {
   now: Date
   viewDayKey: string
+  todayKey: string
   isToday: boolean
   onStep: (dir: 1 | -1) => void
   onToday: () => void
+  onPick: (key: string) => void
 }) {
+  const [picking, setPicking] = useState(false)
+  const pickRef = useRef<HTMLButtonElement>(null)
+  /* a close hands focus back to the trigger (WCAG 2.4.3); a dismissal leaves
+     it wherever the user sent it */
+  const closePicker = useCallback(() => {
+    setPicking(false)
+    pickRef.current?.focus()
+  }, [])
+  const dismissPicker = useCallback(() => setPicking(false), [])
   return (
-    <span className="nx-clock" title={isToday ? 'current time' : undefined}>
+    <span className={'nx-clock' + (picking ? ' picking' : '')}>
       <span className={'nx-day' + (isToday ? '' : ' away')}>
         <button
           type="button"
@@ -86,7 +104,32 @@ function NxClock({
         >
           ‹
         </button>
-        <span className="dt">{dayLine(viewDayKey)}</span>
+        <button
+          ref={pickRef}
+          type="button"
+          className="nx-day-pick"
+          aria-haspopup="dialog"
+          aria-expanded={picking}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (picking) closePicker()
+            else setPicking(true)
+          }}
+        >
+          <svg
+            className="nx-day-glyph"
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect x="1.75" y="3" width="12.5" height="11.25" rx="2" />
+            <path d="M1.75 6.75h12.5M5.25 1.5v3M10.75 1.5v3" />
+          </svg>
+          <span className="dt">{dayLine(viewDayKey)}</span>
+          <span className="sr-only"> — change day</span>
+        </button>
         <button
           type="button"
           className="nx-day-step next"
@@ -98,9 +141,22 @@ function NxClock({
         >
           ›
         </button>
+        {picking && (
+          <DayPicker
+            viewDayKey={viewDayKey}
+            todayKey={todayKey}
+            triggerRef={pickRef}
+            onClose={closePicker}
+            onDismiss={dismissPicker}
+            onPick={(key) => {
+              onPick(key)
+              closePicker()
+            }}
+          />
+        )}
       </span>
       {isToday ? (
-        <span className="nx-time">
+        <span className="nx-time" title="current time">
           <span className="hm">{fmtTime(minOfDay(now))}</span>
           <span className="sc">:{String(now.getSeconds()).padStart(2, '0')}</span>
         </span>
@@ -333,6 +389,7 @@ export function FocusOrbit() {
         <NxClock
           now={now}
           viewDayKey={viewDayKey}
+          todayKey={todayKey}
           isToday={isToday}
           onStep={(dir) => {
             const next = stepDay(viewDayKey, dir)
@@ -341,6 +398,10 @@ export function FocusOrbit() {
           }}
           onToday={() => {
             focusDay(null)
+            setCardId(null)
+          }}
+          onPick={(key) => {
+            focusDay(key === todayKey ? null : key) // the picker's day, the same one key
             setCardId(null)
           }}
         />

@@ -20,6 +20,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   wash, a day ahead stays clear, and the centre names the day with its blocks, committed hours
   and mews. One click brings you back to today, where the live countdown belongs, and a day
   picked in Week carries across. On another day the card keeps Done, Hold and Remove.
+- The date above the dial opens a day picker: a small month calendar that lands on the day
+  you're viewing, with today marked. Pick with a click or from the keyboard alone — arrows move
+  by day and week, Page Up and Page Down by month, Enter shows the day — and Escape simply
+  closes the calendar, leaving the dial exactly as it was.
 - The day-progress wash now holds when half the day is complete: the morning disk stays filled
   from noon on, and a lived day shows its whole wash.
 
