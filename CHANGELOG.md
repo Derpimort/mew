@@ -42,6 +42,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
+- The release guard now names a tag exactly as it was given, and when a tag and the config
+  disagree it spells out both ways forward: re-tag from the config, or bump the config (and the
+  MSI version) to the tag. It also runs as its own workflow, so a desktop-only change no longer
+  waits on the app's typecheck, tests and lint.
 
 ### A bundle budget every PR can see
 - The size budgets now run on every PR into `develop` and the release candidate: the quick
@@ -52,6 +56,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on
   a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
   `SHOOT_DATE` probes another day when you want to look.
+- The day view, day picker and all-day proofs run on that same pinned day too, and keep passing on
+  whatever date `SHOOT_DATE` probes — month ends and a four-week February included.
 
 ### Removing one block removes one block
 - "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the
@@ -122,6 +128,18 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
   length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
   size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
+### The weekly review's roll really moves your work
+- Rolling carried work forward now moves it: the block lands on the same weekday next week and
+  leaves this week's carried list, so it's never offered twice, and one "undo that" brings the
+  whole roll back. A repeating block rides with its own series instead of doubling, a block
+  already planned next week stays exactly where it is, and a day with no room keeps the work
+  carried and says so.
+### The drop choice names its day
+- When a block can't make way and MEW offers to drop it, that choice now names the day ("remove the
+  Groceries today at 14:00"). So it shows up even when the same block sits at the same time on
+  another day, and picking it removes only the one you're looking at. A drop picked on a later day
+  (after midnight, "today" is a new day) checks again first: it runs only while it still points at
+  the block it was offered for, and otherwise MEW names that block and everything stays as it is.
 
 ### The room offer says what it would change
 - When MEW offers to give your work more room, it now names the blocks it would resize

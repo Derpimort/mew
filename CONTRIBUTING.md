@@ -132,17 +132,21 @@ Two checks guard it:
    job** (`ci.yml`) on every PR into `develop` and the RC, and in the `desktop.yml`
    check job on PRs into `main` (where `bundle` skips, so the minutes don't double).
    It reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
-   the job summary.
+   the job summary. The policy itself is unit-tested (`app/scripts/__tests__/`), and
+   those tests run in `pnpm test`, so a broken budget rule fails CI too.
 
 **Budgets** (uncompressed; the targets to keep):
 
-- **main (entry) chunk < 340 KB** — first paint depends on it; keep it tightest.
-  (Lowered from 370 KB for v0.6 (#340): onboarding, the plan-mode picker, and the
-  Settings route now lazy-load, so ~52 KB of first-paint-optional UI left the eager
-  graph. The budget bounds the eager app code the entry carries (~309 KB = first-load
-  minus vendor); rolldown may hoist that shared eager code into first-load sibling
-  chunks, so the entry file itself can read smaller — 340 is the ceiling on the eager
-  app either way. First-load total still well under 1200 KB.)
+- **main (the eager app) < 440 KB** — first paint depends on it; keep it tightest.
+  It's **one sum**: the entry chunk plus every chunk the entry statically imports
+  outside the named families (`vendor`, `three`, `ai`). Rolldown hoists shared eager
+  code out of the entry into sibling chunks (`Button`, `rules`, `primitives` today),
+  so the entry file alone reads ~117 KB while the eager app is ~381 KB. Those siblings
+  are rated `main`, not `lazy` (#80). Re-set 340 → 440 KB for v2026.09: the gate
+  used to cap only the entry file, so the eager app grew unmeasured from v0.6's 309 KB
+  to ~381 KB on the RC and ~401 KB with the queue behind it. 440 keeps v0.6's ~10%
+  headroom. (History: 370 → 340 for v0.6 (#340), when onboarding, the plan-mode
+  picker and the Settings route went lazy.)
 - **vendor chunk < 460 KB** — react, react-dom, zustand, dexie, lucide + the motion family
   (motion 12.41+ ships a non-dissolvable re-export shim, so framer-motion/motion-dom ride here).
 - **lazy chunks < 300 KB** by default. The known-heavy lazy families have their own
@@ -150,7 +154,7 @@ Two checks guard it:
   at the top of `app/scripts/check-bundle-size.mjs`; everything else holds the
   300 KB line.
 - **first-load JS < 1.2 MB** — the entry chunk plus everything it statically imports
-  (today main + vendor), i.e. what a first visit actually downloads. `three` and
+  (the eager app + vendor), i.e. what a first visit actually downloads. `three` and
   `ai` are lazy and excluded. The script also caps the grand total of all chunks so
   nothing grows unbounded.
 
