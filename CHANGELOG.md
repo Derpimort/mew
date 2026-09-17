@@ -224,6 +224,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   midnight, before MEW's clock catches up, checks against the new day, a choice that lengthens a
   block checks its day too, and a "done" choice keeps pointing at the block it was offered for even
   once that block is done.
+- An item you place from your inbox is saved the way it shows, now held by tests: after a reload its
+  block is still in your week, and after "undo that" the item is back in your inbox with no block
+  left behind.
 
 ## [0.7.0] — 2026-08-12
 
