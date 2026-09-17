@@ -454,12 +454,17 @@ describe('#139 — the words a question offers are words the reader accepts', ()
   /* THE REMOVE ASK IS A KNOWN INSTANCE, filed as #161 and NOT fixed here: its
      question offers "the 12:00 (Wednesday 12:00–12:30)" while its chips read
      "tomorrow 12:00", so the words it prints resolve to nothing. This invariant
-     found it on its first run, in a family this slice was not fixing. It is
-     SKIPPED rather than pinned as an expected failure, because the RC's
-     expected-fail count is zero and the crew worked to get it there — the issue
-     carries the defect instead. Whoever fixes #161 deletes this skip and the
-     coverage arrives with no further work. */
-  it.skip('the remove ask — a known divergence, see #161', async () => {
+     found it on its first run, in a family this slice was not fixing.
+
+     Pinned as an EXPECTED FAILURE rather than skipped, per the manager's ruling:
+     the costliest thing this shift found was a test that skipped SILENTLY (five
+     CSP checks, for about a year, every summary line green), and a documented
+     skip repeats that property at a smaller scale — a comment is visible only to
+     whoever opens this file, while an expected fail is visible to everyone who
+     runs the suite. The title carries the issue number so the run output does
+     too. It becomes an ordinary `it` the moment #161 is fixed, and the coverage
+     arrives with no further work. */
+  it.fails('#161: the remove ask offers words its own chips do not carry', async () => {
     await fresh([
       block({ id: 'l1', title: 'Lunch', dayKey: WED, startMin: 720, endMin: 750 }),
       block({ id: 'l2', title: 'Lunch', dayKey: THU, startMin: 720, endMin: 750 }),
