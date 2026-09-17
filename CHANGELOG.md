@@ -281,6 +281,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- The two newest things in this release are now held together with everything else: a sweep over a
+  repeating run is asked about before anything moves, its list is read back row by row against the
+  week, and taking it back says what actually came back — a length, a name or a move, each in its
+  own words. Two journeys, each proven to fail if the fix it guards is removed.
 - A test that sits outside its group now fails the lint gate instead of running quietly: such a
   test still passes, it just reports without the name that tells you which behaviour broke. The
   check is a small script with no new dependency, so the release's proven set of packages is
