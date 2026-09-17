@@ -387,9 +387,8 @@ describe('#75 — narrow batches, collisions, and a pick after midnight', () => 
     await say('push all work after 5pm back an hour')
     await settle()
     expect(at('d1')).toEqual([TODAY, 18 * 60, 19 * 60])
-    expect(lastMew()).toContain(
-      "— note: it overlaps Gym 18:00–19:00 (flexible — offer to drift it, don't move it unasked)"
-    )
+    /* the keyless floor speaks the owner's view: the model-only drift note stays out (#119) */
+    expect(lastMew()).toMatch(/ — note: it overlaps Gym 18:00–19:00 \(flexible\)$/)
   })
 
   it('a confirm picked after midnight re-checks (#94): nothing moves, and MEW says when it was offered', async () => {
