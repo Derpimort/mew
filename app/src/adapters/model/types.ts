@@ -325,7 +325,10 @@ export interface ToolExecutor {
       | { kind: 'moveToDay'; toDayOffset: number }
       | { kind: 'setTag'; tag: import('../../domain/types').Tag },
     confirmCount?: number,
-    confirmToken?: string
+    confirmToken?: string,
+    /** #75 slice 3: which occurrences of a repeating block the sweep means —
+        leave it out and MEW asks with chips before it touches a series */
+    scope?: 'this' | 'following' | 'series'
   ): string
   /** Move a block relative to where it is now, with no absolute time (#335):
       'earlier'/'later' shift the start by `amountMin` (default 30) on the same
