@@ -376,7 +376,13 @@ function gridUp(min: number): number {
     only way in is to displace a committed block, `suggest` instead: MEW offers
     it in chat rather than seizing time. `freeWindows` already excludes fixed,
     external, optional and background blocks, so a placed rest never overlaps. */
-export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | null {
+export function restInsertion(
+  blocks: Block[],
+  dayKey: string,
+  /** #116: the earliest a breather may start (today: now), so a pass never
+      tucks a rest into time already gone; 0 for a day still ahead */
+  fromMin = 0
+): RestInsertion | null {
   const work = committedWork(blocks, dayKey)
   if (!work.length) return null
   /* a run is the unbroken non-rest stretch (dayShape's notion: errands abutting
@@ -406,7 +412,7 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
      one in the evening unasked (placement on request reads plannable hours) */
   const fits = freeWindows(blocks, dayKey, DAY_START, DAY_END)
     .map((w) => ({ startMin: gridUp(w.startMin), endMin: w.endMin }))
-    .filter((w) => w.startMin >= run.startMin && w.startMin <= runEnd)
+    .filter((w) => w.startMin >= run.startMin && w.startMin <= runEnd && w.startMin >= fromMin)
     .filter((w) => w.endMin - w.startMin >= PACING_REST_FLOOR)
     .sort((a, b) => a.startMin - b.startMin)
 
@@ -425,6 +431,8 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
       why: 'a short breather inside a long stretch',
     }
   }
+  /* a stretch that's already over needs no break now (#116) */
+  if (run.endMin <= fromMin) return null
   // no seam — breaking the run means moving committed work, so only offer it
   return {
     dayKey,

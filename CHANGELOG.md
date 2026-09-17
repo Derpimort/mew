@@ -52,6 +52,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Auto-placement lands on human times: a slot asked for at 10:07 opens at 10:30, or at the next
   quarter that still fits, and every placement path stays on the five-minute grid. Times you name
   yourself are kept exactly.
+- A time MEW picks for you is always still ahead of you. When what you ask for no longer fits in
+  today's hours, MEW says so, names the free time past them and offers tomorrow's first opening as
+  a choice, and a breather is only ever tucked into time still to come.
 
 ### Placing from your inbox leaves a receipt
 - When you place something from your inbox or the loose-threads rail, the conversation now shows its
