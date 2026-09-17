@@ -112,6 +112,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   changes first, MEW shows you the new one. One "undo that" puts them all back. Calendar events,
   fixed calls, done blocks and repeating blocks keep their place, and so does any block whose new
   time would sit over one.
+- Retag a set of blocks the same way: "tag all of tomorrow's calls as work" shows the list first and
+  changes only the tags, never a time. Calendar events, done and repeating blocks keep their tags.
+  "Between 2 and 5pm" picks the blocks that start in that window, for any of these changes.
 
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW

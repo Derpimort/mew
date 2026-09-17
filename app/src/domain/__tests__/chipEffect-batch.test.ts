@@ -58,6 +58,7 @@ describe('chipReplyEffect — a batch confirm', () => {
       op: 'shift',
       deltaMin: 60,
       toDayKey: null,
+      toTag: null,
       confirmCount: 2,
       confirmToken: 'k7f2',
     })
@@ -73,6 +74,7 @@ describe('chipReplyEffect — a batch confirm', () => {
       op: 'moveToDay',
       deltaMin: null,
       toDayKey: THU,
+      toTag: null,
       confirmCount: 1,
       confirmToken: null,
     })

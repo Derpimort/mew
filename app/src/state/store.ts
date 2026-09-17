@@ -3947,7 +3947,10 @@ export const useMew = create<MewState>((set, get) => {
       tag?: import('../domain/types').Tag
       titleQuery?: string
     },
-    opIn: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
+    opIn:
+      | { kind: 'shift'; deltaMin: number }
+      | { kind: 'moveToDay'; toDayOffset: number }
+      | { kind: 'setTag'; tag: import('../domain/types').Tag },
     confirmCount?: number,
     confirmToken?: string
   ): string {
@@ -3964,7 +3967,10 @@ export const useMew = create<MewState>((set, get) => {
     const op: BatchOp =
       opIn.kind === 'shift'
         ? { kind: 'shift', deltaMin: opIn.deltaMin }
-        : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
+        : opIn.kind === 'setTag'
+          ? { kind: 'setTag', tag: opIn.tag } // #75 slice 2: a retag, in place
+          : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
+    const retag = op.kind === 'setTag'
     /* a day as MEW says it: "today", "tomorrow", "Thursday", and past this week
        the date too ("Wednesday, Jun 17"), since a weekday alone says this week's */
     const dayName = (k: string) => {
@@ -3999,7 +4005,9 @@ export const useMew = create<MewState>((set, get) => {
     const change =
       op.kind === 'shift'
         ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'} ${onDay(sel.dayKey)}`
-        : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
+        : op.kind === 'setTag'
+          ? `as ${op.tag} ${onDay(sel.dayKey)}`
+          : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
     const why = (sk: BatchSkip): string =>
       sk.reason === 'calendar'
         ? 'from your calendar'
@@ -4011,16 +4019,20 @@ export const useMew = create<MewState>((set, get) => {
               ? 'repeats'
               : sk.reason === 'off-day'
                 ? 'would leave the day'
-                : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+                : sk.reason === 'already'
+                  ? `already ${op.kind === 'setTag' ? op.tag : ''}`
+                  : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
     const stays = plan.skipped.map(
       (sk) => `${baseOf(sk.block.title)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
     )
-    const staysLine = stays.length
-      ? ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
-      : ''
+    const staysLine = !stays.length
+      ? ''
+      : retag
+        ? ` ${andList(stays)} ${stays.length === 1 ? 'keeps its tag' : 'keep their tags'}.`
+        : ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
     if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
     if (!plan.moves.length)
-      return `nothing there can move ${change}:${staysLine} Everything stays as it is.`
+      return `nothing there can ${retag ? 'be tagged' : 'move'} ${change}:${staysLine} Everything stays as it is.`
 
     const n = plan.moves.length
     const line = (m: (typeof plan.moves)[number]) =>
@@ -4030,14 +4042,20 @@ export const useMew = create<MewState>((set, get) => {
     const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
     const next = s.blocks.map((b) => {
       const m = byId.get(b.id)
-      return m ? { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin } : b
+      if (!m) return b
+      return m.tag
+        ? { ...b, tag: m.tag }
+        : { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin }
     })
-    /* the blocks that stay put which each move would share time with */
+    /* the blocks that stay put which each move would share time with (a retag
+       moves nothing, so it shares nothing new) */
     const sharing = plan.moves.map((m) => ({
       m,
-      with: week
-        .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
-        .filter((c) => !byId.has(c.id)),
+      with: retag
+        ? []
+        : week
+            .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
+            .filter((c) => !byId.has(c.id)),
     }))
     /* wide by what the ask SELECTED, not by what can move: "push everything after
        7pm" over four blocks, two of which stay put, is shown first, list and all */
@@ -4066,6 +4084,10 @@ export const useMew = create<MewState>((set, get) => {
         const dayPart = d === 'today' || d === 'tomorrow' ? d : `on ${d}`
         const by = `${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min`
         reply = [`push ${who}`, edges, dayPart, by].filter(Boolean).join(' ') + yes
+      } else if (op.kind === 'setTag') {
+        const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
+        const from = `tag all ${dayRef(sel.dayKey)}'s ${who}`
+        reply = [from, edges, `as ${op.tag}`].filter(Boolean).join(' ') + yes
       } else {
         const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
         const from = `move all ${dayRef(sel.dayKey)}'s ${who}`
@@ -4080,7 +4102,7 @@ export const useMew = create<MewState>((set, get) => {
       const sharesLine = shares.length ? ` ${shares.join(' · ')}.` : ''
       const changed = confirmCount != null ? 'the week changed since then — ' : ''
       return execOfferChoices(
-        `${changed}move ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
+        `${changed}${retag ? 'tag' : 'move'} ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
         [
           { label: 'do it', reply },
           { label: 'not now', reply: 'ok, leave them as they are' },
@@ -4092,7 +4114,7 @@ export const useMew = create<MewState>((set, get) => {
     /* a collision the batch leaves with a block that stayed put speaks in the
        existing clash wording (#324), never a second vocabulary */
     const clash = [...new Map(sharing.flatMap((x) => x.with).map((c) => [c.id, c])).values()]
-    return `Moved ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
+    return `${retag ? 'Tagged' : 'Moved'} ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
   }
 
   /** Move a block relative to where it is now, with no absolute time (#335).
