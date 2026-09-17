@@ -1164,9 +1164,20 @@ function driftReply(
   const stuckPart = stuckNames.length
     ? ` — ${stuckNames.join(' and ')} still ${stuckNames.length === 1 ? 'shares' : 'share'} that time`
     : ''
+  /* #122: work over a protected rest stays where it was asked and the rest
+     stays too, so the reply names the time it runs over; a rest the owner kept
+     after protect-rest's one ask would otherwise go unmentioned */
+  const restPart = res.rests.length
+    ? ` — it runs over your ${andList(
+        res.rests.map(
+          (r) =>
+            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
+        )
+      )}`
+    : ''
   return {
     blocks: next,
-    note: `${driftPart}${fixedPart}${stuckPart}`,
+    note: `${driftPart}${fixedPart}${stuckPart}${restPart}`,
     driftedIds,
     stuckIds: res.stuck.map((b) => b.id),
   }
