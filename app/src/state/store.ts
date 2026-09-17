@@ -195,7 +195,12 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive, typedRemoveAnswer } from '../domain/choices'
+import {
+  choicesActive,
+  scenariosActive,
+  typedChipLabel,
+  typedRemoveAnswer,
+} from '../domain/choices'
 import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -5941,6 +5946,14 @@ export const useMew = create<MewState>((set, get) => {
       syncTurnClock() // #96: one today for the parse, the executors and the model
       const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
       if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
+      /* #139: any live chip, typed exactly as it reads on screen, is that chip's
+         pick — the rescue offer, a no-room time, a batch confirm, a scope ask.
+         Only when the remove ask's own reader had nothing to say about it, so
+         "both" for three blocks still gets its plain answer rather than a pick. */
+      if (!typed) {
+        const label = typedChipLabel(get().chat, trimmed)
+        if (label) return get().pickChoice(label.msgId, label.choiceId)
+      }
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       if (typed) {
         /* a count word that doesn't fit the ask ("both" for three) is answered
