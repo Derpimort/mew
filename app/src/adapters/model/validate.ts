@@ -101,9 +101,11 @@ export async function validateKey(
   // the Response, so hand it the same shape the SDK errors have. 'rejected'
   // (a 400 on a bare models-listing GET) has no probe-specific fix the user
   // could act on — fold it into the retry-worded 'unknown' rather than invent
-  // copy for a shape a GET shouldn't produce.
+  // copy for a shape a GET shouldn't produce. 'dropped' needs the SDK's wrap of
+  // a started stream, which this plain non-2xx status never is — folded the same.
   const kind = classifyFailure({ status: res.status })
-  return { ok: false, reason: kind === 'rejected' ? 'unknown' : kind, status: res.status }
+  const reason = kind === 'rejected' || kind === 'dropped' ? 'unknown' : kind
+  return { ok: false, reason, status: res.status }
 }
 
 /** Does the models listing contain `model`? Returns null (don't disqualify) when

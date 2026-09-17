@@ -13,6 +13,7 @@
    plus the (band × task-type) energyProfile (#321, shipped in v0.6), one row
    per task type with a demonstrated rhythm, all from local memory (#15). */
 
+import { prefKey } from './prefMerge'
 import { normTitle, type Insights } from './insights'
 import {
   candidateToRule,
@@ -56,6 +57,10 @@ export interface StandingRuleView {
   value: string
   stated: string
   pref: PrefPayload
+  /** #71: this rule applies from the brain alone (told on another device, or
+      seeded there) — shown with a quiet source mark, forgettable like any other.
+      Present only when true, so a local-only console is byte-identical. */
+  fromBrain?: true
 }
 
 /** A pattern MEW is about to ask about — the next learn-offer, shown before
@@ -82,9 +87,13 @@ export interface MemoryConsoleData {
 
 export interface ConsoleInputs {
   events: readonly MemoryEvent[]
-  /** the LOCAL standing rulebook (activePrefsFrom over local memory) — the
-      console renders from local memory alone, brain-off by law */
+  /** the APPLIED standing rulebook (#71): exactly what the planners read —
+      local memory merged with the brain's list when a brain answered. With the
+      brain off it is local memory alone, byte-identical to before. */
   prefs: readonly PrefPayload[]
+  /** prefKeys of the rules in `prefs` that come from the brain alone
+      (prefMerge.brainOnlyPrefKeys); absent/empty → no row is marked */
+  brainOnly?: ReadonlySet<string>
   insights: Insights
   /** the (band × task-type) profile from local memory, or null under its data
       floor. Optional: absent reads as no profile, so the rhythm keeps its two rows */
@@ -107,7 +116,7 @@ function ruleTitle(rule: LearnedRule): string {
 }
 
 export function memoryConsole(input: ConsoleInputs): MemoryConsoleData {
-  const { events, prefs, insights, energy } = input
+  const { events, prefs, insights, energy, brainOnly } = input
 
   const rules = confirmedRulesFrom(events)
   const taskRules: TaskRuleView[] = rules.map((rule) => {
@@ -177,6 +186,7 @@ export function memoryConsole(input: ConsoleInputs): MemoryConsoleData {
     value: p.value,
     stated: p.stated,
     pref: p,
+    ...(brainOnly?.has(prefKey(p)) ? { fromBrain: true as const } : {}),
   }))
 
   /* pending — the next candidates the learn pass would offer (already covered
@@ -221,7 +231,8 @@ export function consoleSummary(data: MemoryConsoleData): string[] {
   const lines: string[] = [data.title]
   for (const r of data.taskRules) lines.push(`• ${r.title}: ${r.label} (${r.claim})`)
   for (const r of data.rhythm) lines.push(`• ${r.label}: ${r.value}`)
-  for (const r of data.standingRules) lines.push(`• you told me: ${r.match} → ${r.value}`)
+  for (const r of data.standingRules)
+    lines.push(`• ${r.fromBrain ? 'from your brain' : 'you told me'}: ${r.match} → ${r.value}`)
   if (data.pending.length)
     lines.push(`about to ask about: ${data.pending.map((p) => p.match).join(', ')}`)
   if (data.dismissed.length) lines.push(`not learning (your call): ${data.dismissed.join(', ')}`)
