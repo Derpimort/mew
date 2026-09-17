@@ -311,6 +311,24 @@ export interface ToolExecutor {
     amountMin?: number,
     at?: string
   ): string
+  /** Split one block into two around a gap (#73): the first piece keeps the
+      start and ends where the gap opens, the second picks up where it closes.
+      `around` is a clock range, or another block to split around (its title
+      words + `at`, e.g. the 1pm call). The second piece keeps the rest of the
+      block's length unless `tailMin` says otherwise (the rescue chip's "keep Nm
+      after"). A calendar block is never split, a series occurrence asks this /
+      following / series first (or takes `scope`), and part 2 lands only in free
+      time. `at` pins which of several same-named blocks; `dayOffset` the day. */
+  split(
+    query: string,
+    around: { startMin: number; endMin: number } | { query: string; at?: string },
+    opts?: {
+      at?: string
+      tailMin?: number
+      dayOffset?: number
+      scope?: 'this' | 'following' | 'series'
+    }
+  ): string
   /** Give the just-placed blocks of one focus class room (#322) — resize them
       LONGER, in place, by the factor the user's OWN completion history shows for
       that kind (deep work vs admin). This is what the "give them room?" chip

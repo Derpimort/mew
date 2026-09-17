@@ -694,6 +694,43 @@ export const MEW_TOOLS: NeutralTool[] = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'split_block',
+    description:
+      "Split ONE existing block into two around a gap, leaving the gap free between the pieces ('split the deck around the 1pm call', 'split my focus block around 13:00-13:30'). The first piece keeps the block's start and ends where the gap opens; part 2 picks up where the gap closes and keeps the rest of the block's length, so the total is kept. Give EITHER aroundStartMin + aroundEndMin (a clock gap) OR aroundQuery (+ aroundAt) naming the block to split around on the same day, often a meeting or calendar event. Events from a connected calendar are never split themselves (splitting AROUND one is fine). Part 2 lands only in free time; if something sits there, nothing changes and the result says what. For a REPEATING block, pass scope only when the user made the reach explicit; otherwise omit it and the executor asks this one / this & following / the whole series. Target by a few words of the title, plus `at` (its current start) when several share the title.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few words from the title of the block to split' },
+        at: {
+          type: 'string',
+          description:
+            "The TARGET block's CURRENT start time ('12:00', '9am'): pins which of several same-named blocks to split",
+        },
+        aroundStartMin: {
+          type: 'integer',
+          description: 'Gap start in minutes from midnight (13:00 = 780); pair with aroundEndMin',
+        },
+        aroundEndMin: {
+          type: 'integer',
+          description: 'Gap end in minutes from midnight (13:45 = 825)',
+        },
+        aroundQuery: {
+          type: 'string',
+          description:
+            "A few words from the title of the block to split around on the same day ('call', 'design sync'), instead of a clock gap",
+        },
+        aroundAt: {
+          type: 'string',
+          description:
+            "That block's start time ('13:00', '1pm'): pins which of several same-named blocks to split around",
+        },
+        scope: SCOPE_SCHEMA,
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
 ]
 
 /** The advertised registry under a planMode gear (#293): 'auto' is MEW_TOOLS
@@ -914,6 +951,20 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         optInt(o.amountMin, 5, 600),
         atArg(o.at)
       )
+    }
+    case 'split_block': {
+      const query = String(o.query ?? '')
+      const startMin = optInt(o.aroundStartMin, 0, 1439)
+      const endMin = optInt(o.aroundEndMin, 1, 1440)
+      const aroundQuery = typeof o.aroundQuery === 'string' ? o.aroundQuery.trim() : ''
+      const opts = { at: atArg(o.at), scope: recurScope(o.scope) }
+      if (startMin != null && endMin != null) {
+        if (endMin <= startMin)
+          return 'nothing to split around — aroundEndMin must come after aroundStartMin'
+        return exec.split(query, { startMin, endMin }, opts)
+      }
+      if (aroundQuery) return exec.split(query, { query: aroundQuery, at: atArg(o.aroundAt) }, opts)
+      return 'nothing to split around — pass aroundStartMin + aroundEndMin, or aroundQuery'
     }
     case 'give_room': {
       const classes = ['deep', 'admin', 'health'] as const

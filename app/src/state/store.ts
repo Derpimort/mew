@@ -48,6 +48,7 @@ import {
 } from '../domain/time'
 import { rangeDayKeys, rangeStartLabel, readRange, stripRangePhrase } from '../domain/timeRange'
 import * as week from '../domain/week'
+import { nextPartTitle, splitGeometry, SPLIT_MIN_PIECE } from '../domain/split'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
 import {
   describeRrule,
@@ -2938,32 +2939,9 @@ export const useMew = create<MewState>((set, get) => {
        stacks rests. A free seam gets an UNPROTECTED micro-rest (≤20m, the same
        absorbable pacing rest a reshape can dissolve); a wall-to-wall run that
        would need a committed block displaced is only OFFERED, never seized. */
-    const restNotes: string[] = []
-    for (const key of touchedDays) {
-      const r = restInsertion(blocks, key) // #22: the pacing pass keeps the classic day
-      if (!r) continue
-      const when = key === todayKey ? 'today' : fmtDowLong(key)
-      if (r.kind === 'place') {
-        const rest = week.place(blocks, {
-          title: 'Breather',
-          tag: 'rest',
-          dayKey: key,
-          startMin: r.startMin,
-          endMin: r.endMin,
-          protected: false,
-        })
-        if (rest) {
-          blocks = [...blocks, rest]
-          restNotes.push(
-            `tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`
-          )
-        }
-      } else {
-        restNotes.push(
-          `${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`
-        )
-      }
-    }
+    const paced = paceRest(blocks, touchedDays, todayKey)
+    blocks = paced.blocks
+    const restNotes = paced.notes
     setBlocks(blocks)
     /* #12: any own flexible block left overlapping gets a real choice (chips) */
     const driftAsk = stuckDrifts.length ? offerDriftChoices(stuckDrifts, todayKey) : false
@@ -3161,15 +3139,18 @@ export const useMew = create<MewState>((set, get) => {
       by resolveTarget; this owns the plain-title path the executors shared. */
   function resolvePrecise(
     query: string,
-    op: 'complete' | 'move' | 'edit' | 'duplicate',
+    op: 'complete' | 'move' | 'edit' | 'duplicate' | 'split',
     at: string | undefined,
     includeDone: boolean,
-    reissue: (b: Block) => string
+    reissue: (b: Block) => string,
+    /* #73: a day the ask named pins the target to that day's blocks */
+    onDay?: string
   ): { block: Block } | { reply: string } {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const atMin = at ? parseTimeValue(at) : null
-    const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone })
+    const pool = onDay ? s.blocks.filter((b) => b.dayKey === onDay) : s.blocks
+    const r = week.findTarget(pool, query, todayKey, { at: atMin, includeDone })
     if (r.status === 'ok') return { block: r.block }
     if (r.status === 'ambiguous') {
       const base = baseOf(query)
@@ -3195,7 +3176,9 @@ export const useMew = create<MewState>((set, get) => {
           ? 'to move'
           : op === 'duplicate'
             ? 'to duplicate'
-            : 'to change'
+            : op === 'split'
+              ? 'to split'
+              : 'to change'
     return {
       reply: `I couldn't find "${query}"${at ? ` at ${at}` : ''} ${verb} — say it another way?`,
     }
@@ -3827,6 +3810,299 @@ export const useMew = create<MewState>((set, get) => {
     if (slot.dayKey === target.dayKey && slot.startMin === target.startMin)
       return `${target.title.split('—')[0].trim()} already sits in the earliest open slot — nothing to move.`
     return moveResolved(target, slot.dayKey, slot.startMin)
+  }
+
+  /** Split one block into two around a gap (#73, the #16 command surface). One
+      executor for every door: the typed "split the deck around the 1pm call",
+      the keyed split_block tool, and the rescue chip's exact "split the deck
+      around 13:00-13:45, keep 45m after" (rules.ts runSplit). The geometry is
+      domain/split.ts; this owns the laws and the ONE mutation:
+      — a [calendar] block is never split (it isn't MEW's to cut); the block
+        split AROUND may be one, and that is the common case;
+      — a series occurrence asks this / following / series first;
+      — a gap outside the block, or a piece under 15 min, asks instead of guessing;
+      — part 2 lands only in free time: if anything sits there, nothing changes
+        and the reply names it (fixed-time is scheduled around, never over).
+      The first piece is the original block, shortened in place (same id and
+      history); part 2 is a new block with the same tag, attention and
+      protection. One setBlocks under the wrapper's single snapshot, so one undo
+      takes the whole split back, and a work split paces rest like a placement. */
+  function execSplit(
+    query: string,
+    around: { startMin: number; endMin: number } | { query: string; at?: string },
+    opts: { at?: string; tailMin?: number; dayOffset?: number; scope?: RecurScope } = {}
+  ): string {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const q = baseOf(query)
+    /* every chip this op posts re-asks in the typed grammar, with its day spoken
+       (so a pick after midnight re-checks it, #94) and any rescue tail length */
+    const dayPhrase = (key: string): string => {
+      const w = dayWord(key, todayKey)
+      return w == null ? '' : w === 'today' || w === 'tomorrow' ? ` ${w}` : ` on ${w}`
+    }
+    const keep = opts.tailMin != null ? `, keep ${opts.tailMin}m after` : ''
+    const scoped = (sc?: RecurScope) => (sc ? ` ${scopeWord(sc)}` : '')
+    const clock = (g: { startMin: number; endMin: number }) =>
+      `${fmtTime(g.startMin)}-${fmtTime(g.endMin)}`
+    const aroundAsTyped =
+      'startMin' in around
+        ? clock(around)
+        : `the ${around.at ? `${around.at} ` : ''}${around.query}`
+
+    const onDay = opts.dayOffset != null ? addDaysKey(todayKey, opts.dayOffset) : undefined
+    const res = resolveTarget(query, 'edit')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const r = resolvePrecise(
+        query,
+        'split',
+        opts.at,
+        false,
+        (b) =>
+          `split ${q} at ${fmtTime(b.startMin)} around ${aroundAsTyped}${keep}${dayPhrase(b.dayKey)}${scoped(opts.scope)}`,
+        onDay
+      )
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
+    if (!target) return `I couldn't find "${query}" to split — say it another way?`
+    const t = target
+    const base = t.title.split('—')[0].trim()
+    const when = t.dayKey === todayKey ? 'today' : fmtDowLong(t.dayKey)
+    if (t.external)
+      return `${base} came in from a connected calendar — it's not mine to split. I can split one of your own blocks around it instead.`
+    if (t.status !== 'open') return `${base} is already done, so it stays whole.`
+    noteReferentId(t.id) // the turn touched one block — "it" now points here
+
+    /* the gap: a clock range as given, or the span of the block to split around
+       on the same day (it may be a calendar event — that's the common case) */
+    let gap: { startMin: number; endMin: number }
+    let aroundName: string | null = null
+    if ('startMin' in around) {
+      gap = { startMin: around.startMin, endMin: around.endMin }
+    } else {
+      const pool = s.blocks.filter((b) => b.dayKey === t.dayKey && b.id !== t.id)
+      const atMin = around.at ? parseTimeValue(around.at) : null
+      const r = week.findTarget(pool, around.query, todayKey, { at: atMin, includeDone: true })
+      if (r.status === 'ambiguous') {
+        return execOfferChoices(
+          `which "${baseOf(around.query)}" should ${base} split around?`,
+          r.candidates.slice(0, 5).map((c) => ({
+            label: `around the ${fmtTime(c.startMin)}`,
+            reply: `split ${q} at ${fmtTime(t.startMin)} around ${clock(c)}${keep}${dayPhrase(t.dayKey)}${scoped(opts.scope)}`,
+          }))
+        )
+      }
+      if (r.status !== 'ok') {
+        return `I couldn't find "${around.query}"${around.at ? ` at ${around.at}` : ''} ${when === 'today' ? 'today' : `on ${when}`} to split ${base} around — say its time?`
+      }
+      gap = { startMin: r.block.startMin, endMin: r.block.endMin }
+      aroundName = `${r.block.title.split('—')[0].trim()} ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)}`
+    }
+    const gapName = aroundName ?? `${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)}`
+
+    /* #343: a live series asks how far the split reaches, re-asked with the
+       resolved clock gap so this & following / the whole series can apply it */
+    const membership = week.seriesMembership(s.blocks, t)
+    if (membership && membership.count > 1 && opts.scope !== 'this') {
+      if (!opts.scope) {
+        return offerRecurringScope(
+          base,
+          (sc) =>
+            `split ${q} at ${fmtTime(t.startMin)} around ${clock(gap)}${keep}${dayPhrase(t.dayKey)} ${scopeWord(sc)}`
+        )
+      }
+      return splitSeries(t, gap, opts.tailMin, opts.scope, todayKey)
+    }
+
+    const geo = splitGeometry(t, gap.startMin, gap.endMin, opts.tailMin)
+    if (!geo.ok) return splitRefusal(geo.reason, base, t, gap, gapName, opts.tailMin)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    let blocks = s.blocks.map((b) => (b.id === t.id ? { ...t, endMin: geo.head.endMin } : b))
+    /* part 2 is an explicit-time landing, so it follows the drop law (#347): a
+       fixed, calendar or protected block there bounces it and nothing changes.
+       An unprotected own-flexible neighbour (a paced breather, a meal) yields
+       through #324 drift when part 2 is focus work, exactly as a placed block
+       would; any other part 2 needs the time genuinely free. */
+    const focusWork = t.tag === 'work' && !week.isBackground(t)
+    if (!week.isBackground(t)) {
+      const blockers = moveBlockedBy(
+        blocks,
+        t.dayKey,
+        geo.tail.startMin,
+        geo.tail.endMin,
+        t.id,
+        prefs
+      )
+      const busy = focusWork
+        ? blockers
+        : week.conflictsWith(blocks, t.dayKey, geo.tail.startMin, geo.tail.endMin, t.id, prefs)
+      if (busy.length) return splitNoRoom(base, geo.tail, busy)
+    }
+    const tail = week.place(blocks, {
+      title: nextPartTitle(base),
+      tag: t.tag,
+      dayKey: t.dayKey,
+      startMin: geo.tail.startMin,
+      endMin: geo.tail.endMin,
+      protected: t.protected,
+      attention: t.attention,
+    })!
+    blocks = [...blocks, tail]
+    let driftNote = ''
+    let stuckIds: string[] = []
+    if (focusWork) {
+      const d = driftReply(blocks, tail, todayKey, minOfDay(now), prefs)
+      blocks = d.blocks
+      driftNote = d.note
+      stuckIds = d.stuckIds
+    }
+    const paced = focusWork ? paceRest(blocks, [t.dayKey], todayKey) : { blocks, notes: [] }
+    setBlocks(paced.blocks)
+    const choices = stuckIds.length
+      ? offerDriftChoices([{ placedId: tail.id, stuckIds }], todayKey)
+      : false
+    const pacing = paced.notes.length
+      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
+      : ''
+    const onWhen = when === 'today' ? '' : ` on ${when}`
+    const between = aroundName ? `, around ${aroundName}` : `, leaving ${gapName} free`
+    return `Split — ${base} now runs ${fmtTime(geo.head.startMin)}–${fmtTime(geo.head.endMin)}${onWhen}, and ${tail.title} picks up ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}${between}${driftNote}.${pacing}${choices ? ' The options for that overlap are on screen.' : ''}`
+  }
+
+  /** #73: split every open occurrence a scope reaches around the same clock gap
+      — 'series' all of them, 'following' this one and the ones after (re-linked
+      as their own series from here, the way applyEditScope bounds an edit). An
+      occurrence the gap doesn't fit, or whose part 2 would land on something,
+      stays whole and is named; the rest split exactly as a single split does. */
+  function splitSeries(
+    target: Block,
+    gap: { startMin: number; endMin: number },
+    tailMin: number | undefined,
+    scope: 'following' | 'series',
+    todayKey: string
+  ): string {
+    const s = get()
+    const rid = target.recurringBlockId
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const bound = scope === 'following' ? splitSeriesFrom(target.rrule, target.dayKey) : null
+    const newId = scope === 'following' ? uid() : null
+    const affected = s.blocks
+      .filter(
+        (b) =>
+          b.recurringBlockId === rid &&
+          b.status === 'open' &&
+          (scope === 'series' || b.dayKey >= target.dayKey)
+      )
+      .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+    let blocks = s.blocks
+    const days = new Set<string>()
+    const whole: string[] = []
+    let splitCount = 0
+    for (const occ of affected) {
+      const relink = newId
+        ? { recurringBlockId: newId, ...(bound?.tail ? { rrule: bound.tail } : {}) }
+        : {}
+      const geo = splitGeometry(occ, gap.startMin, gap.endMin, tailMin)
+      const shortened = geo.ok
+        ? blocks.map((b) => (b.id === occ.id ? { ...occ, endMin: geo.head.endMin } : b))
+        : blocks
+      const clash = geo.ok
+        ? week.conflictsWith(
+            shortened,
+            occ.dayKey,
+            geo.tail.startMin,
+            geo.tail.endMin,
+            occ.id,
+            prefs
+          )
+        : []
+      if (!geo.ok || clash.length) {
+        whole.push(occ.dayKey === todayKey ? 'today' : fmtDowLong(occ.dayKey))
+        if (newId) blocks = blocks.map((b) => (b.id === occ.id ? { ...occ, ...relink } : b))
+        continue
+      }
+      blocks = blocks.map((b) =>
+        b.id === occ.id ? { ...occ, endMin: geo.head.endMin, ...relink } : b
+      )
+      const base = occ.title.split('—')[0].trim()
+      const tail = week.place(blocks, {
+        title: nextPartTitle(base),
+        tag: occ.tag,
+        dayKey: occ.dayKey,
+        startMin: geo.tail.startMin,
+        endMin: geo.tail.endMin,
+        protected: occ.protected,
+        attention: occ.attention,
+      })!
+      blocks = [...blocks, tail]
+      splitCount++
+      if (tail.tag === 'work' && !week.isBackground(tail)) days.add(occ.dayKey)
+    }
+    const base = target.title.split('—')[0].trim()
+    if (!splitCount)
+      return `none of the ${base} blocks had room to split around ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)}, so they all stay whole — pick another gap?`
+    if (newId && bound?.head) {
+      blocks = blocks.map((b) =>
+        b.recurringBlockId === rid && b.status !== 'rolled' && b.dayKey < target.dayKey
+          ? { ...b, rrule: bound.head }
+          : b
+      )
+    }
+    const paced = paceRest(blocks, days, todayKey)
+    setBlocks(paced.blocks)
+    const reach =
+      scope === 'series'
+        ? 'across the whole series'
+        : `from ${target.dayKey === todayKey ? 'today' : fmtDowLong(target.dayKey)} on`
+    const kept = whole.length
+      ? ` ${joinHuman(whole).charAt(0).toUpperCase()}${joinHuman(whole).slice(1)} had no room for it, so ${whole.length === 1 ? 'that one stays' : 'those stay'} whole.`
+      : ''
+    const pacing = paced.notes.length
+      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
+      : ''
+    return `Split — ${base} ${reach}: ${splitCount} block${splitCount === 1 ? '' : 's'} now pause ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)} and pick up again after.${kept}${pacing}`
+  }
+
+  /** #73: why a split didn't happen, asked plainly — nothing changed. */
+  function splitRefusal(
+    reason: 'outside' | 'short-head' | 'short-tail' | 'past-midnight',
+    base: string,
+    b: Block,
+    gap: { startMin: number; endMin: number },
+    gapName: string,
+    tailMin: number | undefined
+  ): string {
+    const span = `${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`
+    if (reason === 'outside')
+      return `${base} runs ${span}, so ${gapName} sits outside it — name a time inside it and I'll split it there.`
+    if (reason === 'short-head')
+      return `splitting ${base} at ${fmtTime(gap.startMin)} would leave just ${gap.startMin - b.startMin} min before the gap — pick a split with at least ${SPLIT_MIN_PIECE} min on each side?`
+    if (reason === 'short-tail') {
+      const rest = tailMin ?? b.endMin - gap.startMin
+      return `splitting ${base} around ${gapName} would leave just ${Math.max(0, rest)} min for part 2 — pick a split with at least ${SPLIT_MIN_PIECE} min on each side?`
+    }
+    return `the rest of ${base} would run past midnight, and a split keeps both pieces on the same day — pick an earlier gap?`
+  }
+
+  /** #73: part 2 only lands in free time — name what sits there; nothing changed. */
+  function splitNoRoom(
+    base: string,
+    tail: { startMin: number; endMin: number },
+    clash: Block[]
+  ): string {
+    const names = clash.map(
+      (c) => `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+    )
+    const list =
+      names.length > 1
+        ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+        : names[0]
+    return `the rest of ${base} (${tail.endMin - tail.startMin} min, ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}) would run into ${list}, and part 2 only goes where it fits — clear that or pick another gap, and I'll split it.`
   }
 
   function execCapture(title: string): string {
@@ -5435,6 +5711,13 @@ export const useMew = create<MewState>((set, get) => {
           return runToolWithCard('relativeMove', { query: q }, () =>
             execRelativeMove(q, direction, amountMin, at)
           )
+        },
+        split: (q, around, opts) => {
+          acted = true
+          snapshotForUndo()
+          working('splitting it…')
+          closeStreamRow()
+          return runToolWithCard('split', { query: q }, () => execSplit(q, around, opts))
         },
         giveRoom: (focusClass) => {
           acted = true
@@ -7575,6 +7858,44 @@ function namesOfBlocks(blocks: Block[], ids: string[]): string[] {
     if (name && !names.includes(name)) names.push(name)
   }
   return names
+}
+
+/** The pacing pass (#103) over the days a placement touched: a long unbroken
+    work run earns one unprotected micro-rest in a free seam, or an offer when
+    the run is wall to wall. Shared by execPlan and execSplit (#73), so part 2
+    of a split paces rest exactly as a planned block does. */
+function paceRest(
+  blocks: Block[],
+  days: Iterable<string>,
+  todayKey: string
+): { blocks: Block[]; notes: string[] } {
+  const notes: string[] = []
+  for (const key of days) {
+    const r = restInsertion(blocks, key) // #22: the pacing pass keeps the classic day
+    if (!r) continue
+    const when = key === todayKey ? 'today' : fmtDowLong(key)
+    if (r.kind === 'place') {
+      const rest = week.place(blocks, {
+        title: 'Breather',
+        tag: 'rest',
+        dayKey: key,
+        startMin: r.startMin,
+        endMin: r.endMin,
+        protected: false,
+      })
+      if (rest) {
+        blocks = [...blocks, rest]
+        notes.push(
+          `tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`
+        )
+      }
+    } else {
+      notes.push(
+        `${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`
+      )
+    }
+  }
+  return { blocks, notes }
 }
 
 function joinHuman(parts: string[]): string {

@@ -424,17 +424,16 @@ describe('an inbound meeting lands on planned work (#286)', () => {
     expect(chat().filter((m) => m.body.startsWith('heads up — '))).toHaveLength(1)
   })
 
-  it("execEdit's miss copy is the contract runSplit's stray-tail guard reads — pinned at the producer", async () => {
+  it('a split ask naming no real block stops at the lookup — no stray tail (#73: one split executor)', async () => {
     await fresh([block({ id: 'deck' })])
-    /* the real floor, the real executor: a split ask naming no real block must
-       stop at the shrink — runSplit's guard reads execEdit's miss prefix
-       ("I couldn't find"), so this pins the copy where it is PRODUCED. If the
-       wording ever changes, update rules.ts runSplit in the same commit. */
+    /* the real floor, the real executor: since #73 the rescue split runs the one
+       split executor, which places part 2 only after the block it splits was
+       found and shortened — a miss answers plainly and nothing else lands. */
     await useMew.getState().speak('split the flurble around 13:00-13:45, keep 45m after')
     const reply = chat()
       .filter((m) => m.role === 'mew')
       .at(-1)!
-    expect(reply.body.startsWith(`I couldn't find "flurble" to change`)).toBe(true)
+    expect(reply.body.startsWith(`I couldn't find "flurble" to split`)).toBe(true)
     /* and no stray tail was placed — a failed shrink must never double time */
     expect(blocks().some((b) => b.title.includes('(part 2)'))).toBe(false)
   })

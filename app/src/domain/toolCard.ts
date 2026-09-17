@@ -112,6 +112,7 @@ const BASE_VERB: Record<string, string> = {
   duplicate: 'duplicating it',
   merge: 'merging them',
   relativeMove: 'nudging it',
+  split: 'splitting it',
 }
 
 /* One formatter per tool — variation as data: a new tool is a new row here,
@@ -179,6 +180,7 @@ const FORMATTERS: Record<string, (a: Record<string, unknown>) => ToolCardLabel> 
     return { verb: BASE_VERB.duplicate, target: what ? (to ? `${what} → ${to}` : what) : undefined }
   },
   relativeMove: (a) => ({ verb: BASE_VERB.relativeMove, target: namedTarget(a.query) }),
+  split: (a) => ({ verb: BASE_VERB.split, target: namedTarget(a.query) }),
   merge: (a) => {
     const what = namedTarget(a.query)
     const day = dayWord(a.dayOffset, a.todayKey)

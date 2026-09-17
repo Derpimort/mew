@@ -4,6 +4,7 @@
 
 import type { ScheduleIntent, Tag } from './types'
 import { weekdayOffset } from './time'
+import { parseClockRange } from './split'
 
 const PARTS: Record<string, { start: number; end: number }> = {
   morning: { start: 9 * 60, end: 12 * 60 },
@@ -565,13 +566,69 @@ export function extractSeriesScope(text: string): {
   return { text }
 }
 
+/** The typed split ask (#73). The target's own time ("the 12:00 deck", "deck
+    at 12:00") pins which of several same-named blocks; the around side is a
+    clock range or another block, whose time pins which ("the 1pm call"). A
+    trailing day phrase (today, tomorrow, on <weekday>) pins the day. The
+    rescue chip's exact ask ("…, keep 45m after") rides ahead of this grammar
+    in the rules floor (rescue.ts parseSplitAsk) and never reaches here. */
+const SPLIT_DAY =
+  /\s+(?:on\s+)?(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)$/i
+
+function parseSplit(text: string, now: Date): ScheduleIntent | null {
+  const m = text.match(/^split\s+(.+?)\s+around\s+(.+?)\.?$/i)
+  if (!m) return null
+  let around = m[2].trim()
+  let dayOffset: number | undefined
+  const dayM = around.match(SPLIT_DAY)
+  if (dayM && dayM.index != null) {
+    const d = parseDayOffset(dayM[1], now)
+    if (d) {
+      dayOffset = d.offset
+      around = around.slice(0, dayM.index).trim()
+    }
+  }
+  /* a split chip re-asking a rescue split carries its length: ", keep 45m after" */
+  let tailMin: number | undefined
+  const keepM = around.match(/\s*,\s*keep\s+(\d+)\s*m(?:in(?:ute)?s?)?\s+after$/i)
+  if (keepM && keepM.index != null) {
+    tailMin = Number(keepM[1])
+    around = around.slice(0, keepM.index).trim()
+  }
+  const refQ = referentQuery(m[1])
+  const target = extractTargetAt(m[1])
+  const query = refQ ?? cleanTitle(stripTimeWords(target.rest))
+  if (!query || !around) return null
+  const base = {
+    kind: 'split' as const,
+    query,
+    ...(!refQ && target.at ? { at: target.at } : {}),
+  }
+  const day = {
+    ...(dayOffset != null ? { dayOffset } : {}),
+    ...(tailMin != null && tailMin > 0 ? { tailMin } : {}),
+  }
+  const range = parseClockRange(around)
+  if (range) {
+    return { ...base, split: { gapStartMin: range.startMin, gapEndMin: range.endMin, ...day } }
+  }
+  const other = extractTargetAt(around)
+  const aroundQuery = cleanTitle(stripTimeWords(other.rest))
+  if (!aroundQuery) return null
+  return {
+    ...base,
+    split: { aroundQuery, ...(other.at ? { aroundAt: other.at } : {}), ...day },
+  }
+}
+
 export function parseCommand(text: string, now: Date): ScheduleIntent {
   /* #343: lift any recurring-edit scope word off the top so it can't pollute the
      grammar below, then attach it to an edit/remove result — the ONLY kinds a
      scope reaches (a scope word on anything else is ignored, harmlessly). */
   const { scope, text: scoped } = extractSeriesScope(text)
   const cmd = parseCommandInner(scoped, now)
-  return scope && (cmd.kind === 'edit' || cmd.kind === 'remove' || cmd.kind === 'resize')
+  return scope &&
+    (cmd.kind === 'edit' || cmd.kind === 'remove' || cmd.kind === 'resize' || cmd.kind === 'split')
     ? { ...cmd, seriesScope: scope }
     : cmd
 }
@@ -819,6 +876,10 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     }
   }
 
+  /* split (#73): "split the deck around the 1pm call" · "split the deck around
+     13:00-13:45" · "split the 12:00 deck around 1-1:45pm on friday". */
+  const splitAsk = parseSplit(trimmed, now)
+  if (splitAsk) return splitAsk
   /* merge (#74): "merge my two deck blocks" · "join the writing blocks tomorrow" ·
      "combine both gym blocks on thursday" · "merge the deck at 9:00 with the next
      one". "merge" always means this; "join"/"combine" only with a merge word
