@@ -42,6 +42,21 @@ export interface Block {
       transparent to slot search — a different axis from optional, which
       holds no time at all. */
   attention?: 'focus' | 'background'
+  /** An all-day calendar entry — a holiday, OOO, a birthday (#27). A THIRD axis
+      beside optional (holds no time) and attention (holds the clock, not you):
+      all-day holds neither — it is a label on the day, never a claim on time.
+      Transparent to slot search, conflicts, load, live-now, rescue, nudges and
+      insights through the one predicate week.isAllDay. It only ever arrives by
+      calendar pull, and MEW never pushes one out. Stored with startMin =
+      endMin = 0, so a reader that forgets the predicate meets a zero-length
+      span that overlaps nothing. `false` is written only when a pull finds a
+      load-healed block is really timed, so the heal never re-applies to it
+      (undefined ⇒ never classified). */
+  allDay?: boolean
+  /** The inclusive LAST day of a multi-day all-day span: a Mon–Wed OOO is
+      dayKey Mon + endDayKey Wed, one block. Absent ⇒ the entry covers dayKey
+      alone. */
+  endDayKey?: string
   /** Optional hard deadline (minutes from midnight), independent of endMin.
       With duration it yields latest-start math for the start-by nudge. */
   due?: number

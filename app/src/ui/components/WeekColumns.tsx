@@ -15,7 +15,7 @@ import {
   weekKeys,
   addDaysKey,
 } from '../../domain/time'
-import { blocksForDay, duration } from '../../domain/week'
+import { blocksForDay, duration, isAllDay } from '../../domain/week'
 import { aggregates } from '../../domain/memory'
 import {
   dayLoadAria,
@@ -43,7 +43,10 @@ const PREVIEW_H = 92
 const MC = { size: 52, cx: 26, cy: 26, r: 19, band: 5 }
 
 export function WeekColumns() {
-  const blocks = useMew((s) => s.blocks)
+  const allBlocks = useMew((s) => s.blocks)
+  /* all-day entries are day labels, not time (#27): kept off the timed grid —
+     lanes, render, totals, focus order — until the all-day lane draws them */
+  const blocks = useMemo(() => allBlocks.filter((b) => !isAllDay(b)), [allBlocks])
   const memory = useMew((s) => s.memory)
   const noteReferent = useMew((s) => s.noteReferent)
   const nowMs = useMew((s) => s.nowMs)

@@ -179,7 +179,13 @@ import { choicesActive, scenariosActive } from '../domain/choices'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
-import { adoptOrphanedExternals, mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
+import {
+  adoptOrphanedExternals,
+  healAllDayBlocks,
+  mergePull,
+  runSync,
+  syncWindow,
+} from '../adapters/calendar/sync'
 import { icsToRemoteEvents } from '../adapters/calendar/ics'
 import type { RemoteCalendar } from '../adapters/calendar/types'
 import { ReauthRequiredError } from '../adapters/calendar/types'
@@ -560,7 +566,9 @@ export interface MewState {
       does, then the same rescue-offer pass runs — with no network and no
       OAuth. Each call is one complete simulated listing for its calendar
       (an event absent from a later call reads as deleted, same as a real
-      pull). RC verification is one paste: window.__mewSimulatePull. */
+      pull). RC verification is one paste: window.__mewSimulatePull. An
+      all-day entry (#27) rides the same seam: `allDay: true` (+ an inclusive
+      `endDayKey` for a multi-day span); its clock span is ignored. */
   simulatePull(
     events: {
       eventId: string
@@ -570,6 +578,8 @@ export interface MewState {
       dayKey?: string
       calId?: string
       optional?: boolean
+      allDay?: boolean
+      endDayKey?: string
     }[]
   ): void
 
@@ -4528,9 +4538,13 @@ export const useMew = create<MewState>((set, get) => {
         if (lastFired['weekly-ritual']?.key === bootWeek && !ritualDelivered) {
           delete lastFired['weekly-ritual']
         }
+        /* heal the 0:00–23:59 blocks a pre-#27 pull minted from all-day events
+           back into all-day labels — FIRST, so a healed label the orphan sweep
+           then adopts as native is still never pushed */
+        const healed = healAllDayBlocks(loaded.blocks)
         /* heal blocks whose source calendar is gone (restored backup, cleared
            connections): adopt them as MEW's own so sync can place them again */
-        const swept = adoptOrphanedExternals(loaded.blocks, settings.calendars)
+        const swept = adoptOrphanedExternals(healed.blocks, settings.calendars)
         /* the scaffold key (#299) heals by the same chat-as-truth rule: today's
            key with NO meal-class block on today AND no scaffold line in today's
            chat means the pass never landed — drop the key so it re-runs (the
@@ -4563,7 +4577,7 @@ export const useMew = create<MewState>((set, get) => {
           hydrated: true,
           nowMs: nowFn(),
         })
-        if (swept.adopted) persistBlocks(swept.blocks)
+        if (swept.adopted || healed.healed) persistBlocks(swept.blocks)
         if (cards.flipped.length) persistChat(cards.flipped)
       }
       /* the persisted binding registers on every desktop boot — and again
@@ -6395,13 +6409,16 @@ export const useMew = create<MewState>((set, get) => {
       if (removedIds.length) storage.deleteBlocks(removedIds).catch(() => {})
 
       const optionalCount = events.filter((e) => e.optional).length
+      /* all-day entries arrive as day labels now (#27) — only monthly/yearly
+         rules still stay out */
+      const allDayCount = events.filter((e) => e.allDay).length
       const skipped =
-        result.skippedAllDay + result.skippedRules > 0
-          ? ` (skipped ${result.skippedAllDay} all-day and ${result.skippedRules} monthly/yearly-recurring — they don't sit on the day grid)`
+        result.skippedRules > 0
+          ? ` (skipped ${result.skippedRules} monthly/yearly-recurring — they don't sit on the day grid)`
           : ''
       post([
         mewMsg(
-          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
+          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${allDayCount ? `, ${allDayCount} all-day (a label on the day — no time held)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
         ),
       ])
     },
@@ -6860,7 +6877,8 @@ declare global {
         through the REAL pull + rescue path (mergePull diff → rescue chips) —
         no OAuth, no network. dayKey defaults to today; calId to 'demo@sim'.
         One paste verifies the rescue loop end-to-end:
-        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }]) */
+        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }])
+        An all-day entry (#27): { eventId:'h1', title:'Civic Holiday', startMin:0, endMin:0, allDay:true } */
     __mewSimulatePull?: (
       events: {
         eventId: string
@@ -6870,6 +6888,8 @@ declare global {
         dayKey?: string
         calId?: string
         optional?: boolean
+        allDay?: boolean
+        endDayKey?: string
       }[]
     ) => void
     /** Dev/scenario helper (#346): open the weekly-review surface directly, the

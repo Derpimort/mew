@@ -9,7 +9,7 @@
 import type { Block, PrefPayload, Tag } from '../types'
 import type { Insights } from '../insights'
 import { addDaysKey, spell } from '../time'
-import { blocksForDay, isFixedTime } from '../week'
+import { blocksForDay, isAllDay, isFixedTime } from '../week'
 import { inferTag } from '../parse'
 
 /** One kept invite: the coming week's fixed load + how MEW will plan around
@@ -24,7 +24,7 @@ export function composeWeeklyRitual(
   let fixed = 0
   for (let i = 1; i <= 7; i++) {
     fixed += blocksForDay(blocks, addDaysKey(todayKey, i)).filter(
-      (b) => b.status === 'open' && !b.optional && isFixedTime(b)
+      (b) => b.status === 'open' && !b.optional && !isAllDay(b) && isFixedTime(b)
     ).length
   }
   const shape =
