@@ -2831,6 +2831,15 @@ export const useMew = create<MewState>((set, get) => {
                 b.title.split('—')[0].trim().toLowerCase() === reBase
             )
           : undefined
+      /* #135: a re-plan has ONE length for choosing its slot and for the block
+         that lands there: the length the owner stated this turn, else the block's
+         own. Scoring with one and moving with the other landed it over the next
+         block */
+      const replanLen = existing
+        ? p.durationStated && p.durationMin != null
+          ? p.durationMin
+          : existing.endMin - existing.startMin
+        : undefined
       /* the deterministic floor: with no explicit/ruled time (and not a
          background hold), the scoring oracle (#80) picks the slot —
          conflict-free by construction and rest-aware — so even a model that
@@ -2853,7 +2862,7 @@ export const useMew = create<MewState>((set, get) => {
         const q: SlotQuery = {
           title: p.title,
           tag,
-          durationMin: prefd.durationMin ?? 60,
+          durationMin: replanLen ?? prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
           /* #328: a confirmed window is FIRM here — the scorer collapses
              off-window, so "deck → mornings" lands in the morning. No confirmed
@@ -2887,9 +2896,7 @@ export const useMew = create<MewState>((set, get) => {
          domain, so keyed and keyless behave identically. */
       if (start != null && !bg && p.startMin != null && mealClassOf(p.title)) {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
-        const durationMin = existing
-          ? existing.endMin - existing.startMin
-          : (prefd.durationMin ?? 60)
+        const durationMin = replanLen ?? prefd.durationMin ?? 60
         const fix = correctMeal(
           occupied,
           key,
@@ -2909,20 +2916,13 @@ export const useMew = create<MewState>((set, get) => {
         const landStart = start ?? existing.startMin
         /* #49: a granted overlap never lands on a fixed or calendar block */
         const grant = p.allowOverlap
-          ? grantedOverlap(
-              blocks,
-              key,
-              landStart,
-              landStart + (existing.endMin - existing.startMin),
-              existing.id,
-              prefs
-            )
+          ? grantedOverlap(blocks, key, landStart, landStart + replanLen!, existing.id, prefs)
           : null
         if (grant?.refuse.length) {
           lines.push(overlapRefusal(p.title, landStart, grant.refuse))
           continue
         }
-        blocks = week.move(blocks, existing.id, key, landStart)
+        blocks = week.move(blocks, existing.id, key, landStart, replanLen)
         const moved = blocks.find((b) => b.id === existing.id)!
         targetedIds.push(moved.id) // #320
         if (week.isDeep(moved)) placedDeep = moved

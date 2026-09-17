@@ -69,6 +69,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   that length when you pick a plan from the picker. MEW only offers to give room to the blocks you
   didn't size yourself, and a plan it re-offers after the week moved keeps the lengths it already
   showed you.
+- Asking again for a block you already have ("block 30 min for a walk") moves it at the length you
+  said, into a slot that fits that length, so it never lands over the next block. Without a length it
+  keeps its own.
 
 ### The room offer says what it would change
 - When MEW offers to give your work more room, it now names the blocks it would resize ("(inbox
