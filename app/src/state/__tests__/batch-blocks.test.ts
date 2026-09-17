@@ -5,7 +5,10 @@
    blocks, one undo reverses them all; calendar, fixed, done and repeating blocks
    never move; a narrow batch acts directly; a collision speaks the existing
    clash wording; a confirm picked after midnight re-checks (#94): one naming
-   "today" changes nothing, one naming a weekday still acts. */
+   "today" changes nothing, one naming a weekday still acts. The review pins: a
+   yes carries its list token, so taps between the offer and the yes, or a
+   selector the other floor reads differently, offer again; every yes a keyed
+   offer posts is one the keyless floor applies. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, MemoryEvent, Settings } from '../../domain/types'
@@ -213,6 +216,8 @@ const lastMew = () =>
     .at(-1)!.body
 
 const chipMsgs = () => chat().filter((m) => (m.choices?.length ?? 0) > 0)
+/** the list token a batch yes carries after its "·" */
+const tokenOf = (reply: string) => reply.match(/· ([a-z0-9]+)$/)![1]
 const pick = async (label: string) => {
   const msg = chipMsgs().at(-1)!
   const choice = msg.choices!.find((c) => c.label === label)!
@@ -249,10 +254,11 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     expect(offer.body).toBe(
       'move 3 blocks 60 min later? Deck 15:00→16:00 · Email 17:00→18:00 · Notes 18:00→19:00. Client call 15:30 (fixed) and Quarterly planning 20:00 (from your calendar) stay where they are.'
     )
-    expect(offer.choices!.map((c) => [c.label, c.reply])).toEqual([
-      ['do it', 'push everything after 15:00 today later by 60 min — yes, all 3'],
-      ['not now', 'ok, leave them as they are'],
-    ])
+    expect(offer.choices!.map((c) => c.label)).toEqual(['do it', 'not now'])
+    expect(offer.choices![0].reply).toMatch(
+      /^push everything after 15:00 today later by 60 min — yes, all 3 · [a-z0-9]+$/
+    )
+    expect(offer.choices![1].reply).toBe('ok, leave them as they are')
   })
 
   it('the pick moves exactly the listed blocks; the fixed call and the calendar event stay put', async () => {
@@ -279,21 +285,26 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     expect(snapshot()).toBe(before)
   })
 
-  it('keyed: the offer, then the yes with its count, then one undo brings every block back', async () => {
+  it('keyed: the offer, then the yes with its count and token, then one undo brings every block back', async () => {
     await fresh(afternoon(), [], 'local')
     const before = snapshot()
     let offered = ''
+    let countOnly = ''
     let moved = ''
     let undone = ''
     scriptedModel.chunks = ['on it — ', 'and back.']
     scriptedModel.midTurn = (exec) => {
       offered = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 })
-      moved = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 }, 3)
+      const token = tokenOf(chipMsgs().at(-1)!.choices![0].reply)
+      countOnly = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 }, 3)
+      moved = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 }, 3, token)
       undone = exec.undoLast()
     }
     await say('push everything after 3pm back an hour — yes, do it — actually, undo that')
     await settle()
     expect(offered).toMatch(/^The options are on screen as clickable chips/)
+    /* a yes without the list token names no list: offered again, nothing moves */
+    expect(countOnly).toMatch(/^The options are on screen as clickable chips/)
     expect(moved).toMatch(/^Moved 3 blocks 60 min later — /)
     expect(undone).toMatch(/^Undone — /)
     expect(snapshot()).toBe(before)
@@ -305,8 +316,8 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     await say("move all of today's work to tomorrow")
     await settle()
     expect(snapshot()).toBe(before)
-    expect(chipMsgs().at(-1)!.choices![0].reply).toBe(
-      "move all today's work to tomorrow — yes, all 2"
+    expect(chipMsgs().at(-1)!.choices![0].reply).toMatch(
+      /^move all today's work to tomorrow — yes, all 2 · [a-z0-9]+$/
     )
     await pick('do it')
     expect(at('d1')).toEqual(['2026-06-10', 9 * 60, 10 * 60])
@@ -398,8 +409,8 @@ describe('#75 — narrow batches, collisions, and a pick after midnight', () => 
     await fresh(afternoon().map((b) => ({ ...b, dayKey: THU })))
     await say('push everything after 3pm on thursday back an hour')
     await settle()
-    expect(chipMsgs().at(-1)!.choices![0].reply).toBe(
-      'push everything after 15:00 on thursday later by 60 min — yes, all 3'
+    expect(chipMsgs().at(-1)!.choices![0].reply).toMatch(
+      /^push everything after 15:00 on thursday later by 60 min — yes, all 3 · [a-z0-9]+$/
     )
     vi.setSystemTime(new Date(2026, 5, 10, 0, 5))
     useMew.getState().tick()
@@ -410,6 +421,168 @@ describe('#75 — narrow batches, collisions, and a pick after midnight', () => 
     expect(at('call')).toEqual([THU, 15 * 60 + 30, 15 * 60 + 45])
     expect(at('mtg')).toEqual([THU, 20 * 60, 20 * 60 + 30])
     expect(lastMew()).toMatch(/^Moved 3 blocks 60 min later/)
+  })
+})
+
+describe('#75 review — a yes moves exactly the list it answered, on either floor', () => {
+  const WED = '2026-06-10'
+  const FRI = '2026-06-12'
+  /** a keyed model offers the batch, then is unavailable when the owner taps */
+  const offerKeyed = async (
+    sel: Parameters<import('../../adapters/model').ToolExecutor['batch']>[0],
+    op: Parameters<import('../../adapters/model').ToolExecutor['batch']>[1]
+  ) => {
+    scriptedModel.midTurn = (exec) => {
+      exec.batch(sel, op)
+    }
+    await say('line those up for me')
+    await settle()
+    scriptedModel.midTurn = null
+    useMew.setState((st) => ({ settings: { ...st.settings, modelLocation: 'remote' as const } }))
+    return chipMsgs().at(-1)!
+  }
+
+  it('Y1: a drag and an inbox placement between the offer and the yes: offered again with the new list, nothing moves', async () => {
+    await fresh(afternoon())
+    const cap = useMew.getState().capture('file the taxes', { durationMin: 30 })
+    await say('push everything after 3pm back an hour')
+    await settle()
+    const offer = chipMsgs().at(-1)!
+    useMew.getState().dragMove('d3', TODAY, 14 * 60, 30)
+    useMew
+      .getState()
+      .placeFromInbox(cap.item!.id, { dayKey: TODAY, startMin: 16 * 60 + 30, durationMin: 30 })
+    const before = snapshot()
+    await useMew.getState().pickChoice(offer.id, offer.choices![0].id)
+    await settle()
+    expect(snapshot()).toBe(before)
+    expect(chipMsgs().at(-1)!.body).toMatch(
+      /^the week changed since then — move 3 blocks 60 min later\? Deck 15:00→16:00 · file the taxes 16:30→17:30 · Email 17:00→18:00\./
+    )
+  })
+
+  it('Y1: a keyed offer for title words that are also a tag word, tapped on the keyless floor, moves the blocks it listed', async () => {
+    await fresh(
+      [
+        deck('hw', 9 * 60, 10 * 60, { title: 'Homework help', tag: 'private' }),
+        deck('wo', 11 * 60, 12 * 60, { title: 'Workout', tag: 'health' }),
+        deck('dk', 13 * 60, 14 * 60),
+        deck('em', 14 * 60, 15 * 60, { title: 'Email' }),
+      ],
+      [],
+      'local'
+    )
+    const offer = await offerKeyed({ titleQuery: 'work' }, { kind: 'moveToDay', toDayOffset: 1 })
+    expect(offer.body).toBe('move 2 blocks to tomorrow? Homework help 9:00 · Workout 11:00.')
+    expect(offer.choices![0].reply).toMatch(
+      /^move all today's "work" to tomorrow — yes, all 2 · [a-z0-9]+$/
+    )
+    await pick('do it')
+    expect(at('hw')).toEqual([WED, 9 * 60, 10 * 60])
+    expect(at('wo')).toEqual([WED, 11 * 60, 12 * 60])
+    expect(at('dk')).toEqual([TODAY, 13 * 60, 14 * 60])
+    expect(at('em')).toEqual([TODAY, 14 * 60, 15 * 60])
+  })
+
+  it.each([
+    [
+      'a window with a move to another day',
+      { afterMin: 15 * 60 },
+      { kind: 'moveToDay' as const, toDayOffset: 1 },
+      /^move all today's blocks after 15:00 to tomorrow — yes, all 3 · [a-z0-9]+$/,
+      [
+        ['d1', WED, 15 * 60],
+        ['d2', WED, 17 * 60],
+        ['d3', WED, 18 * 60],
+      ],
+    ],
+    [
+      'both edges and title words in a shift',
+      { afterMin: 15 * 60, beforeMin: 18 * 60 + 30, titleQuery: 'e' },
+      { kind: 'shift' as const, deltaMin: -30 },
+      /^push all "e" after 15:00 and before 18:30 today earlier by 30 min — yes, all 3 · [a-z0-9]+$/,
+      [
+        ['d1', TODAY, 14 * 60 + 30],
+        ['d2', TODAY, 16 * 60 + 30],
+        ['d3', TODAY, 17 * 60 + 30],
+      ],
+    ],
+    [
+      'a day past this week',
+      { tag: 'work' as const, afterMin: 15 * 60 },
+      { kind: 'moveToDay' as const, toDayOffset: 8 },
+      /^move all today's work after 15:00 to 2026-06-17 — yes, all 3 · [a-z0-9]+$/,
+      [
+        ['d1', '2026-06-17', 15 * 60],
+        ['d2', '2026-06-17', 17 * 60],
+        ['d3', '2026-06-17', 18 * 60],
+      ],
+    ],
+  ])(
+    'Y3: every yes a keyed offer posts is one the keyless floor applies: %s',
+    async (_, sel, op, reply, moved) => {
+      await fresh(afternoon(), [], 'local')
+      const offer = await offerKeyed(sel, op)
+      expect(offer.choices![0].reply).toMatch(reply)
+      await pick('do it')
+      expect(moved.map(([id]) => [id, ...at(id as string).slice(0, 2)])).toEqual(moved)
+      expect(useMew.getState().captures).toEqual([])
+      expect(lastMew()).toMatch(/^Moved 3 blocks /)
+    }
+  )
+
+  it('Y2: a move names its day plainly, and past this week with its date', async () => {
+    await fresh([deck('d1', 9 * 60, 10 * 60), deck('d2', 11 * 60, 12 * 60, { title: 'Email' })])
+    await say("move all of today's work to friday")
+    await settle()
+    expect(chipMsgs().at(-1)!.body).toBe('move 2 blocks to Friday? Deck 9:00 · Email 11:00.')
+    await pick('do it')
+    expect(lastMew()).toBe('Moved 2 blocks to Friday — Deck 9:00 · Email 11:00.')
+    expect(at('d1')).toEqual([FRI, 9 * 60, 10 * 60])
+
+    await fresh(
+      [deck('d1', 9 * 60, 10 * 60), deck('d2', 11 * 60, 12 * 60, { title: 'Email' })],
+      [],
+      'local'
+    )
+    const offer = await offerKeyed({ tag: 'work' }, { kind: 'moveToDay', toDayOffset: 8 })
+    expect(offer.body).toBe('move 2 blocks to Wednesday, Jun 17? Deck 9:00 · Email 11:00.')
+  })
+
+  it('Y4: "move all hands to friday" moves the All hands block, as before', async () => {
+    await fresh([block({ id: 'ah', title: 'All hands', startMin: 8 * 60, endMin: 9 * 60 })])
+    await say('move all hands to friday')
+    await settle()
+    expect(lastMew()).toBe('Moved — All hands now lives Friday at 8:00.')
+    expect(at('ah')).toEqual([FRI, 8 * 60, 9 * 60])
+  })
+
+  it('a yes whose plan became narrow is offered again, not acted on', async () => {
+    await fresh(afternoon())
+    await say('push everything after 3pm back an hour')
+    await settle()
+    useMew.setState((st) => ({
+      blocks: st.blocks.filter((b) => !['d2', 'd3', 'mtg'].includes(b.id)),
+    }))
+    const before = snapshot()
+    await pick('do it')
+    expect(snapshot()).toBe(before)
+    expect(chipMsgs().at(-1)!.body).toMatch(
+      /^the week changed since then — move 1 block 60 min later\? Deck 15:00→16:00\./
+    )
+  })
+
+  it('G1: the offer names the blocks a move would share time with', async () => {
+    await fresh([
+      deck('d1', 9 * 60, 10 * 60),
+      deck('d2', 11 * 60, 12 * 60, { title: 'Email' }),
+      deck('gym', 9 * 60, 10 * 60, { title: 'Gym', tag: 'health', dayKey: WED }),
+    ])
+    await say("move all of today's work to tomorrow")
+    await settle()
+    expect(chipMsgs().at(-1)!.body).toBe(
+      'move 2 blocks to tomorrow? Deck 9:00 · Email 11:00. Deck 9:00 would share time with Gym 9:00–10:00.'
+    )
   })
 })
 
@@ -428,7 +601,7 @@ describe('#75 — the batch_blocks tool', () => {
     } as unknown as import('../../adapters/model').ToolExecutor
     await runTool(
       'batch_blocks',
-      { afterMin: 900, op: 'shift', deltaMin: 60, confirmCount: 3 },
+      { afterMin: 900, op: 'shift', deltaMin: 60, confirmCount: 3, confirmToken: ' k7f2 ' },
       exec
     )
     await runTool('batch_blocks', { tag: 'work', op: 'move_to_day', toDayOffset: 1 }, exec)
@@ -443,6 +616,7 @@ describe('#75 — the batch_blocks tool', () => {
         },
         { kind: 'shift', deltaMin: 60 },
         3,
+        'k7f2',
       ],
       [
         {
@@ -454,8 +628,16 @@ describe('#75 — the batch_blocks tool', () => {
         },
         { kind: 'moveToDay', toDayOffset: 1 },
         undefined,
+        undefined,
       ],
     ])
     expect(await runTool('batch_blocks', { op: 'shift' }, exec)).toMatch(/^nothing to shift/)
+    const { sanitizeIntent } = await import('../../adapters/model/rules')
+    expect(
+      sanitizeIntent({
+        kind: 'batch',
+        batch: { op: 'shift', deltaMin: 60, confirmCount: 3, confirmToken: 'k7f2' },
+      })
+    ).toMatchObject({ kind: 'batch', batch: { confirmCount: 3, confirmToken: 'k7f2' } })
   })
 })

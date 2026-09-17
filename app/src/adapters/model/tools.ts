@@ -628,7 +628,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'batch_blocks',
     description:
-      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier) or move_to_day (toDayOffset, same clock). Calendar events, fixed-time, done and repeating blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount ONLY when the user just said yes to MEW's batch offer, with the count that offer named; if the week changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
+      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier) or move_to_day (toDayOffset, same clock). Calendar events, fixed-time, done and repeating blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount and confirmToken ONLY when the user just said yes to MEW's batch offer: the yes ends '— yes, all N · TOKEN'; pass N and TOKEN verbatim. If the list changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
     parameters: {
       type: 'object',
       properties: {
@@ -659,6 +659,11 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'integer',
           description:
             "ONLY after the user said yes to MEW's batch offer: the number of blocks that offer named",
+        },
+        confirmToken: {
+          type: 'string',
+          description:
+            "ONLY after the user said yes to MEW's batch offer: the token after the '·' in that yes, verbatim",
         },
       },
       required: ['op'],
@@ -988,15 +993,19 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           typeof o.titleQuery === 'string' && o.titleQuery.trim() ? o.titleQuery.trim() : undefined,
       }
       const confirmCount = optInt(o.confirmCount, 1, 500)
+      const confirmToken =
+        typeof o.confirmToken === 'string' && o.confirmToken.trim()
+          ? o.confirmToken.trim()
+          : undefined
       if (o.op === 'shift') {
         const deltaMin = optInt(o.deltaMin, -720, 720)
         if (!deltaMin) return 'nothing to shift — pass deltaMin (+ later, − earlier)'
-        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount)
+        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount, confirmToken)
       }
       if (o.op === 'move_to_day') {
         const toDayOffset = optInt(o.toDayOffset, 0, 13)
         if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
-        return exec.batch(selector, { kind: 'moveToDay', toDayOffset }, confirmCount)
+        return exec.batch(selector, { kind: 'moveToDay', toDayOffset }, confirmCount, confirmToken)
       }
       return 'nothing to batch — op must be shift or move_to_day'
     }

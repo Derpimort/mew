@@ -304,7 +304,8 @@ export interface ToolExecutor {
       another day) is OFFERED first as a confirm naming every block it moves and
       every one that stays put (calendar events, fixed-time, done and repeating
       blocks never move); nothing changes until the owner says yes, and the yes
-      re-asks with `confirmCount`, the count it named. One undo reverses the lot. */
+      re-asks with `confirmCount` and `confirmToken`, the count and the list token
+      it named. One undo reverses the lot. */
   batch(
     selector: {
       dayOffset?: number
@@ -314,7 +315,8 @@ export interface ToolExecutor {
       titleQuery?: string
     },
     op: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
-    confirmCount?: number
+    confirmCount?: number,
+    confirmToken?: string
   ): string
   /** Move a block relative to where it is now, with no absolute time (#335):
       'earlier'/'later' shift the start by `amountMin` (default 30) on the same

@@ -117,3 +117,21 @@ export function planBatch(
   }
   return { selected, moves, skipped }
 }
+
+/** The list a confirm names, as a short token (#75 review): a hash of exactly
+    which blocks move where, so a yes acts only while its plan still moves that
+    same list. A block dragged in or out of the window, a capture placed into it,
+    or a selector the other floor reads differently changes the token, and MEW
+    offers again instead of moving blocks the offer never showed. */
+export function batchToken(plan: BatchPlan): string {
+  const list = plan.moves
+    .map((m) => `${m.block.id}@${m.dayKey}/${m.startMin}-${m.endMin}`)
+    .sort()
+    .join('|')
+  let h = 0x811c9dc5 // FNV-1a, 32-bit
+  for (let i = 0; i < list.length; i++) {
+    h ^= list.charCodeAt(i)
+    h = Math.imul(h, 0x01000193) >>> 0
+  }
+  return h.toString(36)
+}

@@ -205,6 +205,7 @@ export function chipReplyEffect(
         deltaMin: bt.op === 'shift' ? (bt.deltaMin ?? 0) : null,
         toDayKey: bt.op === 'moveToDay' ? addDaysKey(todayKey, bt.toDayOffset ?? 0) : null,
         confirmCount: bt.confirmCount ?? null,
+        confirmToken: bt.confirmToken ?? null,
       }
     }
     case 'plan':

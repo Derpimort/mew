@@ -593,7 +593,8 @@ export interface ScheduleIntent {
   /** batch (#75): one op over the blocks a selector picks on one day — a shift
       by minutes ("push everything after 3pm back an hour") or a move to another
       day ("move all of today's work to tomorrow"). A wide batch is offered with
-      the exact list first; `confirmCount` is the count the owner said yes to. */
+      the exact list first; `confirmCount` and `confirmToken` are the count and
+      the list token the owner said yes to. */
   batch?: {
     dayOffset?: number
     afterMin?: number
@@ -604,6 +605,7 @@ export interface ScheduleIntent {
     deltaMin?: number
     toDayOffset?: number
     confirmCount?: number
+    confirmToken?: string
   }
   /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
       blocks of this focus class up to how the kind really runs. The union is

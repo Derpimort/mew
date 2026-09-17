@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 import type { Block } from '../types'
-import { planBatch, selectBatch } from '../batch'
+import { batchToken, planBatch, selectBatch } from '../batch'
 import { parseCommand } from '../parse'
 
 const TODAY = '2026-06-09' // a Tuesday
@@ -102,6 +102,41 @@ describe('planBatch — what moves, and what stays put and why', () => {
     expect(plan.skipped).toEqual([{ block: deck, reason: 'lands-on', on: [call] }])
   })
 
+  it('a shift that ends exactly at midnight still fits the day', () => {
+    const late = block({ id: 'late', startMin: 23 * 60, endMin: 23 * 60 + 30 })
+    const plan = planBatch([late], { dayKey: TODAY }, { kind: 'shift', deltaMin: 30 })
+    expect(plan.moves.map((m) => [m.block.id, m.startMin, m.endMin])).toEqual([
+      ['late', 23 * 60 + 30, 24 * 60],
+    ])
+  })
+
+  it('a done fixed block or a background block at the new time is no obstacle', () => {
+    const deck = block({ id: 'deck' })
+    const doneCall = block({
+      id: 'call',
+      title: 'Client call',
+      status: 'done',
+      startMin: 16 * 60,
+      endMin: 16 * 60 + 30,
+    })
+    const music = block({
+      id: 'music',
+      title: 'Focus music',
+      attention: 'background',
+      external: { calId: 'c', eventId: 'm' },
+      startMin: 16 * 60,
+      endMin: 17 * 60,
+    })
+    for (const other of [doneCall, music]) {
+      const plan = planBatch(
+        [deck, other],
+        { dayKey: TODAY, titleQuery: 'deck' },
+        { kind: 'shift', deltaMin: 60 }
+      )
+      expect(plan.moves.map((m) => m.block.id)).toEqual(['deck'])
+    }
+  })
+
   it('moving to another day keeps each clock, and checks that day for fixed blocks', () => {
     const a = block({ id: 'a' })
     const b = block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60 })
@@ -119,6 +154,24 @@ describe('planBatch — what moves, and what stays put and why', () => {
     )
     expect(plan.moves.map((m) => [m.block.id, m.dayKey, m.startMin])).toEqual([['a', WED, 15 * 60]])
     expect(plan.skipped).toEqual([{ block: b, reason: 'lands-on', on: [wedCall] }])
+  })
+})
+
+describe('batchToken — the list a confirm names', () => {
+  const a = block({ id: 'a' })
+  const b = block({ id: 'b', startMin: 17 * 60, endMin: 18 * 60 })
+  const shift = (bs: Block[]) => planBatch(bs, { dayKey: TODAY }, { kind: 'shift', deltaMin: 60 })
+
+  it('the same moves give the same token, whatever order the week holds them in', () => {
+    expect(batchToken(shift([a, b]))).toBe(batchToken(shift([b, a])))
+    expect(batchToken(shift([a, b]))).toMatch(/^[a-z0-9]+$/)
+  })
+
+  it('another block in the list, or a block landing elsewhere, gives another token', () => {
+    const c = block({ id: 'c', startMin: 19 * 60, endMin: 20 * 60 })
+    expect(batchToken(shift([a, b, c]))).not.toBe(batchToken(shift([a, b])))
+    const bMoved = { ...b, startMin: 17 * 60 + 5, endMin: 18 * 60 + 5 }
+    expect(batchToken(shift([a, bMoved]))).not.toBe(batchToken(shift([a, b])))
   })
 })
 
@@ -145,6 +198,58 @@ describe('the keyless batch grammar', () => {
       "move all today's work to tomorrow — yes, all 4",
       { dayOffset: 0, tag: 'work', op: 'moveToDay', toDayOffset: 1, confirmCount: 4 },
     ],
+    [
+      'push everything after 9am and before noon on thursday back 30 min',
+      { dayOffset: 2, afterMin: 540, beforeMin: 720, op: 'shift', deltaMin: 30 },
+    ],
+    [
+      'push all work "deck" after 9:00 and before 12:00 on thursday later by 30 min — yes, all 3 · k7f2',
+      {
+        dayOffset: 2,
+        afterMin: 540,
+        beforeMin: 720,
+        tag: 'work',
+        titleQuery: 'deck',
+        op: 'shift',
+        deltaMin: 30,
+        confirmCount: 3,
+        confirmToken: 'k7f2',
+      },
+    ],
+    ['push everything back an hour', { op: 'shift', deltaMin: 60 }],
+    [
+      `move all today's "work" to tomorrow — yes, all 2 · 1x9`,
+      {
+        dayOffset: 0,
+        titleQuery: 'work',
+        op: 'moveToDay',
+        toDayOffset: 1,
+        confirmCount: 2,
+        confirmToken: '1x9',
+      },
+    ],
+    [
+      "move all today's blocks after 15:00 to tomorrow",
+      { dayOffset: 0, afterMin: 900, op: 'moveToDay', toDayOffset: 1 },
+    ],
+    [
+      "move all today's work to 2026-06-17 — yes, all 2 · zz",
+      {
+        dayOffset: 0,
+        tag: 'work',
+        op: 'moveToDay',
+        toDayOffset: 8,
+        confirmCount: 2,
+        confirmToken: 'zz',
+      },
+    ],
+    [
+      'push all health on 2026-06-19 earlier by 15 min',
+      { dayOffset: 10, tag: 'health', op: 'shift', deltaMin: -15 },
+    ],
+    ['move all my blocks to friday', { op: 'moveToDay', toDayOffset: 3 }],
+    ['move all blocks to friday', { op: 'moveToDay', toDayOffset: 3 }],
+    ['move all my work to friday', { tag: 'work', op: 'moveToDay', toDayOffset: 3 }],
   ])('"%s"', (text, batch) => {
     expect(parseCommand(text, NOW)).toEqual({ kind: 'batch', batch })
   })
@@ -153,6 +258,22 @@ describe('the keyless batch grammar', () => {
     expect(parseCommand('push everything after 3 back an hour', NOW)).toEqual({
       kind: 'chat',
       reply: `after 3am or 3pm? say "after 3pm" and I'll line them up.`,
+    })
+  })
+
+  it('a date past two weeks, or one already gone, is no batch day', () => {
+    expect(parseCommand("move all today's work to 2026-06-30", NOW).kind).not.toBe('batch')
+    expect(parseCommand("move all today's work to 2026-06-08", NOW).kind).not.toBe('batch')
+  })
+
+  it('a title that starts with "all" stays a single-block move', () => {
+    expect(parseCommand('move all hands to friday', NOW)).toMatchObject({
+      kind: 'move',
+      query: 'all hands',
+    })
+    expect(parseCommand('push all hands back an hour', NOW)).toMatchObject({
+      kind: 'move',
+      relStartMin: 60,
     })
   })
 

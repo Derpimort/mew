@@ -48,7 +48,7 @@ describe('chipReplyEffect — a batch confirm', () => {
     expect(
       chipReplyEffect(
         week(),
-        'push everything after 15:00 on thursday later by 60 min — yes, all 2',
+        'push everything after 15:00 on thursday later by 60 min — yes, all 2 · k7f2',
         TUE_2350
       )
     ).toEqual({
@@ -59,6 +59,7 @@ describe('chipReplyEffect — a batch confirm', () => {
       deltaMin: 60,
       toDayKey: null,
       confirmCount: 2,
+      confirmToken: 'k7f2',
     })
   })
 
@@ -73,6 +74,7 @@ describe('chipReplyEffect — a batch confirm', () => {
       deltaMin: null,
       toDayKey: THU,
       confirmCount: 1,
+      confirmToken: null,
     })
   })
 

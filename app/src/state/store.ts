@@ -49,7 +49,13 @@ import {
 import { rangeDayKeys, rangeStartLabel, readRange, stripRangePhrase } from '../domain/timeRange'
 import * as week from '../domain/week'
 import { nextPartTitle, splitGeometry, SPLIT_MIN_PIECE } from '../domain/split'
-import { planBatch, type BatchOp, type BatchSelector, type BatchSkip } from '../domain/batch'
+import {
+  batchToken,
+  planBatch,
+  type BatchOp,
+  type BatchSelector,
+  type BatchSkip,
+} from '../domain/batch'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
 import {
   describeRrule,
@@ -3754,9 +3760,10 @@ export const useMew = create<MewState>((set, get) => {
       pure (domain/batch.ts): what moves where, what stays put and why. A narrow
       batch (1–2 blocks, same day) acts directly like today's single ops; a wide
       one (3+ blocks, or any move to another day) is OFFERED first as a confirm
-      naming every move and every block that stays put, and nothing changes until
-      the owner says yes. The yes re-asks with the count it named: if the week
-      changed and the plan no longer moves exactly that many, MEW offers again.
+      naming every move, every block that stays put and every block a move would
+      share time with, and nothing changes until the owner says yes. The yes
+      re-asks in the keyless batch grammar with the count and the list token it
+      named: if the plan no longer moves exactly that list, MEW offers again.
       One setBlocks under the wrapper's snapshot, so one undo reverses the lot;
       a collision the batch leaves speaks in the existing clash wording. */
   function execBatch(
@@ -3768,14 +3775,16 @@ export const useMew = create<MewState>((set, get) => {
       titleQuery?: string
     },
     opIn: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
-    confirmCount?: number
+    confirmCount?: number,
+    confirmToken?: string
   ): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const sel: BatchSelector = {
       dayKey: addDaysKey(todayKey, selIn.dayOffset ?? 0),
-      afterMin: selIn.afterMin,
-      beforeMin: selIn.beforeMin,
+      /* an edge at the day's own ends picks every block anyway */
+      afterMin: selIn.afterMin != null && selIn.afterMin > 0 ? selIn.afterMin : undefined,
+      beforeMin: selIn.beforeMin != null && selIn.beforeMin < 24 * 60 ? selIn.beforeMin : undefined,
       tag: selIn.tag,
       titleQuery: selIn.titleQuery?.trim() || undefined,
     }
@@ -3783,11 +3792,20 @@ export const useMew = create<MewState>((set, get) => {
       opIn.kind === 'shift'
         ? { kind: 'shift', deltaMin: opIn.deltaMin }
         : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
-    /* "today" / "tomorrow" / "on Thursday" for replies; "today" / "tomorrow" /
-       "thursday" for the words a confirm re-asks in */
-    const onDay = (k: string) =>
-      k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : `on ${fmtDowLong(k)}`
-    const word = (k: string) => dayWord(k, todayKey)
+    /* a day as MEW says it: "today", "tomorrow", "Thursday", and past this week
+       the date too ("Wednesday, Jun 17"), since a weekday alone says this week's */
+    const dayName = (k: string) => {
+      const w = dayWord(k, todayKey)
+      return w === 'today' || w === 'tomorrow'
+        ? w
+        : w
+          ? fmtDowLong(k)
+          : `${fmtDowLong(k)}, ${fmtShortDate(k)}`
+    }
+    const onDay = (k: string) => {
+      const d = dayName(k)
+      return d === 'today' || d === 'tomorrow' ? d : `on ${d}`
+    }
     if (op.kind === 'shift' && !op.deltaMin)
       return `nothing to shift — say how far (30 min, an hour).`
     if (op.kind === 'moveToDay' && op.toDayKey === sel.dayKey)
@@ -3806,7 +3824,7 @@ export const useMew = create<MewState>((set, get) => {
     const change =
       op.kind === 'shift'
         ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'}`
-        : `to ${onDay(op.toDayKey)}`
+        : `to ${dayName(op.toDayKey)}`
     const why = (sk: BatchSkip): string =>
       sk.reason === 'calendar'
         ? 'from your calendar'
@@ -3834,48 +3852,60 @@ export const useMew = create<MewState>((set, get) => {
       op.kind === 'shift'
         ? `${baseOf(m.block.title)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
         : `${baseOf(m.block.title)} ${fmtTime(m.startMin)}`
+    const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
+    const next = s.blocks.map((b) => {
+      const m = byId.get(b.id)
+      return m ? { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin } : b
+    })
+    /* the blocks that stay put which each move would share time with */
+    const sharing = plan.moves.map((m) => ({
+      m,
+      with: week
+        .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
+        .filter((c) => !byId.has(c.id)),
+    }))
     /* wide by what the ask SELECTED, not by what can move: "push everything after
        7pm" over four blocks, two of which stay put, is shown first, list and all */
     const wide = plan.selected.length >= 3 || op.kind === 'moveToDay'
-    /* a yes names a list: if the plan no longer moves exactly that many, offer
-       again, even when the smaller set would be narrow enough to act directly */
-    if ((wide || confirmCount != null) && confirmCount !== n) {
-      /* the words a yes re-asks in: the keyless batch grammar when the selector
-         fits it (so the floor applies it exactly), plain words otherwise (a keyed
-         model reads them and calls again with confirmCount) */
-      const yes = ` — yes, all ${n}`
-      const fromWord = word(sel.dayKey)
-      const toWord = op.kind === 'moveToDay' ? word(op.toDayKey) : null
+    const token = batchToken(plan)
+    /* a yes names a list: it acts only while the plan still moves exactly that
+       list (its count and its token), else MEW offers again, even when the plan
+       left would be narrow enough to act directly */
+    if ((wide || confirmCount != null) && (confirmCount !== n || confirmToken !== token)) {
+      /* the words a yes re-asks in: always the keyless batch grammar, for every
+         selector a batch holds, so a yes means the same list on either floor */
+      const dayRef = (k: string) => dayWord(k, todayKey) ?? k
+      const edges = [
+        sel.afterMin != null ? `after ${fmtTime(sel.afterMin)}` : '',
+        sel.beforeMin != null ? `before ${fmtTime(sel.beforeMin)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' and ')
+      const words = sel.titleQuery ? `"${sel.titleQuery.replace(/"/g, '')}"` : ''
+      const yes = ` — yes, all ${n} · ${token}`
       let reply: string
-      if (
-        op.kind === 'shift' &&
-        !sel.titleQuery &&
-        (sel.afterMin != null) !== (sel.beforeMin != null) &&
-        fromWord
-      ) {
-        const who = sel.tag ? `all ${sel.tag}` : 'everything'
-        const edge =
-          sel.afterMin != null
-            ? `after ${fmtTime(sel.afterMin)}`
-            : `before ${fmtTime(sel.beforeMin!)}`
-        const dayPart =
-          fromWord === 'today' || fromWord === 'tomorrow' ? fromWord : `on ${fromWord}`
-        reply = `push ${who} ${edge} ${dayPart} ${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min${yes}`
-      } else if (
-        op.kind === 'moveToDay' &&
-        sel.afterMin == null &&
-        sel.beforeMin == null &&
-        fromWord &&
-        toWord
-      ) {
-        const who = sel.titleQuery ? `${sel.titleQuery} blocks` : sel.tag ? sel.tag : 'blocks'
-        reply = `move all ${fromWord}'s ${who} to ${toWord}${yes}`
+      if (op.kind === 'shift') {
+        const who =
+          sel.tag || words ? ['all', sel.tag, words].filter(Boolean).join(' ') : 'everything'
+        const d = dayRef(sel.dayKey)
+        const dayPart = d === 'today' || d === 'tomorrow' ? d : `on ${d}`
+        const by = `${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min`
+        reply = [`push ${who}`, edges, dayPart, by].filter(Boolean).join(' ') + yes
       } else {
-        reply = `yes — move those ${n} blocks ${change}`
+        const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
+        const from = `move all ${dayRef(sel.dayKey)}'s ${who}`
+        reply = [from, edges, `to ${dayRef(op.toDayKey)}`].filter(Boolean).join(' ') + yes
       }
+      const shares = sharing
+        .filter((x) => x.with.length)
+        .map(
+          (x) =>
+            `${baseOf(x.m.block.title)} ${fmtTime(x.m.startMin)} would share time with ${andList(x.with.map((c) => `${baseOf(c.title)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`))}`
+        )
+      const sharesLine = shares.length ? ` ${shares.join(' · ')}.` : ''
       const changed = confirmCount != null ? 'the week changed since then — ' : ''
       return execOfferChoices(
-        `${changed}move ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}`,
+        `${changed}move ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
         [
           { label: 'do it', reply },
           { label: 'not now', reply: 'ok, leave them as they are' },
@@ -3883,25 +3913,10 @@ export const useMew = create<MewState>((set, get) => {
       )
     }
 
-    const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
-    const next = s.blocks.map((b) => {
-      const m = byId.get(b.id)
-      return m ? { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin } : b
-    })
     setBlocks(next)
     /* a collision the batch leaves with a block that stayed put speaks in the
        existing clash wording (#324), never a second vocabulary */
-    const clash = [
-      ...new Map(
-        plan.moves
-          .flatMap((m) =>
-            week
-              .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
-              .filter((c) => !byId.has(c.id))
-          )
-          .map((c) => [c.id, c])
-      ).values(),
-    ]
+    const clash = [...new Map(sharing.flatMap((x) => x.with).map((c) => [c.id, c])).values()]
     return `Moved ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
   }
 
@@ -5854,13 +5869,13 @@ export const useMew = create<MewState>((set, get) => {
             () => execDuplicate(q, opts, at)
           )
         },
-        batch: (selector, op, confirmCount) => {
+        batch: (selector, op, confirmCount, confirmToken) => {
           acted = true
           snapshotForUndo()
           working('moving them…')
           closeStreamRow()
           return runToolWithCard('batch', { query: selector.titleQuery ?? selector.tag }, () =>
-            execBatch(selector, op, confirmCount)
+            execBatch(selector, op, confirmCount, confirmToken)
           )
         },
         merge: (q, dayOffset, at) => {

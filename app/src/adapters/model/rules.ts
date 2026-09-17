@@ -198,7 +198,8 @@ export function runIntent(
             titleQuery: bt.titleQuery,
           },
           op,
-          bt.confirmCount
+          bt.confirmCount,
+          bt.confirmToken
         )
       )
     }
@@ -480,6 +481,8 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         op: bt.op,
         deltaMin: optInt(bt.deltaMin, -720, 720),
         toDayOffset: optInt(bt.toDayOffset, 0, 13),
+        confirmCount: optInt(bt.confirmCount, 1, 500),
+        confirmToken: typeof bt.confirmToken === 'string' ? bt.confirmToken : undefined,
       },
     }
   }
