@@ -3790,7 +3790,16 @@ export const useMew = create<MewState>((set, get) => {
         case 'series':
           return `${list(run.parts)} repeats — I keep a repeating block whole, so everything stays as it is.`
         case 'titles': {
-          const names = [...new Set(run.parts.map((b) => baseOf(b.title)))]
+          /* one name per block: a split's pieces are one block, named without
+             their "(part N)" (#121 review) */
+          const names = [
+            ...new Map(
+              run.parts.map((b) => [
+                week.mergeName(b),
+                baseOf(b.title).replace(/\s+\(part \d+\)$/i, ''),
+              ])
+            ).values(),
+          ]
           return `${andList(names)} are different blocks — name the one whose parts you want joined, and I'll merge them. Everything stays as it is for now.`
         }
         case 'tags': {

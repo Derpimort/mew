@@ -100,6 +100,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
   Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
   and MEW names both, so a merged block never loses one of its names.
+- A block you split merges back: "merge my two deck polish blocks" joins Deck polish and Deck
+  polish (part 2) into one Deck polish again. While the meeting you split around still sits between
+  them, MEW names it and both pieces stay.
 
 ### Change several blocks at once, with a yes first
 - Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
