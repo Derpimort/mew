@@ -9,7 +9,7 @@
 
 import type { Block } from './types'
 import { fmtTime } from './time'
-import { blocksForDay, duration, isFixedTime } from './week'
+import { blocksForDay, duration, isAllDay, isFixedTime } from './week'
 
 export interface DayShape {
   /** Longest run of non-rest blocks with <15 min of air between them. */
@@ -24,7 +24,7 @@ export interface DayShape {
 
 export function dayShape(blocks: Block[], dayKey: string, fromMin = 0): DayShape {
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => !b.optional && b.status !== 'rolled' && b.endMin > fromMin
+    (b) => !b.optional && !isAllDay(b) && b.status !== 'rolled' && b.endMin > fromMin
   )
   const lines: string[] = []
   const gaps: DayShape['gaps'] = []

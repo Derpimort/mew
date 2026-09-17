@@ -2,7 +2,7 @@
    and every mutation from (blocks, clock); never stored, so never stale. */
 
 import type { Block } from './types'
-import { blocksForDay, dayClear, isBackground } from './week'
+import { blocksForDay, dayClear, isAllDay, isBackground } from './week'
 import { fmtTime } from './time'
 
 export interface LiveNow {
@@ -29,7 +29,9 @@ function headlineFor(b: Block): string {
 }
 
 export function liveNow(blocks: Block[], todayKey: string, nowMin: number): LiveNow {
-  const day = blocksForDay(blocks, todayKey)
+  /* an all-day entry labels the day; it is never the center, never next, never
+     a task to count — "Finish Civic Holiday. 573:04" must not return (#27) */
+  const day = blocksForDay(blocks, todayKey).filter((b) => !isAllDay(b))
   // optional events aren't commitments: they never drive the headline, and an
   // open optional doesn't count against the day (a completed one is still a mew)
   const tasks = day.filter((b) => b.tag !== 'rest' && (!b.optional || b.status === 'done'))

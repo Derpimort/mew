@@ -8,7 +8,7 @@ export interface RemoteCalendar {
   readOnly: boolean
 }
 
-/** A timed event as seen on the remote calendar (all-day events are skipped). */
+/** An event as seen on the remote calendar — timed, or all-day (#27). */
 export interface RemoteEvent {
   eventId: string
   calId: string
@@ -20,6 +20,11 @@ export interface RemoteEvent {
   mewBlockId?: string
   /** Tentative / shows-as-free: lands as a non-blocking tint, not a hard block. */
   optional?: boolean
+  /** A date-only event, or an exact local midnight→midnight span: a label on
+      the day, not a claim on time. Carries startMin = endMin = 0. */
+  allDay?: boolean
+  /** Inclusive last day of a multi-day all-day span; absent for a single day. */
+  endDayKey?: string
 }
 
 export interface PushEventBody {

@@ -46,7 +46,7 @@ describe('ICS parsing — the shapes real Google exports use', () => {
     expect(out.events[0].startMin).toBe(expected.getHours() * 60 + expected.getMinutes())
   })
 
-  it('skips all-day events and monthly/yearly rules, counting them honestly', () => {
+  it('lands all-day events as day labels (#27); monthly/yearly rules stay skipped and counted', () => {
     const text = ics(
       [
         'BEGIN:VEVENT',
@@ -65,8 +65,17 @@ describe('ICS parsing — the shapes real Google exports use', () => {
       ].join('\r\n')
     )
     const out = icsToRemoteEvents(text, 'cal', WS, WE)
-    expect(out.events).toHaveLength(0)
-    expect(out.skippedAllDay).toBe(1)
+    expect(out.events).toEqual([
+      {
+        eventId: 'allday@x',
+        calId: 'cal',
+        title: 'Birthday',
+        dayKey: '2026-06-10',
+        startMin: 0,
+        endMin: 0,
+        allDay: true,
+      },
+    ])
     expect(out.skippedRules).toBe(1)
   })
 
