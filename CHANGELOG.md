@@ -68,6 +68,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in
   proofs run green again with no API key, on the same pinned day and shared harness as the
   canon gate. Their screenshots are current, and the Google sign-in proof runs fully offline.
+### Straight talk when a reply drops
+- When the connection to the model drops after a reply has begun, MEW names it for what it is —
+  "the connection to the model hiccuped" — and answers the turn itself. Whatever already streamed
+  stays exactly as it arrived, and nothing is sent twice behind your back.
 
 ## [0.7.0] — 2026-08-12
 
