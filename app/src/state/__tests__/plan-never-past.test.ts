@@ -234,6 +234,8 @@ describe('#116 — a placement MEW times never starts in the past', () => {
       ['tomorrow 10:00', 'block 2h for writing tomorrow at 10:00'],
       ['not now', 'ok, not now'],
     ])
+    /* keyless: the chips ARE the reply, so no line meant for a model is shown */
+    expect(chat().some((m) => /The options are on screen/.test(m.body))).toBe(false)
     await useMew.getState().pickChoice(offer.id, offer.choices![0].id)
     await settle()
     expect(titled('writing').map((b) => [b.dayKey, b.startMin, b.endMin])).toEqual([

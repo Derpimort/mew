@@ -88,29 +88,33 @@ export function runIntent(
            reply. A fall-through line (single shape, nothing fits) speaks. */
         return quietIfChoices(out)
       }
-      return exec.plan(
-        places.map((p) => ({
-          title: p.title,
-          tag: p.tag,
-          dayOffset: p.dayOffset ?? 0,
-          startMin: p.startMin,
-          // #323: the deterministic parser only ever reads a time the user typed
-          // ("dinner at 6") — never a reshape — so an explicit time here is stated
-          startStated: p.startMin != null || undefined,
-          durationMin: p.durationMin,
-          // #322: same logic for length — a parsed duration is always the user's
-          // own words, so it's stated (and stated word wins: never auto-padded)
-          durationStated: p.durationMin != null || undefined,
-          protected: p.protected,
-          attention: p.attention,
-          due: p.due,
-          rrule: p.rrule,
-        })),
-        frees.map((f) => ({
-          dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
-          startMin: f.startMin,
-          endMin: f.endMin,
-        }))
+      /* #116: an ask that no longer fits today posts its tomorrow offer as chips;
+         the floor stays quiet then, the chips ARE the reply */
+      return quietIfChoices(
+        exec.plan(
+          places.map((p) => ({
+            title: p.title,
+            tag: p.tag,
+            dayOffset: p.dayOffset ?? 0,
+            startMin: p.startMin,
+            // #323: the deterministic parser only ever reads a time the user typed
+            // ("dinner at 6") — never a reshape — so an explicit time here is stated
+            startStated: p.startMin != null || undefined,
+            durationMin: p.durationMin,
+            // #322: same logic for length — a parsed duration is always the user's
+            // own words, so it's stated (and stated word wins: never auto-padded)
+            durationStated: p.durationMin != null || undefined,
+            protected: p.protected,
+            attention: p.attention,
+            due: p.due,
+            rrule: p.rrule,
+          })),
+          frees.map((f) => ({
+            dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
+            startMin: f.startMin,
+            endMin: f.endMin,
+          }))
+        )
       )
     }
     case 'complete':
