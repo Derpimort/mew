@@ -2755,3 +2755,233 @@
   outline: var(--focus-ring);
   outline-offset: 2px;
 }
+
+/* ── the dial on any day (#23 slice 2) — the date is the day picker's trigger ──
+   At rest on today the trigger is exactly the date text it wraps (a flex box
+   with no box of its own) and its calendar glyph sits invisible beside it, so
+   today's clock renders as before. The glyph shows with the steps (hover,
+   keyboard focus, off today, or while the picker holds focus) and a quiet pill
+   marks the button. The picker wears the command palette's popover dress at
+   date-picker size: the panel gradient, the ice-tinted hairline, mono type, the
+   palette tabs' "on" treatment for the shown day and gold for today. Scoped
+   under .nx-clock past the shell's `.stl button` reset. Tokens only. */
+.nx-clock .nx-day-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.nx-clock .nx-day-pick::before {
+  content: '';
+  position: absolute;
+  inset: -3px -7px -3px -25px;
+  border: 1px solid var(--ice-bd);
+  border-radius: 7px;
+  background: var(--ice-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.nx-clock .nx-day-pick .dt {
+  position: relative; /* paints over the pill */
+}
+.nx-clock .nx-day-pick:hover::before,
+.nx-clock .nx-day-pick:focus-visible::before,
+.nx-clock .nx-day-pick[aria-expanded='true']::before {
+  opacity: 1;
+}
+.nx-clock .nx-day-pick:focus-visible {
+  outline: none;
+}
+.nx-clock .nx-day-pick:focus-visible::before {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+.nx-clock .nx-day-glyph {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  margin-right: 6px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  color: var(--gold);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.nx-day:hover .nx-day-glyph,
+.nx-day:focus-within .nx-day-glyph,
+.nx-day.away .nx-day-glyph {
+  opacity: 1;
+}
+/* the previous-day step clears the glyph */
+.nx-clock .nx-day-step.prev {
+  margin-right: 25px;
+}
+
+/* the picker drops from the date pill and stands in for the readout below it
+   while it's open (hidden, not removed: nothing moves) */
+.nx-clock.picking .nx-time,
+.nx-clock.picking .nx-day-today {
+  visibility: hidden;
+}
+.nx-clock .dp {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 2;
+  width: 258px;
+  margin-left: -129px;
+  overflow: hidden;
+  pointer-events: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--ice) 24%, var(--line));
+  border-radius: 15px;
+  box-shadow:
+    0 30px 80px -28px rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+  cursor: default;
+  animation: cmdk-rise 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.nx-clock .dp:focus {
+  outline: none; /* the container only holds focus for a press on its text */
+}
+.sys--light .nx-clock .dp {
+  box-shadow: 0 30px 80px -32px rgba(60, 45, 15, 0.42);
+}
+.nx-clock .dp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.nx-clock .dp-month {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.nx-clock .dp .dp-nav {
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.nx-clock .dp .dp-nav:hover {
+  color: var(--ink);
+  background: var(--ice-soft);
+  border-color: var(--ice-bd);
+}
+.nx-clock .dp-grid {
+  width: 100%;
+  padding: 6px 8px 4px;
+  border-collapse: separate;
+  border-spacing: 2px;
+}
+.nx-clock .dp-grid th {
+  padding: 3px 0;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--muted);
+}
+.nx-clock .dp-grid td {
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 11.5px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.nx-clock .dp-grid td.out {
+  color: var(--faint);
+}
+.nx-clock .dp-grid td:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.nx-clock .dp-grid td[aria-current='date'] {
+  color: var(--gold);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.nx-clock .dp-grid td[aria-selected='true'] {
+  color: var(--ice);
+  background: var(--ice-soft);
+  border-color: var(--ice-bd);
+  font-weight: 700;
+}
+.nx-clock .dp-grid td:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+.nx-clock .dp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px 8px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--muted);
+}
+.nx-clock .dp .dp-today {
+  padding: 3px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+.nx-clock .dp .dp-today:hover {
+  color: var(--gold);
+  border-color: var(--ice-bd);
+}
+.nx-clock .dp .dp-nav:focus-visible,
+.nx-clock .dp .dp-today:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
