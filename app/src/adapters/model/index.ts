@@ -18,7 +18,7 @@ export type {
   ChoiceOption,
   ScenarioTaskSpec,
 } from './types'
-export { CHOICES_POSTED } from './types'
+export { CHOICES_POSTED } from './choicesPosted'
 export { classifyFailure, type FailureKind } from './retry'
 export type { RemoteProvider } from './aiAdapter'
 /* The guided-setup key probe (#161) — plain fetch, no SDK, so importing it never
