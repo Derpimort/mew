@@ -3,7 +3,13 @@
    and model settings keep their full behavior, re-skinned. */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { activePrefsFrom, brainIsOn, mewBrain, useMew, type SidecarStatus } from '../../state/store'
+import {
+  brainIsOn,
+  mewBrain,
+  standingRulebook,
+  useMew,
+  type SidecarStatus,
+} from '../../state/store'
 import {
   DEFAULT_SETTINGS,
   type PetId,
@@ -228,12 +234,16 @@ function NoticedFromStore() {
 }
 
 /* store → presenter wiring for the memory console (#330): "what I've picked up
-   about you." Reads LOCAL memory alone (activePrefsFrom over local, brain-off
-   by law) into the pure domain presenter, and passes the tools-only edit/forget
-   actions down. The console skin (MemoryConsole) stays headless-testable. */
+   about you." Reads the rulebook the planners apply (standingRulebook: local
+   memory, merged with the brain's list once a brain answered, with brain-only
+   rules marked, #71; brain off it is local memory alone) into the pure domain
+   presenter, and passes the tools-only edit/forget actions down. The console skin (MemoryConsole) stays headless-testable. */
 function MemoryConsoleFromStore() {
   const memory = useMew((s) => s.memory)
   const nowMs = useMew((s) => s.nowMs)
+  /* #71: the applied rulebook — brain-only rules join (marked) once a brain answers */
+  const settings = useMew((s) => s.settings)
+  const brainPrefs = useMew((s) => s.brainPrefs)
   const confirmTaskRule = useMew((s) => s.confirmTaskRule)
   const forgetRule = useMew((s) => s.forgetRule)
   const reEnableRule = useMew((s) => s.reEnableRule)
@@ -245,11 +255,11 @@ function MemoryConsoleFromStore() {
     const insights = computeInsights(memory, agg, now)
     return memoryConsole({
       events: memory,
-      prefs: activePrefsFrom(memory, null),
+      ...standingRulebook({ memory, settings, brainPrefs }),
       insights,
       energy: energyProfile(memory, agg, now), // #15: the band × task-type rows
     })
-  }, [memory, nowMs])
+  }, [memory, nowMs, settings, brainPrefs])
   return (
     <MemoryConsole
       data={data}
