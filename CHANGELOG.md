@@ -42,6 +42,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
+- The release guard now names a tag exactly as it was given, and when a tag and the config
+  disagree it spells out both ways forward: re-tag from the config, or bump the config (and the
+  MSI version) to the tag. It also runs as its own workflow, so a desktop-only change no longer
+  waits on the app's typecheck, tests and lint.
 
 ### A bundle budget every PR can see
 - The size budgets now run on every PR into `develop` and the release candidate: the quick
