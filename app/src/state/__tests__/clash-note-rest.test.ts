@@ -231,6 +231,39 @@ describe('a clash with a protected rest is named as rest, never "flexible"', () 
     expect(blocks().find((b) => b.id === 'walk')).toMatchObject({ startMin: 1080, endMin: 1125 })
   })
 
+  it("MEW's own pacing breather is not sacred rest: it keeps the flexible note", async () => {
+    /* an unprotected rest (#103's absorbable breather) is the reason
+       isProtectedRest reads `protected`, not just the tag */
+    await fresh([
+      deck(),
+      block({
+        id: 'breather',
+        title: 'Breather',
+        tag: 'rest',
+        startMin: 18 * 60,
+        endMin: 18 * 60 + 15,
+        protected: false,
+        placedBy: 'pacing',
+      }),
+    ])
+    await say('push all work after 5pm back 30 min')
+    await settle()
+    expect(lastMew()).toMatch(/ — note: it overlaps Breather 18:00–18:15 \(flexible\)$/)
+    expect(lastMew()).not.toContain('runs over your')
+  })
+
+  it('a rest the owner said never moves keeps its fixed wording', async () => {
+    /* fixed-time is tested before the rest wording, so a rest with a standing
+       "never moves" rule reads as fixed, not as sacred rest */
+    await fresh([walk()])
+    await say('remember the evening walk never moves')
+    await settle()
+    await say('block 30 min for the report at 18:00')
+    await settle()
+    expect(lastMew()).toMatch(/ — note: it overlaps Evening walk 18:00–18:45 \(fixed[^)]*\)\.?$/)
+    expect(lastMew()).not.toContain('runs over your')
+  })
+
   it('a truly flexible block keeps its note', async () => {
     await fresh([deck(), gym()])
     await say('push all work after 5pm back an hour')

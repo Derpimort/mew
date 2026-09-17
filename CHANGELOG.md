@@ -288,6 +288,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ### Under the hood
 
+- Six more details of tonight's work are now held by tests: a breather MEW tucks in for pacing
+  still reads as flexible, a rest you said never moves reads as fixed, a day holding nothing but
+  MEW's own meals never reads as clear, a re-planned lunch keeps the length you said and stays
+  inside its window, a block you allowed to share time is judged on that same length, and a reply
+  carrying both a note and a question puts the statement first and the question last.
 - A reply that ends by asking you something ends with its question mark, never "?.", and a question
   stands as its own sentence after the notes before it.
 - Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key

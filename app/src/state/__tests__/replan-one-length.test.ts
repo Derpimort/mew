@@ -281,6 +281,73 @@ describe('#135 — a re-plan scores and moves with one length', () => {
     expect(walkAt()).toEqual([[TODAY, 12 * 60, 12 * 60 + 90]])
   })
 
+  it('the meal guardrail reads the one length too: 13:30 fits the lunch window at 30 min (#145 review R4)', async () => {
+    /* the lunch window ends at 14:00: a 30-min lunch at 13:30 sits inside it,
+       while the block's own 60 would run past it and earn a warning aside */
+    await fresh([
+      block({
+        id: 'lunch',
+        title: 'Lunch',
+        tag: 'private',
+        startMin: 12 * 60,
+        endMin: 13 * 60,
+        protected: false,
+      }),
+    ])
+    clock(8, 30)
+    await say('block 30 min for lunch at 13:30')
+    await settle()
+    expect(
+      blocks()
+        .filter((b) => b.title === 'Lunch')
+        .map((b) => [b.startMin, b.endMin])
+    ).toEqual([[13 * 60 + 30, 14 * 60]])
+    expect(lastMew()).toBe('Done — moved lunch to today 13:30–14:00.')
+  })
+
+  it('keyed: a granted overlap is judged on the one length, so a 30-min walk at 14:00 clears a fixed call at 14:30 (#145 review R5)', async () => {
+    /* allowOverlap only reaches execPlan from a keyed model (#49): the window it
+       checks is landStart + the one length, not the block's own 90 */
+    await fresh(
+      [
+        block({
+          id: 'walk',
+          title: 'Walk',
+          tag: 'health',
+          startMin: 9 * 60,
+          endMin: 10 * 60 + 30,
+          protected: false,
+        }),
+        block({ id: 'call', title: 'Client call', startMin: 14 * 60 + 30, endMin: 15 * 60 }),
+      ],
+      [],
+      'local'
+    )
+    clock(8, 30)
+    let reply = ''
+    scriptedModel.midTurn = (exec) => {
+      reply = exec.plan(
+        [
+          {
+            title: 'walk',
+            tag: 'health',
+            dayOffset: 0,
+            startMin: 14 * 60,
+            startStated: true,
+            durationMin: 30,
+            durationStated: true,
+            allowOverlap: true,
+          },
+        ],
+        []
+      )
+    }
+    await say('move the walk to 2pm for half an hour, sharing time is fine')
+    await settle()
+    expect(reply).not.toContain('stays unplaced')
+    expect(walkAt()).toEqual([[TODAY, 14 * 60, 14 * 60 + 30]])
+  })
+
   it('a stated length with a stated time resizes as it moves', async () => {
     await fresh(day())
     clock(8, 30)
