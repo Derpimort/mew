@@ -15,6 +15,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 ## [Unreleased]
 
 ### The dial on any day
+
 - The Focus dial shows any day, not just today: step through the days from the date line above the
   clock and see that day's blocks on the same calm face — a lived day wears its full wash, a day
   ahead stays clear, and the centre names the day with its blocks, committed hours and mews. One
@@ -29,11 +30,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   noon on, and a lived day shows its whole wash.
 
 ### Toward dragging on the dial
+
 - The Focus dial can now read any point on its face back as a time of day, to the minute, on either
   half of the clock, and a drop there lands on the same five-minute grid the week uses. It's the
   groundwork for sliding a block around the clock; nothing on screen changes yet.
 
 ### All-day entries are labels on the day
+
 - Holidays, time off and birthdays now arrive from Google and ICS calendars as all-day entries, a
   fact about the day rather than a 0:00–23:59 block on it; a span covers every day it names.
 - The Week shows them on a strip above 0:00 — one continuous chip for a Monday-to-Wednesday
@@ -42,6 +45,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   day and never becomes a wedge or takes the countdown.
 
 ### The evening exists
+
 - MEW now plans inside the hours you actually keep: placement, suggestions and free-slot searches
   read your **plannable hours** rather than stopping at 18:30, and when nothing fits inside them MEW
   says so plainly and names the free time past them. Its own morning scaffold and the weekly ritual
@@ -60,17 +64,20 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   task, and when the evening is full MEW offers tomorrow evening.
 
 ### Placing from your inbox leaves a receipt
+
 - When you place something from your inbox or the loose-threads rail, the conversation now shows its
   receipt like any other placement, and "undo that" right after takes the block back and returns
   the item to your inbox. Where it lands is exactly as before.
 
 ### Your stated lengths hold through the plan picker
+
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly
   that length when you pick a plan from the picker. MEW only offers to give room to the blocks you
   didn't size yourself, and a plan it re-offers after the week moved keeps the lengths it already
   showed you.
 
 ### The room offer says what it would change
+
 - When MEW offers to give your work more room, it now names the blocks it would resize ("(inbox
   sweep, errands)") and calls the kind what it is: hour-plus work. The count that comes with a new
   block uses the same words ("That's your 2nd hour-plus work block this week"), so a routine inbox
@@ -78,12 +85,14 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   exactly the blocks it named, and the confirmation names them too.
 
 ### Overlap on your say-so
+
 - Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it
   places the block exactly there, leaves your flexible block where it is, and says the two share
   that time. Meetings, calls and calendar events are still never covered: MEW names them and asks
   for another time.
 
 ### Split a block around a meeting
+
 - Say "split the deck around the 1pm call" (or give the time, "around 13:00-13:45") and the block
   becomes two with that time free between them, keeping its whole length: the first part ends as
   the call starts and part 2 picks up when it ends. A calendar event is never split itself, a
@@ -96,6 +105,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   as it is and says when it was offered.
 
 ### Merge two blocks into one
+
 - Say "merge my two deck blocks" (or "join the writing blocks tomorrow") and MEW joins them into one
   block, from the first start to the last end, and one "undo that" brings both back. MEW merges
   only your own blocks with the same tag, across free time: when a call, a calendar event, a done
@@ -108,6 +118,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   them, MEW names it and both pieces stay.
 
 ### Change several blocks at once, with a yes first
+
 - Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
   lines it up in one go. When it touches three or more blocks, or moves anything to another day,
   MEW first shows the day, exactly which blocks move where, which stay put and what they would share
@@ -117,12 +128,14 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   time would sit over one.
 
 ### A real choice when a block can't make way
+
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
   now asks with up to three tappable choices: move the work to its next clean slot, drop the
   flexible block, or keep both. Nothing moves until you pick, and every choice does exactly what it
   says, with or without a model key.
 
 ### The drop choice names its day
+
 - When a block can't make way and MEW offers to drop it, that choice now names the day ("remove the
   Groceries today at 14:00"). So it shows up even when the same block sits at the same time on
   another day, and picking it removes only the one you're looking at. A drop picked on a later day
@@ -130,19 +143,26 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   the block it was offered for, and otherwise MEW names that block and everything stays as it is.
 
 ### Removing one block removes one block
+
 - "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the same
   time on several days, MEW asks which day with tappable choices ("today 12:00", "thursday 12:00")
   and changes nothing until you pick. Naming the day ("remove the lunch on thursday at 12:00") goes
   straight to that one, and "all" still means all.
 - The question names its all-choice in the choice's own words: "both" for two blocks, "all of
   them" for three or more.
+- Answer that question in words too: typing "all of them", "both", "the thursday one" or a choice's
+  own label does exactly what tapping that choice does, and never lands in your inbox. A count that
+  doesn't fit — "both" when three are ahead — changes nothing and asks again, choices and all, so the
+  next word you say still lands.
 
 ### Say the day your way when removing
+
 - "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at
   12:00" now find the block. The day phrase is read as the day, so only the title is looked up, and
   when the same time repeats across days MEW still asks which with day choices.
 
 ### Undo takes back what MEW just did
+
 - Say "undo that" right after MEW changes your week (something you typed, asked a connected model
   for, or picked from a choice) and that change comes back: a moved block returns, a split block is
   whole again, a removed lunch is back. It works without a connected model too, and "undo that"
@@ -150,24 +170,28 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   message.
 
 ### Ask about any stretch of time
+
 - Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three
   weeks", "this month", "in March", "between Aug 3 and Aug 17" or "yesterday" all answer with real
   sums from your own blocks, on this device, with or without the brain connected. A very long
   stretch is answered for its most recent year, and "last week" reads just as before.
 
 ### What you tell MEW sticks
+
 - A standing rule you tell MEW while its brain is away keeps applying once the brain is back, and
   MEW passes it along to the brain exactly once. A rule you forget stays forgotten with the brain
   on. And "what I've picked up about you" now shows your rhythm by energy: where your deep work,
   admin and health blocks actually get finished.
 
 ### Rules from your brain are yours to see and let go
+
 - The memory console now lists every standing rule MEW applies, including ones that live only in
   your brain (told on another device, or seeded there), each with a quiet "from your brain" mark.
   Forget works on them like any other rule, and it sticks. With the brain off, the list is exactly
   what's on this device.
 
 ### The weekly review's roll really moves your work
+
 - Rolling carried work forward now moves it: the block lands on the same weekday next week and
   leaves this week's carried list, so it's never offered twice, and one "undo that" brings the whole
   roll back. A repeating block rides with its own series instead of doubling, a block already
@@ -178,11 +202,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   you asked for yourself still rolls.
 
 ### Midnight means the same day to every part of a turn
+
 - In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's
   Groceries. Each turn, typed or tapped, now starts from one clock, so the words you use, the choice
   checks, the tools that act and the model's view of your week all agree on what today is.
 
 ### Every choice keeps the day it was offered
+
 - The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
   work to its next clean slot, pick which of two same-named blocks you meant, or apply an edit to
   just this one of a repeating block) keep the day they were offered. Picked after midnight, a
@@ -191,21 +217,25 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   weekday ("move it to thursday") keeps working the next day.
 
 ### Recurring events keep their own clock
+
 - Weekly and fortnightly ICS series now walk their event's own time zone, so "every Monday 09:00"
   stays a Monday wherever you are, a clock-change night never doubles an occurrence, and a date-only
   UNTIL keeps the series' last day.
 
 ### Straight talk when a reply drops
+
 - When the connection to the model drops after a reply has begun, MEW names it for what it is — "the
   connection to the model hiccuped" — and answers the turn itself. Whatever already streamed stays
   exactly as it arrived, and nothing is sent twice behind your back.
 
 ### Replies written for you
+
 - Every reply MEW speaks without a connected model is written for you alone: a captured thought
   reads just `Captured "call the bank".`, and an overlap a batch change leaves names the block and
   that it's flexible. A connected model still gets its own guidance behind the scenes.
 
 ### Each rest gets its one gentle ask
+
 - When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
   and remembers it, across a restart too. A second rest that day still gets its own ask, even
   while the first one's question stands, and tomorrow starts fresh.
@@ -217,6 +247,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   flexible block is called flexible.
 
 ### Versioning by the calendar
+
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching MSI-safe
   `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before any build or
@@ -227,11 +258,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   app's typecheck, tests and lint.
 
 ### A bundle budget every PR can see
+
 - The size budgets now run on every PR into `develop` and the release candidate: the quick gate
   builds the app and checks each chunk against its ceiling, so a heavier download shows up on the PR
   that caused it, long before release day.
 
 ### Screenshots that hold on any weekday
+
 - The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on a
   Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
   `SHOOT_DATE` probes another day when you want to look.
@@ -239,11 +272,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   whatever date `SHOOT_DATE` probes — month ends and a four-week February included.
 
 ### Feature proofs that run again
+
 - The desktop self-update, desktop backup and restore, loose-threads rail, and Google sign-in proofs
   run green again with no API key, on the same pinned day and shared harness as the canon gate.
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+
 - Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key
   exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
   same wire behaviour as before, held by pinned tests.
@@ -278,19 +313,22 @@ stops stealing attention: nothing opens your browser except your own click, a pa
 says so kindly, and the pixels you see — in the app and in this repo — are the current truth.
 
 ### A calmer Google connection
+
 - Silent re-auth never opens the system browser again. When the desktop sign-in expires,
   sync pauses honestly — one kind line in chat, a `sync paused — google needs a fresh
-  sign-in` state in Settings — and resumes the moment you click **reconnect**. The browser
+sign-in` state in Settings — and resumes the moment you click **reconnect**. The browser
   opens only as the direct result of that click.
 - Disconnecting a calendar while signed out no longer pops a browser either; the cleanup
   waits politely and the events stay safe on the remote calendar.
 
 ### Steadier under the pointer
+
 - A week-grid press now claims the pointer properly: a stray text selection can no longer
   hijack drag-to-reschedule mid-gesture (the drag used to freeze armed), and click-to-focus
   for the keyboard's roving tab stop is preserved.
 
 ### The open house
+
 - MEW is open source (MIT). The repo's public face was rebuilt for it: README with live
   screenshots, an agent operating guide (AGENTS.md/CLAUDE.md), and a history scrubbed for
   publication.
@@ -307,18 +345,21 @@ it learns you and stops making you repeat yourself — and grows a full calendar
 and a weekly rhythm around it. Every new capability offers first and waits for your yes.
 
 ### gbrain, working
+
 - Learns your task rules from repetition and offers once, then remembers forever.
 - A confirmed rule resolves the full task spec deterministically on every placement path — keyless too.
 - On-device memory is the always-on floor; the brain sidecar self-heals and reports its status honestly.
 - A memory console to see — and correct or forget — everything MEW knows about you.
 
 ### The weekly rhythm
+
 - Energy-aware scheduling learned from what you actually finish (never a textbook curve); admin batched; your stated rules always win.
 - Estimate correction: MEW notices the kinds of work you book short and offers to give them room — one calm voice per placement.
-- A weekly review that celebrates your mews and rolls the unfinished flexible work *you pick* into next week.
+- A weekly review that celebrates your mews and rolls the unfinished flexible work _you pick_ into next week.
 - Week-scaffolding: MEW drafts next week the way your weeks usually go — a proposal you accept, tweak, or discard, never auto-filled.
 
 ### Calendar command surface
+
 - Read-only `list_blocks` — MEW's eyes on the calendar.
 - Surgical single-block edits by name + time, and propose-then-confirm deletion of done blocks instead of refusing.
 - Recurring-edit scope — just this one / this & following / the whole series.
@@ -328,12 +369,14 @@ and a weekly rhythm around it. Every new capability offers first and waits for y
 - Conversational context across turns — referents, positional and relative edits, keyless too.
 
 ### Calmer under real use
+
 - Meals stay sane when a reshape places them at an explicit time.
 - Your own flexible blocks drift out of the way of new explicit work in the same pass.
 - A correction is one acknowledgment and one reshape sweep — no flailing.
 - The protect-rest nudge reads clean and fires once.
 
 ### Under the hood
+
 - Onboarding, the plan picker, Settings, and the inbox lazy-load off the entry chunk.
 
 ## [0.5.0] — 2026-07-17
@@ -345,17 +388,17 @@ intelligence layer that earns its keep every morning.
 ### Added
 
 - **Plan mode.** Braindump a big week and MEW lays out two or three named ways to hold it —
-  *protected mornings*, *spread even*, *front-loaded* — as compact mini-week cards you pick
+  _protected mornings_, _spread even_, _front-loaded_ — as compact mini-week cards you pick
   from. What you pick is exactly what lands: a preview is a quote, never re-guessed.
 - **Morning brief & evening wrap.** A three-line brief opens the day (its shape, the first
   block, the one thing to watch); a kind wrap closes it (what got done, what's waiting for
   tomorrow, one thing worth noticing). Once a day, restart-proof, and it never keeps a guilt
-  list — rolled work is *waiting*, not failed.
+  list — rolled work is _waiting_, not failed.
 - **Weekly planning ritual.** Sunday evening (or "plan my week" anytime) MEW pulls your
   calendar, asks two or three quick questions, and shapes the week around your meetings using
   your own best hours — through the same picker, so you choose the shape.
 - **Rescue my afternoon.** When an inbound meeting lands on planned work, MEW says so and
-  offers one-tap chips — *shift*, *split around it*, *roll to tomorrow*. Your meeting never
+  offers one-tap chips — _shift_, _split around it_, _roll to tomorrow_. Your meeting never
   moves; MEW's own block does.
 - **Fed and paced, without asking.** MEW now knows what a meal is: lunch lands at lunchtime,
   dinner in the evening, a real stretch apart — and each morning it quietly places the meals
@@ -365,7 +408,7 @@ intelligence layer that earns its keep every morning.
   running while MEW is hidden.
 - **Global quick-capture hotkey.** ⌘/Ctrl+Shift+C from anywhere drops a thought into MEW
   without switching windows; rebinds are shell-validated and a taken key stays kind.
-- **Notification actions.** Native nudges carry *Done* and *+15 min*; clicking a nudge lands
+- **Notification actions.** Native nudges carry _Done_ and _+15 min_; clicking a nudge lands
   on its card where the same two actions live, so the loop closes on every platform.
 - **The insights card.** "What MEW's noticed" surfaces the science it already computes — your
   best deep-work hours, your kindest day, one habit worth keeping — from local memory alone.
@@ -386,7 +429,7 @@ intelligence layer that earns its keep every morning.
 - **Streaming that's actually alive.** Replies paint word by word as they arrive, and MEW
   shows an honest "thinking it through…" state instead of dead air before the first token.
 - **The composer never locks.** Type mid-turn any time — Enter queues your message to send
-  when the turn settles, and the stop button becomes *stop & send* when something's waiting.
+  when the turn settles, and the stop button becomes _stop & send_ when something's waiting.
 
 ### Fixed
 
@@ -408,7 +451,7 @@ intelligence layer that earns its keep every morning.
 - The Calendars card breathes: calendars carry their real names (your account address, never a
   generic "Primary"), the visibility chips and buttons grew into their labels, and the
   "what this calendar sees" preview now shows exactly what sync will send — events that came
-  *in* from your calendars are counted on their own honest line instead.
+  _in_ from your calendars are counted on their own honest line instead.
 - A fresh profile starts with no demo calendars — the connections you make are the only ones
   you see.
 
@@ -513,7 +556,7 @@ intelligence layer that earns its keep every morning.
 
 - Lazy-load three.js: the main bundle drops from ~658KB to ~371KB, so first paint is quicker.
 - Pet White theme tuned to meet AA contrast.
-- README now links to the changelog under *Run it*.
+- README now links to the changelog under _Run it_.
 
 ### Security
 
