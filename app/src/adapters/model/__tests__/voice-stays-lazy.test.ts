@@ -116,14 +116,21 @@ describe('the system prompt stays in the lazy AI chunk (#80 headroom)', () => {
     expect(own.has('CHOICES_POSTED')).toBe(false)
   })
 
-  it('only the lazy AI adapter binds a value ./types defines; every eager module takes types or pass-throughs', () => {
-    const own = ownValueExports()
-    const files = sourceFiles(SRC)
-    expect(files.length).toBeGreaterThan(100) // the walk really covered src/
-    const edges = files.filter((f) => f !== LAZY_ADAPTER).flatMap((f) => valueEdges(f, own))
-    expect(edges).toEqual([])
-    expect(valueEdges(LAZY_ADAPTER, own).length).toBeGreaterThan(0) // the one sanctioned door
-  })
+  /* this case walks the TypeScript AST of every eager module: ~5 s on a loaded runner
+     (it hit vitest's 5 s default twice in one night under parallel chains), so it gets
+     the room it needs — a real regression fails by assertion, not by the clock */
+  it(
+    'only the lazy AI adapter binds a value ./types defines; every eager module takes types or pass-throughs',
+    { timeout: 20_000 },
+    () => {
+      const own = ownValueExports()
+      const files = sourceFiles(SRC)
+      expect(files.length).toBeGreaterThan(100) // the walk really covered src/
+      const edges = files.filter((f) => f !== LAZY_ADAPTER).flatMap((f) => valueEdges(f, own))
+      expect(edges).toEqual([])
+      expect(valueEdges(LAZY_ADAPTER, own).length).toBeGreaterThan(0) // the one sanctioned door
+    }
+  )
 
   it('CHOICES_POSTED is one token wherever it is read from', () => {
     expect(fromTypes).toBe(fromOwnModule)
