@@ -161,3 +161,5 @@ if (mode === '--shape') {
       `--shape | --promotion | --tag vYYYY.M.PATCH`,
   )
 }
+
+// throwaway: desktop-only change to prove ci.yml stays quiet (#85 negative proof)
