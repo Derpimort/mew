@@ -25,6 +25,8 @@ import { memoryConsole } from '../../domain/console'
 import { ApiKeySetupFlow } from '../components/ApiKeySetupFlow'
 import { keySetupView } from '../components/apiKeySetup'
 import SimpleGraph from '../react-bits/simple-graph'
+import { PlannableHoursField } from '../components/PlannableHoursField'
+import { plannableOf } from '../../domain/plannable'
 
 const TAGS: VisibleTag[] = ['work', 'private', 'health']
 const VIS_CLASS = { details: 'det', busy: 'busy', hidden: 'hid' } as const
@@ -1047,6 +1049,16 @@ function NudgesCard() {
             {quietLabel}
           </button>
         </span>
+      </SetRow>
+      {/* #22: the plannable day — its own fact; quiet hours never shorten it */}
+      <SetRow
+        t="Plannable hours"
+        s="Where MEW places and suggests time. Separate from quiet hours."
+      >
+        <PlannableHoursField
+          hours={plannableOf(settings)}
+          onCommit={(hours) => updateSettings({ plannableHours: hours })}
+        />
       </SetRow>
       <SetRow
         t="Morning brief"
