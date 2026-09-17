@@ -441,9 +441,15 @@ describe('off = byte-identical to today (#322 pin)', () => {
 describe('always — silent pre-size in the plan-mode picker (#322)', () => {
   it('the picker previews demonstrated durations and the pick applies them; no chip offer', async () => {
     await fresh([], estimateMem(), { estimateAutosize: 'always', planMode: 'always' })
+    /* #22 slice C: starts land on human times, so three equal deep blocks on an
+       empty morning no longer split into distinct shapes via ragged back-to-back
+       packing (9:10 now reads 9:30) — two small errands keep the profiles apart,
+       so the picker this pin is about still appears */
     await useMew
       .getState()
-      .speak('block the quarterly report, block the board deck, block the roadmap review')
+      .speak(
+        'block the quarterly report, block the board deck, block the roadmap review, block inbox sweep, block errands'
+      )
     await settle()
 
     const picker = chat().find((m) => (m.scenarios?.length ?? 0) > 0)

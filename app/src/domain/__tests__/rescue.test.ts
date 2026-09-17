@@ -187,8 +187,9 @@ describe('rescueOptions — viability, computed at post time', () => {
     const call = mk({ id: 'k', title: 'Client call', startMin: 700, endMin: 760, protected: true })
     const opts = rescueOptions([block, m, call], { meeting: m, block }, TODAY, nowMin)
     const shift = opts.find((o) => o.id === 'shift')!
-    const start = 12 * 60 + 40 // after the call — 10:15+120 would overlap it
-    expect(shift.label).toBe(`shift to 12:40`)
+    // after the call (ends 12:40) — 10:15+120 would overlap it; #22: offered at the round 13:00
+    const start = 13 * 60
+    expect(shift.label).toBe(`shift to 13:00`)
     expect(start + 120).toBeLessThanOrEqual(18 * 60 + 30)
   })
 
