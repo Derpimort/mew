@@ -257,12 +257,13 @@ export interface ToolExecutor {
       own blocks (real numbers, never model-estimated); brain recall adds the
       citable color. Async: the one tool allowed to wait on the brain. */
   queryBrain(question: string): Promise<string>
-  /** Reverse the LAST tool-driven mutation of this turn — the graceful "undo
-      that" recovery for a misclick or a wrong placement. The store snapshots
-      the week (blocks/captures/memory) just before each mutating tool runs and
-      restores that snapshot here, then clears it so a second undo is a no-op.
-      Read-only when nothing has changed this turn ("nothing to undo yet"). Chat
-      is untouched — the reply about the undone action stays as context. */
+  /** Reverse the LAST change to the week — the graceful "undo that" recovery
+      for a misclick or a wrong placement: this turn's, or the previous turn's
+      when asked in the very next message (#120). The store snapshots the week
+      (blocks/captures/memory) just before each mutating tool runs and restores
+      that snapshot here, then clears it so a second undo is a no-op. Read-only
+      when there's nothing to take back ("nothing to undo right now"). Chat is
+      untouched — the reply about the undone action stays as context. */
   undoLast(): string
   /** Resize a block in place: change its LENGTH while keeping the start fixed
       (#335). `durationMin` sets an absolute length; `relDurationMin` a signed
