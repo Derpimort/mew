@@ -18,6 +18,8 @@ describe('the evening, said the way people say it', () => {
       { title: 'walk', window: 'evening', afterDinner: true },
     ],
     ['block tonight for the budget review', { title: 'budget review', window: 'evening' }],
+    ["block 1h for tonight's reading", { title: 'reading', window: 'evening', durationMin: 60 }],
+    ['block 30 min for this evening’s walk', { title: 'walk', window: 'evening', durationMin: 30 }],
   ])('"%s" is the evening window, and the title keeps only the task', (text, want) => {
     const p = place(text)!
     expect(p).toMatchObject(want)

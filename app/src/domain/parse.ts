@@ -136,7 +136,7 @@ const BG_CUE = /\b(?:in the background|background|bg task|while i work)\b/i
 /* #117: the evening, said the way people say it. With no clock time it's the
    evening WINDOW (from the classic day's end, inside the plannable hours), not
    the fixed 18:00 "evening" part, and the phrase never stays in the title */
-const EVENING_CUE = /\b(?:tonight|this\s+evening|after\s+dinner)\b/i
+const EVENING_CUE = /\b(?:tonight|this\s+evening|after\s+dinner)(?:['’]s)?\b/i // "tonight's reading" too
 
 /* "due by 1pm" / "due 13:00" / "must finish by 1" — a hard deadline, distinct
    from the block's end. Bare hours ≤ 7 read as afternoon (a 1pm world). */

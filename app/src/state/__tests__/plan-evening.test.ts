@@ -229,6 +229,15 @@ describe('#117 — the evening, said the way people say it', () => {
     expect(blocks().some((b) => /this|evening/.test(b.title))).toBe(false)
   })
 
+  it('a possessive cue leaves nothing behind: "tonight\'s reading" is "reading", in the evening', async () => {
+    await fresh([anchor()])
+    clock(14, 0)
+    await say("block 1h for tonight's reading")
+    await settle()
+    expect(at('reading')).toEqual([[TODAY, 18 * 60 + 30, 19 * 60 + 30]])
+    expect(blocks().some((b) => b.title.includes("'s"))).toBe(false)
+  })
+
   it('"after dinner" waits for that day\'s dinner to end', async () => {
     await fresh([
       anchor(),
