@@ -801,6 +801,34 @@ function choicesMsg(body: string, choices: ChatChoice[]): ChatMessage {
   return { id: uid(), role: 'mew', body, ts: nowFn(), choices }
 }
 
+/** The drift drop chip's exactness guard (#12): its reply resolves exactly as
+    execRemove will (the day pin becomes the resolver's day) to block `id` and
+    nothing else. It runs when the chip is offered AND again when it's picked:
+    the reply's day words mean the day it's spoken, so a chip picked after
+    midnight has to single out its block all over again. */
+function dropReplySinglesOut(
+  blocks: Block[],
+  reply: string,
+  now: Date,
+  todayKey: string,
+  id: string
+): boolean {
+  const ask = parseCommand(reply, now)
+  if (ask.kind !== 'remove') return false
+  const pin = ask.remove ?? {}
+  const r = week.resolveRemoval(
+    blocks,
+    ask.query ?? '',
+    {
+      at: pin.at,
+      all: pin.all,
+      day: pin.dayOffset != null ? addDaysKey(todayKey, pin.dayOffset) : undefined,
+    },
+    todayKey
+  )
+  return r.remove.length === 1 && r.remove[0].id === id && !r.candidates.length
+}
+
 /** The #293 scenario-picker message shape — the chips pattern with cards:
     ONE mew message carrying the engine's named placements. Chat-only data;
     the week changes only when pickScenario routes the stored places through
@@ -1908,14 +1936,18 @@ export const useMew = create<MewState>((set, get) => {
       }
 
       /* drop the flexible block: only a one-off (a series asks this/following/
-         series first) that its own reply singles out */
+         series first) that its own reply singles out. The reply names its DAY
+         (#62's day pin: "today", "tomorrow", "on thursday"), so a same-titled
+         block at the same time on another day no longer hides the chip. Past the
+         day words (a week or more out) it stays day-less, and the exactness guard
+         below withholds it whenever that could reach another day. */
       for (const b of flex.slice(0, 3)) {
         if (b.recurringBlockId) continue
-        const reply = `remove the ${base(b)} at ${fmtTime(b.startMin)}`
-        const ask = parseCommand(reply, now)
-        if (ask.kind !== 'remove') continue
-        const r = week.resolveRemoval(s.blocks, ask.query ?? '', ask.remove ?? {}, todayKey)
-        if (r.remove.length === 1 && r.remove[0].id === b.id && !r.candidates.length)
+        const word = dayWord(b.dayKey, todayKey)
+        const onDay =
+          word == null ? '' : word === 'today' || word === 'tomorrow' ? ` ${word}` : ` on ${word}`
+        const reply = `remove the ${base(b)}${onDay} at ${fmtTime(b.startMin)}`
+        if (dropReplySinglesOut(s.blocks, reply, now, todayKey, b.id))
           choices.push({ id: `drop-${b.id}`, label: `drop ${base(b)}`, reply })
       }
 
@@ -5505,6 +5537,30 @@ export const useMew = create<MewState>((set, get) => {
       }))
       const updated = get().chat.find((m) => m.id === msgId)
       if (updated) persistChat([updated]) // delta putChat, same as resolveNudge
+      /* a drift drop chip (#12) re-runs its exactness guard with the pick's own
+         clock: "remove the Groceries today at 14:00", offered Tuesday and picked
+         after midnight, means Wednesday's Groceries now. It speaks only while it
+         still singles out the block it was offered for; otherwise the chip is
+         spent, MEW names that block, and everything stays as it is. */
+      if (choice.id.startsWith('drop-')) {
+        const id = choice.id.slice('drop-'.length)
+        const now = new Date(s.nowMs)
+        const todayKey = dayKey(now)
+        if (!dropReplySinglesOut(s.blocks, choice.reply, now, todayKey, id)) {
+          const b = s.blocks.find((x) => x.id === id)
+          const word = b ? dayWord(b.dayKey, todayKey) : null
+          const whose = !b
+            ? ''
+            : word === 'today' || word === 'tomorrow'
+              ? `${word}'s `
+              : `${fmtDowLong(b.dayKey)}'s `
+          const name = b
+            ? `${b.title.split('—')[0].trim()} at ${fmtTime(b.startMin)}`
+            : choice.label.replace(/^drop /, '')
+          post([mewMsg(`That choice was for ${whose}${name}, so everything stays as it is.`)])
+          return
+        }
+      }
       /* the pick IS the user's next message — the normal turn does the rest */
       await get().speak(choice.reply)
     },
