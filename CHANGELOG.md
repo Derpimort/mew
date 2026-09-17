@@ -88,6 +88,36 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Forget works on them like any other rule, and it sticks. With the brain off, the list is exactly
   what's on this device.
 
+### The evening exists
+- MEW now plans inside the hours you actually keep: placement, suggestions and free-slot searches
+  read your **plannable hours** rather than stopping at 18:30, and when nothing fits inside them
+  MEW says so plainly and names the free time past them. Its own morning scaffold and the weekly
+  ritual keep the classic day.
+- **Plannable hours** have their own row in Settings → Nudges & notifications, independent of
+  quiet hours: two 24h fields on a five-minute grid, steppable from the keyboard and named for
+  screen readers.
+- Auto-placement lands on human times: a slot asked for at 10:07 opens at 10:30, or at the next
+  quarter that still fits, and every placement path stays on the five-minute grid. Times you name
+  yourself are kept exactly.
+
+### All-day entries are labels on the day
+- Holidays, time off and birthdays now arrive from Google and ICS calendars as all-day entries, a
+  fact about the day rather than a 0:00–23:59 block on it; a span covers every day it names.
+- The Week shows them on a strip above 0:00 — one continuous chip for a Monday-to-Wednesday
+  out-of-office, packed neatly when several share a day.
+- The Focus dial shows today's all-day entries as pill badges above the centre; a holiday labels
+  the day and never becomes a wedge or takes the countdown.
+
+### Recurring events keep their own clock
+- Weekly and fortnightly ICS series now walk their event's own time zone, so "every Monday 09:00"
+  stays a Monday wherever you are, a clock-change night never doubles an occurrence, and a
+  date-only UNTIL keeps the series' last day.
+
+### Under the hood
+- Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key
+  exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
+  same wire behaviour as before, held by pinned tests.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
