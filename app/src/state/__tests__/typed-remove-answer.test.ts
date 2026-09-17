@@ -242,8 +242,8 @@ async function askAboutLunch() {
 }
 
 describe('#131 — a typed answer to a live remove ask does what its chip does', () => {
-  it('the all-chip in words: "all of them", "both", "all", "remove all of them", "Remove both."', async () => {
-    for (const said of ['all of them', 'both', 'all', 'remove all of them', 'Remove both.']) {
+  it('the all-chip in words that fit three: "all of them", "all", "remove all of them", "all three", "all 3"', async () => {
+    for (const said of ['all of them', 'all', 'remove all of them', 'all three', 'all 3']) {
       await fresh(threeLunches())
       await askAboutLunch()
       await say(said)
@@ -251,6 +251,38 @@ describe('#131 — a typed answer to a live remove ask does what its chip does',
       expect(lunchIds(), said).toEqual([])
       expect(lastUser(), said).toBe('remove all lunch')
       expect(useMew.getState().captures, said).toEqual([])
+    }
+  })
+
+  it('a count word that doesn\'t fit the ask is answered, and nothing changes: "both" for three', async () => {
+    for (const said of ['both', 'all two', 'all 2', 'remove both']) {
+      await fresh(threeLunches())
+      await askAboutLunch()
+      await say(said)
+      await settle()
+      expect(lastUser(), said).toBe(said)
+      expect(lastMew(), said).toBe(
+        'There are 3 "lunch" blocks — say "remove all lunch" to drop all 3, or name the day of the one to drop.'
+      )
+      expect(lunchIds(), said).toEqual(['l-thu', 'l-tue', 'l-wed'])
+      expect(useMew.getState().captures, said).toEqual([])
+    }
+    /* and the words it suggests do it */
+    await say('remove all lunch')
+    await settle()
+    expect(lunchIds()).toEqual([])
+  })
+
+  it('"both" and "all 2" fit two', async () => {
+    for (const said of ['both', 'all 2']) {
+      await fresh([lunch('l-tue', TODAY), lunch('l-wed', WED)])
+      await say('remove the lunch at 12:00')
+      await settle()
+      expect(lastMew()).toMatch(/^2 "lunch" blocks ahead/)
+      await say(said)
+      await settle()
+      expect(lunchIds(), said).toEqual([])
+      expect(lastUser(), said).toBe('remove all lunch')
     }
   })
 
@@ -329,6 +361,23 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
     expect(typedRemoveAnswer([user('u'), removeAsk], '12:00')).toEqual({
       msgId: 'a',
       choiceId: 'c1',
+    })
+    /* the ask's own count decides a count word */
+    const threeAsk = {
+      ...ask('n', [
+        ['the 12:00', 'remove lunch 12:00'],
+        ['the 12:30', 'remove lunch 12:30'],
+        ['all of them', 'remove all lunch'],
+      ]),
+      body: '3 "lunch" blocks ahead — which?',
+    }
+    expect(typedRemoveAnswer([user('u'), threeAsk], 'both')).toEqual({
+      clarify:
+        'There are 3 "lunch" blocks — say "remove all lunch" to drop all 3, or name the day of the one to drop.',
+    })
+    expect(typedRemoveAnswer([user('u'), threeAsk], 'all three')).toEqual({
+      msgId: 'n',
+      choiceId: 'c3',
     })
     /* not a remove ask: a drift offer's "keep both" is its own family */
     const drift = ask('d', [

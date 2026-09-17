@@ -60,13 +60,26 @@ export function scenariosActive(chat: ChatMessage[], msg: ChatMessage): boolean 
    null, so it's an ordinary message exactly as before. */
 
 const DAY_WORDS = 'today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday'
-const ALL_WORDS =
-  /^(?:(?:remove|drop|delete)\s+)?(?:both(?:\s+of\s+them)?|all(?:\s+of\s+them)?|them\s+all|all\s+(?:two|three|four|five|\d+)(?:\s+of\s+them)?)$/
+/* the all-chip in words: "all"-words fit any count, "both" only two, "all N"
+   only N; a count word that doesn't fit is answered, never acted on */
+const ALL_WORDS = /^(?:(?:remove|drop|delete)\s+)?(?:all(?:\s+of\s+them)?|them\s+all)$/
+const BOTH_WORDS = /^(?:(?:remove|drop|delete)\s+)?both(?:\s+of\s+them)?$/
+const ALL_N_WORDS =
+  /^(?:(?:remove|drop|delete)\s+)?all\s+(two|three|four|five|six|seven|eight|\d+)(?:\s+of\s+them)?$/
+const COUNT_WORDS: Record<string, number> = {
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+}
 
 export function typedRemoveAnswer(
   chat: ChatMessage[],
   text: string
-): { msgId: string; choiceId: string } | null {
+): { msgId: string; choiceId: string } | { clarify: string } | null {
   let ask: ChatMessage | undefined
   for (let i = chat.length - 1; i >= 0; i--) {
     if ((chat[i].choices?.length ?? 0) > 0) {
@@ -90,8 +103,18 @@ export function typedRemoveAnswer(
 
   const exact = one(options.filter((c) => label(c) === said || label(c) === bare))
   if (exact) return pick(exact)
-  if (ALL_WORDS.test(said))
-    return pick(one(options.filter((c) => /^remove\s+all\s/i.test(c.reply))))
+  const allChip = one(options.filter((c) => /^remove\s+all\s/i.test(c.reply)))
+  if (allChip && (ALL_WORDS.test(said) || BOTH_WORDS.test(said) || ALL_N_WORDS.test(said))) {
+    /* how many the ask is about: its line leads with the count ("3 "lunch" blocks") */
+    const count = Number(ask.body.match(/^(\d+)\s/)?.[1] ?? options.length - 1)
+    const n = said.match(ALL_N_WORDS)?.[1]
+    const named = BOTH_WORDS.test(said) ? 2 : n ? (COUNT_WORDS[n] ?? Number(n)) : count
+    if (named === count) return pick(allChip)
+    const base = allChip.reply.replace(/^remove\s+all\s+/i, '')
+    return {
+      clarify: `There are ${count} "${base}" blocks — say "remove all ${base}" to drop all ${count}, or name the day of the one to drop.`,
+    }
+  }
   const day = bare.match(
     new RegExp(`^(?:the\\s+)?(?:one\\s+(?:on\\s+)?)?(${DAY_WORDS})(?:'s|’s)?(?:\\s+one)?$`)
   )

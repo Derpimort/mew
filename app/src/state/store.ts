@@ -5906,9 +5906,18 @@ export const useMew = create<MewState>((set, get) => {
          same path as the tap, #94's pick-time re-check included — never a new
          ask or a thought for the inbox */
       const typed = typedRemoveAnswer(get().chat, trimmed)
-      if (typed) return get().pickChoice(typed.msgId, typed.choiceId)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       syncTurnClock() // #96: one today for the parse, the executors and the model
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
+      if (typed) {
+        /* a count word that doesn't fit the ask ("both" for three) is answered
+           plainly: nothing changes, and it's never a thought for the inbox. It
+           is still a message, so an older undo hold lets go here (#130) */
+        if (snapshotHolds) snapshotHolds = false
+        else preMutationSnapshot = null
+        post([mewMsg(typed.clarify)])
+        return
+      }
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
       /* "undo that" reaches MEW's last change through this one message (#120,
