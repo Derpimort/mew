@@ -10,18 +10,23 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMew, useLive, clockNow } from '../../state/store'
+import type { Block } from '../../domain/types'
 import { dayKey, fmtDow, fmtTime, minOfDay } from '../../domain/time'
-import { isBackground } from '../../domain/week'
+import { isAllDay, isBackground } from '../../domain/week'
 import { clockDeg, dialKeyAction, rArc, rPolar, sector } from './dialGeometry'
 import {
   arcAriaLabel,
+  badgeAriaLabel,
+  badgeRow,
   crossDaySpan,
   dayFill,
+  dialBadges,
   dialFocusOrder,
   fitLabel,
   labelBudget,
   LANE_STEP,
   OG,
+  isBadge,
   isRunning,
   orbitColor,
   radiiFor,
@@ -96,6 +101,13 @@ export function FocusOrbit() {
     [vis, radii]
   )
 
+  /* today's all-day entries (#27): pill badges above the centre, never wedges.
+     A crowded day shows BADGE_MAX and "+N more" until opened (per day). */
+  const badges = dialBadges(blocks, todayKey)
+  const [badgesOpenDay, setBadgesOpenDay] = useState<string | null>(null)
+  const badgeView = badgeRow(badges, badgesOpenDay === todayKey)
+  const badgeIds = badgeView.shown.map((b) => b.id)
+
   const [hover, setHover] = useState<string | null>(null)
   const [cardId, setCardId] = useState<string | null>(null)
   /* declutter: at rest the face shows only arcs + now-hand + the centre. Hovering
@@ -121,13 +133,15 @@ export function FocusOrbit() {
      arcs across the two clock axes. `kbFocus` is the roving anchor; `arcRefs` lets
      us imperatively move DOM focus to the next arc so a screen reader announces
      it. The interaction reads from the same pure geometry the dial draws with. */
-  const order = useMemo(() => dialFocusOrder(vis), [vis])
+  const arcOrder = useMemo(() => dialFocusOrder(vis), [vis])
+  /* badges lead the reading order: they sit above the centre and cover the day */
+  const order = [...badgeIds, ...arcOrder]
   const [kbFocus, setKbFocus] = useState<string | null>(null)
   const [chipFocused, setChipFocused] = useState(false) // keyboard focus on the demote chip reveals it
   // the single roving tab stop (one tabindex=0): last keyboard arc, else the live
   // focus item, else the first by time — so Tab always reaches the dial.
   const rovingId = rovingFocusId(order, kbFocus, focusId)
-  const arcRefs = useRef(new Map<string, SVGElement | null>())
+  const arcRefs = useRef(new Map<string, SVGElement | HTMLElement | null>())
   const focusArc = (id: string | null) => {
     if (!id) return
     setKbFocus(id)
@@ -147,7 +161,7 @@ export function FocusOrbit() {
     switch (action.kind) {
       case 'step':
         e.preventDefault()
-        focusArc(stepDialFocus(vis, radii, id, action.axis, action.dir))
+        focusArc(stepDialFocus(vis, radii, id, action.axis, action.dir, badgeIds))
         break
       case 'promote':
         e.preventDefault()
@@ -163,6 +177,51 @@ export function FocusOrbit() {
         break
     }
   }
+
+  /* a badge carries an arc's grammar with one difference: a day label has no
+     centre to take, so Enter opens its card like Space; Escape closes it */
+  const [badgeFocus, setBadgeFocus] = useState<string | null>(null)
+  const onBadgeKeyDown = (id: string) => (e: React.KeyboardEvent) => {
+    const action = dialKeyAction(e.key)
+    if (!action) return
+    e.preventDefault()
+    switch (action.kind) {
+      case 'step':
+        focusArc(stepDialFocus(vis, radii, id, action.axis, action.dir, badgeIds))
+        break
+      case 'promote':
+      case 'open':
+        openCard(id)
+        break
+      case 'demote':
+        setCardId(null)
+        break
+    }
+  }
+  /* hover, keyboard focus or an open card on a badge lights the WHOLE ring */
+  const wholeDay = isBadge(badges, hover) || isBadge(badges, badgeFocus) || isBadge(badges, cardId)
+  const badgeRowEl =
+    badges.length > 0 ? (
+      <DialBadges
+        view={badgeView}
+        todayKey={todayKey}
+        rovingId={rovingId}
+        litId={hover ?? cardId}
+        hidden={cardId != null}
+        badgeRef={(id) => (el) => {
+          arcRefs.current.set(id, el)
+        }}
+        onHover={setHover}
+        onFocusBadge={(id) => {
+          setKbFocus(id)
+          setBadgeFocus(id)
+        }}
+        onBlurBadge={(id) => setBadgeFocus((f) => (f === id ? null : f))}
+        onOpen={openCard}
+        onBadgeKey={(id, e) => onBadgeKeyDown(id)(e)}
+        onMore={() => setBadgesOpenDay(todayKey)}
+      />
+    ) : null
 
   /* countdown to the FOCUS item's end, ticking seconds */
   const secOfDay = minOfDay(now) * 60 + now.getSeconds()
@@ -252,6 +311,29 @@ export function FocusOrbit() {
             </g>
           )
         })()}
+
+        {/* whole-day light (#27): a badge hovered, focused or open covers the
+            day, so the entire face glows — a full-turn annulus (sector clamps a
+            complete turn just shy of 360°) and a lit bezel */}
+        {wholeDay && (
+          <g className="dial-wholeday" pointerEvents="none" aria-hidden="true">
+            <path
+              d={sector(OG.cx, OG.cy, OG.disk, OG.pm, 0, 360)}
+              fill="var(--ice)"
+              opacity={0.1}
+            />
+            <circle
+              cx={OG.cx}
+              cy={OG.cy}
+              r={OG.pm}
+              fill="none"
+              stroke="var(--ice)"
+              strokeWidth="2.4"
+              opacity={0.9}
+              style={{ filter: 'drop-shadow(0 0 8px var(--glowc))' }}
+            />
+          </g>
+        )}
 
         {/* fixed bezel: hour ticks at all 12 (12/3/6/9 major), 12 pinned at top */}
         <g pointerEvents="none" aria-hidden="true">
@@ -588,6 +670,7 @@ export function FocusOrbit() {
           className="clk-center"
           style={cardId ? { opacity: 0, pointerEvents: 'none' } : undefined}
         >
+          {badgeRowEl}
           <div className="nx-count" style={{ fontSize: count.length > 5 ? 48 : 64 }}>
             {count}
           </div>
@@ -641,6 +724,7 @@ export function FocusOrbit() {
         </div>
       ) : (
         <div className="clk-center" style={{ width: 280 }}>
+          {badgeRowEl}
           <div className="nx-task" style={{ fontSize: 24, color: 'var(--muted)' }}>
             <StaggeredText
               key={live.headline}
@@ -689,7 +773,23 @@ export function FocusOrbit() {
         }}
       >
         {(() => {
-          const hb = hover ? vis.find((b) => b.id === hover) : null
+          const hb = hover
+            ? (vis.find((b) => b.id === hover) ?? badges.find((b) => b.id === hover))
+            : null
+          if (hb && isAllDay(hb)) {
+            /* a badge's readout: the whole day, never a clock span */
+            return (
+              <>
+                <span className="pri-range">
+                  all day
+                  {hb.endDayKey && hb.endDayKey > todayKey && (
+                    <span className="xd">→ {fmtDow(hb.endDayKey).toLowerCase()}</span>
+                  )}
+                </span>
+                <span className="pri-sub">{hb.title.split('—')[0].trim()}</span>
+              </>
+            )
+          }
           if (hb) {
             const t = hb.title.split('—')[0].trim()
             const dueOnly = isBackground(hb) && hb.due != null
@@ -726,6 +826,83 @@ export function FocusOrbit() {
           its details, Escape to let the centre task run in the background.
         </span>
       </div>
+    </div>
+  )
+}
+
+/** The dial's all-day badges (#27): today's day labels as pills above the
+    centre stack — never ring wedges. Props in, markup out: FocusOrbit owns the
+    state; a badge joins the dial's roving tab stop and opens the same card. */
+export function DialBadges({
+  view,
+  todayKey,
+  rovingId,
+  litId,
+  hidden,
+  badgeRef,
+  onHover,
+  onFocusBadge,
+  onBlurBadge,
+  onOpen,
+  onBadgeKey,
+  onMore,
+}: {
+  view: { shown: Block[]; more: number }
+  todayKey: string
+  /** the dial's single tab stop — a badge holds it when it's the keyboard anchor */
+  rovingId: string | null
+  /** the badge hovered or open, drawn lit */
+  litId: string | null
+  /** an open card owns the centre: the row steps back with the stack */
+  hidden?: boolean
+  badgeRef?: (id: string) => (el: HTMLElement | null) => void
+  onHover?: (id: string | null) => void
+  onFocusBadge?: (id: string) => void
+  onBlurBadge?: (id: string) => void
+  onOpen?: (id: string) => void
+  onBadgeKey?: (id: string, e: React.KeyboardEvent) => void
+  onMore?: () => void
+}) {
+  return (
+    <div
+      className="dial-badges"
+      role="group"
+      aria-label="today's all-day labels"
+      style={hidden ? { opacity: 0, pointerEvents: 'none' } : undefined}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {view.shown.map((b) => (
+        <div
+          key={b.id}
+          className={
+            'dial-badge' + (litId === b.id ? ' on' : '') + (b.status === 'done' ? ' done' : '')
+          }
+          role="button"
+          tabIndex={rovingId === b.id ? 0 : -1}
+          aria-label={badgeAriaLabel(b, todayKey)}
+          title={b.title}
+          ref={badgeRef?.(b.id)}
+          onMouseEnter={() => onHover?.(b.id)}
+          onMouseLeave={() => onHover?.(null)}
+          onFocus={() => onFocusBadge?.(b.id)}
+          onBlur={() => onBlurBadge?.(b.id)}
+          onClick={() => onOpen?.(b.id)}
+          onKeyDown={(e) => onBadgeKey?.(b.id, e)}
+        >
+          <span className="t">{b.title.split('—')[0].trim()}</span>
+        </div>
+      ))}
+      {view.more > 0 && (
+        <button
+          type="button"
+          className="dial-badge more"
+          aria-expanded={false}
+          aria-label={`${view.more} more all-day labels today — show them all`}
+          onClick={() => onMore?.()}
+        >
+          +{view.more} more
+        </button>
+      )}
     </div>
   )
 }

@@ -2560,3 +2560,83 @@
   outline-offset: 1px;
   border-radius: 6px;
 }
+
+/* ── all-day badges on the dial (#27) — labels on today, never ring wedges ──
+   A single line of pills anchored just above the centre stack (bottom: 100%,
+   out of its flow, so the countdown never reflows and a day without all-day
+   entries renders exactly as before). The 240px line sits inside the inner
+   ring: its outer corners stay ≈160px from centre with ri = 170 (see .clk-center
+   and OG.ri — change them together). Tokens only. */
+.dial-badges {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 10px;
+  width: 240px;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: auto;
+  transition: opacity 0.18s ease;
+}
+.dial-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  background: var(--ice-soft);
+  box-shadow: inset 0 0 0 1px var(--ice-bd);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.dial-badge .t {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dial-badge:hover,
+.dial-badge.on {
+  box-shadow:
+    inset 0 0 0 1.4px var(--ice),
+    0 0 12px var(--glowc);
+}
+.dial-badge:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.dial-badge.done .t {
+  text-decoration: line-through;
+  font-weight: 600;
+}
+/* "+N more" — scoped past the shell's `.stl button { font: inherit }` reset */
+.dial-badges .dial-badge.more {
+  flex: none;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dial-badges .dial-badge.more:hover {
+  color: var(--gold);
+}
+/* opened past BADGE_MAX, the line may wrap — rows grow upward from the anchor */
+.dial-badges:has(.dial-badge:nth-child(4)) {
+  flex-wrap: wrap;
+  width: 300px;
+}
