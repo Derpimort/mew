@@ -95,6 +95,7 @@ import {
 } from '../domain/scheduler'
 import { pastEndNote, plannableLabel, plannableOf } from '../domain/plannable'
 import { correctMeal, mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
+import { CAPTURE_NUDGE_NOTE, DRIFT_OFFER_NOTE } from '../adapters/model/modelNotes'
 import {
   buildCtx,
   evaluateEvent,
@@ -1083,7 +1084,7 @@ function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
     const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
     return week.isFixedTime(c, prefs)
       ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
-      : `${base} (flexible — offer to drift it, don't move it unasked)`
+      : `${base} (flexible${DRIFT_OFFER_NOTE})`
   })
   return ` — note: it overlaps ${parts.join(' and ')}`
 }
@@ -4295,7 +4296,7 @@ export const useMew = create<MewState>((set, get) => {
     set((st) => ({ captures: [...st.captures, capture] }))
     persistCaptures([capture])
     fireEventNudges({ newCapture: capture })
-    return `Captured "${clean}". (The when-&-where nudge with a proposed slot is already posted — don't propose another time yourself.)`
+    return `Captured "${clean}".${CAPTURE_NUDGE_NOTE}`
   }
 
   /* ── recurring-edit scope (#343) ─────────────────────────────────────────

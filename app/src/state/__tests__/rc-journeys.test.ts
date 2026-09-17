@@ -475,7 +475,7 @@ describe('RC journey 2: a meeting lands on flexible work', () => {
     expect(useMew.getState().captures.map((c) => c.title)).not.toContain('undo that')
   })
 
-  it.fails("#119: a keyless capture reply shows the owner only the owner's line", async () => {
+  it("#119: a keyless capture reply shows the owner only the owner's line", async () => {
     await fresh([deckPolish()], { at: TUE(8, 0) })
     await say('call the bank')
     await settle()
