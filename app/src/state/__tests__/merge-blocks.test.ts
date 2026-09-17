@@ -417,6 +417,20 @@ describe('#74 — nothing changes when a merge would cover something, and the re
     )
   })
 
+  it('two different blocks sharing a word: nothing changes, and both names are given', async () => {
+    await fresh([
+      deck('d1', 9 * 60, 10 * 60, { title: 'Deck polish' }),
+      deck('d2', 10 * 60, 11 * 60, { title: 'Deck review' }),
+    ])
+    const before = snapshot()
+    await say('merge my two deck blocks')
+    await settle()
+    expect(snapshot()).toBe(before)
+    expect(lastMew()).toBe(
+      "Deck polish and Deck review are different blocks — name the one whose parts you want joined, and I'll merge them. Everything stays as it is for now."
+    )
+  })
+
   it('mixed tags never merge silently: nothing changes, and the tags are named', async () => {
     await fresh([deck('d1', 9 * 60, 10 * 60), deck('d2', 10 * 60, 11 * 60, { tag: 'private' })])
     const before = snapshot()

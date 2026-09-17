@@ -3709,6 +3709,10 @@ export const useMew = create<MewState>((set, get) => {
           return `${list(run.parts)} is already done — a mew stays a mew, so everything stays as it is.`
         case 'series':
           return `${list(run.parts)} repeats — I keep a repeating block whole, so everything stays as it is.`
+        case 'titles': {
+          const names = [...new Set(run.parts.map((b) => baseOf(b.title)))]
+          return `${andList(names)} are different blocks — name the one whose parts you want joined, and I'll merge them. Everything stays as it is for now.`
+        }
         case 'tags': {
           const tags = [...new Set(run.parts.map((b) => b.tag))].join(' and ')
           return `those "${baseOf(run.parts[0].title)}" blocks ${day} are tagged ${tags} — give them one tag and I'll merge them. Everything stays as it is for now.`

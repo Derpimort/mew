@@ -193,6 +193,44 @@ describe('mergeRun — one block, or exactly why not', () => {
     expect(mergeRun(bs, ['a', 'b'])).toMatchObject({ ok: false, reason })
   })
 
+  it('a full-day all-day label (0:00–24:00) over the span holds no slot, so it never blocks (M10)', () => {
+    const bs = [
+      block({ id: 'a' }),
+      block({ id: 'hol', title: 'Civic Holiday', startMin: 0, endMin: 24 * 60, allDay: true }),
+      block({ id: 'b', startMin: 11 * 60, endMin: 12 * 60 }),
+    ]
+    expect(mergeRun(bs, ['a', 'b'])).toMatchObject({ ok: true, startMin: 9 * 60, endMin: 12 * 60 })
+  })
+
+  it('two different blocks that share a word never merge under one name: titles', () => {
+    const bs = [
+      block({ id: 'a', title: 'Deck polish' }),
+      block({ id: 'b', title: 'Deck review', startMin: 10 * 60, endMin: 11 * 60 }),
+    ]
+    expect(mergeRun(bs, ['a', 'b'])).toMatchObject({ ok: false, reason: 'titles' })
+    /* the same block named with a note after the dash is one block */
+    const same = [
+      block({ id: 'a', title: 'Deck — morning' }),
+      block({ id: 'b', title: 'Deck — later', startMin: 10 * 60, endMin: 11 * 60 }),
+    ]
+    expect(mergeRun(same, ['a', 'b'])).toMatchObject({ ok: true })
+  })
+
+  it('tentative only if every part was: one firm part makes the merged block firm', () => {
+    const mixed = [
+      block({ id: 'a', optional: true }),
+      block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60 }),
+    ]
+    const r1 = mergeRun(mixed, ['a', 'b'])
+    expect(r1.ok && r1.merged.optional).toBeUndefined()
+    const both = [
+      block({ id: 'a', optional: true }),
+      block({ id: 'b', startMin: 10 * 60, endMin: 11 * 60, optional: true }),
+    ]
+    const r2 = mergeRun(both, ['a', 'b'])
+    expect(r2.ok && r2.merged.optional).toBe(true)
+  })
+
   it('fewer than two parts: few', () => {
     expect(mergeRun([block({ id: 'a' })], ['a'])).toMatchObject({ ok: false, reason: 'few' })
   })
@@ -220,5 +258,31 @@ describe('the keyless grammar — merge / join / combine', () => {
 
   it('"join the standup at 9" is not a merge (no merge word)', () => {
     expect(parseCommand('join the standup at 9', NOW).kind).not.toBe('merge')
+  })
+
+  it('"join both calls" is not a merge either: both / two alone are not merge words', () => {
+    expect(parseCommand('join both calls', NOW).kind).not.toBe('merge')
+    expect(parseCommand('combine the two calls', NOW).kind).not.toBe('merge')
+  })
+
+  it('an "of" inside a title stays: "proof of concept", "end of day review" (peer review of #108)', () => {
+    expect(parseCommand('merge my two proof of concept blocks', NOW)).toEqual({
+      kind: 'merge',
+      query: 'proof of concept',
+      merge: {},
+    })
+    expect(parseCommand('join the end of day review blocks', NOW)).toEqual({
+      kind: 'merge',
+      query: 'end of day review',
+      merge: {},
+    })
+  })
+
+  it('"combine two blocks of deck into one" names the deck, not "of deck"', () => {
+    expect(parseCommand('combine two blocks of deck into one', NOW)).toEqual({
+      kind: 'merge',
+      query: 'deck',
+      merge: {},
+    })
   })
 })

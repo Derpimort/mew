@@ -827,7 +827,7 @@ export type MergeRun =
       ok: false
       /** what stops it, in the order checked; `blockers` for 'blocked', the
           offending parts for the rest */
-      reason: 'few' | 'days' | 'external' | 'done' | 'series' | 'tags' | 'blocked'
+      reason: 'few' | 'days' | 'external' | 'done' | 'series' | 'titles' | 'tags' | 'blocked'
       parts: Block[]
       blockers: Block[]
     }
@@ -856,6 +856,10 @@ export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
   if (done.length) return no('done', done)
   const series = parts.filter((b) => b.recurringBlockId)
   if (series.length) return no('series', series)
+  /* one block's parts, not two different blocks that share a word ("deck" matches
+     "Deck polish" and "Deck review"): the merged block would keep only one name */
+  if (new Set(parts.map((b) => b.title.split('—')[0].trim().toLowerCase())).size > 1)
+    return no('titles', parts)
   if (new Set(parts.map((b) => b.tag)).size > 1) return no('tags', parts)
   const startMin = parts[0].startMin
   const endMin = Math.max(...parts.map((b) => b.endMin))
@@ -874,7 +878,7 @@ export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
   if (blockers.length) return no('blocked', parts, blockers)
   const keep = parts[0]
   const dues = parts.map((b) => b.due).filter((d): d is number => d != null)
-  const { attention: _attention, due: _due, ...rest } = keep
+  const { attention: _attention, due: _due, optional: _optional, ...rest } = keep
   const merged: Block = {
     ...rest,
     startMin,
@@ -886,6 +890,8 @@ export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
         ? { attention: 'focus' as const }
         : {}),
     ...(dues.length ? { due: Math.min(...dues) } : {}),
+    /* tentative only if every part was: one firm part holds the whole span */
+    ...(parts.every((b) => b.optional) ? { optional: true } : {}),
   }
   return {
     ok: true,

@@ -883,11 +883,11 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
   /* merge (#74): "merge my two deck blocks" · "join the writing blocks tomorrow" ·
      "combine both gym blocks on thursday" · "merge the deck at 9:00 with the next
      one". "merge" always means this; "join"/"combine" only with a merge word
-     (blocks / together / into one / both / two), so "join the standup at 9"
-     stays chat. A time pins the run's first block, a day word its day. */
+     (blocks / together / into one), so "join the standup at 9" and "join both
+     calls" stay chat. A time pins the run's first block, a day word its day. */
   const mergeM =
     lower.match(/^merge\s+(.+)$/) ??
-    (/^(?:join|combine)\s+/.test(lower) && /\b(?:blocks|together|into\s+one|both|two)\b/.test(lower)
+    (/^(?:join|combine)\s+/.test(lower) && /\b(?:blocks|together|into\s+one)\b/.test(lower)
       ? lower.match(/^(?:join|combine)\s+(.+)$/)
       : null)
   if (mergeM) {
@@ -896,6 +896,7 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
     const query = cleanTitle(
       stripTimeWords(rest)
         .replace(/\b(?:with|and)\s+(?:the\s+)?(?:next|other)\s+one\b/g, ' ')
+        .replace(/\bblocks?\s+of\b/g, ' ') // "two blocks of deck", never the "of" inside a title
         .replace(/\b(?:together|into\s+one|blocks?|my|the|both|two|all|these|those|on)\b/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
