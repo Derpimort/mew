@@ -64,3 +64,39 @@ describe('remove — a weekday inside a title is still the title (#66 unchanged)
     })
   })
 })
+
+/* peer review of #82 (coderpa): "next <weekday>" is a day MEW never pins, so it
+   may never widen a bulk remove, and only a WEEKDAY makes a day phrase */
+describe('remove — an unpinned day never widens a bulk remove (#72 review)', () => {
+  it.each([
+    ['remove all lunch next thursday', { kind: 'remove', query: 'lunch' }],
+    [
+      'remove every lunch next thursday at 12:00',
+      { kind: 'remove', query: 'lunch', remove: { at: '12:00' } },
+    ],
+    ["remove next thursday's lunch", { kind: 'remove', query: 'lunch' }], // next week's possessive: no pin
+  ])('"%s" drops the sweep and pins nothing (the day chips ask)', (text, parsed) => {
+    expect(read(text)).toEqual(parsed)
+  })
+
+  it('"this thursday\'s" is still this week\'s pinned day, lifted whole', () => {
+    expect(read("remove this thursday's lunch")).toEqual({
+      kind: 'remove',
+      query: 'lunch',
+      remove: { dayOffset: 2 },
+    })
+  })
+
+  it('a non-weekday this/next word is not a day phrase: it stays in the query', () => {
+    expect(read('remove all review next week')).toEqual({
+      kind: 'remove',
+      query: 'review next week',
+      remove: { all: true },
+    })
+    expect(read('remove all tasks this morning').query).toBe('tasks this')
+  })
+
+  it('a leading "this <weekday>" is a title determiner, not a day (kept as the RC reads it)', () => {
+    expect(read('remove this friday demo')).toEqual({ kind: 'remove', query: 'this demo' })
+  })
+})

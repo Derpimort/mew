@@ -417,3 +417,44 @@ describe('#72 — remove by a day phrase finds the block', () => {
     ])
   })
 })
+
+/* peer review of #82 (coderpa): Lunch on Tue, Wed, Thu AND next Thursday. An
+   unpinned "next <weekday>" must never turn a bulk remove into a sweep of every
+   day — the P1 class #66 fixed. Keyless, asked on Tuesday. */
+describe('#72 review — "next <weekday>" never widens a bulk remove', () => {
+  const NEXT_THU = '2026-06-18'
+  const fourLunches = () => [...threeLunches(), lunch('next-thu', NEXT_THU)]
+
+  it.each(['remove all lunch next thursday', 'remove every lunch next thursday'])(
+    '"%s" removes nothing and asks with day chips',
+    async (said) => {
+      await fresh(fourLunches())
+      await say(said)
+      await settle()
+      expect(lunchIds()).toEqual(['next-thu', 'thu', 'tue', 'wed'])
+      expect(chipMsgs()).toHaveLength(1)
+    }
+  )
+
+  it('"remove next thursday\'s lunch" never takes this Thursday\'s', async () => {
+    await fresh(fourLunches())
+    await say("remove next thursday's lunch")
+    await settle()
+    expect(lunchIds()).toEqual(['next-thu', 'thu', 'tue', 'wed'])
+  })
+
+  it('"remove all review next week" stays a safe miss — "next week" is not a day phrase', async () => {
+    await fresh([
+      lunch('rev-tue', TODAY, { title: 'Review', startMin: 15 * 60, endMin: 16 * 60 }),
+      lunch('rev-wed', WED, { title: 'Review', startMin: 15 * 60, endMin: 16 * 60 }),
+    ])
+    await say('remove all review next week')
+    await settle()
+    const left = useMew
+      .getState()
+      .blocks.filter((b) => b.title === 'Review')
+      .map((b) => b.id)
+      .sort()
+    expect(left).toEqual(['rev-tue', 'rev-wed'])
+  })
+})
