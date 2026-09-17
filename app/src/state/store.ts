@@ -2897,7 +2897,10 @@ export const useMew = create<MewState>((set, get) => {
           week.isDeep(b) &&
           b.status !== 'rolled'
       ).length
-      observation = ` That's your ${ordinal(deepCount)} deep-work block this week.`
+      /* #90: the count names the class in the room offer's own words — the same
+         turn's offer says "hour-plus work", so an inbox sweep isn't a "deep-work
+         block" one message earlier */
+      observation = ` That's your ${ordinal(deepCount)} ${FOCUS_CLASS_LABEL.deep} block this week.`
       /* the meter speaking for this day makes the right-size aside a second
          voice in the same turn — the chips carry the offer, the count stands */
       if (agg.realisticBestH != null && !guarded.has(placedDeep.dayKey)) {

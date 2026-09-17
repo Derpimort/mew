@@ -90,8 +90,10 @@ function bandOf(startMin: number): EnergyBand | null {
 }
 
 /** MEW-voice labels for the three focus classes — one home, shared by the
-    estimate offer's copy ("your deep-work blocks…") and the pad chip's reply
-    ("give my deep-work blocks room"), so the ask and the answer can't drift. */
+    estimate offer's copy ("your hour-plus work blocks…"), the pad chip's reply
+    ("give my hour-plus work blocks room") and the plan reply's weekly count
+    ("That's your 2nd hour-plus work block this week"), so the ask, the answer
+    and the count can't drift. */
 export const FOCUS_CLASS_LABEL: Record<FocusClass, string> = {
   /* #90: what the class IS — work of an hour or more. "deep-work" told the owner a
      default-length inbox sweep was deep work; the offer now also names its blocks */

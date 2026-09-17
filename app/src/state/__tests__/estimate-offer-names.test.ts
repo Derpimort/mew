@@ -252,3 +252,91 @@ describe('#90 — the estimate offer names the blocks it pads', () => {
     expect(found('quarterly report')!.endMin - found('quarterly report')!.startMin).toBe(70)
   })
 })
+
+describe('#90 — one class word in the turn, and the names say exactly what grew', () => {
+  const mews = () => chat().filter((m) => m.role === 'mew')
+
+  it('the direct path: the weekly count calls inbox sweep and errands hour-plus work, the same words as the offer that follows', async () => {
+    await fresh([], estimateMem(), { estimateAutosize: 'ask' })
+    await useMew.getState().speak('block inbox sweep, block errands')
+    await settle()
+
+    expect(mews().map((m) => m.body)).toEqual([
+      "Done — today 8:00–9:00 is held for inbox sweep, today 9:30–10:30 is held for errands. That's your 2nd hour-plus work block this week.",
+      'your hour-plus work blocks tend to run ~20% long — want me to give them room? (inbox sweep, errands)',
+    ])
+    expect(mews().some((m) => /deep-work/.test(m.body))).toBe(false)
+  })
+
+  it('a stated 90-minute block counts under the same words, and no offer follows', async () => {
+    await fresh([], estimateMem(), { estimateAutosize: 'ask' })
+    await useMew.getState().speak('block 90 min for the quarterly report tomorrow')
+    await settle()
+
+    expect(mews().map((m) => m.body)).toEqual([
+      "Done — Wednesday 8:00–9:30 is held for quarterly report. That's your 1st hour-plus work block this week.",
+    ])
+  })
+
+  it('two blocks with one title are named once, and both grow', async () => {
+    await fresh([], estimateMem(), { estimateAutosize: 'ask' })
+    await useMew.getState().speak('block inbox sweep today, block inbox sweep tomorrow')
+    await settle()
+
+    expect(offers()).toHaveLength(1)
+    expect(offers()[0].body).toBe(
+      'your hour-plus work blocks tend to run ~20% long — want me to give them room? (inbox sweep)'
+    )
+    await useMew.getState().pickChoice(offers()[0].id, 'pad')
+    await settle()
+    expect(blocks().map((b) => [b.title, b.endMin - b.startMin])).toEqual([
+      ['inbox sweep', 70],
+      ['inbox sweep', 70],
+    ])
+    expect(mews().at(-1)!.body).toBe(
+      'Gave inbox sweep room — 2 now run about 20% longer, sized to how they really go.'
+    )
+  })
+
+  it('three blocks are all named, in the offer and in the confirmation', async () => {
+    await fresh([], estimateMem(), { estimateAutosize: 'ask' })
+    await useMew
+      .getState()
+      .speak(
+        'block the quarterly report tomorrow, block the board deck tomorrow, block the roadmap review tomorrow'
+      )
+    await settle()
+
+    expect(offers()).toHaveLength(1)
+    expect(offers()[0].body).toBe(
+      'your hour-plus work blocks tend to run ~20% long — want me to give them room? (quarterly report, board deck, roadmap review)'
+    )
+    await useMew.getState().pickChoice(offers()[0].id, 'pad')
+    await settle()
+    expect(mews().at(-1)!.body).toBe(
+      'Gave quarterly report, board deck and roadmap review room — 3 now run about 20% longer, sized to how they really go.'
+    )
+  })
+
+  it('an offered block that has started by the pick stays as it is, and the confirmation names only what grew', async () => {
+    await fresh([], estimateMem(), { estimateAutosize: 'ask' })
+    await useMew.getState().speak('block the quarterly report today, block the board deck tomorrow')
+    await settle()
+    expect(offers()[0].body).toMatch(/\(quarterly report, board deck\)$/)
+    expect([found('quarterly report')!.dayKey, found('quarterly report')!.startMin]).toEqual([
+      TODAY,
+      8 * 60,
+    ])
+
+    vi.setSystemTime(TUE(8, 5)) // the report is under way
+    useMew.getState().tick()
+    await useMew.getState().pickChoice(offers()[0].id, 'pad')
+    await settle()
+
+    expect(found('quarterly report')!.endMin - found('quarterly report')!.startMin).toBe(60)
+    expect(found('board deck')!.endMin - found('board deck')!.startMin).toBe(70)
+    expect(mews().at(-1)!.body).toBe(
+      'Gave board deck room — it now runs about 20% longer, sized to how it really goes.'
+    )
+  })
+})

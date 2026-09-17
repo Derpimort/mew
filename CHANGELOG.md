@@ -125,9 +125,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ### The room offer says what it would change
 - When MEW offers to give your work more room, it now names the blocks it would resize
-  ("(inbox sweep, errands)") and calls the kind what it is, hour-plus work, so a routine inbox
-  sweep is never described as deep work. "Give them room" changes exactly the blocks it named,
-  and the confirmation names them too.
+  ("(inbox sweep, errands)") and calls the kind what it is: hour-plus work. The count that comes
+  with a new block uses the same words ("That's your 2nd hour-plus work block this week"), so a
+  routine inbox sweep isn't called a deep-work block one message before the offer. "Give them
+  room" changes exactly the blocks it named, and the confirmation names them too.
 
 ## [0.7.0] — 2026-08-12
 
