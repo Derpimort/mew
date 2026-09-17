@@ -181,6 +181,7 @@ import {
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
 import { choicesActive, scenariosActive } from '../domain/choices'
+import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
@@ -813,20 +814,15 @@ function dropReplySinglesOut(
   todayKey: string,
   id: string
 ): boolean {
-  const ask = parseCommand(reply, now)
-  if (ask.kind !== 'remove') return false
-  const pin = ask.remove ?? {}
-  const r = week.resolveRemoval(
-    blocks,
-    ask.query ?? '',
-    {
-      at: pin.at,
-      all: pin.all,
-      day: pin.dayOffset != null ? addDaysKey(todayKey, pin.dayOffset) : undefined,
-    },
-    todayKey
+  const e = chipReplyEffect(blocks, reply, now, todayKey) // #94: the one chip resolver
+  return (
+    e?.kind === 'remove' &&
+    Array.isArray(e.remove) &&
+    e.remove.length === 1 &&
+    e.remove[0] === id &&
+    Array.isArray(e.candidates) &&
+    !e.candidates.length
   )
-  return r.remove.length === 1 && r.remove[0].id === id && !r.candidates.length
 }
 
 /** The #293 scenario-picker message shape — the chips pattern with cards:
@@ -1915,6 +1911,17 @@ export const useMew = create<MewState>((set, get) => {
      like the day-load chips (#301) so the ask lands after the turn's reply.
      Returns whether chips went out, so the reply can say the options are on
      screen. */
+  /* One clock per turn (#96). The store clock (nowMs) only moves on a tick —
+     every 5 s, on visibility, on the shell's tick — while a turn can start in the
+     seconds after midnight before one lands. Everything a turn resolves (the rules
+     floor's day words, every executor's todayKey, the model's week context) reads
+     nowMs, so bring it to now once, first. Forward only: the store clock never
+     runs backwards under a turn. */
+  function syncTurnClock() {
+    const now = nowFn()
+    if (now > get().nowMs) set({ nowMs: now })
+  }
+
   let pendingDriftMsgs: ChatMessage[] = []
   function offerDriftChoices(
     stuck: { placedId: string; stuckIds: string[] }[],
@@ -5109,6 +5116,7 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      syncTurnClock() // #96: one today for the parse, the executors and the model
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
@@ -5378,7 +5386,9 @@ export const useMew = create<MewState>((set, get) => {
         }
         const ctx = weekContext(get(), recallLines, recallDegraded)
         const thread = buildThread(get().chat)
-        const adapters = selectAdapters(get().settings, () => new Date(nowFn()))
+        /* #96: the rules floor counts day words ("on thursday") from the SAME clock
+           every executor resolves them against — never the wall clock beside it */
+        const adapters = selectAdapters(get().settings, () => new Date(get().nowMs))
         const failed: string[] = []
         let lastModelErr: unknown = null // why a model adapter threw, for honest fallback copy
 
@@ -5606,13 +5616,17 @@ export const useMew = create<MewState>((set, get) => {
     },
 
     async pickChoice(msgId: string, choiceId: string) {
-      const s = get()
       /* chips park while a turn is in flight — a pick mid-turn would start a
          concurrent speak racing the live stream. turnInFlight is the phase
          authority (same gate send() queues on, #280): `thinking` alone is too
          narrow — it flips off at the first streamed token while the turn
          keeps running. */
       if (turnInFlight) return
+      /* #96: a pick starts a turn, so its pick-time checks (#89) read the same
+         synced clock the spoken reply will — right after midnight, before a
+         tick, the check and the executor both say Wednesday */
+      syncTurnClock()
+      const s = get()
       const msg = s.chat.find((m) => m.id === msgId)
       const choice = msg?.choices?.find((c) => c.id === choiceId)
       if (!msg || !choice) return
@@ -5652,6 +5666,24 @@ export const useMew = create<MewState>((set, get) => {
           post([mewMsg(`That choice was for ${whose}${name}, so everything stays as it is.`)])
           return
         }
+      }
+      /* #94: every chip's reply speaks in the pick's day words. Picked on a later
+         calendar day than it was offered, a chip acts only while its reply still
+         reaches the same blocks on the same absolute day and time ("to thursday"
+         still does; "to tomorrow" moved a day). Otherwise the chip is spent, MEW
+         says when it was offered, and everything stays as it is. */
+      const offeredAt = new Date(msg.ts)
+      const pickedAt = new Date(s.nowMs)
+      if (
+        dayKey(offeredAt) !== dayKey(pickedAt) &&
+        !chipStillMeans(s.blocks, choice.reply, offeredAt, pickedAt)
+      ) {
+        post([
+          mewMsg(
+            `That choice was offered on ${fmtDowLong(dayKey(offeredAt))} ("${choice.label}"), so everything stays as it is.`
+          ),
+        ])
+        return
       }
       /* the pick IS the user's next message — the normal turn does the rest */
       await get().speak(choice.reply)

@@ -133,6 +133,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
   length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
   size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
+### Midnight means the same day to every part of a turn
+- In the first seconds after midnight, "remove the Groceries on thursday" removes Thursday's
+  Groceries. Each turn, typed or tapped, now starts from one clock, so the words you use, the
+  choice checks, the tools that act and the model's view of your week all agree on what today is.
+
 ### The weekly review's roll really moves your work
 - Rolling carried work forward now moves it: the block lands on the same weekday next week and
   leaves this week's carried list, so it's never offered twice, and one "undo that" brings the
@@ -157,6 +162,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Tell MEW an overlap is fine ("put the email sweep at 2, it's fine to overlap gaming") and it places
   the block exactly there, leaves your flexible block where it is, and says the two share that time.
   Meetings, calls and calendar events are still never covered: MEW names them and asks for another time.
+### Every choice keeps the day it was offered
+- The one-tap choices MEW offers (shift, split or roll around a meeting, trim a heavy day, shift new
+  work to its next clean slot, pick which of two same-named blocks you meant, or apply an edit to
+  just this one of a repeating block) keep the day they were offered. Picked after midnight, a
+  choice checks first: it acts while it still reaches the same block on the same day and time, and
+  otherwise MEW says which day it was offered on and everything stays as it is. A choice named for
+  a weekday ("move it to thursday") keeps working the next day.
 
 ## [0.7.0] — 2026-08-12
 
