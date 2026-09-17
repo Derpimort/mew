@@ -82,6 +82,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   at 12:00" now find the block. The day phrase is read as the day, so only the title is looked up,
   and when the same time repeats across days MEW still asks which with day choices.
 
+### Rules from your brain are yours to see and let go
+- The memory console now lists every standing rule MEW applies, including ones that live only in
+  your brain (told on another device, or seeded there), each with a quiet "from your brain" mark.
+  Forget works on them like any other rule, and it sticks. With the brain off, the list is exactly
+  what's on this device.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar

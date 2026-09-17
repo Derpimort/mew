@@ -109,7 +109,7 @@ import {
   prefPage,
   slugify,
 } from '../adapters/brain/senses'
-import { mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
+import { brainOnlyPrefKeys, mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
 import {
   adoptSidecarSnapshot,
   effectiveBrain,
@@ -233,13 +233,19 @@ export type { SidecarStatus } from '../adapters/brain/sidecar'
    remember/forget and on (re)connect. What APPLIES is always the merge with local
    memory (activePrefsFrom): local rules and forgets win, and brain-only rules join. */
 let brainPrefs: PrefPayload[] | null = null
+/* #71: every write to the cache is mirrored into state, so the memory console (a
+   React surface) re-renders when the brain's list lands or changes */
+function setBrainPrefs(prefs: PrefPayload[] | null): void {
+  brainPrefs = prefs
+  if (useMew.getState().brainPrefs !== prefs) useMew.setState({ brainPrefs: prefs })
+}
 function refreshBrainPrefs(): void {
   if (!brainOn()) {
-    brainPrefs = null
+    setBrainPrefs(null)
     return
   }
   void brain.listPrefs().then((prefs) => {
-    brainPrefs = prefs
+    setBrainPrefs(prefs)
     replayLocalPrefs(prefs)
   })
 }
@@ -278,7 +284,7 @@ function replayLocalPrefs(fromBrain: PrefPayload[]): void {
     // re-read the brain's copy; no second replay, the ledger already holds these
     if (wrote)
       void brain.listPrefs().then((prefs) => {
-        brainPrefs = prefs
+        setBrainPrefs(prefs)
       })
   })()
 }
@@ -293,6 +299,21 @@ export function activePrefsFrom(
      it held anything, dropping rules told to MEW while it was away and bringing
      back rules the owner had forgotten. */
   return mergeActivePrefs(memory, fromBrain)
+}
+
+/** #71: the standing rulebook the owner sees — exactly what the planners read
+    (the merge with the brain's list when a brain answered, local memory alone
+    otherwise), plus which of those rules come from the brain alone. One selector
+    for the memory console and the keyless "what do you know about me?" reply. */
+export function standingRulebook(s: Pick<MewState, 'memory' | 'settings' | 'brainPrefs'>): {
+  prefs: PrefPayload[]
+  brainOnly: Set<string>
+} {
+  const fromBrain = brainIsOn(s.settings) ? s.brainPrefs : null
+  return {
+    prefs: activePrefsFrom(s.memory, fromBrain),
+    brainOnly: brainOnlyPrefKeys(s.memory, fromBrain),
+  }
 }
 
 /** the same rulebook, rendered for the context block */
@@ -379,6 +400,10 @@ export interface MewState {
       beat). Settings renders it so a dead built-in brain is visibly dead —
       the user can always answer "is my brain on?" (#249). */
   brainSidecar: SidecarStatus
+  /** Non-persisted (#71): the brain's copy of the standing rulebook, as last
+      listed this session (null until a brain answers, or with the brain off).
+      Mirrors the store's cache so the memory console can show brain-only rules. */
+  brainPrefs: PrefPayload[] | null
 
   engine: EngineState
   lastActivityMs: number
@@ -1121,7 +1146,7 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
     knownLines: consoleSummary(
       memoryConsole({
         events: s.memory,
-        prefs: activePrefsFrom(s.memory, null),
+        ...standingRulebook(s), // #71: the card's rulebook, brain rows only once it answered
         insights,
         energy: energyProfile(s.memory, agg, now), // #15: rhythm rows, parity with the card
       })
@@ -4693,6 +4718,7 @@ export const useMew = create<MewState>((set, get) => {
     queuedSpeak: null,
     lastReferent: null,
     brainSidecar: 'off',
+    brainPrefs: null,
 
     engine: { lastFired: {}, lastDriftBlockId: null },
     lastActivityMs: nowFn(),
