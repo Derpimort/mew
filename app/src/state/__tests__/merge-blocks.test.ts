@@ -310,6 +310,44 @@ describe('#74 — two same-tag blocks become one', () => {
   })
 })
 
+describe('#74 — the reply names the day the way it reads', () => {
+  it('tomorrow\'s blocks: "now runs tomorrow …", and a blocker "sits between them tomorrow"', async () => {
+    const TOMORROW = '2026-06-10'
+    await fresh([
+      deck('d1', 9 * 60, 10 * 60, { dayKey: TOMORROW }),
+      deck('d2', 10 * 60, 11 * 60, { dayKey: TOMORROW }),
+      deck('t1', 14 * 60, 15 * 60, { dayKey: TOMORROW, title: 'Notes' }),
+      block({
+        id: 'call',
+        title: 'Client call',
+        dayKey: TOMORROW,
+        startMin: 15 * 60,
+        endMin: 15 * 60 + 30,
+      }),
+      deck('t2', 15 * 60 + 30, 16 * 60 + 30, { dayKey: TOMORROW, title: 'Notes' }),
+    ])
+    await say('merge my two deck blocks tomorrow')
+    await settle()
+    expect(lastMew()).toBe('Merged — Deck now runs tomorrow 9:00–11:00 as one block (2 joined).')
+    await say('merge my two notes blocks tomorrow')
+    await settle()
+    expect(lastMew()).toBe(
+      'Client call 15:00–15:30 (fixed) sits between them tomorrow, so everything stays as it is.'
+    )
+  })
+
+  it('a later day reads "on <weekday>"', async () => {
+    const THURSDAY = '2026-06-11'
+    await fresh([
+      deck('d1', 9 * 60, 10 * 60, { dayKey: THURSDAY }),
+      deck('d2', 10 * 60, 11 * 60, { dayKey: THURSDAY }),
+    ])
+    await say('merge my two deck blocks on thursday')
+    await settle()
+    expect(lastMew()).toBe('Merged — Deck now runs on Thursday 9:00–11:00 as one block (2 joined).')
+  })
+})
+
 describe('#74 — nothing changes when a merge would cover something, and the reply says what', () => {
   it('a fixed call between the parts: nothing changes, and the call is named', async () => {
     await fresh([

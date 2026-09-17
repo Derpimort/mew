@@ -3700,7 +3700,9 @@ export const useMew = create<MewState>((set, get) => {
   function execMerge(query: string, dayOffset?: number, at?: string): string {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
-    const dayWordOf = (k: string) => (k === todayKey ? 'today' : fmtDowLong(k))
+    /* "today" / "tomorrow" / "on Thursday" — reads right mid-sentence */
+    const dayWordOf = (k: string) =>
+      k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : `on ${fmtDowLong(k)}`
     const named = (b: Block) => `${baseOf(b.title)} at ${fmtTime(b.startMin)}`
     const cands = week.mergeCandidates(s.blocks, query, todayKey, {
       dayKey: dayOffset != null ? addDaysKey(todayKey, dayOffset) : undefined,
