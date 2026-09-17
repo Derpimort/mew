@@ -302,7 +302,12 @@ function StandingRuleRow({
   }
 
   return (
-    <div data-claim="stated" className="set-row" style={{ alignItems: 'flex-start' }}>
+    <div
+      /* #71: a brain-only rule traces to the brain; a local one to your own words */
+      data-claim={r.fromBrain ? 'brain' : 'stated'}
+      className="set-row"
+      style={{ alignItems: 'flex-start' }}
+    >
       <div style={{ minWidth: 0, flex: 1 }}>
         <div className="rt">{r.match}</div>
         {editing ? (
@@ -334,7 +339,10 @@ function StandingRuleRow({
         ) : (
           <>
             <div className="rs">{r.value}</div>
-            <div style={SRC}>you told me: "{r.stated}"</div>
+            <div style={SRC}>
+              {r.fromBrain ? 'from your brain' : 'you told me'}
+              {r.stated ? `: "${r.stated}"` : ''}
+            </div>
           </>
         )}
       </div>
