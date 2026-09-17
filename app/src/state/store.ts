@@ -6566,6 +6566,7 @@ export const useMew = create<MewState>((set, get) => {
       const places: PlaceSpec[] = [] // what landed, for the tool card
       const landed: string[] = []
       const withSeries: string[] = []
+      const rolledOriginals: Block[] = [] // every original this roll marks rolled
       const noRoom: { name: string; toKey: string }[] = []
       const workDays = new Set<string>()
       for (const b of picked) {
@@ -6589,6 +6590,7 @@ export const useMew = create<MewState>((set, get) => {
             x.id === b.id ? { ...x, status: 'rolled' as const, rolledToId: next.id } : x
           )
           withSeries.push(name)
+          rolledOriginals.push(b)
           continue
         }
         const durationMin = week.duration(b)
@@ -6646,6 +6648,7 @@ export const useMew = create<MewState>((set, get) => {
         })
         if (b.tag === 'work' && !week.isBackground(b)) workDays.add(toKey)
         landed.push(name)
+        rolledOriginals.push(b)
       }
 
       const parts: string[] = []
@@ -6676,6 +6679,25 @@ export const useMew = create<MewState>((set, get) => {
         pickSnapshotHolds = true
         const commit = () => {
           setBlocks(blocks)
+          /* a review roll is a roll: logged and ingested exactly like the evening
+             wind-down roll and an interrupt, once per original it marks, so the
+             carry ratio, the energy profile and the roll insights all see it.
+             Inside the snapshot, so "undo that" drops these events too. */
+          for (const b of rolledOriginals) {
+            const evTs = nowFn() // one ts for the event and its brain offer
+            ingestBlockEvent(b, 'rolled', minOfDay(new Date(evTs)), evTs)
+            logMemory({
+              kind: 'rolled',
+              dayKey: b.dayKey,
+              tag: b.tag,
+              plannedMin: week.duration(b),
+              deep: week.isDeep(b),
+              title: b.title,
+              startMin: b.startMin,
+              endMin: b.endMin,
+              ts: evTs,
+            })
+          }
           return reply
         }
         if (places.length) runToolWithCard('plan', { places, frees: [] }, commit)

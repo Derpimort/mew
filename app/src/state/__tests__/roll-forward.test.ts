@@ -91,9 +91,14 @@ vi.mock('../../adapters/notify', () => {
   return { createNotifier: stub, createBrowserNotifier: stub }
 })
 
+/* the brain's ingest records every page, so a pin can hear a roll the way the
+   brain does (a block page tagged with its event kind) */
+const brainIngest = vi.hoisted(() => ({ pages: [] as { tags?: string[]; body?: string }[] }))
 vi.mock('../../adapters/brain/gbrainHttp', () => ({
   createGbrainHttp: () => ({
-    ingest: async () => {},
+    ingest: async (page: { tags?: string[]; body?: string }) => {
+      brainIngest.pages.push(page)
+    },
     recall: async () => [],
     health: async () => false,
     listPrefs: async () => [],
@@ -205,7 +210,10 @@ const learnedRule = (rule: NonNullable<MemoryEvent['rule']>): MemoryEvent => ({
   rule,
 })
 
-beforeEach(() => vi.useFakeTimers())
+beforeEach(() => {
+  vi.useFakeTimers()
+  brainIngest.pages.length = 0
+})
 afterEach(() => {
   vi.useRealTimers()
   scriptedModel.reset()
@@ -667,5 +675,90 @@ describe('rolling forward keeps to the owner’s rules (#19)', () => {
     expect(byId('q3')!.status).toBe('rolled')
     expect(byId('sp')!.status).toBe('rolled')
     expect(meter()).toHaveLength(1)
+  })
+})
+
+/* ── a review roll is logged and heard like every roll (#19 peer review) ── */
+
+describe('a review roll is logged and heard like every roll (#19)', () => {
+  const rolledEvents = () => useMew.getState().memory.filter((e) => e.kind === 'rolled')
+  const rolledPages = () => brainIngest.pages.filter((p) => p.tags?.includes('rolled'))
+  const three = () => {
+    const rrule = { freq: 'WEEKLY' as const, interval: 1 }
+    return [
+      block({ id: 'rd', title: 'Roadmap draft', dayKey: TUE, startMin: 10 * 60, endMin: 11 * 60 }),
+      block({
+        id: 'gym-10',
+        title: 'Gym',
+        tag: 'health',
+        dayKey: WED,
+        startMin: 7 * 60,
+        endMin: 8 * 60,
+        recurringBlockId: 'gym-s',
+        rrule,
+      }),
+      block({
+        id: 'gym-17',
+        title: 'Gym',
+        tag: 'health',
+        dayKey: NEXT_WED,
+        startMin: 7 * 60,
+        endMin: 8 * 60,
+        recurringBlockId: 'gym-s',
+        rrule,
+      }),
+      block({ id: 'spec', title: 'Spec review', dayKey: THU, startMin: 14 * 60, endMin: 15 * 60 }),
+      block({
+        id: 'wall',
+        title: 'Offsite interview day',
+        dayKey: NEXT_THU,
+        startMin: 0,
+        endMin: 24 * 60 - 1,
+        protected: true,
+      }),
+    ]
+  }
+
+  it('one rolled memory event per rolled block (landed or riding its series), in the block’s own shape; a pick with no room logs nothing', async () => {
+    await fresh(three())
+    expect(rolledEvents()).toHaveLength(0)
+
+    roll(['rd', 'gym-10', 'spec'])
+
+    expect(byId('spec')!.status).toBe('open') // no room next Thursday
+    const events = rolledEvents()
+    expect(events.map((e) => e.title).sort()).toEqual(['Gym', 'Roadmap draft'])
+    expect(events.find((e) => e.title === 'Roadmap draft')).toMatchObject({
+      dayKey: TUE, // the day the work was carried FROM
+      tag: 'work',
+      plannedMin: 60,
+      startMin: 10 * 60,
+      endMin: 11 * 60,
+    })
+    expect(events.find((e) => e.title === 'Gym')).toMatchObject({ dayKey: WED, tag: 'health' })
+  })
+
+  it('the brain hears each roll as a rolled block page, and nothing for the pick with no room', async () => {
+    await fresh(three())
+
+    roll(['rd', 'gym-10', 'spec'])
+
+    const pages = rolledPages()
+    expect(pages).toHaveLength(2)
+    expect(pages.map((p) => p.body?.split('\n')[0]).sort()).toEqual(['# Gym', '# Roadmap draft'])
+  })
+
+  it('one "undo that" drops the logged roll events along with the roll', async () => {
+    await fresh(three(), [], 'local')
+    roll(['rd', 'gym-10'])
+    expect(rolledEvents()).toHaveLength(2)
+
+    scriptedModel.chunks = ['on it — ', 'putting that back.']
+    scriptedModel.midTurn = (exec) => void exec.undoLast()
+    await say('undo that')
+
+    expect(byId('rd')!.status).toBe('open')
+    expect(byId('gym-10')!.status).toBe('open')
+    expect(rolledEvents()).toHaveLength(0)
   })
 })
