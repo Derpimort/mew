@@ -8,7 +8,8 @@
 
 import type { Block } from '../../domain/types'
 import { addDaysKey, fmtDowLong, fmtTime } from '../../domain/time'
-import { blocksForDay, duration } from '../../domain/week'
+import { blocksForDay, duration, isAllDay } from '../../domain/week'
+import { layoutAllDay, type LaneChip } from './allDayLane'
 import { snapMin } from './dragGeometry'
 import { DAY_MIN } from './orbitGeometry'
 
@@ -92,6 +93,7 @@ export type WeekEdge =
   | 'week-end' // …or its right edge
   | 'min-length' // shrunk to the 15-min floor
   | 'max-length' // grown to the end of the day
+  | 'all-day' // an all-day entry labels its day(s) — no clock to nudge along (#27)
 
 export type WeekKeyCommand =
   | { kind: 'move'; toDayKey: string; toStartMin: number }
@@ -103,6 +105,9 @@ export function weekKeyCommand(
   intent: MutIntent,
   weekDayKeys: readonly string[]
 ): WeekKeyCommand {
+  /* a holiday holds no time: nothing to slide or stretch, and it never reaches
+     the drag door — the attempt is still spoken, never a silent no-op */
+  if (isAllDay(b)) return { kind: 'edge', edge: 'all-day' }
   if (intent.kind === 'resize') {
     const dur = duration(b)
     if (intent.deltaMin < 0) {
@@ -147,10 +152,26 @@ export function weekKeyCommand(
    order (wrapping, so a keyboard user never dead-ends); ←/→ hop to the
    nearest-by-start block of an adjacent day with blocks, mirroring the dial's
    two-axis grammar (#253). rovingFocusId (orbitGeometry) picks the single
-   tab stop from this order. */
+   tab stop from this order.
+
+   All-day chips (#27) sit above 0:00, so a day's chips lead its tiles — in
+   lane row order, each chip on the first visible day it covers. Pass exactly
+   what is drawn: a chip tucked behind "+N more" is not in the order. */
+
+/** One day's items in reading order: the chips starting on it, then its tiles. */
+function dayItems(blocks: Block[], lane: LaneChip[], weekDayKeys: readonly string[], i: number) {
+  return [
+    ...lane
+      .filter((c) => c.col === i)
+      .sort((a, z) => a.row - z.row)
+      .map((c) => c.block),
+    ...blocksForDay(blocks, weekDayKeys[i]).filter((b) => !isAllDay(b)),
+  ]
+}
 
 export function weekFocusOrder(blocks: Block[], weekDayKeys: readonly string[]): string[] {
-  return weekDayKeys.flatMap((k) => blocksForDay(blocks, k).map((b) => b.id))
+  const lane = layoutAllDay(blocks, weekDayKeys).chips
+  return weekDayKeys.flatMap((_, i) => dayItems(blocks, lane, weekDayKeys, i).map((b) => b.id))
 }
 
 export function stepWeekFocus(
@@ -173,20 +194,26 @@ export function stepWeekFocus(
 
   // ←/→: the adjacent day (skipping empty columns, wrapping) — nearest start
   const cur = blocks.find((b) => b.id === currentId)!
-  const di = weekDayKeys.indexOf(cur.dayKey)
+  const lane = layoutAllDay(blocks, weekDayKeys).chips
+  const chip = lane.find((c) => c.block.id === currentId)
+  /* a chip spans days: → leaves from its LAST visible day, ← from its first */
+  const di = chip
+    ? dir === 'right'
+      ? chip.col + chip.span - 1
+      : chip.col
+    : weekDayKeys.indexOf(cur.dayKey)
   if (di === -1) return currentId
+  /* a chip reads as the top of its day, just above 0:00 */
+  const at = (b: Block): number => (isAllDay(b) ? -1 : b.startMin)
   const step = dir === 'right' ? 1 : -1
   for (let hop = 1; hop < weekDayKeys.length; hop++) {
     // |step·hop| < length, so one added length keeps the modulo in range
-    const day = blocksForDay(
-      blocks,
-      weekDayKeys[(di + step * hop + weekDayKeys.length) % weekDayKeys.length]
-    )
+    const i = (di + step * hop + weekDayKeys.length) % weekDayKeys.length
+    const day = dayItems(blocks, lane, weekDayKeys, i).filter((b) => b.id !== currentId)
     if (day.length === 0) continue
     let best = day[0]
     for (const cand of day) {
-      if (Math.abs(cand.startMin - cur.startMin) < Math.abs(best.startMin - cur.startMin))
-        best = cand
+      if (Math.abs(at(cand) - at(cur)) < Math.abs(at(best) - at(cur))) best = cand
     }
     return best.id
   }
@@ -202,6 +229,13 @@ export function stepWeekFocus(
     held) — so a screen reader knows an immovable block before trying it. */
 export function blockAriaLabel(b: Block): string {
   const done = b.status === 'done' ? ', done' : ''
+  if (isAllDay(b)) {
+    /* a day label speaks its days, never a clock span it doesn't hold (#27) */
+    const days = b.endDayKey
+      ? `, ${fmtDowLong(b.dayKey).toLowerCase()} to ${fmtDowLong(b.endDayKey).toLowerCase()}`
+      : ''
+    return `${b.title}, all day${days}${done}${b.external ? ', from your calendar' : ''}`
+  }
   const nature = b.external ? ', from your calendar' : b.protected ? ', held' : ''
   return `${b.title}, ${fmtTime(b.startMin)} to ${fmtTime(b.endMin)}${done}${nature}`
 }
@@ -224,6 +258,10 @@ export function edgeAnnouncement(b: Block, edge: WeekEdge): string {
       return `${t} is already at its smallest — ${MIN_BLOCK_MIN} minutes`
     case 'max-length':
       return `${t} already runs to the end of the day`
+    case 'all-day':
+      return b.endDayKey
+        ? `${t} covers ${fmtDowLong(b.dayKey).toLowerCase()} to ${fmtDowLong(b.endDayKey).toLowerCase()} — it stays`
+        : `${t} covers the whole day — it stays`
   }
 }
 
