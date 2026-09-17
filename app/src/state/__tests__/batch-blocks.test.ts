@@ -4,8 +4,8 @@
    stays put; nothing changes until the pick; the pick moves exactly the listed
    blocks, one undo reverses them all; calendar, fixed, done and repeating blocks
    never move; a narrow batch acts directly; a collision speaks the existing
-   clash wording; a confirm picked after midnight re-checks (#94) and changes
-   nothing. */
+   clash wording; a confirm picked after midnight re-checks (#94): one naming
+   "today" changes nothing, one naming a weekday still acts. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, MemoryEvent, Settings } from '../../domain/types'
@@ -391,6 +391,25 @@ describe('#75 — narrow batches, collisions, and a pick after midnight', () => 
     await pick('do it')
     expect(snapshot()).toBe(before)
     expect(lastMew()).toMatch(/^That choice was offered on Tuesday/)
+  })
+
+  it('a confirm that names its day as a weekday still acts after midnight, moving exactly what it listed', async () => {
+    const THU = '2026-06-11'
+    await fresh(afternoon().map((b) => ({ ...b, dayKey: THU })))
+    await say('push everything after 3pm on thursday back an hour')
+    await settle()
+    expect(chipMsgs().at(-1)!.choices![0].reply).toBe(
+      'push everything after 15:00 on thursday later by 60 min — yes, all 3'
+    )
+    vi.setSystemTime(new Date(2026, 5, 10, 0, 5))
+    useMew.getState().tick()
+    await pick('do it')
+    expect(at('d1')).toEqual([THU, 16 * 60, 17 * 60])
+    expect(at('d2')).toEqual([THU, 18 * 60, 18 * 60 + 30])
+    expect(at('d3')).toEqual([THU, 19 * 60, 19 * 60 + 30])
+    expect(at('call')).toEqual([THU, 15 * 60 + 30, 15 * 60 + 45])
+    expect(at('mtg')).toEqual([THU, 20 * 60, 20 * 60 + 30])
+    expect(lastMew()).toMatch(/^Moved 3 blocks 60 min later/)
   })
 })
 
