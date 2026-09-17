@@ -14,6 +14,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+### Toward dragging on the dial
+- The Focus dial can now read any point on its face back as a time of day, to the minute, on
+  either half of the clock, and a drop there lands on the same five-minute grid the week uses.
+  It's the groundwork for sliding a block around the clock; nothing on screen changes yet.
+
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
