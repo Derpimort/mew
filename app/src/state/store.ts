@@ -5535,13 +5535,17 @@ export const useMew = create<MewState>((set, get) => {
     },
 
     async pickChoice(msgId: string, choiceId: string) {
-      const s = get()
       /* chips park while a turn is in flight — a pick mid-turn would start a
          concurrent speak racing the live stream. turnInFlight is the phase
          authority (same gate send() queues on, #280): `thinking` alone is too
          narrow — it flips off at the first streamed token while the turn
          keeps running. */
       if (turnInFlight) return
+      /* #96: a pick starts a turn, so its pick-time checks (#89) read the same
+         synced clock the spoken reply will — right after midnight, before a
+         tick, the check and the executor both say Wednesday */
+      syncTurnClock()
+      const s = get()
       const msg = s.chat.find((m) => m.id === msgId)
       const choice = msg?.choices?.find((c) => c.id === choiceId)
       if (!msg || !choice) return
