@@ -195,7 +195,7 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive } from '../domain/choices'
+import { choicesActive, scenariosActive, typedRemoveAnswer } from '../domain/choices'
 import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -1080,13 +1080,37 @@ function nudgeMsg(n: NudgeInstance): ChatMessage {
     (#102: an explicit time is the user's judgment — place it, then offer). */
 function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   if (!clash.length) return ''
-  const parts = clash.map((c) => {
-    const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
-    return week.isFixedTime(c, prefs)
-      ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
-      : `${base} (flexible${DRIFT_OFFER_NOTE})`
-  })
-  return ` — note: it overlaps ${parts.join(' and ')}`
+  /* a protected rest isn't "flexible": protect-rest owns it, so it's named the
+     way #122 names it, with no offer to drift it */
+  const rests = clash.filter((c) => !week.isFixedTime(c, prefs) && isProtectedRest(c))
+  const parts = clash
+    .filter((c) => !rests.includes(c))
+    .map((c) => {
+      const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+      return week.isFixedTime(c, prefs)
+        ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
+        : `${base} (flexible${DRIFT_OFFER_NOTE})`
+    })
+  return `${parts.length ? ` — note: it overlaps ${parts.join(' and ')}` : ''}${restRunsOver(rests)}`
+}
+
+/** A protected rest: sacred time protect-rest owns, never moved by a placement
+    and never called flexible (#122) */
+function isProtectedRest(b: Block): boolean {
+  return b.tag === 'rest' && b.protected
+}
+
+/** #122's words for the protected rest a change runs over ('' when none):
+    " — it runs over your evening walk 18:00–18:45" */
+function restRunsOver(rests: Block[]): string {
+  return rests.length
+    ? ` — it runs over your ${andList(
+        rests.map(
+          (r) =>
+            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
+        )
+      )}`
+    : ''
 }
 
 /** #49: a GRANTED overlap — the owner said, in their own words this turn, that
@@ -1167,14 +1191,7 @@ function driftReply(
   /* #122: work over a protected rest stays where it was asked and the rest
      stays too, so the reply names the time it runs over; a rest the owner kept
      after protect-rest's one ask would otherwise go unmentioned */
-  const restPart = res.rests.length
-    ? ` — it runs over your ${andList(
-        res.rests.map(
-          (r) =>
-            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
-        )
-      )}`
-    : ''
+  const restPart = restRunsOver(res.rests)
   return {
     blocks: next,
     note: `${driftPart}${fixedPart}${stuckPart}${restPart}`,
@@ -5890,8 +5907,24 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      /* #131: a typed answer to a live remove ask is that chip's pick — the
+         same path as the tap, #94's pick-time re-check included — never a new
+         ask or a thought for the inbox */
       syncTurnClock() // #96: one today for the parse, the executors and the model
+      const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
+      if (typed) {
+        /* a count word that doesn't fit the ask ("both" for three) is answered
+           plainly: nothing changes, and it's never a thought for the inbox. It
+           is still a message, so an older undo hold lets go here (#130) */
+        if (snapshotHolds) snapshotHolds = false
+        else preMutationSnapshot = null
+        /* the ask's own chips ride the line home: the answer settled the ones
+           above, so these are how a tap — or "the thursday one" — still lands */
+        post([typed.choices ? choicesMsg(typed.clarify, typed.choices) : mewMsg(typed.clarify)])
+        return
+      }
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
       /* "undo that" reaches MEW's last change through this one message (#120,

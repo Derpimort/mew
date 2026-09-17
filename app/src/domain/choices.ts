@@ -4,7 +4,8 @@
    DERIVED from the chat itself (a picked flag, a newer user message), never
    stored — the same computed-not-stored law as liveNow. */
 
-import type { ChatMessage } from './types'
+import { dayKey } from './time'
+import type { ChatChoice, ChatMessage } from './types'
 
 /** True once any option on the message was picked. */
 export function choicePicked(msg: ChatMessage): boolean {
@@ -48,4 +49,91 @@ export function scenariosActive(chat: ChatMessage[], msg: ChatMessage): boolean 
   return (
     (msg.scenarios?.length ?? 0) > 0 && !scenarioPicked(msg) && !choicesSuperseded(chat, msg.id)
   )
+}
+
+/* ── a remove ask answered in words (#131) ─────────────────────────────
+   The remove ask says "Tell me which, or say "both"/"all of them"", so a typed
+   answer must do what the chip would. While the newest live chips message is a
+   remove ask (every option removes), a typed reply that names one chip resolves
+   to it: its label, the all-chip's words ("both", "all", "all of them",
+   "remove all of them"), a day ("the thursday one", "thursday's") or a time
+   ("the 12:00"), each only when it points at exactly one chip. Anything else is
+   null, so it's an ordinary message exactly as before. */
+
+const DAY_WORDS = 'today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday'
+/* the all-chip in words: "all"-words fit any count, "both" only two, "all N"
+   only N; a count word that doesn't fit is answered, never acted on */
+const ALL_WORDS = /^(?:(?:remove|drop|delete)\s+)?(?:all(?:\s+of\s+them)?|them\s+all)$/
+const BOTH_WORDS = /^(?:(?:remove|drop|delete)\s+)?both(?:\s+of\s+them)?$/
+const ALL_N_WORDS =
+  /^(?:(?:remove|drop|delete)\s+)?all\s+(two|three|four|five|six|seven|eight|\d+)(?:\s+of\s+them)?$/
+const COUNT_WORDS: Record<string, number> = {
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+}
+
+export function typedRemoveAnswer(
+  chat: ChatMessage[],
+  text: string,
+  nowMs: number
+): { msgId: string; choiceId: string } | { clarify: string; choices?: ChatChoice[] } | null {
+  let ask: ChatMessage | undefined
+  for (let i = chat.length - 1; i >= 0; i--) {
+    if ((chat[i].choices?.length ?? 0) > 0) {
+      ask = chat[i]
+      break
+    }
+  }
+  if (!ask || !choicesActive(chat, ask)) return null
+  const options = ask.choices!
+  if (!options.every((c) => /^remove\s/i.test(c.reply))) return null
+  const pick = (c: { id: string } | undefined) => (c ? { msgId: ask!.id, choiceId: c.id } : null)
+  const one = <T>(xs: T[]): T | undefined => (xs.length === 1 ? xs[0] : undefined)
+
+  const said = text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?]+$/, '')
+    .replace(/\s+/g, ' ')
+  const bare = said.replace(/^(?:remove|drop|delete)\s+/, '')
+  const label = (c: { label: string }) => c.label.toLowerCase()
+
+  const exact = one(options.filter((c) => label(c) === said || label(c) === bare))
+  if (exact) return pick(exact)
+  const allChip = one(options.filter((c) => /^remove\s+all\s/i.test(c.reply)))
+  if (allChip && (ALL_WORDS.test(said) || BOTH_WORDS.test(said) || ALL_N_WORDS.test(said))) {
+    /* how many the ask is about: its line leads with the count ("3 "lunch" blocks") */
+    const count = Number(ask.body.match(/^(\d+)\s/)?.[1] ?? options.length - 1)
+    const n = said.match(ALL_N_WORDS)?.[1]
+    const named = BOTH_WORDS.test(said) ? 2 : n ? (COUNT_WORDS[n] ?? Number(n)) : count
+    if (named === count) return pick(allChip)
+    const base = allChip.reply.replace(/^remove\s+all\s+/i, '')
+    const many = count === 2 ? 'them both' : `all ${count}`
+    /* The answer retired the ask's chips (#254: a newer user message settles
+       them), so the line has to leave a way through. On the ask's own day the
+       very same chips come back under it — a tap, a label, a day or a time all
+       answer again, and the line leads with the count so this message reads as
+       the ask it repeats. Once the day has turned, those day words would point
+       at other days (#94), so the line names words that stand on their own. */
+    if (dayKey(new Date(ask.ts)) !== dayKey(new Date(nowMs)))
+      return {
+        clarify: `${count} "${base}" blocks ahead — say "remove all ${base}" to drop ${many}, or "remove ${base}" to pick one.`,
+      }
+    return {
+      clarify: `${count} "${base}" blocks ahead — say "${allChip.label}" to drop ${many}, or tell me which one.`,
+      choices: options.map((c) => ({ id: c.id, label: c.label, reply: c.reply })),
+    }
+  }
+  const day = bare.match(
+    new RegExp(`^(?:the\\s+)?(?:one\\s+(?:on\\s+)?)?(${DAY_WORDS})(?:'s|’s)?(?:\\s+one)?$`)
+  )
+  if (day) return pick(one(options.filter((c) => label(c).split(' ')[0] === day[1])))
+  const time = bare.match(/^(?:the\s+)?(?:one\s+at\s+)?(\d{1,2}:\d{2})(?:\s+one)?$/)
+  if (time) return pick(one(options.filter((c) => label(c).endsWith(time[1]))))
+  return null
 }
