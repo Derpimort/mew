@@ -47,6 +47,7 @@ pnpm install --frozen-lockfile
 npx tsc -b        # strict typecheck — no errors
 npx vitest run    # the domain + adapter + store suite — all green
 pnpm build        # production bundle succeeds (also enforces the size-budget warning)
+node scripts/check-bundle-size.mjs dist   # hard bundle budgets (CI: ci.yml `bundle` job)
 ```
 
 **Tests live with behavior.** Add them at the right layer:
@@ -84,10 +85,11 @@ re-run. Never ship red.
 MEW uses a calm two-tier gitflow, and CI matches it so day-to-day work stays
 fast and the heavy suite runs only when it earns its keep:
 
-- **Feature branches → PR into `develop`.** This fires the **quick gate**
-  (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`), and lint
-  (ESLint + Prettier `--check`). It's all pure-JS and lands in ~2-3 min, so you
-  get fast feedback on every push.
+- **Feature branches → PR into `develop`** (or the active RC, `v*-rc*`). This fires
+  the **quick gate** (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`),
+  lint (ESLint + Prettier `--check`), and the **`bundle`** job (`pnpm build` + the
+  hard bundle budgets, §4). It lands in a few minutes, so you get fast feedback on
+  every push.
 - **Promote with a `develop → main` PR.** A PR whose base is `main` is a release
   promotion, and it runs the **full suite** on top of the quick gate: the app
   build + `cargo check` (`desktop.yml`), Playwright e2e (`e2e.yml`), Lighthouse
@@ -116,9 +118,11 @@ Two checks guard it:
 
 1. **`pnpm build` warns** when any single chunk exceeds **400 KB** (uncompressed) —
    `build.chunkSizeWarningLimit`.
-2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build` in the
-   `desktop.yml` check job) when a chunk or the total crosses its hard budget. It
-   reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
+2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build`) when a
+   chunk or the total crosses its hard budget. It runs in the quick gate's **`bundle`
+   job** (`ci.yml`) on every PR into `develop` and the RC, and in the `desktop.yml`
+   check job on PRs into `main` (where `bundle` skips, so the minutes don't double).
+   It reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
    the job summary.
 
 **Budgets** (uncompressed; the targets to keep):
