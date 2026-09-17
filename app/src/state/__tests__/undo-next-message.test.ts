@@ -392,3 +392,112 @@ describe('#120 — one message, and always the newest change', () => {
     expect(week()).toEqual(split)
   })
 })
+
+describe('#130 — a held undo acts only while the week is what the change left', () => {
+  const standup = () =>
+    block({ id: 'anchor', title: 'Standup', dayKey: WED, startMin: 540, endMin: 555 })
+  const stored = () => [...fakeDb.blocks.values()].map((b) => (b as { title: string }).title).sort()
+
+  it('a calendar sync in between: the meeting stays, nothing is undone, and MEW says why', async () => {
+    await fresh([standup()])
+    await say('block 1h for deck at 15:00')
+    await settle()
+    useMew
+      .getState()
+      .simulatePull([{ eventId: 'e1', title: 'Board call', startMin: 17 * 60, endMin: 18 * 60 }])
+    await settle()
+    const before = week()
+
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe(
+      "something else changed since, so I can't take that back cleanly: Board call came in from your calendar."
+    )
+    expect(week()).toEqual(before)
+    expect(stored()).toEqual(['Board call', 'Standup', 'deck'])
+  })
+
+  it('a checkbox in between: the block stays done and its mew stays', async () => {
+    await fresh([block({ id: 'email', title: 'Email', startMin: 510, endMin: 540 })])
+    await say('block 1h for deck at 15:00')
+    await settle()
+    useMew.getState().toggleComplete('email')
+    await settle()
+    const mews = () => useMew.getState().memory.filter((e) => e.kind === 'completed').length
+    expect(mews()).toBe(1)
+
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe(
+      "something else changed since, so I can't take that back cleanly: Email was checked off."
+    )
+    expect(blocks().find((b) => b.id === 'email')!.status).toBe('done')
+    expect(mews()).toBe(1)
+    expect(blocks().map((b) => b.title)).toContain('deck')
+  })
+
+  it('a capture in between: the inbox keeps it', async () => {
+    await fresh([standup()])
+    await say('block 1h for deck at 15:00')
+    await settle()
+    useMew.getState().capture('call the bank')
+    await settle()
+
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe(
+      'something else changed since, so I can\'t take that back cleanly: "call the bank" went into your inbox.'
+    )
+    expect(useMew.getState().captures.map((c) => [c.title, c.status])).toEqual([
+      ['call the bank', 'open'],
+    ])
+  })
+
+  it('a tap holds its undo the same way: a drag, then a checkbox, then "undo that" declines', async () => {
+    await fresh([
+      block({ id: 'deck', title: 'Deck', startMin: 600, endMin: 660, protected: false }),
+      block({ id: 'email', title: 'Email', startMin: 510, endMin: 540 }),
+    ])
+    expect(useMew.getState().dragMove('deck', TODAY, 14 * 60, 60)).toBe('moved')
+    useMew.getState().toggleComplete('email')
+    await settle()
+
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe(
+      "something else changed since, so I can't take that back cleanly: Email was checked off."
+    )
+    expect(blocks().find((b) => b.id === 'deck')!.startMin).toBe(14 * 60)
+    expect(blocks().find((b) => b.id === 'email')!.status).toBe('done')
+  })
+
+  it('only a tick in between: the undo still takes the change back', async () => {
+    await fresh([standup()])
+    await say('block 1h for deck at 15:00')
+    await settle()
+    vi.setSystemTime(TUE(8, 35))
+    useMew.getState().tick()
+    await settle()
+
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe("Undone — took back the deck block I'd just placed.")
+    expect(week()).toEqual([['Standup', WED, 540, 555]])
+  })
+
+  it('an undo in the same turn as its change is unchanged', async () => {
+    await fresh([standup()], { location: 'local' })
+    let undone = ''
+    scriptedModel.midTurn = (exec) => {
+      exec.plan(
+        [{ title: 'deck', tag: 'work', dayOffset: 0, startMin: 15 * 60, durationMin: 60 }],
+        []
+      )
+      undone = exec.undoLast()
+    }
+    await say('block an hour for the deck at 3 — no, put it back')
+    await settle()
+    expect(undone).toBe("Undone — took back the deck block I'd just placed.")
+    expect(week()).toEqual([['Standup', WED, 540, 555]])
+  })
+})

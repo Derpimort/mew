@@ -3117,6 +3117,82 @@ export const useMew = create<MewState>((set, get) => {
     const s = get()
     preMutationSnapshot = { blocks: s.blocks, captures: s.captures, memory: s.memory }
     snapshotHolds = true
+    undoLeft = null
+  }
+
+  /* the week as MEW's last change left it (#130): the undo restores the snapshot
+     whole, so it acts only while the week is still exactly what that change
+     left. A calendar sync, a checkbox, a capture or any other change since would
+     be swept back with it, so the undo declines and changes nothing. Compared by
+     what the owner sees (a block's title, day, time and status; an inbox item's
+     status; the completion ledger), never by clock ticks or nudge bookkeeping. */
+  type WeekMark = {
+    blocks: Map<string, { sig: string; title: string; status: string; external: boolean }>
+    captures: Map<string, { status: string; title: string }>
+    mews: Set<string>
+  }
+  let undoLeft: WeekMark | null = null
+  function weekMark(): WeekMark {
+    const s = get()
+    return {
+      blocks: new Map(
+        s.blocks.map((b) => [
+          b.id,
+          {
+            sig: `${b.title}|${b.dayKey}|${b.startMin}|${b.endMin}|${b.status}`,
+            title: baseOf(b.title),
+            status: b.status,
+            external: !!b.external,
+          },
+        ])
+      ),
+      captures: new Map(s.captures.map((c) => [c.id, { status: c.status, title: c.title }])),
+      mews: new Set(s.memory.filter((e) => e.kind === 'completed').map((e) => e.id)),
+    }
+  }
+  /** a change is complete: remember the week it left */
+  function markUndoLeft() {
+    if (preMutationSnapshot) undoLeft = weekMark()
+  }
+  /** a change made through a tool: its receipt card, then the mark of the week it left */
+  function runChange(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    run: () => string
+  ): string {
+    return runToolWithCard(name, args, () => {
+      const out = run()
+      markUndoLeft()
+      return out
+    })
+  }
+  /** what changed the week since `mark`, as the owner would name it (empty: nothing) */
+  function changedSince(mark: WeekMark): string[] {
+    const now = weekMark()
+    const out: string[] = []
+    for (const [id, b] of now.blocks) {
+      const was = mark.blocks.get(id)
+      if (!was)
+        out.push(b.external ? `${b.title} came in from your calendar` : `${b.title} was added`)
+      else if (was.sig !== b.sig)
+        out.push(
+          b.status === 'done' && was.status !== 'done'
+            ? `${b.title} was checked off`
+            : `${was.title} changed`
+        )
+    }
+    for (const [id, b] of mark.blocks) if (!now.blocks.has(id)) out.push(`${b.title} was removed`)
+    for (const [id, c] of now.captures) {
+      const was = mark.captures.get(id)
+      if (!was) out.push(`"${c.title}" went into your inbox`)
+      else if (was.status !== c.status) out.push(`"${c.title}" changed in your inbox`)
+    }
+    for (const [id, c] of mark.captures)
+      if (!now.captures.has(id)) out.push(`"${c.title}" left your inbox`)
+    const mewsChanged =
+      now.mews.size !== mark.mews.size || [...now.mews].some((id) => !mark.mews.has(id))
+    if (!out.length && mewsChanged) out.push('a mew was logged')
+    return out
   }
 
   /* ── conversational referents (#320) ────────────────────────────────────
@@ -3346,6 +3422,7 @@ export const useMew = create<MewState>((set, get) => {
     persistBlocks(kept)
     storage.deleteBlocks(ids).catch(() => {})
     if (dropEv.size) persistDeleteMemory([...dropEv])
+    markUndoLeft()
     dismissExternal(targets) // an external we deleted stays gone across a re-sync
     if (targets.some((b) => b.id === get().lastReferent?.blockId)) clearReferent()
     const names = targets
@@ -5120,7 +5197,7 @@ export const useMew = create<MewState>((set, get) => {
       const [y, m, d] = k.split('-').map(Number)
       return Date.UTC(y, m - 1, d) / 86_400_000
     }
-    runToolWithCard(
+    runChange(
       'plan',
       {
         places: [
@@ -5369,6 +5446,14 @@ export const useMew = create<MewState>((set, get) => {
     const snap = preMutationSnapshot
     if (!snap)
       return `nothing to undo right now — I can take back my last change in your very next message.`
+    const since = undoLeft ? changedSince(undoLeft) : []
+    if (since.length) {
+      /* #130: restoring the snapshot would sweep these back too — decline, change nothing */
+      preMutationSnapshot = null
+      undoLeft = null
+      const named = since.length > 2 ? [...since.slice(0, 2), 'more'] : since
+      return `something else changed since, so I can't take that back cleanly: ${joinHuman(named)}.`
+    }
     const s = get()
 
     const snapBlockIds = new Set(snap.blocks.map((b) => b.id))
@@ -5814,21 +5899,21 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('placing blocks…')
           closeStreamRow()
-          return runToolWithCard('plan', { places, frees }, () => execPlan(places, frees))
+          return runChange('plan', { places, frees }, () => execPlan(places, frees))
         },
         complete: (q, at) => {
           acted = true
           snapshotForUndo()
           working('marking it done…')
           closeStreamRow()
-          return runToolWithCard('complete', { query: q }, () => execComplete(q, at))
+          return runChange('complete', { query: q }, () => execComplete(q, at))
         },
         move: (q, d, t, rel, at, allowOverlap) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
-          return runToolWithCard('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
+          return runChange('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
             execMove(q, d, t, rel, at, allowOverlap)
           )
         },
@@ -5837,28 +5922,28 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('jotting it down…')
           closeStreamRow()
-          return runToolWithCard('capture', { title: t }, () => execCapture(t))
+          return runChange('capture', { title: t }, () => execCapture(t))
         },
         clear: (scope) => {
           acted = true
           snapshotForUndo()
           working('clearing the time…')
           closeStreamRow()
-          return runToolWithCard('clear', { scope }, () => execClear(scope))
+          return runChange('clear', { scope }, () => execClear(scope))
         },
         edit: (q, patch, at, scope) => {
           acted = true
           snapshotForUndo()
           working('reshaping it…')
           closeStreamRow()
-          return runToolWithCard('edit', { query: q }, () => execEdit(q, patch, at, scope))
+          return runChange('edit', { query: q }, () => execEdit(q, patch, at, scope))
         },
         remove: (q, opts) => {
           acted = true
           snapshotForUndo()
           working('taking it off…')
           closeStreamRow()
-          return runToolWithCard('remove', { query: q }, () => execRemove(q, opts))
+          return runChange('remove', { query: q }, () => execRemove(q, opts))
         },
         analyze: (d) => {
           working('reading your week…')
@@ -5905,7 +5990,7 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('remembering that…')
           closeStreamRow()
-          return runToolWithCard('remember', { match: pref.match, value: pref.value }, () =>
+          return runChange('remember', { match: pref.match, value: pref.value }, () =>
             execRemember(pref)
           )
         },
@@ -5944,14 +6029,14 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('resizing it…')
           closeStreamRow()
-          return runToolWithCard('resize', { query: q }, () => execResize(q, resize, at, scope))
+          return runChange('resize', { query: q }, () => execResize(q, resize, at, scope))
         },
         duplicate: (q, opts, at) => {
           acted = true
           snapshotForUndo()
           working('duplicating it…')
           closeStreamRow()
-          return runToolWithCard(
+          return runChange(
             'duplicate',
             { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
             () => execDuplicate(q, opts, at)
@@ -5962,7 +6047,7 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('moving them…')
           closeStreamRow()
-          return runToolWithCard('batch', { query: selector.titleQuery ?? selector.tag }, () =>
+          return runChange('batch', { query: selector.titleQuery ?? selector.tag }, () =>
             execBatch(selector, op, confirmCount, confirmToken)
           )
         },
@@ -5971,16 +6056,14 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('merging them…')
           closeStreamRow()
-          return runToolWithCard('merge', { query: q, dayOffset }, () =>
-            execMerge(q, dayOffset, at)
-          )
+          return runChange('merge', { query: q, dayOffset }, () => execMerge(q, dayOffset, at))
         },
         relativeMove: (q, direction, amountMin, at) => {
           acted = true
           snapshotForUndo()
           working('nudging it…')
           closeStreamRow()
-          return runToolWithCard('relativeMove', { query: q }, () =>
+          return runChange('relativeMove', { query: q }, () =>
             execRelativeMove(q, direction, amountMin, at)
           )
         },
@@ -5989,14 +6072,14 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('splitting it…')
           closeStreamRow()
-          return runToolWithCard('split', { query: q }, () => execSplit(q, around, opts))
+          return runChange('split', { query: q }, () => execSplit(q, around, opts))
         },
         giveRoom: (focusClass) => {
           acted = true
           snapshotForUndo()
           working('giving them room…')
           closeStreamRow()
-          return runToolWithCard('giveRoom', { focusClass }, () => execGiveRoom(focusClass))
+          return runChange('giveRoom', { focusClass }, () => execGiveRoom(focusClass))
         },
       }
 
@@ -6390,7 +6473,7 @@ export const useMew = create<MewState>((set, get) => {
       if (updated) persistChat([updated]) // delta putChat, same as pickChoice
       snapshotForUndo() // "undo that" must reach the applied plan (#162)
       try {
-        const line = runToolWithCard('plan', { places: scenario.places, frees: [] }, () =>
+        const line = runChange('plan', { places: scenario.places, frees: [] }, () =>
           execPlan(scenario.places, [])
         )
         post([mewMsg(line)])
@@ -7270,6 +7353,7 @@ export const useMew = create<MewState>((set, get) => {
       } else {
         reply = moveResolved(target, toDayKey, toStartMin)
       }
+      markUndoLeft()
       post([mewMsg(reply)])
       return resized ? 'resized' : 'moved'
     },
@@ -7555,8 +7639,11 @@ export const useMew = create<MewState>((set, get) => {
           }
           return reply
         }
-        if (places.length) runToolWithCard('plan', { places, frees: [] }, commit)
-        else commit()
+        if (places.length) runChange('plan', { places, frees: [] }, commit)
+        else {
+          commit()
+          markUndoLeft()
+        }
       }
       post([mewMsg(reply)])
       /* the day-load meter (#301) still looks at every day the roll filled */
