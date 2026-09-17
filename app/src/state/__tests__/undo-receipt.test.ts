@@ -7,7 +7,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, MemoryEvent, Settings } from '../../domain/types'
 import { chatOrder } from '../../adapters/storage-port'
-import * as week from '../../domain/week'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
 
@@ -206,15 +205,21 @@ afterEach(() => {
   scriptedModel.reset()
 })
 
-
 /* ── fixtures ─────────────────────────────────────────────────────── */
 
+const TOMORROW = '2026-06-10'
 const deck = () =>
   block({ id: 'deck', title: 'Deck', startMin: 9 * 60, endMin: 10 * 60, protected: false })
 const lastMew = () =>
   chat()
     .filter((m) => m.role === 'mew')
     .at(-1)!.body
+const chipMsgs = () => chat().filter((m) => (m.choices?.length ?? 0) > 0)
+const pick = async (label: string) => {
+  const msg = chipMsgs().at(-1)!
+  await useMew.getState().pickChoice(msg.id, msg.choices!.find((c) => c.label === label)!.id)
+  await settle()
+}
 const row = (id: string) => {
   const b = blocks().find((x) => x.id === id)!
   return [b.title, b.tag, b.dayKey, b.startMin, b.endMin]
@@ -270,7 +275,13 @@ describe('#149: undo says what actually changed, not always "back where it was"'
   it('two blocks retagged: two tags come back, and no block is said to have moved', async () => {
     await fresh([
       deck(),
-      block({ id: 'notes', title: 'Deck notes', startMin: 11 * 60, endMin: 12 * 60, protected: false }),
+      block({
+        id: 'notes',
+        title: 'Deck notes',
+        startMin: 11 * 60,
+        endMin: 12 * 60,
+        protected: false,
+      }),
     ])
     await say(`tag all of today's "deck" as private`)
     await settle()
@@ -279,6 +290,37 @@ describe('#149: undo says what actually changed, not always "back where it was"'
     await settle()
     expect(lastMew()).toBe('Undone — put two tags back.')
     expect(blocks().map((b) => b.tag)).toEqual(['work', 'work'])
+  })
+
+  it('a move to another day that keeps the clock still says WHERE it went back to', async () => {
+    /* the day half of "moved", which needs a shape that changes the day WITHOUT
+       the clock: a keyless "move the deck to tomorrow" re-times the block, so it
+       would read as moved even if the day were ignored. A batch move-to-day keeps
+       every block's own time by design, so here only the dayKey differs. */
+    await fresh([
+      deck(),
+      block({
+        id: 'notes',
+        title: 'Deck notes',
+        startMin: 11 * 60,
+        endMin: 12 * 60,
+        protected: false,
+      }),
+    ])
+    await say("move all of today's work to tomorrow")
+    await settle()
+    await pick('do it')
+    expect(blocks().map((b) => [b.dayKey, b.startMin])).toEqual([
+      [TOMORROW, 540],
+      [TOMORROW, 660],
+    ])
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe('Undone — put two blocks back where they were.')
+    expect(blocks().map((b) => [b.dayKey, b.startMin])).toEqual([
+      [TODAY, 540],
+      [TODAY, 660],
+    ])
   })
 
   it('a block that both moved and was retagged takes the larger fact: where it sits', async () => {
