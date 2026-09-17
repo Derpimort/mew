@@ -6,7 +6,8 @@
    Each journey drives the real store (keyless floor unless it says keyed) and
    asserts, step by step, both the WEEK and the CHAT the owner would see.
    Test-only: a journey that finds a bug pins it as a filed issue (it.fails with
-   the issue number), never a fix in this file. */
+   the issue number), never a fix in this file. Journey 8's #149 pin has since
+   been fixed and reads as an ordinary test. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, MemoryEvent, Settings } from '../../domain/types'
 import { chatOrder } from '../../adapters/storage-port'
@@ -493,20 +494,19 @@ describe('RC journey 8: retagging a selection that includes a calendar event and
     ])
   })
 
-  /* 4 · the sentence that comes back with it — filed as #149. The week is right
-     (step 3 proves it); only the receipt is wrong, calling a retag a move. */
-  it.fails(
-    '#149: undoing a retag does not say the blocks were put back WHERE they were',
-    async () => {
-      await fresh(day())
-      await say("tag all of tomorrow's calls as work")
-      await settle()
-      await pick('do it')
-      await say('undo that')
-      await settle()
-      expect(lastMew()).not.toContain('back where they were')
-    }
-  )
+  /* 4 · the sentence that comes back with it. Filed as #149 and pinned here as an
+     expected fail while it stood; now fixed, so it is an ordinary test — and it
+     asserts the whole sentence, which is what the pin could not do while the
+     wording was still someone else's to choose. */
+  it('#149: undoing the retag says the tags came back, not that anything moved', async () => {
+    await fresh(day())
+    await say("tag all of tomorrow's calls as work")
+    await settle()
+    await pick('do it')
+    await say('undo that')
+    await settle()
+    expect(lastMew()).toBe('Undone — put two tags back.')
+  })
 })
 
 /* ── 9 · Friday evening: the review, the roll, and what counts as yours ─ */

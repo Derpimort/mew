@@ -4,6 +4,12 @@
    only, and an undo always takes back the newest change. Through the REAL
    store (a scripted local model for the keyed steps); no jsdom. */
 
+/* #149 changed two sentences in this file, deliberately: a split SHORTENS the
+   block it splits (its start never moves), so undoing one now reads "put Deck
+   polish back to its old length" rather than "back where it was" — the same
+   class the issue is about, found because this file's pins failed against the
+   fix. The receipt's first clause, which is what the split really did, is
+   unchanged. */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, MemoryEvent, Settings } from '../../domain/types'
 import { chatOrder } from '../../adapters/storage-port'
@@ -296,7 +302,7 @@ describe('#120 — the very next message reaches the last change', () => {
     expect(week()).not.toEqual(before)
 
     expect(await keyedUndo()).toBe(
-      "Undone — took back the two blocks I'd just placed, put Deck polish back where it was."
+      "Undone — took back the two blocks I'd just placed, put Deck polish back to its old length."
     )
     expect(week()).toEqual(before)
   })
@@ -327,7 +333,7 @@ describe('#120 — the very next message reaches the last change', () => {
     await say('undo that')
     await settle()
     expect(lastMew()).toBe(
-      "Undone — took back the Deck polish (part 2) block I'd just placed, put Deck polish back where it was."
+      "Undone — took back the Deck polish (part 2) block I'd just placed, put Deck polish back to its old length."
     )
     expect(week()).toEqual([['Deck polish', TODAY, 540, 660]])
 
