@@ -179,6 +179,30 @@ export function runIntent(
           intent.at
         )
       )
+    case 'batch': {
+      /* #75: a wide batch posts its confirm as chips — the floor stays quiet,
+         the chips ARE the reply; a yes re-asks with the count it named */
+      const bt = intent.batch
+      if (!bt) return `nothing to batch — name the blocks and the change`
+      const op =
+        bt.op === 'shift'
+          ? { kind: 'shift' as const, deltaMin: bt.deltaMin ?? 0 }
+          : { kind: 'moveToDay' as const, toDayOffset: bt.toDayOffset ?? 0 }
+      return quietIfChoices(
+        exec.batch(
+          {
+            dayOffset: bt.dayOffset,
+            afterMin: bt.afterMin,
+            beforeMin: bt.beforeMin,
+            tag: bt.tag,
+            titleQuery: bt.titleQuery,
+          },
+          op,
+          bt.confirmCount,
+          bt.confirmToken
+        )
+      )
+    }
     case 'merge':
       /* #74: join same-tag blocks on one day into one — the executor refuses (and
          says why) anything that isn't the owner's own open blocks across free air */
@@ -439,6 +463,27 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         amountMin: optInt(rm.amountMin, 5, 600),
       },
       ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+    }
+  }
+  if (kind === 'batch') {
+    // #75: one op over a selector — a valid op is required, else drop.
+    const bt = (o.batch && typeof o.batch === 'object' ? o.batch : o) as Record<string, unknown>
+    const tags = ['work', 'private', 'health', 'rest'] as const
+    if (bt.op !== 'shift' && bt.op !== 'moveToDay') return null
+    return {
+      kind,
+      batch: {
+        dayOffset: optInt(bt.dayOffset, 0, 13),
+        afterMin: optInt(bt.afterMin, 0, 1439),
+        beforeMin: optInt(bt.beforeMin, 1, 1440),
+        tag: tags.includes(bt.tag as never) ? (bt.tag as (typeof tags)[number]) : undefined,
+        titleQuery: typeof bt.titleQuery === 'string' ? bt.titleQuery : undefined,
+        op: bt.op,
+        deltaMin: optInt(bt.deltaMin, -720, 720),
+        toDayOffset: optInt(bt.toDayOffset, 0, 13),
+        confirmCount: optInt(bt.confirmCount, 1, 500),
+        confirmToken: typeof bt.confirmToken === 'string' ? bt.confirmToken : undefined,
+      },
     }
   }
   if (kind === 'merge' && typeof o.query === 'string' && o.query.trim()) {

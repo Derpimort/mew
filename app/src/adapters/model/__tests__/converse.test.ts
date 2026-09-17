@@ -99,6 +99,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('merge')
       return `Merged ${q}.`
     }),
+    batch: vi.fn(() => {
+      calls.push('batch')
+      return 'Moved.'
+    }),
     relativeMove: vi.fn((q) => {
       calls.push('relativeMove')
       return `Moved ${q}.`
