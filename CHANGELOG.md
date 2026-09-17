@@ -25,6 +25,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   gate builds the app and checks each chunk against its ceiling, so a heavier download shows up
   on the PR that caused it, long before release day.
 
+### Screenshots that hold on any weekday
+- The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on
+  a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
+  `SHOOT_DATE` probes another day when you want to look.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
