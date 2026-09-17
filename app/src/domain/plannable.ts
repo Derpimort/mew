@@ -79,9 +79,10 @@ export function clockOf(min: number): string {
   return `${String(Math.floor(min / 60)).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`
 }
 
-/** A whole "HH:MM" 24h clock time → minutes; null for anything else. */
+/** A whole 24h clock time → minutes: "08:00" or MEW's own "8:00" spelling
+    (fmtTime writes it that way everywhere); null for anything else. */
 export function parseClock(value: string): number | null {
-  const m = /^(\d{2}):(\d{2})$/.exec(value.trim())
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value.trim())
   if (!m) return null
   const h = Number(m[1])
   const min = Number(m[2])

@@ -21,6 +21,7 @@ import {
   stepClock,
 } from '../../../domain/plannable'
 import { DEFAULT_PLANNABLE_HOURS } from '../../../domain/types'
+import { plannableKeyIntent } from '../plannableKeys'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const componentsCss = readFileSync(resolve(here, '../components.css'), 'utf8')
@@ -118,13 +119,21 @@ describe('checkPlannableDraft — a draft commits only as a real plannable day',
     expect(checkPlannableDraft(' 07:05 ', '07:10')).toMatchObject({ ok: true })
   })
 
+  it("reads MEW's own unpadded spelling back — what fmtTime writes, the field accepts", () => {
+    expect(checkPlannableDraft('8:00', '22:30')).toEqual({
+      ok: true,
+      hours: { startMin: 480, endMin: 1350 },
+    })
+    expect(checkPlannableDraft('7:05', '9:30')).toMatchObject({ ok: true })
+  })
+
   it('asks for a readable time, naming the field', () => {
     expect(checkPlannableDraft('', '22:30')).toEqual({
       ok: false,
       field: 'start',
       hint: 'pick a start time, like 08:00',
     })
-    for (const bad of ['8:00', '24:00', '12:60', '12.30', '1230', 'noon'])
+    for (const bad of ['24:00', '12:60', '12.30', '1230', 'noon', '123:00', ':30'])
       expect(checkPlannableDraft('08:00', bad)).toEqual({
         ok: false,
         field: 'end',
@@ -171,10 +180,31 @@ describe('checkPlannableDraft — a draft commits only as a real plannable day',
   })
 })
 
+describe('plannableKeyIntent — the field keyboard grammar', () => {
+  it('Enter settles in place (never a blur), arrows step 5 minutes, Shift an hour', () => {
+    expect(plannableKeyIntent('Enter', false)).toEqual({ kind: 'settle' })
+    expect(plannableKeyIntent('ArrowUp', false)).toEqual({ kind: 'step', deltaMin: 5 })
+    expect(plannableKeyIntent('ArrowDown', false)).toEqual({ kind: 'step', deltaMin: -5 })
+    expect(plannableKeyIntent('ArrowUp', true)).toEqual({ kind: 'step', deltaMin: 60 })
+    expect(plannableKeyIntent('ArrowDown', true)).toEqual({ kind: 'step', deltaMin: -60 })
+  })
+
+  it('leaves every other key alone — typing, Tab and Escape keep their defaults', () => {
+    for (const key of ['Tab', 'Escape', '8', ':', 'Backspace', 'ArrowLeft', 'Home'])
+      expect(plannableKeyIntent(key, false)).toBeNull()
+  })
+
+  it('the field wires Enter to settle, not blur', () => {
+    const src = readFileSync(resolve(here, '../PlannableHoursField.tsx'), 'utf8')
+    expect(src).toContain('plannableKeyIntent(e.key, e.shiftKey)')
+    expect(src).not.toMatch(/\.blur\(\)/)
+  })
+})
+
 describe('clock helpers', () => {
   it('parseClock and clockOf round-trip every 5-minute mark of the day', () => {
     for (let m = 0; m <= PLANNABLE_LAST_END; m += 5) expect(parseClock(clockOf(m))).toBe(m)
-    expect(parseClock('7:30')).toBeNull()
+    expect(parseClock('7:30')).toBe(7 * 60 + 30) // MEW's own spelling (fmtTime)
   })
 
   it('stepClock moves on-grid times by the step and clamps to 00:00–23:55', () => {

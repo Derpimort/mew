@@ -2,11 +2,13 @@
    and suggest_slots look. Two 24h clock fields in MEW's mono voice (a native
    time input would follow the browser locale into AM/PM). Each is a spinbutton:
    ↑/↓ step 5 minutes, Shift steps an hour, and a screen reader hears its name
-   and value. Typing commits on Enter or blur; a step commits at once. A draft
+   and value. Typing commits on Enter (focus stays put) or blur; a step commits
+   at once. A draft
    reaches onCommit only once checkPlannableDraft passes — otherwise it stays on
    screen with one positive hint in a live region, and the stored day keeps
    working. Quiet hours are a different fact: nothing here reads or writes them. */
 import { useId, useState } from 'react'
+import { plannableKeyIntent } from './plannableKeys'
 import type { PlannableHours } from '../../domain/types'
 import {
   PLANNABLE_LAST_END,
@@ -68,13 +70,13 @@ export function PlannableHoursView({
           onChange={(e) => onType(which, e.target.value)}
           onBlur={onSettle}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              ;(e.target as HTMLInputElement).blur() // settles through onBlur, once
-            } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-              e.preventDefault()
-              onStep(which, (e.key === 'ArrowUp' ? 1 : -1) * (e.shiftKey ? 60 : 5))
-            }
+            const intent = plannableKeyIntent(e.key, e.shiftKey)
+            if (!intent) return
+            e.preventDefault()
+            /* settle in place — focus stays on the field; a later blur re-settles
+               an unchanged draft as a no-op, so nothing double-commits */
+            if (intent.kind === 'settle') onSettle()
+            else onStep(which, intent.deltaMin)
           }}
         />
       </span>
