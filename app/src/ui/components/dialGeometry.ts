@@ -19,7 +19,10 @@ export const rArc = (cx: number, cy: number, r: number, d0: number, d1: number):
 
 /** Filled sector clockwise d0→d1. rIn=0 → a pie slice (inner disk fill); rIn>0
     → an annular wedge (the band between two rings). Used for the day-progress
-    wash, so it clamps a full turn just shy of 360 to keep the path non-empty. */
+    wash and the whole-day light. A FULL turn is drawn as two half-arcs: an arc
+    whose ends coincide draws nothing (SVG omits it), and the old 359.999° clamp
+    rounds onto its own start at 2 decimals — so a complete wash (the AM disk
+    from noon on, a lived day, the whole-ring light) used to vanish. */
 export const sector = (
   cx: number,
   cy: number,
@@ -29,7 +32,17 @@ export const sector = (
   d1: number
 ): string => {
   if (d1 < d0) d1 += 360
-  if (d1 - d0 >= 360) d1 = d0 + 359.999
+  if (d1 - d0 >= 360) {
+    const ring = (r: number, sweep: 0 | 1): string => {
+      const [x0, y0] = rPolar(cx, cy, r, d0)
+      const [x1, y1] = rPolar(cx, cy, r, d0 + 180)
+      const p0 = `${x0.toFixed(2)} ${y0.toFixed(2)}`
+      const p1 = `${x1.toFixed(2)} ${y1.toFixed(2)}`
+      return `M ${p0} A ${r} ${r} 0 1 ${sweep} ${p1} A ${r} ${r} 0 1 ${sweep} ${p0} Z`
+    }
+    // the inner ring runs the other way, so under nonzero it cuts the hole
+    return rIn <= 0 ? ring(rOut, 1) : `${ring(rOut, 1)} ${ring(rIn, 0)}`
+  }
   const big = d1 - d0 > 180 ? 1 : 0
   const [ox0, oy0] = rPolar(cx, cy, rOut, d0)
   const [ox1, oy1] = rPolar(cx, cy, rOut, d1)
