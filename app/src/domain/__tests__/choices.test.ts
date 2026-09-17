@@ -99,6 +99,45 @@ describe('typedChipLabel (#139)', () => {
     expect(typedChipLabel([twins], 'tomorrow 9:00')).toBeNull()
   })
 
+  it('the looser reading of one chip never beats another chip that reads EXACTLY (#139 slice 2)', () => {
+    /* the order is the safety, not the rules: "8:30" is a loose reading of "the
+       8:30" and the exact label of the other chip, so the exact one must win.
+       No ask ships this shape today — it is constructed precisely because a
+       future one might, and because order is what a reviewer cannot see. */
+    const both = mew('m1', [
+      { id: 'loose', label: 'the 8:30', reply: 'move the gym to 15:00 — the 8:30' },
+      { id: 'exactly', label: '8:30', reply: 'move the gym to 15:00 — 8:30' },
+    ])
+    expect(typedChipLabel([both], '8:30')).toEqual({ msgId: 'm1', choiceId: 'exactly' })
+    /* and the other way round: "the 8:30" is exact on the first chip */
+    expect(typedChipLabel([both], 'the 8:30')).toEqual({ msgId: 'm1', choiceId: 'loose' })
+  })
+
+  it('a label read loosely still refuses when it points at more than one chip', () => {
+    const twins = mew('m1', [
+      { id: 'wed', label: 'the 8:30 (Wednesday)', reply: 'move it — wed' },
+      { id: 'thu', label: 'the 8:30 (Thursday)', reply: 'move it — thu' },
+    ])
+    expect(typedChipLabel([twins], 'the 8:30')).toBeNull()
+    expect(typedChipLabel([twins], '8:30')).toBeNull()
+    /* each still answers to its own whole label */
+    expect(typedChipLabel([twins], 'the 8:30 (thursday)')).toEqual({ msgId: 'm1', choiceId: 'thu' })
+  })
+
+  it('the looser readings a chip label carries', () => {
+    const ask = mew('m1', [
+      { id: 'a', label: 'the 18:30 (Wednesday)', reply: 'x' },
+      { id: 'b', label: 'keep it as planned', reply: 'y' },
+    ])
+    /* bracket gone, article gone, both gone */
+    expect(typedChipLabel([ask], 'the 18:30')).toEqual({ msgId: 'm1', choiceId: 'a' })
+    expect(typedChipLabel([ask], '18:30 (wednesday)')).toEqual({ msgId: 'm1', choiceId: 'a' })
+    expect(typedChipLabel([ask], '18:30')).toEqual({ msgId: 'm1', choiceId: 'a' })
+    /* a plain label has no looser reading to find, and is unharmed */
+    expect(typedChipLabel([ask], 'keep it as planned')).toEqual({ msgId: 'm1', choiceId: 'b' })
+    expect(typedChipLabel([ask], 'keep it')).toBeNull()
+  })
+
   it('only the newest chips, and only while they are live', () => {
     const older = mew('m1', CHOICES)
     const newer = mew('m2', [{ id: 'd1', label: 'do it', reply: 'go ahead' }])

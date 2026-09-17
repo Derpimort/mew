@@ -322,6 +322,64 @@ describe("#139 — a typed chip label is that chip's pick, in every family", () 
     expect(at('g2')).toEqual([WED, 18 * 60 + 30, 19 * 60 + 30])
     expect(captures()).toEqual([])
   })
+
+  it('the which-block ask: the label without the day it carries in brackets (#139 slice 2)', async () => {
+    /* found by typing at the real ask: the chips read "the 8:30 (Wednesday)" and
+         typing "the 8:30" became a thought in the inbox — the owner typed what
+         they read, minus a bracket they had no reason to think was load-bearing */
+    const wed = () => [
+      block({ id: 'g1', title: 'Gym', tag: 'health', dayKey: WED, startMin: 510, endMin: 570 }),
+      block({ id: 'g2', title: 'Gym', tag: 'health', dayKey: WED, startMin: 1110, endMin: 1170 }),
+    ]
+    await fresh(wed())
+    await say('move the gym to 15:00')
+    await settle()
+    expect(labels()).toEqual(['the 8:30 (Wednesday)', 'the 18:30 (Wednesday)'])
+    await say('the 8:30')
+    await settle()
+    expect(lastBody()).toBe('Moved — Gym now lives Wednesday at 15:00.')
+    expect(at('g1')).toEqual([WED, 15 * 60, 16 * 60])
+    expect(at('g2')).toEqual([WED, 1110, 1170])
+    expect(captures()).toEqual([])
+  })
+
+  it('the which-block ask: the bare time its own question offers (#139 slice 2)', async () => {
+    /* the ask reads 'two "gym" blocks — 8:30 or 18:30? Which one?' and then
+         declined "8:30". A question that refuses the words it just offered is
+         worse than a missing feature: the owner did exactly what they were told. */
+    await fresh([
+      block({ id: 'a', title: 'Gym', tag: 'health', startMin: 510, endMin: 570 }),
+      block({ id: 'b', title: 'Gym', tag: 'health', startMin: 1110, endMin: 1170 }),
+    ])
+    await say('move the gym to 15:00')
+    await settle()
+    expect(chipMsgs().at(-1)!.body).toBe('two "gym" blocks — 8:30 or 18:30? Which one?')
+    await say('18:30')
+    await settle()
+    expect(lastBody()).toBe('Moved — Gym now lives today at 15:00.')
+    expect(at('b')).toEqual([TODAY, 15 * 60, 16 * 60])
+    expect(at('a')).toEqual([TODAY, 510, 570])
+    expect(captures()).toEqual([])
+  })
+
+  it('the day-load offer answers to its label, exactly as it reads', async () => {
+    /* covered already per the audit, pinned because the per-family risk lives in
+         the ASK rather than the shared reader — this one has no bracket and no
+         article, so it proves the second pass did not break a plain label */
+    await fresh([
+      block({ id: 'spec', title: 'Spec draft — deep work', startMin: 9 * 60, endMin: 13 * 60 }),
+    ])
+    await say('block 2h for the roadmap today')
+    await settle()
+    const load = chat().find((m) => /against your usual/.test(m.body))
+    if (load) {
+      expect(load.choices!.map((c) => c.label)).toEqual(['keep it as planned', 'trim to my usual'])
+      await say('trim to my usual')
+      await settle()
+      expect(captures()).toEqual([])
+      expect(lastBody()).toMatch(/^(Moved|Done)/)
+    }
+  })
 })
 
 describe('#139 — and only while the words really are a live chip', () => {
