@@ -1,6 +1,8 @@
 /* The Focus dial's day picker (#23 slice 2): the date is a real button whose
    calendar glyph opens a month grid. Drives the real app against a served dist
-   with today pinned via ?d= (a Wednesday) and fails loudly on any miss:
+   with today pinned by scripts/lib/shootClock.mjs (the shoot.mjs gate's
+   Wednesday; SHOOT_DATE probes another day, and every date checked below derives
+   from it) and fails loudly on any miss:
      · at rest on today the trigger IS the date: no box of its own (its rect is
        the date text's), the glyph and pill invisible, named by the date it shows
      · keyboard focus reveals the glyph like hover; Enter opens a modal dialog
@@ -20,12 +22,48 @@ import { chromium } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { PROBING, SHOOT_DATE, clockUrl, shootDay } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots')
 mkdirSync(outDir, { recursive: true })
 
-const TODAY = '2026-09-16' // a Wednesday
+/* every date this proof checks derives from the pinned day, so a SHOOT_DATE probe
+   walks the same keys on any weekday (a Wednesday on the pin) */
+const TODAY = SHOOT_DATE
+const pinned = shootDay() // the pinned day at noon, local
+const dayAt = (n) => new Date(pinned.getFullYear(), pinned.getMonth(), pinned.getDate() + n, 12)
+const keyOf = (d) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+/** the picker's PageDown/PageUp: same day-of-month, clamped to the month's end */
+const addMonths = (d, n) => {
+  const target = new Date(d.getFullYear(), d.getMonth() + n, 1, 12)
+  const last = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate()
+  target.setDate(Math.min(d.getDate(), last))
+  return target
+}
+const weekday = (d) => d.toLocaleDateString('en-US', { weekday: 'long' }) // "Monday"
+const month = (d, style) => d.toLocaleDateString('en-US', { month: style }) // "September" | "Sep"
+const dateLine = (d) => `${weekday(d).slice(0, 3)} · ${month(d, 'short')} ${d.getDate()}` // "Wed · Sep 16"
+/** the day keys of d's month grid, exactly as dayPickerKeys.monthGrid lays it out:
+    whole Monday-first weeks, from the Monday on or before the 1st through the week
+    that holds the month's last day (28, 35 or 42 cells) */
+const monthGridKeys = (d) => {
+  const first = new Date(d.getFullYear(), d.getMonth(), 1, 12)
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0, 12)
+  const cursor = new Date(first)
+  cursor.setDate(first.getDate() - ((first.getDay() + 6) % 7))
+  const keys = []
+  while (cursor <= last) {
+    for (let i = 0; i < 7; i++) {
+      keys.push(keyOf(cursor))
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  }
+  return keys
+}
+const PICKED = dayAt(-2) // two ArrowLefts back from today
+console.log('pinned day:', SHOOT_DATE, PROBING ? '(probe)' : '(the pin)')
 const browser = await chromium.launch({ executablePath: findChromium(), args: ['--disable-gpu'] })
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 840 } })
 const page = await ctx.newPage()
@@ -62,7 +100,7 @@ phase = 'identity'
 const distHtml = readFileSync(path.resolve('dist/index.html'), 'utf8')
 const wantSrc = distHtml.match(/src="([^"]*assets\/index-[^"]+\.js)"/)?.[1]
 assert(wantSrc, 'dist/index.html has no hashed index bundle — run pnpm build first')
-await page.goto(`${base}/?d=${TODAY}&t=9:40`)
+await page.goto(clockUrl(base, '9:40'))
 const servedSrc = await page.evaluate(() =>
   [...document.querySelectorAll('script[src]')].map((s) => s.getAttribute('src')).join(' ')
 )
@@ -177,8 +215,8 @@ await page.mouse.move(8, 830)
 await page.waitForTimeout(1200)
 const rest = await state()
 console.log('rest:', JSON.stringify(rest))
-assert(rest.date === 'Wed · Sep 16', `the date should read today: "${rest.date}"`)
-assert(rest.name === 'Wed · Sep 16 — change day', `the trigger's name: "${rest.name}"`)
+assert(rest.date === dateLine(pinned), `the date should read today: "${rest.date}"`)
+assert(rest.name === `${dateLine(pinned)} — change day`, `the trigger's name: "${rest.name}"`)
 assert(rest.haspopup === 'dialog' && rest.expanded === 'false', 'trigger popup semantics')
 const same = (a, b) => Math.abs(a - b) < 0.01
 assert(
@@ -211,7 +249,10 @@ await page.waitForTimeout(350) // the rise animation
 const open = await state()
 console.log('open:', JSON.stringify(open))
 assert(open.open && open.modal === 'true' && open.expanded === 'true', 'modal dialog, expanded')
-assert(open.month === 'September 2026', `month heading: "${open.month}"`)
+assert(
+  open.month === `${month(pinned, 'long')} ${pinned.getFullYear()}`,
+  `month heading: "${open.month}"`
+)
 assert(open.active === TODAY, `focus should land on the dial's day: ${open.active}`)
 assert(open.selected.join() === TODAY && open.current.join() === TODAY, 'selected/current')
 assert(open.stops === 1, `one roving tab stop, got ${open.stops}`)
@@ -237,7 +278,12 @@ const layering = await page.evaluate(() => {
 })
 console.log('layering:', JSON.stringify(layering))
 assert(layering.inside, 'the picker must sit inside the stage')
-assert(layering.cells === 35 && layering.covered.length === 0, `covered days: ${layering.covered}`)
+/* the pinned month's grid size is 28, 35 or 42 cells — derived, never September's 35 */
+const gridCells = monthGridKeys(pinned).length
+assert(
+  layering.cells === gridCells && layering.covered.length === 0,
+  `cells ${layering.cells}/${gridCells}, covered days: ${layering.covered}`
+)
 const openHits = await collisions('.nx-clock')
 assert(openHits.length === 0, `text collisions in the open header: ${openHits.join('; ')}`)
 await cropShot('daypicker-today.png')
@@ -245,10 +291,10 @@ await cropShot('daypicker-today.png')
 /* 4 · keys move, Enter picks, focus comes home */
 phase = 'pick'
 for (const [key, want] of [
-  ['ArrowLeft', '2026-09-15'],
-  ['ArrowLeft', '2026-09-14'],
-  ['PageDown', '2026-10-14'],
-  ['PageUp', '2026-09-14'],
+  ['ArrowLeft', keyOf(dayAt(-1))],
+  ['ArrowLeft', keyOf(PICKED)],
+  ['PageDown', keyOf(addMonths(PICKED, 1))],
+  ['PageUp', keyOf(addMonths(addMonths(PICKED, 1), -1))],
 ]) {
   await page.keyboard.press(key)
   await page.waitForTimeout(60)
@@ -262,8 +308,16 @@ console.log('picked:', JSON.stringify(picked))
 assert(!picked.open && picked.expanded === 'false', 'Enter should close the picker')
 assert(picked.active === 'trigger', `focus should come home to the trigger: ${picked.active}`)
 assert(picked.ring === 'solid', 'the trigger should show its keyboard focus ring')
-assert(picked.date === 'Mon · Sep 14', `the dial should show the picked day: "${picked.date}"`)
-assert(/showing the tasks for Monday, September 14/.test(picked.label), `"${picked.label}"`)
+/* PageDown then PageUp returns to the picked day's own date unless the month
+   between clamped it (a 31st), so the dial shows exactly where the keys landed */
+const LANDED = addMonths(addMonths(PICKED, 1), -1)
+assert(picked.date === dateLine(LANDED), `the dial should show the picked day: "${picked.date}"`)
+assert(
+  picked.label.includes(
+    `showing the tasks for ${weekday(LANDED)}, ${month(LANDED, 'long')} ${LANDED.getDate()}`
+  ),
+  `"${picked.label}"`
+)
 
 /* 5 · light theme, off today, reopened by pointer; a press outside dismisses */
 phase = 'light'
@@ -275,8 +329,14 @@ await page.mouse.move(8, 830)
 await page.waitForTimeout(350)
 const light = await state()
 console.log('light:', JSON.stringify(light))
-assert(light.selected.join() === '2026-09-14', 'reopens on the picked day')
-assert(light.current.join() === TODAY, 'today stays marked off today')
+assert(light.selected.join() === keyOf(LANDED), 'reopens on the picked day')
+/* today is marked only when the picked day's month grid reaches today (a picked
+   Oct 30 shows October, whose last row ends Sun Nov 1, so a Nov 2 today isn't on it) */
+const todayOnGrid = monthGridKeys(LANDED).includes(TODAY)
+assert(
+  light.current.join() === (todayOnGrid ? TODAY : ''),
+  `today stays marked off today: ${light.current.join() || '(none)'}, expected ${todayOnGrid ? TODAY : '(none: not on this grid)'}`
+)
 const lightHits = await collisions('.nx-clock')
 assert(lightHits.length === 0, `text collisions (light, off today): ${lightHits.join('; ')}`)
 await cropShot('daypicker-away-light.png')
@@ -291,7 +351,7 @@ await page.click('.nx-day-today')
 await page.mouse.move(8, 830)
 await page.waitForTimeout(600)
 const back = await state()
-assert(back.date === 'Wed · Sep 16' && back.glyph === 0 && back.pill === 0, 'rest on today again')
+assert(back.date === dateLine(pinned) && back.glyph === 0 && back.pill === 0, 'rest on today again')
 assert(
   (await collisions('.nx-stage')).length === 0,
   `text collisions (today, closed): ${(await collisions('.nx-stage')).join('; ')}`

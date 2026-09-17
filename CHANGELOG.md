@@ -56,6 +56,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on
   a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
   `SHOOT_DATE` probes another day when you want to look.
+- The day view, day picker and all-day proofs run on that same pinned day too, and keep passing on
+  whatever date `SHOOT_DATE` probes — month ends and a four-week February included.
 
 ### Removing one block removes one block
 - "Remove the lunch at 12:00" now takes off exactly one Lunch. When the same block sits at the
