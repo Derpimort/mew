@@ -5703,10 +5703,50 @@ export const useMew = create<MewState>((set, get) => {
       parts.push(
         `brought back ${removed.length === 1 ? base(removed[0]) : `${spell(removed.length)} blocks`}`
       )
-    if (changed.length)
-      parts.push(
-        `put ${changed.length === 1 ? base(changed[0]) : `${spell(changed.length)} blocks`} back where ${changed.length === 1 ? 'it' : 'they'} ${changed.length === 1 ? 'was' : 'were'}`
+    /* #149: name what actually came back. `changed` is object identity, so read
+       the fields: only a block whose day or time moved is "back where it was",
+       and a retag, a resize or a rename each get their own words instead of a
+       sentence describing a move that never happened. A block that changed in
+       several ways takes the largest fact — where it sits — and anything else
+       that differs falls back to "as it was", which is true of every field. */
+    const kindOf = (b: Block): 'moved' | 'length' | 'name' | 'tag' | 'other' => {
+      const live = liveBlockById.get(b.id)!
+      if (b.dayKey !== live.dayKey || b.startMin !== live.startMin) return 'moved'
+      if (b.endMin !== live.endMin) return 'length'
+      if (b.title !== live.title) return 'name'
+      if (b.tag !== live.tag) return 'tag'
+      return 'other'
+    }
+    const back = (bs: Block[], one: (b: Block) => string, many: (n: number) => string) =>
+      bs.length ? [bs.length === 1 ? one(bs[0]) : many(bs.length)] : []
+    const by = (k: ReturnType<typeof kindOf>) => changed.filter((b) => kindOf(b) === k)
+    parts.push(
+      ...back(
+        by('moved'),
+        (b) => `put ${base(b)} back where it was`,
+        (n) => `put ${spell(n)} blocks back where they were`
+      ),
+      ...back(
+        by('length'),
+        (b) => `put ${base(b)} back to its old length`,
+        (n) => `put ${spell(n)} blocks back to their old lengths`
+      ),
+      ...back(
+        by('name'),
+        (b) => `called it ${base(b)} again`,
+        (n) => `put ${spell(n)} names back`
+      ),
+      ...back(
+        by('tag'),
+        (b) => `put ${base(b)} back to ${b.tag}`,
+        (n) => `put ${spell(n)} tags back`
+      ),
+      ...back(
+        by('other'),
+        (b) => `put ${base(b)} back as it was`,
+        (n) => `put ${spell(n)} blocks back as they were`
       )
+    )
     if (addedCaptureIds.length) parts.push(`cleared the note I'd jotted`)
     return `Undone — ${joinHuman(parts)}.`
   }
