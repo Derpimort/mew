@@ -523,7 +523,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'undo_last_action',
     description:
-      'Reverse YOUR most recent change this exchange — the graceful "undo that" when the user catches a misclick or a wrong placement ("no, put it back", "that was wrong"). It rolls the blocks just placed/moved/removed back to how they were before that one call and drops any note logged with it; the tool result names what it took back ("removed the 3 blocks you just placed"). It reaches only the last action, not the whole history, and changes nothing if you have not acted yet. Chat stays — your reply about the undone action remains as context.',
+      'Reverse the most recent change to the week — the graceful "undo that" when the user catches a misclick or a wrong placement ("no, put it back", "that was wrong"): your last change this turn, or, when the user asks in the message right after, the last change of the turn before (a picked chip or a tap counts too). It rolls the blocks just placed/moved/removed back to how they were before that one call and drops any note logged with it; the tool result names what it took back ("removed the 3 blocks you just placed"). It reaches only the last change, not the whole history, and changes nothing if there is none to take back. Chat stays — your reply about the undone action remains as context.',
     parameters: {
       type: 'object',
       properties: {},

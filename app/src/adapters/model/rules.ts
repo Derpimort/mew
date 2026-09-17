@@ -142,6 +142,9 @@ export function runIntent(
       )
     case 'capture':
       return exec.capture(intent.title ?? '')
+    case 'undo':
+      /* #118: the same undo the keyed model calls — never a capture */
+      return exec.undoLast()
     case 'clear':
       return exec.clear(intent.scope ?? 'upcoming')
     case 'edit':
@@ -392,6 +395,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
       ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
     }
   if (kind === 'capture' && typeof o.title === 'string') return { kind, title: o.title }
+  if (kind === 'undo') return { kind }
   if (kind === 'remove' && typeof o.query === 'string' && o.query.trim()) {
     const at = typeof o.at === 'string' && o.at.trim() ? o.at.trim() : undefined
     const all = o.all === true

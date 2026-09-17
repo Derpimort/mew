@@ -49,7 +49,9 @@ export interface WeeklyReview {
     both ends: even a stray id handed to rollForward can never roll a mew or an
     external event past this gate. Pure and keyless. */
 export function isRollCandidate(b: Block, prefs: PrefPayload[] = []): boolean {
-  return b.status === 'open' && !b.external && !isFixedTime(b, prefs)
+  /* #123: a breather or meal MEW placed as scaffolding isn't the owner's work;
+     next week's pacing and meals place their own */
+  return b.status === 'open' && !b.external && !isFixedTime(b, prefs) && !b.placedBy
 }
 
 /** The 7 Mon–Sun day-keys of the week `weekKey` (its Monday) opens. */

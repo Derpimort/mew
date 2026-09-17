@@ -374,6 +374,8 @@ export interface PlaceSpec {
   /** Links a block to its recurring series; the rule it came from (#159). */
   recurringBlockId?: string
   rrule?: Block['rrule']
+  /** MEW's own scaffolding (#123) */
+  placedBy?: Block['placedBy']
 }
 
 /** Place a block; when no explicit time, the first free slot wins. Returns null if the day is full. */
@@ -407,6 +409,7 @@ export function place(
     ...(spec.due != null ? { due: spec.due } : {}),
     ...(spec.recurringBlockId != null ? { recurringBlockId: spec.recurringBlockId } : {}),
     ...(spec.rrule != null ? { rrule: spec.rrule } : {}),
+    ...(spec.placedBy ? { placedBy: spec.placedBy } : {}),
   }
 }
 

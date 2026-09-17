@@ -517,6 +517,12 @@ function parseBatch(text: string, now: Date): ScheduleIntent | null {
   return null
 }
 
+/** "undo", "undo that", "no, put it back", "take that back", "revert it" —
+    the whole message, with an optional lead-in ("no", "oops", "actually") and a
+    closing "please" (#118). */
+const UNDO_ASK =
+  /^(?:(?:no|oops|actually|wait|hmm)[,.!]*\s+)?(?:undo(?:\s+(?:that|it|this|the\s+last\s+(?:one|change|step)))?|put\s+(?:it|that|them)\s+back|take\s+(?:it|that)\s+back|revert\s+(?:that|it))(?:[,\s]+please)?[.!]*$/
+
 /** A relative TIME shift for move — signed minutes, needing both an amount
     ("30 min", "an hour", "half an hour") and a direction (earlier/later, push
     back, move up). Returns null when either is missing, so a plain duration
@@ -828,6 +834,11 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
   const trimmed = text.trim()
   if (!trimmed) return { kind: 'chat', reply: '' }
   const lower = trimmed.toLowerCase()
+
+  /* "undo that" (#118): the same undo the keyed model calls, never a thought
+     for the inbox. Whole-message phrases only, so "put it back at 3" stays a
+     move and "undo the laundry" stays whatever it was. */
+  if (UNDO_ASK.test(lower)) return { kind: 'undo' }
 
   /* "remember that gym is always at 7am" — a rule for the standing rulebook.
      "remember to <do the thing>" is a TODO in disguise — capture intent, not

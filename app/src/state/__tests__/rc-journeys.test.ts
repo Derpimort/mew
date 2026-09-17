@@ -451,24 +451,21 @@ describe('RC journey 2: a meeting lands on flexible work', () => {
     ).toEqual([[540, 660]])
   })
 
-  it.fails(
-    '#120: "undo that", the message after the split was picked, takes the split back',
-    async () => {
-      await splitAroundTheMeeting()
-      await keyed()
-      scriptedModel.midTurn = (exec) => {
-        exec.undoLast()
-      }
-      await say('undo that')
-      await settle()
-      expect(dayRows(TODAY)).toEqual([
-        ['Deck polish', 540, 660, 'open'],
-        ['Design sync', 570, 615, 'open'],
-      ])
+  it('#120: "undo that", the message after the split was picked, takes the split back', async () => {
+    await splitAroundTheMeeting()
+    await keyed()
+    scriptedModel.midTurn = (exec) => {
+      exec.undoLast()
     }
-  )
+    await say('undo that')
+    await settle()
+    expect(dayRows(TODAY)).toEqual([
+      ['Deck polish', 540, 660, 'open'],
+      ['Design sync', 570, 615, 'open'],
+    ])
+  })
 
-  it.fails('#118: keyless "undo that" is never captured into the inbox', async () => {
+  it('#118: keyless "undo that" is never captured into the inbox', async () => {
     await fresh([deckPolish()], { at: TUE(8, 0) })
     await say('split the deck polish around 9:30-10:15')
     await settle()
@@ -670,7 +667,7 @@ describe('RC journey 4: Friday, with a split pair, the room offer and rolling fo
     expect(dayRows('2026-06-19')).toEqual([['Spec review (part 2)', 480, 540, 'open']])
   })
 
-  it.fails("#123: the weekly review never offers MEW's own breather as carried work", async () => {
+  it("#123: the weekly review never offers MEW's own breather as carried work", async () => {
     await friday()
     await say('split the spec review around the 2pm call')
     await settle()
