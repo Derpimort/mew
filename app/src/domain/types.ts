@@ -137,10 +137,17 @@ export type NudgeId =
     one slot per landing so several live conflicts dedupe independently, one
     day-load guard (#301) — `dayload:<dayKey>`, its `key` holding the todayKey
     it fired on, so the same over-line day speaks at most once per calendar day
-    — or a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
-    day so a re-pull of the same tight pair never re-observes it. */
+    — a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
+    day so a re-pull of the same tight pair never re-observes it — or one rest
+    block asked about by protect-rest (#14) — `rest:<blockId>|<dayKey>`, so each
+    rest gets its one ask. */
 export type FiredKey =
-  NudgeId | 'sustenance' | `rescue:${string}` | `dayload:${string}` | `buffer:${string}`
+  | NudgeId
+  | 'sustenance'
+  | `rescue:${string}`
+  | `dayload:${string}`
+  | `buffer:${string}`
+  | `rest:${string}`
 
 /** Per-slot last-fired marker (ts + contextual key). The engine's dedupe
     state, persisted through `Settings.nudgeLastFired` so once-per-day rituals

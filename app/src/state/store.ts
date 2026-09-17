@@ -95,7 +95,13 @@ import {
 } from '../domain/scheduler'
 import { pastEndNote, plannableLabel, plannableOf } from '../domain/plannable'
 import { correctMeal, mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
-import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
+import {
+  buildCtx,
+  evaluateEvent,
+  evaluateTick,
+  recordFired,
+  type EngineState,
+} from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { coalesceNudges } from '../domain/nudges/queue'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
@@ -1716,7 +1722,7 @@ export const useMew = create<MewState>((set, get) => {
 
   function markFired(n: NudgeInstance, nowMs: number) {
     set((s) => {
-      const lastFired = { ...s.engine.lastFired, [n.type]: { ts: nowMs, key: n.key } }
+      const lastFired = recordFired(s.engine.lastFired, n, nowMs, dayKey(new Date(nowMs)))
       return {
         engine: {
           lastFired,
