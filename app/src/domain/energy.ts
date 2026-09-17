@@ -93,7 +93,9 @@ function bandOf(startMin: number): EnergyBand | null {
     estimate offer's copy ("your deep-work blocks…") and the pad chip's reply
     ("give my deep-work blocks room"), so the ask and the answer can't drift. */
 export const FOCUS_CLASS_LABEL: Record<FocusClass, string> = {
-  deep: 'deep-work',
+  /* #90: what the class IS — work of an hour or more. "deep-work" told the owner a
+     default-length inbox sweep was deep work; the offer now also names its blocks */
+  deep: 'hour-plus work',
   admin: 'admin',
   health: 'health',
 }

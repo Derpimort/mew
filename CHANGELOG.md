@@ -123,6 +123,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
   size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
 
+### The room offer says what it would change
+- When MEW offers to give your work more room, it now names the blocks it would resize
+  ("(inbox sweep, errands)") and calls the kind what it is, hour-plus work, so a routine inbox
+  sweep is never described as deep work. "Give them room" changes exactly the blocks it named,
+  and the confirmation names them too.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar

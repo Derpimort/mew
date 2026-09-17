@@ -1972,8 +1972,11 @@ export const useMew = create<MewState>((set, get) => {
     const pct = Math.round((factor - 1) * 100)
     const label = FOCUS_CLASS_LABEL[focusClass]
     pendingEstimatePad = { ids, factor, focusClass }
+    /* #90: name the blocks the pad would touch, so the offer never lets a class
+       word stand in for what it changes */
+    const names = namesOfBlocks(s.blocks, ids)
     const msg = choicesMsg(
-      `your ${label} blocks tend to run ~${pct}% long — want me to give them room?`,
+      `your ${label} blocks tend to run ~${pct}% long — want me to give them room? (${listShort(names)})`,
       [
         { id: 'pad', label: 'give them room', reply: `give my ${label} blocks room` },
         { id: 'leave', label: 'leave as-is', reply: 'ok, leave them as they are' },
@@ -2025,10 +2028,11 @@ export const useMew = create<MewState>((set, get) => {
     )
     setBlocks(next)
     pendingEstimatePad = null // one pad per offer
-    const label = FOCUS_CLASS_LABEL[focusClass]
     const n = targets.length
     const pct = Math.round((pad.factor - 1) * 100)
-    return `Gave your ${label} block${n === 1 ? '' : 's'} room — ${n} now run${n === 1 ? 's' : ''} about ${pct}% longer, sized to how they really go.`
+    /* #90: name what grew, the same names the offer promised */
+    const names = andList(namesOfBlocks(targets, [...grown]))
+    return `Gave ${names} room — ${n === 1 ? 'it now runs' : `${n} now run`} about ${pct}% longer, sized to how ${n === 1 ? 'it really goes' : 'they really go'}.`
   }
 
   /* task→person link snapshot for the delegate nudge — fetched once per
@@ -7159,6 +7163,31 @@ function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd']
   const v = n % 100
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0])
+}
+
+/** #90: "a, b, c" or "a, b and 2 more" — the offer's parenthetical of names */
+function listShort(parts: string[]): string {
+  return parts.length > 3
+    ? `${parts.slice(0, 2).join(', ')} and ${parts.length - 2} more`
+    : parts.join(', ')
+}
+
+/** #90: "a", "a and b", "a, b and c", "a, b and 2 more" — a short, human list */
+function andList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  if (parts.length > 3) return `${parts.slice(0, 2).join(', ')} and ${parts.length - 2} more`
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+/** #90: the spoken names of the blocks with `ids`, in id order, each title once */
+function namesOfBlocks(blocks: Block[], ids: string[]): string[] {
+  const names: string[] = []
+  for (const id of ids) {
+    const b = blocks.find((x) => x.id === id)
+    const name = b?.title.split('—')[0].trim()
+    if (name && !names.includes(name)) names.push(name)
+  }
+  return names
 }
 
 function joinHuman(parts: string[]): string {
