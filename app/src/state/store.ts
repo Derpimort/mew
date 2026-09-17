@@ -195,7 +195,7 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive } from '../domain/choices'
+import { choicesActive, scenariosActive, typedRemoveAnswer } from '../domain/choices'
 import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -2848,6 +2848,15 @@ export const useMew = create<MewState>((set, get) => {
                 b.title.split('—')[0].trim().toLowerCase() === reBase
             )
           : undefined
+      /* #135: a re-plan has ONE length for choosing its slot and for the block
+         that lands there: the length the owner stated this turn, else the block's
+         own. Scoring with one and moving with the other landed it over the next
+         block */
+      const replanLen = existing
+        ? p.durationStated && p.durationMin != null
+          ? p.durationMin
+          : existing.endMin - existing.startMin
+        : undefined
       /* the deterministic floor: with no explicit/ruled time (and not a
          background hold), the scoring oracle (#80) picks the slot —
          conflict-free by construction and rest-aware — so even a model that
@@ -2870,7 +2879,7 @@ export const useMew = create<MewState>((set, get) => {
         const q: SlotQuery = {
           title: p.title,
           tag,
-          durationMin: prefd.durationMin ?? 60,
+          durationMin: replanLen ?? prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
           /* #328: a confirmed window is FIRM here — the scorer collapses
              off-window, so "deck → mornings" lands in the morning. No confirmed
@@ -2904,9 +2913,7 @@ export const useMew = create<MewState>((set, get) => {
          domain, so keyed and keyless behave identically. */
       if (start != null && !bg && p.startMin != null && mealClassOf(p.title)) {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
-        const durationMin = existing
-          ? existing.endMin - existing.startMin
-          : (prefd.durationMin ?? 60)
+        const durationMin = replanLen ?? prefd.durationMin ?? 60
         const fix = correctMeal(
           occupied,
           key,
@@ -2926,20 +2933,13 @@ export const useMew = create<MewState>((set, get) => {
         const landStart = start ?? existing.startMin
         /* #49: a granted overlap never lands on a fixed or calendar block */
         const grant = p.allowOverlap
-          ? grantedOverlap(
-              blocks,
-              key,
-              landStart,
-              landStart + (existing.endMin - existing.startMin),
-              existing.id,
-              prefs
-            )
+          ? grantedOverlap(blocks, key, landStart, landStart + replanLen!, existing.id, prefs)
           : null
         if (grant?.refuse.length) {
           lines.push(overlapRefusal(p.title, landStart, grant.refuse))
           continue
         }
-        blocks = week.move(blocks, existing.id, key, landStart)
+        blocks = week.move(blocks, existing.id, key, landStart, replanLen)
         const moved = blocks.find((b) => b.id === existing.id)!
         targetedIds.push(moved.id) // #320
         if (week.isDeep(moved)) placedDeep = moved
@@ -3134,18 +3134,10 @@ export const useMew = create<MewState>((set, get) => {
         }
       }
     }
-    let pacing = ''
-    if (restNotes.length) {
-      const joined = joinHuman(restNotes)
-      pacing = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const pacing = asideSentences(restNotes)
     /* #323: the meal guardrail's asides — a moved or kept meal named once, in
        the same positive voice as the pacing note above */
-    let mealAside = ''
-    if (mealNotes.length) {
-      const joined = joinHuman(mealNotes)
-      mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const mealAside = asideSentences(mealNotes)
     const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
     const noRoomAside = noRoom.length ? ` ${noRoom.map((r) => r.note).join(' ')}` : ''
     return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}${noRoomAside}`
@@ -4014,7 +4006,10 @@ export const useMew = create<MewState>((set, get) => {
       tag?: import('../domain/types').Tag
       titleQuery?: string
     },
-    opIn: { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayOffset: number },
+    opIn:
+      | { kind: 'shift'; deltaMin: number }
+      | { kind: 'moveToDay'; toDayOffset: number }
+      | { kind: 'setTag'; tag: import('../domain/types').Tag },
     confirmCount?: number,
     confirmToken?: string
   ): string {
@@ -4031,7 +4026,10 @@ export const useMew = create<MewState>((set, get) => {
     const op: BatchOp =
       opIn.kind === 'shift'
         ? { kind: 'shift', deltaMin: opIn.deltaMin }
-        : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
+        : opIn.kind === 'setTag'
+          ? { kind: 'setTag', tag: opIn.tag } // #75 slice 2: a retag, in place
+          : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
+    const retag = op.kind === 'setTag'
     /* a day as MEW says it: "today", "tomorrow", "Thursday", and past this week
        the date too ("Wednesday, Jun 17"), since a weekday alone says this week's */
     const dayName = (k: string) => {
@@ -4055,8 +4053,14 @@ export const useMew = create<MewState>((set, get) => {
     const plan = planBatch(s.blocks, sel, op, prefs)
     const what = [
       sel.titleQuery ? `"${sel.titleQuery}"` : sel.tag ? `your ${sel.tag} blocks` : 'everything',
-      sel.afterMin != null ? `starting after ${fmtTime(sel.afterMin)}` : '',
-      sel.beforeMin != null ? `starting before ${fmtTime(sel.beforeMin)}` : '',
+      /* both edges read as one window (#75 slice 2) */
+      sel.afterMin != null && sel.beforeMin != null
+        ? `starting between ${fmtTime(sel.afterMin)} and ${fmtTime(sel.beforeMin)}`
+        : sel.afterMin != null
+          ? `starting after ${fmtTime(sel.afterMin)}`
+          : sel.beforeMin != null
+            ? `starting before ${fmtTime(sel.beforeMin)}`
+            : '',
       onDay(sel.dayKey),
     ]
       .filter(Boolean)
@@ -4066,7 +4070,9 @@ export const useMew = create<MewState>((set, get) => {
     const change =
       op.kind === 'shift'
         ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'} ${onDay(sel.dayKey)}`
-        : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
+        : op.kind === 'setTag'
+          ? `as ${op.tag} ${onDay(sel.dayKey)}`
+          : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
     const why = (sk: BatchSkip): string =>
       sk.reason === 'calendar'
         ? 'from your calendar'
@@ -4078,16 +4084,20 @@ export const useMew = create<MewState>((set, get) => {
               ? 'repeats'
               : sk.reason === 'off-day'
                 ? 'would leave the day'
-                : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+                : sk.reason === 'already'
+                  ? `already ${op.kind === 'setTag' ? op.tag : ''}`
+                  : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
     const stays = plan.skipped.map(
       (sk) => `${baseOf(sk.block.title)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
     )
-    const staysLine = stays.length
-      ? ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
-      : ''
+    const staysLine = !stays.length
+      ? ''
+      : retag
+        ? ` ${andList(stays)} ${stays.length === 1 ? 'keeps its tag' : 'keep their tags'}.`
+        : ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
     if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
     if (!plan.moves.length)
-      return `nothing there can move ${change}:${staysLine} Everything stays as it is.`
+      return `nothing there can ${retag ? 'be tagged' : 'move'} ${change}:${staysLine} Everything stays as it is.`
 
     const n = plan.moves.length
     const line = (m: (typeof plan.moves)[number]) =>
@@ -4097,14 +4107,20 @@ export const useMew = create<MewState>((set, get) => {
     const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
     const next = s.blocks.map((b) => {
       const m = byId.get(b.id)
-      return m ? { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin } : b
+      if (!m) return b
+      return m.tag
+        ? { ...b, tag: m.tag }
+        : { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin }
     })
-    /* the blocks that stay put which each move would share time with */
+    /* the blocks that stay put which each move would share time with (a retag
+       moves nothing, so it shares nothing new) */
     const sharing = plan.moves.map((m) => ({
       m,
-      with: week
-        .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
-        .filter((c) => !byId.has(c.id)),
+      with: retag
+        ? []
+        : week
+            .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
+            .filter((c) => !byId.has(c.id)),
     }))
     /* wide by what the ask SELECTED, not by what can move: "push everything after
        7pm" over four blocks, two of which stay put, is shown first, list and all */
@@ -4133,6 +4149,10 @@ export const useMew = create<MewState>((set, get) => {
         const dayPart = d === 'today' || d === 'tomorrow' ? d : `on ${d}`
         const by = `${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min`
         reply = [`push ${who}`, edges, dayPart, by].filter(Boolean).join(' ') + yes
+      } else if (op.kind === 'setTag') {
+        const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
+        const from = `tag all ${dayRef(sel.dayKey)}'s ${who}`
+        reply = [from, edges, `as ${op.tag}`].filter(Boolean).join(' ') + yes
       } else {
         const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
         const from = `move all ${dayRef(sel.dayKey)}'s ${who}`
@@ -4147,7 +4167,7 @@ export const useMew = create<MewState>((set, get) => {
       const sharesLine = shares.length ? ` ${shares.join(' · ')}.` : ''
       const changed = confirmCount != null ? 'the week changed since then — ' : ''
       return execOfferChoices(
-        `${changed}move ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
+        `${changed}${retag ? 'tag' : 'move'} ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
         [
           { label: 'do it', reply },
           { label: 'not now', reply: 'ok, leave them as they are' },
@@ -4159,7 +4179,7 @@ export const useMew = create<MewState>((set, get) => {
     /* a collision the batch leaves with a block that stayed put speaks in the
        existing clash wording (#324), never a second vocabulary */
     const clash = [...new Map(sharing.flatMap((x) => x.with).map((c) => [c.id, c])).values()]
-    return `Moved ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
+    return `${retag ? 'Tagged' : 'Moved'} ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
   }
 
   /** Move a block relative to where it is now, with no absolute time (#335).
@@ -4385,9 +4405,7 @@ export const useMew = create<MewState>((set, get) => {
     const choices = stuckIds.length
       ? offerDriftChoices([{ placedId: tail.id, stuckIds }], todayKey)
       : false
-    const pacing = paced.notes.length
-      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
-      : ''
+    const pacing = asideSentences(paced.notes)
     const onWhen = when === 'today' ? '' : ` on ${when}`
     const between = aroundName ? `, around ${aroundName}` : `, leaving ${gapName} free`
     return `Split — ${base} now runs ${fmtTime(geo.head.startMin)}–${fmtTime(geo.head.endMin)}${onWhen}, and ${tail.title} picks up ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}${between}${driftNote}.${pacing}${choices ? ' The options for that overlap are on screen.' : ''}`
@@ -4481,9 +4499,7 @@ export const useMew = create<MewState>((set, get) => {
     const kept = whole.length
       ? ` ${joinHuman(whole).charAt(0).toUpperCase()}${joinHuman(whole).slice(1)} had no room for it, so ${whole.length === 1 ? 'that one stays' : 'those stay'} whole.`
       : ''
-    const pacing = paced.notes.length
-      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
-      : ''
+    const pacing = asideSentences(paced.notes)
     return `Split — ${base} ${reach}: ${splitCount} block${splitCount === 1 ? '' : 's'} now pause ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)} and pick up again after.${kept}${pacing}`
   }
 
@@ -5919,8 +5935,24 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      /* #131: a typed answer to a live remove ask is that chip's pick — the
+         same path as the tap, #94's pick-time re-check included — never a new
+         ask or a thought for the inbox */
       syncTurnClock() // #96: one today for the parse, the executors and the model
+      const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
+      if (typed) {
+        /* a count word that doesn't fit the ask ("both" for three) is answered
+           plainly: nothing changes, and it's never a thought for the inbox. It
+           is still a message, so an older undo hold lets go here (#130) */
+        if (snapshotHolds) snapshotHolds = false
+        else preMutationSnapshot = null
+        /* the ask's own chips ride the line home: the answer settled the ones
+           above, so these are how a tap — or "the thursday one" — still lands */
+        post([typed.choices ? choicesMsg(typed.clarify, typed.choices) : mewMsg(typed.clarify)])
+        return
+      }
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
       /* "undo that" reaches MEW's last change through this one message (#120,
@@ -6151,10 +6183,14 @@ export const useMew = create<MewState>((set, get) => {
         batch: (selector, op, confirmCount, confirmToken) => {
           acted = true
           snapshotForUndo()
-          working('moving them…')
+          /* a retag moves nothing: its card and working line say so (#75 slice 2) */
+          const retag = op.kind === 'setTag'
+          working(retag ? 'tagging them…' : 'moving them…')
           closeStreamRow()
-          return runChange('batch', { query: selector.titleQuery ?? selector.tag }, () =>
-            execBatch(selector, op, confirmCount, confirmToken)
+          return runChange(
+            retag ? 'retag' : 'batch',
+            { query: selector.titleQuery ?? selector.tag },
+            () => execBatch(selector, op, confirmCount, confirmToken)
           )
         },
         merge: (q, dayOffset, at) => {
@@ -8364,6 +8400,20 @@ function paceRest(
     }
   }
   return { blocks, notes }
+}
+
+/** Asides as sentences (#126): the statements joined into one sentence with its
+    period, and a note that already ends a sentence ("want me to make room for a
+    short breather?") standing as its own, never given a second mark ("?.") */
+function asideSentences(notes: string[]): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+  const ends = (s: string) => /[?!.]$/.test(s)
+  const statements = notes.filter((s) => !ends(s))
+  const parts = [
+    ...(statements.length ? [`${cap(joinHuman(statements))}.`] : []),
+    ...notes.filter(ends).map(cap),
+  ]
+  return parts.length ? ` ${parts.join(' ')}` : ''
 }
 
 function joinHuman(parts: string[]): string {

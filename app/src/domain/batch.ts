@@ -21,13 +21,19 @@ export interface BatchSelector {
   titleQuery?: string
 }
 
-export type BatchOp = { kind: 'shift'; deltaMin: number } | { kind: 'moveToDay'; toDayKey: string }
+export type BatchOp =
+  | { kind: 'shift'; deltaMin: number }
+  | { kind: 'moveToDay'; toDayKey: string }
+  /** #75 slice 2: retag the selection in place ("tag all of tomorrow's calls as work") */
+  | { kind: 'setTag'; tag: Tag }
 
 export interface BatchMove {
   block: Block
   dayKey: string
   startMin: number
   endMin: number
+  /** setTag: the tag the block takes (its time stays) */
+  tag?: Tag
 }
 
 export type BatchSkipReason =
@@ -43,6 +49,8 @@ export type BatchSkipReason =
   | 'off-day'
   /** its new time would sit over a fixed or calendar block */
   | 'lands-on'
+  /** setTag: it already has that tag */
+  | 'already'
 
 export interface BatchSkip {
   block: Block
@@ -64,14 +72,19 @@ export function selectBatch(blocks: Block[], sel: BatchSelector): Block[] {
   /* quotes aside, so title words survive a re-ask that can't carry them */
   const unquoted = (s: string) => s.replace(/["“”]/g, '').toLowerCase()
   const q = sel.titleQuery ? unquoted(sel.titleQuery).trim() : undefined
-  return blocksForDay(blocks, sel.dayKey).filter(
-    (b) =>
-      !isAllDay(b) &&
-      (sel.tag == null || b.tag === sel.tag) &&
-      (sel.afterMin == null || b.startMin >= sel.afterMin) &&
-      (sel.beforeMin == null || b.startMin < sel.beforeMin) &&
-      (!q || unquoted(b.title).includes(q))
-  )
+  const pick = (words: string | undefined) =>
+    blocksForDay(blocks, sel.dayKey).filter(
+      (b) =>
+        !isAllDay(b) &&
+        (sel.tag == null || b.tag === sel.tag) &&
+        (sel.afterMin == null || b.startMin >= sel.afterMin) &&
+        (sel.beforeMin == null || b.startMin < sel.beforeMin) &&
+        (!words || unquoted(b.title).includes(words))
+    )
+  const picked = pick(q)
+  /* "tomorrow's calls" names Client call: a plural that matches nothing that day
+     tries its singular (#75 slice 2), never widening a selection that matched */
+  return !picked.length && q && q.length > 3 && q.endsWith('s') ? pick(q.slice(0, -1)) : picked
 }
 
 /** Plan a batch: which selected blocks move where, which stay put and why. */
@@ -84,13 +97,28 @@ export function planBatch(
   const selected = selectBatch(blocks, sel)
   const skipped: BatchSkip[] = []
   const candidates: BatchMove[] = []
+  const moves: BatchMove[] = []
   for (const b of selected) {
     if (b.external) skipped.push({ block: b, reason: 'calendar' })
     else if (b.status === 'done') skipped.push({ block: b, reason: 'done' })
-    else if (isFixedTime(b, prefs)) skipped.push({ block: b, reason: 'fixed' })
+    /* fixed-time is about time: a retag moves nothing, so an own fixed block
+       ("Client call") takes the tag (#75 slice 2); a move still never touches it */
+    else if (op.kind !== 'setTag' && isFixedTime(b, prefs))
+      skipped.push({ block: b, reason: 'fixed' })
     else if (b.recurringBlockId) skipped.push({ block: b, reason: 'repeating' })
     else if (b.status !== 'open') continue
-    else {
+    else if (op.kind === 'setTag') {
+      /* a retag keeps every block where it is: nothing to land on, no day to leave */
+      if (b.tag === op.tag) skipped.push({ block: b, reason: 'already' })
+      else
+        moves.push({
+          block: b,
+          dayKey: b.dayKey,
+          startMin: b.startMin,
+          endMin: b.endMin,
+          tag: op.tag,
+        })
+    } else {
       const target =
         op.kind === 'shift'
           ? { dayKey: b.dayKey, startMin: b.startMin + op.deltaMin, endMin: b.endMin + op.deltaMin }
@@ -103,7 +131,6 @@ export function planBatch(
   /* a moved block never lands on a fixed or calendar block that stays where it
      is (fixed-time is scheduled around, never over): that one stays put, named */
   const moving = new Set(candidates.map((m) => m.block.id))
-  const moves: BatchMove[] = []
   for (const m of candidates) {
     const on = blocksForDay(blocks, m.dayKey).filter(
       (b) =>
@@ -128,7 +155,7 @@ export function planBatch(
     offers again instead of moving blocks the offer never showed. */
 export function batchToken(plan: BatchPlan): string {
   const list = plan.moves
-    .map((m) => `${m.block.id}@${m.dayKey}/${m.startMin}-${m.endMin}`)
+    .map((m) => `${m.block.id}@${m.dayKey}/${m.startMin}-${m.endMin}${m.tag ? `#${m.tag}` : ''}`)
     .sort()
     .join('|')
   let h = 0x811c9dc5 // FNV-1a, 32-bit

@@ -619,9 +619,11 @@ export interface ScheduleIntent {
     beforeMin?: number
     tag?: Tag
     titleQuery?: string
-    op: 'shift' | 'moveToDay'
+    op: 'shift' | 'moveToDay' | 'setTag'
     deltaMin?: number
     toDayOffset?: number
+    /** setTag (#75 slice 2): the tag the selection takes */
+    toTag?: Tag
     confirmCount?: number
     confirmToken?: string
   }
