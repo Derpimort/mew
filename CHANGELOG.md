@@ -123,6 +123,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Every dependency lockfile is clean of known advisories: vitest 4.1, the post-quantum X-Wing key
   exchange under noble 0.7.1, the current ai-sdk providers and the patched Rust crates — with the
   same wire behaviour as before, held by pinned tests.
+- Two quiet details are now held by tests: the day picker keeps the dial's day selected while the
+  arrow keys move through the month, and a remembered rule with none of your words shows just where
+  it came from.
 
 ### Your stated lengths hold through the plan picker
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
