@@ -69,6 +69,10 @@ Both gates run on one pinned calendar day (`app/scripts/lib/shootClock.mjs`, a
 Wednesday), so the seeded week and the canon PNGs are the same whatever weekday
 you run them. `SHOOT_DATE=YYYY-MM-DD pnpm -C app shoot` probes another day (the
 gate is proven for a Monday and mid-week); the pin, not the override, is the gate.
+Probe caveats: a malformed `SHOOT_DATE` stops the run (it never falls back silently); only
+a probe may self-seed the done block, so on the pin a week with no seeded done block fails;
+a Sunday probe fails day-load (a Sunday week has no days ahead to tint); and a probe
+**overwrites the tracked canon PNGs**, so run `git checkout -- app/shots` after probing.
 
 **Who owns which canon** (`app/shots/`, re-pin with `git add -f <file>`): `shoot.mjs` owns
 `1-focus-rest` … `8-sync-paused`. The scenario proofs run keyless against the same preview
