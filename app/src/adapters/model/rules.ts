@@ -10,13 +10,8 @@ import { parseSplitAsk, type SplitAsk } from '../../domain/rescue'
 import { RITUAL_ASK } from '../../domain/chipEffect' // #94: one home with the chip resolver
 import { weekdayOffset } from '../../domain/time'
 import type { PlanMode, ScheduleIntent, Tag } from '../../domain/types'
-import {
-  CHOICES_POSTED,
-  type ChatTurn,
-  type ModelPort,
-  type ToolExecutor,
-  type WeekContext,
-} from './types'
+import { CHOICES_POSTED } from './choicesPosted'
+import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
   [

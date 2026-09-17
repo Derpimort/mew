@@ -126,6 +126,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Two quiet details are now held by tests: the day picker keeps the dial's day selected while the
   arrow keys move through the month, and a remembered rule with none of your words shows just where
   it came from.
+- MEW opens on about 43 KB less code: the connected-model instructions and the class-merging helper
+  used by Settings now load only when those are used, not with every start.
 
 ### Your stated lengths hold through the plan picker
 - A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
