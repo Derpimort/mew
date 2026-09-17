@@ -14,6 +14,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+### Toward dragging on the dial
+- The Focus dial can now read any point on its face back as a time of day, to the minute, on
+  either half of the clock, and a drop there lands on the same five-minute grid the week uses.
+  It's the groundwork for sliding a block around the clock; nothing on screen changes yet.
+
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
   `2026.9.0` from the `v2026.09-rc1` branch. The Windows installer carries the matching
@@ -24,6 +29,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The size budgets now run on every PR into `develop` and the release candidate: the quick
   gate builds the app and checks each chunk against its ceiling, so a heavier download shows up
   on the PR that caused it, long before release day.
+
+### Screenshots that hold on any weekday
+- The canonical screenshot gate now runs on one pinned calendar day, so it passes the same way on
+  a Monday as on a Wednesday, and the canon screenshots regenerate identically whenever it runs.
+  `SHOOT_DATE` probes another day when you want to look.
 
 ### Straight talk when a reply drops
 - When the connection to the model drops after a reply has begun, MEW names it for what it is —
