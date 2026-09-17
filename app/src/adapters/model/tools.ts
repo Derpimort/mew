@@ -762,7 +762,11 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const at = atArg(o.at)
       const all = o.all === true
       const scope = recurScope(o.scope)
-      const dayOffset = optInt(o.dayOffset, 0, 13)
+      /* #62: out of range is IGNORED, never clamped — a clamped 14 would pin day
+         13 and remove a block nobody named; unpinned, a repeated time asks */
+      const d = o.dayOffset
+      const dayOffset =
+        typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 13 ? d : undefined
       return exec.remove(String(o.query ?? ''), {
         at,
         all,

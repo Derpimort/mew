@@ -115,6 +115,7 @@ vi.mock('../../adapters/model/aiAdapter', () => ({
   }),
 }))
 
+import { runTool } from '../../adapters/model/tools'
 import { useMew } from '../store'
 
 const pristine = useMew.getState()
@@ -139,6 +140,15 @@ function lunch(id: string, dayKey: string, over: Partial<Block> = {}): Block {
   }
 }
 const threeLunches = () => [lunch('tue', TODAY), lunch('wed', WED), lunch('thu', THU)]
+/** a block whose TITLE carries a weekday word, at 15:00 on `dayKey` */
+const named = (id: string, title: string, dayKey: string) =>
+  lunch(id, dayKey, { title, startMin: 15 * 60, endMin: 16 * 60 })
+const idsOf = (title: string) =>
+  useMew
+    .getState()
+    .blocks.filter((b) => b.title === title)
+    .map((b) => b.id)
+    .sort()
 
 async function fresh(blocks: Block[], location: 'remote' | 'local' = 'remote') {
   fakeDb.reset()
@@ -268,5 +278,90 @@ describe('#62 — keyed remove_blocks behaves the same', () => {
     await settle()
     expect(removed).toMatch(/^Removed — /)
     expect(lunchIds()).toEqual(['thu', 'tue'])
+  })
+})
+
+/* peer review of #66 (coderpa): a weekday word inside a TITLE is not a day pin —
+   the RC removed these, and the pin must not turn them into "couldn't find" */
+describe('#62 review — a weekday-named title is still the title', () => {
+  it.each([
+    ['remove the friday demo', 'Friday demo', THU],
+    ['remove sun salutation', 'Sun salutation', WED],
+    ['remove the monday planning', 'Monday planning', WED],
+  ])('"%s" removes the %s on another day', async (said, title, dayKey) => {
+    await fresh([named('only', title, dayKey)])
+    await say(said)
+    await settle()
+    expect(idsOf(title)).toEqual([])
+    expect(chat()[chat().length - 1].body).toMatch(/^Removed — /)
+  })
+
+  it('the #62 ask works for it: day chips, nothing removed, and each chip does what it says', async () => {
+    await fresh([named('wed', 'Friday demo', WED), named('thu', 'Friday demo', THU)])
+    await say('remove the friday demo at 15:00')
+    await settle()
+    expect(idsOf('Friday demo')).toEqual(['thu', 'wed'])
+    const ask = chipMsgs()
+    expect(ask).toHaveLength(1)
+    expect(ask[0].choices!.map((c) => c.label)).toEqual([
+      'tomorrow 15:00',
+      'thursday 15:00',
+      'both',
+    ])
+
+    await useMew
+      .getState()
+      .pickChoice(ask[0].id, ask[0].choices!.find((c) => c.label === 'thursday 15:00')!.id)
+    await settle()
+    expect(idsOf('Friday demo')).toEqual(['wed']) // Thursday's went — not a Friday nobody has
+  })
+
+  it('keyed: the "both" chip sweeps every match — the title never pins it to Friday', async () => {
+    await fresh([named('wed', 'Friday demo', WED), named('thu', 'Friday demo', THU)], 'local')
+    scriptedModel.midTurn = (exec) => {
+      exec.remove('Friday demo', { at: '15:00' })
+    }
+    await say('drop the 3pm friday demo')
+    await settle()
+    const ask = chipMsgs()[chipMsgs().length - 1]
+    expect(ask.choices!.map((c) => c.reply)).toEqual([
+      'remove Friday demo tomorrow at 15:00',
+      'remove Friday demo on thursday at 15:00',
+      'remove all Friday demo',
+    ])
+    /* a chip reply is a complete remove the parser acts on — pick it on the
+       keyless floor so the PARSE of "remove all Friday demo" is what's proven */
+    scriptedModel.reset()
+    useMew.getState().updateSettings({ modelLocation: 'remote' })
+    await useMew.getState().pickChoice(ask.id, ask.choices!.find((c) => c.label === 'both')!.id)
+    await settle()
+    expect(idsOf('Friday demo')).toEqual([])
+  })
+})
+
+describe('#62 review — a model dayOffset out of range is ignored, never clamped', () => {
+  it.each([14, -1, 1.5, '1'])('dayOffset %s pins nothing: the repeated time asks', async (bad) => {
+    const daily = [...threeLunches(), lunch('day13', '2026-06-22')]
+    await fresh(daily, 'local')
+    let pending: Promise<string> | null = null
+    scriptedModel.midTurn = (exec) => {
+      pending = runTool('remove_blocks', { query: 'lunch', at: '12:00', dayOffset: bad }, exec)
+    }
+    await say('drop the lunch two weeks out')
+    await settle()
+    expect((await pending!).startsWith(CHOICES_POSTED)).toBe(true)
+    expect(lunchIds()).toEqual(['day13', 'thu', 'tue', 'wed']) // day 13's Lunch is still there
+  })
+
+  it('an in-range dayOffset still removes exactly that day', async () => {
+    await fresh(threeLunches(), 'local')
+    let pending: Promise<string> | null = null
+    scriptedModel.midTurn = (exec) => {
+      pending = runTool('remove_blocks', { query: 'lunch', at: '12:00', dayOffset: 2 }, exec)
+    }
+    await say('drop thursday lunch')
+    await settle()
+    expect(await pending!).toMatch(/^Removed — /)
+    expect(lunchIds()).toEqual(['tue', 'wed'])
   })
 })

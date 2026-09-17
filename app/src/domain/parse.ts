@@ -37,6 +37,26 @@ function parseDayOffset(text: string, now: Date): { offset: number; matched: str
   return null
 }
 
+/** #62: the day a remove is pinned to, read ONLY from a day PHRASE — a bare
+    today / tomorrow, "on <weekday>", "<weekday>'s", or "this <weekday>" past the
+    phrase's first word. A pin is a hard filter, so a weekday word that belongs
+    to a TITLE ("the Friday demo", "Sun salutation", "remove this Friday demo")
+    must never become one; nor does "next <weekday>" (this week's or the one
+    after is the owner's call). Unpinned is always safe: a time that repeats
+    across days asks with day chips, and those chips speak "on <weekday>". */
+function removeDayPin(text: string, now: Date): number | null {
+  const lower = text.toLowerCase()
+  if (/\btoday\b/.test(lower)) return 0
+  if (/\btomorrow\b/.test(lower)) return 1
+  const DOW =
+    '(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)'
+  const m =
+    lower.match(new RegExp(`\\bon\\s+${DOW}\\b`)) ??
+    lower.match(new RegExp(`\\b${DOW}'s\\b`)) ??
+    lower.match(new RegExp(`\\S\\s+this\\s+${DOW}\\b`))
+  return m ? weekdayOffset(m[1], now) : null
+}
+
 function parseTime(text: string): number | null {
   const m = text.toLowerCase().match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/)
   if (!m) return null
@@ -740,19 +760,19 @@ function parseCommandInner(text: string, now: Date): ScheduleIntent {
         .replace(/^(?:both|all|every|each|the|my)\s+/i, '')
         .replace(/\s+(?:blocks?|events?|tasks?)\s*$/i, '')
     )
-    /* #62: a day word pins which day ("remove the lunch on thursday at 12:00") —
+    /* #62: a day phrase pins which day ("remove the lunch on thursday at 12:00") —
        the time alone can hit the same title on several days */
-    const day = parseDayOffset(dropM[1], now)
+    const dayOffset = removeDayPin(dropM[1], now)
     if (q)
       return {
         kind: 'remove',
         query: q,
-        ...(at || all || day
+        ...(at || all || dayOffset != null
           ? {
               remove: {
                 ...(at ? { at } : {}),
                 ...(all ? { all: true } : {}),
-                ...(day ? { dayOffset: day.offset } : {}),
+                ...(dayOffset != null ? { dayOffset } : {}),
               },
             }
           : {}),

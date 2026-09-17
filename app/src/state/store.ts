@@ -4072,9 +4072,8 @@ export const useMew = create<MewState>((set, get) => {
       const timeRepeatsAcrossDays = candidates.some((b) =>
         candidates.some((c) => c !== b && c.startMin === b.startMin && c.dayKey !== b.dayKey)
       )
-      const multiDay = timeRepeatsAcrossDays
       const seen = new Set<string>()
-      const timeOptions = multiDay
+      const timeOptions = timeRepeatsAcrossDays
         ? candidates
             .map((b) => ({ b, word: dayWord(b.dayKey, todayKey) }))
             .filter((x): x is { b: Block; word: string } => x.word != null)
@@ -5072,10 +5071,8 @@ export const useMew = create<MewState>((set, get) => {
                 set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
               /* #325: a repeated apology tail is dropped — one acknowledgment
                  stands for the turn (the catch path stays as-is: an error is not
-                 the flail, and a hiccuped turn keeps whatever streamed) */ else if (
-                final &&
-                !coalesceApology(final)
-              ) {
+                 the flail, and a hiccuped turn keeps whatever streamed) */
+              else if (final && !coalesceApology(final)) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */

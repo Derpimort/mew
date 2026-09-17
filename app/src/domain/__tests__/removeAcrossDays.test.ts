@@ -103,3 +103,49 @@ describe('parseCommand — removes keep the day word (#62)', () => {
     })
   })
 })
+
+/* peer review of #66: a pin is a hard day filter, so it may only come from a day
+   PHRASE — a weekday word inside a title names the block, never the day */
+describe('parseCommand — only a day PHRASE pins a remove (#62 review)', () => {
+  const pinOf = (text: string) => {
+    const r = parseCommand(text, NOW) as { remove?: { dayOffset?: number } }
+    return r.remove?.dayOffset
+  }
+
+  it.each([
+    'remove the friday demo',
+    'remove sun salutation',
+    'remove the monday planning',
+    'remove this friday demo',
+    'remove the friday demo at 15:00',
+    'remove all friday demo',
+    'remove the lunch next thursday at 12:00',
+  ])('"%s" → no day pin', (text) => {
+    expect(pinOf(text)).toBeUndefined()
+  })
+
+  it.each([
+    ['remove lunch today at 12:00', 0],
+    ['remove friday demo tomorrow at 15:00', 1],
+    ['remove friday demo on thursday at 15:00', 2],
+    ["remove thursday's lunch at 12:00", 2],
+    ['remove the lunch this thursday', 2],
+    ['remove all lunch on thu', 2],
+  ] as const)('"%s" → day %i', (text, offset) => {
+    expect(pinOf(text)).toBe(offset)
+  })
+
+  it('the chips of a weekday-named title parse to exactly what they say', () => {
+    expect(parseCommand('remove friday demo on thursday at 15:00', NOW)).toEqual({
+      kind: 'remove',
+      query: 'demo',
+      remove: { at: '15:00', dayOffset: 2 },
+    })
+    // "both" sweeps every match — the title's weekday never narrows it to Friday
+    expect(parseCommand('remove all friday demo', NOW)).toEqual({
+      kind: 'remove',
+      query: 'demo',
+      remove: { all: true },
+    })
+  })
+})
