@@ -101,6 +101,7 @@ import {
   condenseChatPage,
   condensedChatSlug,
   debriefPage,
+  forgottenPrefPage,
   knownProjectsFrom,
   learnedRulePage,
   makeChatBatcher,
@@ -108,6 +109,7 @@ import {
   prefPage,
   slugify,
 } from '../adapters/brain/senses'
+import { mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
 import {
   adoptSidecarSnapshot,
   effectiveBrain,
@@ -227,8 +229,9 @@ export const mewBrain = brain
 /** re-exported so the UI reads sidecar state through the store, not the adapter */
 export type { SidecarStatus } from '../adapters/brain/sidecar'
 
-/* the always-on pref slice: brain-backed when connected, memory-backed
-   otherwise. Cached per session; refreshed after every remember. */
+/* the brain's copy of the rulebook, cached per session and refreshed after every
+   remember/forget and on (re)connect. What APPLIES is always the merge with local
+   memory (activePrefsFrom): local rules and forgets win, and brain-only rules join. */
 let brainPrefs: PrefPayload[] | null = null
 function refreshBrainPrefs(): void {
   if (!brainOn()) {
@@ -237,7 +240,45 @@ function refreshBrainPrefs(): void {
   }
   void brain.listPrefs().then((prefs) => {
     brainPrefs = prefs
+    replayLocalPrefs(prefs)
   })
+}
+
+/* #15: what the owner told MEW while the brain was away (or forgot since) reaches
+   the brain once it answers. The plan comes from the pure merge rule
+   (prefReplayPlan). A session ledger keyed by brain + rule + value makes each
+   replay happen exactly once. Nothing is claimed unless the brain proves
+   reachable, so a down brain is simply retried on the next connect. */
+const replayedPrefs = new Set<string>()
+function replayLocalPrefs(fromBrain: PrefPayload[]): void {
+  const s = useMew.getState()
+  if (!s.hydrated || !brainOn()) return
+  const plan = prefReplayPlan(s.memory, fromBrain)
+  if (!plan.remember.length && !plan.forget.length) return
+  const brainKey = effectiveBrainKey(s.settings)
+  void (async () => {
+    if (!(await brain.health())) return
+    let wrote = false
+    for (const p of plan.remember) {
+      const id = `${brainKey}|${prefKey(p)}|${p.value}`
+      if (replayedPrefs.has(id)) continue
+      replayedPrefs.add(id)
+      await brain.ingest(prefPage(p))
+      wrote = true
+    }
+    for (const p of plan.forget) {
+      const id = `${brainKey}|${prefKey(p)}|forgotten`
+      if (replayedPrefs.has(id)) continue
+      replayedPrefs.add(id)
+      await brain.ingest(forgottenPrefPage(p))
+      wrote = true
+    }
+    // re-read the brain's copy; no second replay, the ledger already holds these
+    if (wrote)
+      void brain.listPrefs().then((prefs) => {
+        brainPrefs = prefs
+      })
+  })()
 }
 
 /** newest-first, deduped by kind+match — the standing rulebook, as data */
@@ -245,22 +286,11 @@ export function activePrefsFrom(
   memory: MemoryEvent[],
   fromBrain: PrefPayload[] | null
 ): PrefPayload[] {
-  const source: PrefPayload[] = fromBrain?.length
-    ? fromBrain
-    : [...memory]
-        .reverse()
-        .filter((e) => e.kind === 'preference' && e.pref)
-        .map((e) => e.pref!)
-  const seen = new Set<string>()
-  const out: PrefPayload[] = []
-  for (const p of source) {
-    const key = `${p.kind}:${p.match.toLowerCase()}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(p)
-    if (out.length >= 15) break
-  }
-  return out
+  /* #15: ONE merge rule (domain/prefMerge.ts). Local rules and forgets win, and
+     brain-only rules join. The brain's list used to REPLACE local memory whenever
+     it held anything, dropping rules told to MEW while it was away and bringing
+     back rules the owner had forgotten. */
+  return mergeActivePrefs(memory, fromBrain)
 }
 
 /** the same rulebook, rendered for the context block */
@@ -1082,7 +1112,12 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
        shows, over LOCAL memory (brain-off by law), so reply and card are one
        summary. Computed here so runIntent stays a pure render of ctx. */
     knownLines: consoleSummary(
-      memoryConsole({ events: s.memory, prefs: activePrefsFrom(s.memory, null), insights })
+      memoryConsole({
+        events: s.memory,
+        prefs: activePrefsFrom(s.memory, null),
+        insights,
+        energy: energyProfile(s.memory, agg, now), // #15: rhythm rows, parity with the card
+      })
     ),
     recallLines,
     recallDegraded,
@@ -6289,22 +6324,28 @@ export const useMew = create<MewState>((set, get) => {
       execRemember(pref)
     },
     forgetStandingPref(pref) {
-      const key = `${pref.kind}:${pref.match.toLowerCase()}`
+      const key = prefKey(pref)
       const drop = get()
-        .memory.filter(
-          (e) =>
-            e.kind === 'preference' &&
-            e.pref &&
-            `${e.pref.kind}:${e.pref.match.toLowerCase()}` === key
-        )
+        .memory.filter((e) => e.kind === 'preference' && e.pref && prefKey(e.pref) === key)
         .map((e) => e.id)
-      if (!drop.length) return
-      const gone = new Set(drop)
-      set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
-      persistDeleteMemory(drop)
-      /* local removal is authoritative for what applies; mirror it into the
-         brain-backed pref cache too (the brain's copy is append-only, as undo). */
-      refreshBrainPrefs()
+      const brainHasIt = (brainPrefs ?? []).some((p) => prefKey(p) === key)
+      if (!drop.length && !brainHasIt) return
+      if (drop.length) {
+        const gone = new Set(drop)
+        set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
+        persistDeleteMemory(drop)
+      }
+      /* #15: the forget is a TOMBSTONE, so it sticks with the brain on. The merge
+         rule lets it win over the brain's copy (listPrefs would otherwise bring
+         the rule straight back), and the brain's page is retired to match. A
+         later remember of the same rule is newer and simply wins again. */
+      logMemory({
+        kind: 'forgotten_pref',
+        dayKey: dayKey(new Date(get().nowMs)),
+        pref: { kind: pref.kind, match: pref.match, value: '', stated: '' },
+      })
+      if (brainOn()) void brain.ingest(forgottenPrefPage(pref)).then(() => refreshBrainPrefs())
+      else refreshBrainPrefs()
     },
 
     /* ── weekly review (#346) ──────────────────────────────────────────
@@ -6376,7 +6417,12 @@ export const useMew = create<MewState>((set, get) => {
          (opt-in on, or the sidecar it falls back to) gets its offer (#249).
          URL/token edits alone don't trigger — a half-typed endpoint must not
          be sprayed with a replay; the next launch converges it. */
-      if ('brainEnabled' in patch) maybeBackfillBrain()
+      if ('brainEnabled' in patch) {
+        maybeBackfillBrain()
+        /* #15: the connect re-reads the brain's rulebook, and that read replays
+           whatever the owner told MEW while it was away (once, idempotently) */
+        refreshBrainPrefs()
+      }
     },
 
     async applyCaptureHotkey(accel) {

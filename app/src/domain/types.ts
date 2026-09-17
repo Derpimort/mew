@@ -245,6 +245,7 @@ export type MemoryKind =
   | 'preference' // a stated standing rule (the brain-off home for remember)
   | 'learned_rule' // gbrain Pillar 1 (#327): a rule confirmed from repetition — state, never ages out
   | 'dismissed_rule' // #327: a candidate the user rejected — never offered again
+  | 'forgotten_pref' // #15: a standing rule the owner forgot — a tombstone over the brain's copy
   | 'weekly_summary' // consolidation artifact — old raw events compacted per ISO week
 
 export interface MemoryEvent {

@@ -20,6 +20,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MSI-safe `26.9.0`, and the release guard checks the shape, the MSI mapping and the tag before
   any build or tag — documented in `.github/RELEASES.md`.
 
+### What you tell MEW sticks
+- A standing rule you tell MEW while its brain is away keeps applying once the brain is back,
+  and MEW passes it along to the brain exactly once. A rule you forget stays forgotten with
+  the brain on. And "what I've picked up about you" now shows your rhythm by energy: where your
+  deep work, admin and health blocks actually get finished.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
