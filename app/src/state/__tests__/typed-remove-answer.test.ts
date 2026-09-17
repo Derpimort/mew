@@ -262,15 +262,36 @@ describe('#131 — a typed answer to a live remove ask does what its chip does',
       await settle()
       expect(lastUser(), said).toBe(said)
       expect(lastMew(), said).toBe(
-        'There are 3 "lunch" blocks — say "remove all lunch" to drop all 3, or name the day of the one to drop.'
+        '3 "lunch" blocks ahead — say "all of them" to drop all 3, or tell me which one.'
       )
       expect(lunchIds(), said).toEqual(['l-thu', 'l-tue', 'l-wed'])
       expect(useMew.getState().captures, said).toEqual([])
     }
     /* and the words it suggests do it */
-    await say('remove all lunch')
+    await say('all of them')
     await settle()
+    expect(lastUser()).toBe('remove all lunch')
     expect(lunchIds()).toEqual([])
+  })
+
+  it("the line brings the ask's chips with it, so a day still answers after it", async () => {
+    await fresh(threeLunches())
+    await askAboutLunch()
+    await say('both')
+    await settle()
+    const asked = useMew.getState().chat.at(-1)!
+    expect(asked.choices?.map((c) => c.label)).toEqual([
+      'today 12:00',
+      'tomorrow 12:00',
+      'thursday 12:00',
+      'all of them',
+    ])
+    /* the words the owner would reach for next — a day, a label, a time */
+    await say('the thursday one')
+    await settle()
+    expect(lastUser()).toBe('remove lunch on thursday at 12:00')
+    expect(lunchIds()).toEqual(['l-tue', 'l-wed'])
+    expect(useMew.getState().captures).toEqual([])
   })
 
   it('"both" and "all 2" fit two', async () => {
@@ -343,6 +364,10 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
     choices: choices.map(([label, reply], i) => ({ id: `c${i + 1}`, label, reply, picked })),
   })
   const user = (id: string) => ({ id, role: 'user' as const, body: 'x', ts: 0 })
+  /* every ask below is stamped ts: 1, so ASK_DAY answers it on its own day and
+     NEXT_DAY is the same ask read after the calendar turned (#94's case) */
+  const ASK_DAY = 1
+  const NEXT_DAY = ASK_DAY + 24 * 60 * 60 * 1000
 
   it('only the newest live chips, only a remove ask, only a word that points at one chip', () => {
     const removeAsk = ask('a', [
@@ -350,15 +375,15 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
       ['the 12:30', 'remove lunch 12:30'],
       ['both', 'remove all lunch'],
     ])
-    expect(typedRemoveAnswer([user('u'), removeAsk], 'the 12:30')).toEqual({
+    expect(typedRemoveAnswer([user('u'), removeAsk], 'the 12:30', ASK_DAY)).toEqual({
       msgId: 'a',
       choiceId: 'c2',
     })
-    expect(typedRemoveAnswer([user('u'), removeAsk], 'both')).toEqual({
+    expect(typedRemoveAnswer([user('u'), removeAsk], 'both', ASK_DAY)).toEqual({
       msgId: 'a',
       choiceId: 'c3',
     })
-    expect(typedRemoveAnswer([user('u'), removeAsk], '12:00')).toEqual({
+    expect(typedRemoveAnswer([user('u'), removeAsk], '12:00', ASK_DAY)).toEqual({
       msgId: 'a',
       choiceId: 'c1',
     })
@@ -371,11 +396,23 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
       ]),
       body: '3 "lunch" blocks ahead — which?',
     }
-    expect(typedRemoveAnswer([user('u'), threeAsk], 'both')).toEqual({
-      clarify:
-        'There are 3 "lunch" blocks — say "remove all lunch" to drop all 3, or name the day of the one to drop.',
+    /* the line carries the ask's own chips back, since the answer settled the
+       ones above it — and leads with the count, so it reads as the ask it is */
+    expect(typedRemoveAnswer([user('u'), threeAsk], 'both', ASK_DAY)).toEqual({
+      clarify: '3 "lunch" blocks ahead — say "all of them" to drop all 3, or tell me which one.',
+      choices: [
+        { id: 'c1', label: 'the 12:00', reply: 'remove lunch 12:00' },
+        { id: 'c2', label: 'the 12:30', reply: 'remove lunch 12:30' },
+        { id: 'c3', label: 'all of them', reply: 'remove all lunch' },
+      ],
     })
-    expect(typedRemoveAnswer([user('u'), threeAsk], 'all three')).toEqual({
+    /* once the day has turned, those chips would point at other days (#94), so
+       the line names words that stand on their own and brings none back */
+    expect(typedRemoveAnswer([user('u'), threeAsk], 'both', NEXT_DAY)).toEqual({
+      clarify:
+        '3 "lunch" blocks ahead — say "remove all lunch" to drop all 3, or "remove lunch" to pick one.',
+    })
+    expect(typedRemoveAnswer([user('u'), threeAsk], 'all three', ASK_DAY)).toEqual({
       msgId: 'n',
       choiceId: 'c3',
     })
@@ -384,7 +421,7 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
       ['drop Groceries', 'remove the Groceries today at 14:00'],
       ['keep both', 'ok, keep both as they are'],
     ])
-    expect(typedRemoveAnswer([user('u'), drift], 'both')).toBeNull()
+    expect(typedRemoveAnswer([user('u'), drift], 'both', ASK_DAY)).toBeNull()
     /* a repeating block's scope ask removes, but has no all-chip: "all" never
        means "the whole series"; its own label, typed, still picks it */
     const scope = ask('s', [
@@ -392,8 +429,8 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
       ['this & the ones after', 'remove standup today at 9:00 this and following'],
       ['the whole series', 'remove standup today at 9:00 across the whole series'],
     ])
-    expect(typedRemoveAnswer([user('u'), scope], 'all')).toBeNull()
-    expect(typedRemoveAnswer([user('u'), scope], 'just this one')).toEqual({
+    expect(typedRemoveAnswer([user('u'), scope], 'all', ASK_DAY)).toBeNull()
+    expect(typedRemoveAnswer([user('u'), scope], 'just this one', ASK_DAY)).toEqual({
       msgId: 's',
       choiceId: 'c1',
     })
@@ -402,18 +439,22 @@ describe('#131 — typedRemoveAnswer (pure)', () => {
       ['shift to 10:15', 'move the Deck polish to today at 10:15'],
       ['roll to tomorrow', 'move the Deck polish to tomorrow'],
     ])
-    expect(typedRemoveAnswer([user('u'), rescue], 'roll to tomorrow')).toBeNull()
+    expect(typedRemoveAnswer([user('u'), rescue], 'roll to tomorrow', ASK_DAY)).toBeNull()
     /* picked, or left behind by a newer user message: not live */
     expect(
-      typedRemoveAnswer([user('u'), ask('p', [['both', 'remove all lunch']], true)], 'both')
+      typedRemoveAnswer(
+        [user('u'), ask('p', [['both', 'remove all lunch']], true)],
+        'both',
+        ASK_DAY
+      )
     ).toBeNull()
-    expect(typedRemoveAnswer([removeAsk, user('u')], 'both')).toBeNull()
+    expect(typedRemoveAnswer([removeAsk, user('u')], 'both', ASK_DAY)).toBeNull()
     /* a day word two chips share is no answer */
     const twoToday = ask('t', [
       ['today 9:00', 'remove deck today at 9:00'],
       ['today 14:00', 'remove deck today at 14:00'],
     ])
-    expect(typedRemoveAnswer([user('u'), twoToday], 'the today one')).toBeNull()
-    expect(typedRemoveAnswer([user('u'), removeAsk], 'lunch at noon')).toBeNull()
+    expect(typedRemoveAnswer([user('u'), twoToday], 'the today one', ASK_DAY)).toBeNull()
+    expect(typedRemoveAnswer([user('u'), removeAsk], 'lunch at noon', ASK_DAY)).toBeNull()
   })
 })

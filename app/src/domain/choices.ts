@@ -4,7 +4,8 @@
    DERIVED from the chat itself (a picked flag, a newer user message), never
    stored — the same computed-not-stored law as liveNow. */
 
-import type { ChatMessage } from './types'
+import { dayKey } from './time'
+import type { ChatChoice, ChatMessage } from './types'
 
 /** True once any option on the message was picked. */
 export function choicePicked(msg: ChatMessage): boolean {
@@ -78,8 +79,9 @@ const COUNT_WORDS: Record<string, number> = {
 
 export function typedRemoveAnswer(
   chat: ChatMessage[],
-  text: string
-): { msgId: string; choiceId: string } | { clarify: string } | null {
+  text: string,
+  nowMs: number
+): { msgId: string; choiceId: string } | { clarify: string; choices?: ChatChoice[] } | null {
   let ask: ChatMessage | undefined
   for (let i = chat.length - 1; i >= 0; i--) {
     if ((chat[i].choices?.length ?? 0) > 0) {
@@ -111,8 +113,20 @@ export function typedRemoveAnswer(
     const named = BOTH_WORDS.test(said) ? 2 : n ? (COUNT_WORDS[n] ?? Number(n)) : count
     if (named === count) return pick(allChip)
     const base = allChip.reply.replace(/^remove\s+all\s+/i, '')
+    const many = count === 2 ? 'them both' : `all ${count}`
+    /* The answer retired the ask's chips (#254: a newer user message settles
+       them), so the line has to leave a way through. On the ask's own day the
+       very same chips come back under it — a tap, a label, a day or a time all
+       answer again, and the line leads with the count so this message reads as
+       the ask it repeats. Once the day has turned, those day words would point
+       at other days (#94), so the line names words that stand on their own. */
+    if (dayKey(new Date(ask.ts)) !== dayKey(new Date(nowMs)))
+      return {
+        clarify: `${count} "${base}" blocks ahead — say "remove all ${base}" to drop ${many}, or "remove ${base}" to pick one.`,
+      }
     return {
-      clarify: `There are ${count} "${base}" blocks — say "remove all ${base}" to drop all ${count}, or name the day of the one to drop.`,
+      clarify: `${count} "${base}" blocks ahead — say "${allChip.label}" to drop ${many}, or tell me which one.`,
+      choices: options.map((c) => ({ id: c.id, label: c.label, reply: c.reply })),
     }
   }
   const day = bare.match(

@@ -5905,9 +5905,9 @@ export const useMew = create<MewState>((set, get) => {
       /* #131: a typed answer to a live remove ask is that chip's pick — the
          same path as the tap, #94's pick-time re-check included — never a new
          ask or a thought for the inbox */
-      const typed = typedRemoveAnswer(get().chat, trimmed)
-      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       syncTurnClock() // #96: one today for the parse, the executors and the model
+      const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
       if (typed) {
         /* a count word that doesn't fit the ask ("both" for three) is answered
@@ -5915,7 +5915,9 @@ export const useMew = create<MewState>((set, get) => {
            is still a message, so an older undo hold lets go here (#130) */
         if (snapshotHolds) snapshotHolds = false
         else preMutationSnapshot = null
-        post([mewMsg(typed.clarify)])
+        /* the ask's own chips ride the line home: the answer settled the ones
+           above, so these are how a tap — or "the thursday one" — still lands */
+        post([typed.choices ? choicesMsg(typed.clarify, typed.choices) : mewMsg(typed.clarify)])
         return
       }
       set({ thinking: true })
