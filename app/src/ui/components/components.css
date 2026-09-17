@@ -2640,3 +2640,38 @@
   flex-wrap: wrap;
   width: 300px;
 }
+
+/* ── plannable hours (#22 slice B) ─────────────────────────────────────
+   Two .keyfield clock fields and a live hint that wraps under them, right-
+   aligned with the row's control column. Tokens only. */
+.plannable {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  column-gap: 6px;
+  max-width: 260px;
+}
+.plannable .keyfield input {
+  width: 5.5ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.plannable-sep {
+  color: var(--faint);
+  font-size: 11px;
+}
+.plannable-flag {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+.plannable-hint {
+  flex-basis: 100%;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gold);
+}
+.plannable-hint:not(:empty) {
+  margin-top: 5px;
+}
