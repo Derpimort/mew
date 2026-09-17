@@ -198,10 +198,14 @@ export function runIntent(
          the chips ARE the reply; a yes re-asks with the count it named */
       const bt = intent.batch
       if (!bt) return `nothing to batch — name the blocks and the change`
+      if (bt.op === 'setTag' && !bt.toTag)
+        return `nothing to tag — say which tag (work, private, health or rest)`
       const op =
         bt.op === 'shift'
           ? { kind: 'shift' as const, deltaMin: bt.deltaMin ?? 0 }
-          : { kind: 'moveToDay' as const, toDayOffset: bt.toDayOffset ?? 0 }
+          : bt.op === 'setTag'
+            ? { kind: 'setTag' as const, tag: bt.toTag! } // #75 slice 2: a retag
+            : { kind: 'moveToDay' as const, toDayOffset: bt.toDayOffset ?? 0 }
       return quietIfChoices(
         exec.batch(
           {
@@ -485,7 +489,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
     // #75: one op over a selector — a valid op is required, else drop.
     const bt = (o.batch && typeof o.batch === 'object' ? o.batch : o) as Record<string, unknown>
     const tags = ['work', 'private', 'health', 'rest'] as const
-    if (bt.op !== 'shift' && bt.op !== 'moveToDay') return null
+    if (bt.op !== 'shift' && bt.op !== 'moveToDay' && bt.op !== 'setTag') return null
     return {
       kind,
       batch: {
@@ -497,6 +501,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         op: bt.op,
         deltaMin: optInt(bt.deltaMin, -720, 720),
         toDayOffset: optInt(bt.toDayOffset, 0, 13),
+        toTag: tags.includes(bt.toTag as never) ? (bt.toTag as (typeof tags)[number]) : undefined,
         confirmCount: optInt(bt.confirmCount, 1, 500),
         confirmToken: typeof bt.confirmToken === 'string' ? bt.confirmToken : undefined,
       },

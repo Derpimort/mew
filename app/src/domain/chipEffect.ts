@@ -204,6 +204,7 @@ export function chipReplyEffect(
         op: bt.op,
         deltaMin: bt.op === 'shift' ? (bt.deltaMin ?? 0) : null,
         toDayKey: bt.op === 'moveToDay' ? addDaysKey(todayKey, bt.toDayOffset ?? 0) : null,
+        toTag: bt.op === 'setTag' ? (bt.toTag ?? null) : null,
         confirmCount: bt.confirmCount ?? null,
         confirmToken: bt.confirmToken ?? null,
       }
