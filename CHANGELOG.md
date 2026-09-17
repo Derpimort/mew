@@ -45,6 +45,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MEW now asks with up to three tappable choices: move the work to its next clean slot, drop the
   flexible block, or keep both. Nothing moves until you pick, and every choice does exactly
   what it says, with or without a model key.
+### What you tell MEW sticks
+- A standing rule you tell MEW while its brain is away keeps applying once the brain is back,
+  and MEW passes it along to the brain exactly once. A rule you forget stays forgotten with
+  the brain on. And "what I've picked up about you" now shows your rhythm by energy: where your
+  deep work, admin and health blocks actually get finished.
 
 ## [0.7.0] — 2026-08-12
 
