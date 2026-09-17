@@ -195,7 +195,7 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive } from '../domain/choices'
+import { choicesActive, scenariosActive, typedRemoveAnswer } from '../domain/choices'
 import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
@@ -3134,18 +3134,10 @@ export const useMew = create<MewState>((set, get) => {
         }
       }
     }
-    let pacing = ''
-    if (restNotes.length) {
-      const joined = joinHuman(restNotes)
-      pacing = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const pacing = asideSentences(restNotes)
     /* #323: the meal guardrail's asides — a moved or kept meal named once, in
        the same positive voice as the pacing note above */
-    let mealAside = ''
-    if (mealNotes.length) {
-      const joined = joinHuman(mealNotes)
-      mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const mealAside = asideSentences(mealNotes)
     const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
     const noRoomAside = noRoom.length ? ` ${noRoom.map((r) => r.note).join(' ')}` : ''
     return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}${noRoomAside}`
@@ -4385,9 +4377,7 @@ export const useMew = create<MewState>((set, get) => {
     const choices = stuckIds.length
       ? offerDriftChoices([{ placedId: tail.id, stuckIds }], todayKey)
       : false
-    const pacing = paced.notes.length
-      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
-      : ''
+    const pacing = asideSentences(paced.notes)
     const onWhen = when === 'today' ? '' : ` on ${when}`
     const between = aroundName ? `, around ${aroundName}` : `, leaving ${gapName} free`
     return `Split — ${base} now runs ${fmtTime(geo.head.startMin)}–${fmtTime(geo.head.endMin)}${onWhen}, and ${tail.title} picks up ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}${between}${driftNote}.${pacing}${choices ? ' The options for that overlap are on screen.' : ''}`
@@ -4481,9 +4471,7 @@ export const useMew = create<MewState>((set, get) => {
     const kept = whole.length
       ? ` ${joinHuman(whole).charAt(0).toUpperCase()}${joinHuman(whole).slice(1)} had no room for it, so ${whole.length === 1 ? 'that one stays' : 'those stay'} whole.`
       : ''
-    const pacing = paced.notes.length
-      ? ` ${joinHuman(paced.notes).charAt(0).toUpperCase()}${joinHuman(paced.notes).slice(1)}.`
-      : ''
+    const pacing = asideSentences(paced.notes)
     return `Split — ${base} ${reach}: ${splitCount} block${splitCount === 1 ? '' : 's'} now pause ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)} and pick up again after.${kept}${pacing}`
   }
 
@@ -5919,8 +5907,24 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      /* #131: a typed answer to a live remove ask is that chip's pick — the
+         same path as the tap, #94's pick-time re-check included — never a new
+         ask or a thought for the inbox */
       syncTurnClock() // #96: one today for the parse, the executors and the model
+      const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
+      if (typed) {
+        /* a count word that doesn't fit the ask ("both" for three) is answered
+           plainly: nothing changes, and it's never a thought for the inbox. It
+           is still a message, so an older undo hold lets go here (#130) */
+        if (snapshotHolds) snapshotHolds = false
+        else preMutationSnapshot = null
+        /* the ask's own chips ride the line home: the answer settled the ones
+           above, so these are how a tap — or "the thursday one" — still lands */
+        post([typed.choices ? choicesMsg(typed.clarify, typed.choices) : mewMsg(typed.clarify)])
+        return
+      }
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
       /* "undo that" reaches MEW's last change through this one message (#120,
@@ -8364,6 +8368,20 @@ function paceRest(
     }
   }
   return { blocks, notes }
+}
+
+/** Asides as sentences (#126): the statements joined into one sentence with its
+    period, and a note that already ends a sentence ("want me to make room for a
+    short breather?") standing as its own, never given a second mark ("?.") */
+function asideSentences(notes: string[]): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+  const ends = (s: string) => /[?!.]$/.test(s)
+  const statements = notes.filter((s) => !ends(s))
+  const parts = [
+    ...(statements.length ? [`${cap(joinHuman(statements))}.`] : []),
+    ...notes.filter(ends).map(cap),
+  ]
+  return parts.length ? ` ${parts.join(' ')}` : ''
 }
 
 function joinHuman(parts: string[]): string {
