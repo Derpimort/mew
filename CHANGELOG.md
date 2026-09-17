@@ -18,6 +18,15 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - The Focus dial can now read any point on its face back as a time of day, to the minute, on
   either half of the clock, and a drop there lands on the same five-minute grid the week uses.
   It's the groundwork for sliding a block around the clock; nothing on screen changes yet.
+### The dial on any day
+- The Focus dial shows any day, not just today: step through the days from the date line
+  above the clock and see that day's blocks on the same calm face — a lived day wears its full
+  wash, a day ahead stays clear, and the centre names the day with its blocks, committed hours
+  and mews. One click brings you back to today, where the live countdown belongs, and a day
+  picked in Week carries across. On a lived day the card keeps Done, Hold and Remove; a day
+  ahead keeps Hold and Remove, so a mew is only ever counted once it's done.
+- The day-progress wash now holds when half the day is complete: the morning disk stays filled
+  from noon on, and a lived day shows its whole wash.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
