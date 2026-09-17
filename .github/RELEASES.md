@@ -72,8 +72,38 @@ straight by its bullets) and check the edit with `node desktop/scripts/check-cha
 
 Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and changelog sections stand.
 
+## Closing keywords: put them where the COMMIT can see them
+
+`Closes #N` in a **pull request body does nothing here.** `gh pr merge --squash` builds the squash
+message from GitHub's default (the PR title plus a bullet list of the branch's commit subjects) or
+from exactly the text you pass with `--body` — the PR body never reaches it. Three merges on the
+2026.9.0 RC proved it the hard way: one kept its keyword only because the merger happened to retype
+it into `--body`, and two lost theirs, so two shipped fixes were left looking unfinished.
+
+So, per merge:
+
+```sh
+gh pr merge <n> --squash --body "… Closes #N."
+git show -s --format=%B <merge-sha> | grep -c Closes     # verify in the COMMIT, not the PR
+```
+
+And note **when** the keyword fires: GitHub auto-closes only from the **default branch**, so a
+keyword merged into a `v*-rc*` branch does nothing until that commit reaches `main` at promotion.
+That is the behaviour you want — the issue closes when the fix actually ships — but it means a
+missing keyword is invisible for the whole RC and only bites at promotion.
+
+**Recovering a keyword you already lost:** do not force-push an amended commit onto a shared RC to
+fix bookkeeping — that trades a wrong list for a rewritten history everyone has already pulled. Put
+the missing `Closes #N` lines in the **promotion PR's** own squash body instead; they fire from
+`main` exactly the same way.
+
 ## Cutting a release (maintainer)
 
+0. **Carry any lost closing keywords.** Check the RC's merge commits for the issues it fixes
+   (`git log --format=%B origin/main..HEAD | grep -c Closes` against the list of issues the RC
+   closes) and add a `Closes #N` line to the promotion PR's squash body for every one that is
+   missing. For 2026.9.0 that is **#160 and #161** — both fixed and shipped, both merged without
+   the keyword reaching the commit. See *Closing keywords* above for why.
 1. **Move `[Unreleased]` into a version.** In `CHANGELOG.md`, rename the `[Unreleased]` heading
    to the new version with today's date (`## [2026.9.0] — 2026-09-18`), then open a fresh empty
    `[Unreleased]` above it. Update the link-reference block at the bottom: add the new version's
