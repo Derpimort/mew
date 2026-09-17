@@ -4058,7 +4058,15 @@ export const useMew = create<MewState>((set, get) => {
       along), so a preview is sized and windowed the way the apply will be.
       Every scenario is validated against the live week at post time — the
       engine is conflict-free by construction, the gate keeps that checked. */
-  function execProposeScenarios(prompt: string, specs: ScenarioTaskSpec[]): string {
+  function execProposeScenarios(
+    prompt: string,
+    specs: (ScenarioTaskSpec & { durationStated?: boolean })[],
+    /* #81: a stale plan's re-offer re-quotes the STORED places — their lengths
+       are already the honest quote (pre-sized under "always", as asked
+       otherwise), so each carries its own stated flag and nothing is pre-sized
+       a second time */
+    requote = false
+  ): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -4082,8 +4090,10 @@ export const useMew = create<MewState>((set, get) => {
           ...(t.due != null ? { due: t.due } : {}),
           // a stated window, else a confirmed rule's — the engine honors both
           ...(r.spec.window ? { window: r.spec.window } : {}),
-          // #322: a length in the ask is the user's word — "always" leaves it be
-          ...(t.durationMin != null ? { durationStated: true } : {}),
+          // #322: a length in the ask is the user's word — "always" leaves it be.
+          // A re-quote (#81) keeps each place's own flag instead: every stored
+          // place has a length, but only the stated ones were the owner's word.
+          ...((requote ? t.durationStated : t.durationMin != null) ? { durationStated: true } : {}),
         }
       })
     if (!tasks.length) return 'nothing to propose — name the tasks and I will lay out the week.'
@@ -4102,7 +4112,9 @@ export const useMew = create<MewState>((set, get) => {
        preview AND the applied quote both carry honest lengths. off/ask ⇒ absent
        ⇒ scenarios are byte-identical to today. */
     const estimateFactor =
-      s.settings.estimateAutosize === 'always' ? estimateFactorByTag(s.memory, now) : undefined
+      s.settings.estimateAutosize === 'always' && !requote // #81: never pre-size a quote twice
+        ? estimateFactorByTag(s.memory, now)
+        : undefined
     const all = generateScenarios(s.blocks, tasks, {
       nowMin: minOfDay(now),
       todayKey,
@@ -5480,7 +5492,9 @@ export const useMew = create<MewState>((set, get) => {
             tag: p.tag,
             durationMin: p.durationMin,
             ...(p.due != null ? { due: p.due } : {}),
-          }))
+            ...(p.durationStated ? { durationStated: true } : {}), // #81
+          })),
+          true // #81: a re-quote of the stored lengths
         )
         if (!offer.startsWith(CHOICES_POSTED)) post([mewMsg(offer)])
         return

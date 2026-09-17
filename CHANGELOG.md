@@ -55,6 +55,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   proofs run green again with no API key, on the same pinned day and shared harness as the
   canon gate. Their screenshots are current, and the Google sign-in proof runs fully offline.
 
+### Your stated lengths hold through the plan picker
+- A length you say in your own words ("block 90 min for the quarterly report") now stays exactly that
+  length when you pick a plan from the picker. MEW only offers to give room to the blocks you didn't
+  size yourself, and a plan it re-offers after the week moved keeps the lengths it already showed you.
+
 ## [0.7.0] — 2026-08-12
 
 **Calm connections.** The first release cut from the open repo. The connected calendar
