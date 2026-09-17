@@ -584,9 +584,12 @@ describe('a seeded Tuesday morning', () => {
       expect(msg.role).toBe('mew')
       expect(msg.body).toMatch(/2 "prod release" blocks ahead/)
       expect(msg.choices).toBeDefined()
-      expect(msg.choices!.map((c) => c.label)).toEqual(['the 14:00', 'the 10:00', 'both'])
-      expect(msg.choices!.find((c) => c.label === 'the 14:00')!.reply).toBe(
-        'remove prod release 14:00'
+      /* #161: the candidates sit on different days, so each chip names its day —
+         the question now reads these same words, and "the 14:00" alone never told
+         the owner WHICH 14:00 they were dropping */
+      expect(msg.choices!.map((c) => c.label)).toEqual(['today 14:00', 'tomorrow 10:00', 'both'])
+      expect(msg.choices!.find((c) => c.label === 'today 14:00')!.reply).toBe(
+        'remove prod release today at 14:00'
       )
       expect(msg.choices!.find((c) => c.label === 'both')!.reply).toBe('remove all prod release')
       /* the floor stayed quiet: exactly one message asks, nothing dropped yet */
@@ -596,12 +599,12 @@ describe('a seeded Tuesday morning', () => {
 
     it('a pick posts the reply as a user turn, resolves the removal, and goes inert', async () => {
       const msg = await twoProdReleases()
-      const pick = msg.choices!.find((c) => c.label === 'the 14:00')!
+      const pick = msg.choices!.find((c) => c.label === 'today 14:00')!
       await useMew.getState().pickChoice(msg.id, pick.id)
 
       /* the pick IS an ordinary user message — the model saw a normal turn */
       const userTurns = chat().filter((m) => m.role === 'user')
-      expect(userTurns[userTurns.length - 1].body).toBe('remove prod release 14:00')
+      expect(userTurns[userTurns.length - 1].body).toBe('remove prod release today at 14:00')
       expect(lastMsg().body).toMatch(/^Removed — /)
 
       /* the week changed through the remove tool, not through the chips */
@@ -652,7 +655,7 @@ describe('a seeded Tuesday morning', () => {
       await useMew.getState().hydrate()
       const back = chat().find((m) => m.id === msg.id)!
       expect(back.choices).toBeDefined()
-      expect(back.choices!.map((c) => c.label)).toEqual(['the 14:00', 'the 10:00', 'both'])
+      expect(back.choices!.map((c) => c.label)).toEqual(['today 14:00', 'tomorrow 10:00', 'both'])
       expect(back.choices![0].picked).toBe(true)
     })
 

@@ -5285,13 +5285,6 @@ export const useMew = create<MewState>((set, get) => {
     /* several share the title and nothing singled one out — name them with
        their times and ask, rather than dropping a block they didn't mean */
     if (!matches.length && candidates.length > 1) {
-      const when = (b: Block) =>
-        `the ${fmtTime(b.startMin)} (${b.dayKey === todayKey ? '' : `${fmtDowLong(b.dayKey)} `}${fmtTime(b.startMin)}–${fmtTime(b.endMin)})`
-      const list = candidates.map(when)
-      const tail =
-        list.length === 2
-          ? `${list[0]} or ${list[1]}`
-          : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
       const base = query.split('—')[0].trim()
       /* the question rides a chips message (#254) — the same structure the
          offer_choices tool posts, so the keyless floor gets clickable answers
@@ -5304,16 +5297,24 @@ export const useMew = create<MewState>((set, get) => {
          time-only chips (each is already exact). A block past the day words
          (7+ days out) gets no chip, since its reply would land on the wrong day;
          the question text still names it. */
-      const timeRepeatsAcrossDays = candidates.some((b) =>
-        candidates.some((c) => c !== b && c.startMin === b.startMin && c.dayKey !== b.dayKey)
-      )
+      /* #161: the chips name their DAY whenever the candidates span more than one
+         — not only when a time repeats. The narrower rule left a question like
+         "the 12:00, the 13:00, or the 13:20?" for three blocks on three days: one
+         vocabulary with the day dropped, so the owner could answer but could not
+         tell which block they were answering about. Naming the day in the chip
+         keeps the question and the chips in one vocabulary AND keeps the day,
+         which is what the bracketed form used to carry. */
+      const spansDays = new Set(candidates.map((b) => b.dayKey)).size > 1
       const seen = new Set<string>()
-      const timeOptions = timeRepeatsAcrossDays
+      /* each chip remembers the block it speaks for, so the question can be
+         written in the chips' own words (#161) rather than in a second dialect */
+      const chips = spansDays
         ? candidates
             .map((b) => ({ b, word: dayWord(b.dayKey, todayKey) }))
             .filter((x): x is { b: Block; word: string } => x.word != null)
             .slice(0, 4)
             .map(({ b, word }) => ({
+              block: b,
               label: `${word} ${fmtTime(b.startMin)}`,
               reply: `remove ${base} ${word === 'today' || word === 'tomorrow' ? word : `on ${word}`} at ${fmtTime(b.startMin)}`,
             }))
@@ -5326,9 +5327,30 @@ export const useMew = create<MewState>((set, get) => {
             })
             .slice(0, 4)
             .map((b) => ({
+              block: b,
               label: `the ${fmtTime(b.startMin)}`,
               reply: `remove ${base} ${fmtTime(b.startMin)}`,
             }))
+      const timeOptions = chips.map(({ label, reply }) => ({ label, reply }))
+      /* #161: the question names each block in the WORDS OF ITS OWN CHIP, so the
+         alternatives it offers are alternatives the owner can type back. It used
+         to describe them ("the 12:00 (Wednesday 12:00–12:30)") while the chips
+         read "tomorrow 12:00" — two vocabularies for one ask, and typing what the
+         question printed resolved to nothing. Where two candidates share a start
+         time the ask offered the same words twice, distinguished only by the
+         bracket nobody would type.
+         A candidate with no chip keeps the descriptive form: the chip list is
+         capped and skips blocks past the day words, and the question naming every
+         block is a guarantee older than this fix (#62). */
+      const labelOf = new Map(chips.map((c) => [c.block.id, c.label]))
+      const when = (b: Block) =>
+        labelOf.get(b.id) ??
+        `the ${fmtTime(b.startMin)} (${b.dayKey === todayKey ? '' : `${fmtDowLong(b.dayKey)} `}${fmtTime(b.startMin)}–${fmtTime(b.endMin)})`
+      const list = candidates.map(when)
+      const tail =
+        list.length === 2
+          ? `${list[0]} or ${list[1]}`
+          : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
       /* #124: the line names the all-chip in its own words — "both" for two,
          "all of them" for three or more */
       const everyOne = candidates.length === 2 ? 'both' : 'all of them'

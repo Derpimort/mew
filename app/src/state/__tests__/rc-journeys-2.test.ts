@@ -374,7 +374,9 @@ describe('RC journey 7: three lunches, a count that does not fit, and one undo',
     await settle()
     expect(seen(from)).toEqual([
       'user: remove lunch',
-      'mew: 3 "lunch" blocks ahead — the 12:00 (12:00–12:45), the 12:00 (Wednesday 12:00–12:45), or the 12:00 (Thursday 12:00–12:45)? Tell me which, or say "all of them" to drop them all.',
+      /* #161: the ask now names each block in its own chip's words — one
+           vocabulary, and each alternative says which day it is */
+      'mew: 3 "lunch" blocks ahead — today 12:00, tomorrow 12:00, or thursday 12:00? Tell me which, or say "all of them" to drop them all.',
     ])
     expect(chips()).toEqual([
       ['today 12:00', 'remove lunch today at 12:00'],

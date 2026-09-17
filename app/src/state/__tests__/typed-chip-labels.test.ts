@@ -465,20 +465,78 @@ describe('#139 — the words a question offers are words the reader accepts', ()
     expect(acceptsEveryWordItOffers()).toEqual(['8:30', '18:30'])
   })
 
-  /* THE REMOVE ASK IS A KNOWN INSTANCE, filed as #161 and NOT fixed here: its
-     question offers "the 12:00 (Wednesday 12:00–12:30)" while its chips read
-     "tomorrow 12:00", so the words it prints resolve to nothing. This invariant
-     found it on its first run, in a family this slice was not fixing.
+  /* THE REMOVE ASK WAS THE INSTANCE THIS INVARIANT FOUND, on its first run and in
+     a family slice 2 was not fixing: its question offered "the 12:00 (Wednesday
+     12:00–12:30)" while its chips read "tomorrow 12:00", so the words it printed
+     resolved to nothing. It rode here as an expected failure, by ruling, so the
+     defect was visible to everyone who ran the suite rather than only to whoever
+     opened this file.
 
-     Pinned as an EXPECTED FAILURE rather than skipped, per the manager's ruling:
-     the costliest thing this shift found was a test that skipped SILENTLY (five
-     CSP checks, for about a year, every summary line green), and a documented
-     skip repeats that property at a smaller scale — a comment is visible only to
-     whoever opens this file, while an expected fail is visible to everyone who
-     runs the suite. The title carries the issue number so the run output does
-     too. It becomes an ordinary `it` the moment #161 is fixed, and the coverage
-     arrives with no further work. */
-  it.fails('#161: the remove ask offers words its own chips do not carry', async () => {
+     #161 IS FIXED, so it is an ordinary test now — the RC's expected-fail count
+     returns to zero because the bug went away, not because the row did. That is
+     the whole reason the expected-fail form was the right one: it created the
+     obligation that this line is now discharging. */
+  it('a block past the day words gets NO chip, and the question still names it (#166 part 1)', async () => {
+    /* coderpa's finding on this PR, pinned here rather than left to #166: widening
+       the day-naming rule to "the candidates span days" makes an existing,
+       load-bearing, UNPINNED guard matter in strictly more asks. A block ten days
+       out has no day word — a chip saying "friday 14:00" would reply "on friday"
+       and remove THIS Friday's block, one the owner never named. Dropping its chip
+       is the SAFE failure and #62 says the question must still name it.
+
+       Their mutant, which this test now kills: let a chipless candidate through
+       and the ask ships a chip reading "null 14:00" whose reply is "remove lunch on
+       null at 14:00", while 778 state tests stay green. Both halves are asserted
+       so it cannot pass by dropping the block from the question too. */
+    await fresh([
+      block({ id: 'near', title: 'Lunch', startMin: 720, endMin: 750 }),
+      block({
+        id: 'far',
+        title: 'Lunch',
+        dayKey: addDaysKey(TODAY, 10),
+        startMin: 840,
+        endMin: 870,
+      }),
+    ])
+    await say('remove the lunch')
+    await settle()
+    const ask = chipMsgs().at(-1)!
+    /* the far block has no chip … */
+    expect(ask.choices!.map((c) => c.label)).toEqual(['today 12:00', 'both'])
+    expect(ask.choices!.every((c) => !/null/.test(c.label) && !/null/.test(c.reply))).toBe(true)
+    /* … and the question still names it, in the descriptive form it keeps for a
+       candidate with no chip to speak for it */
+    expect(ask.body).toContain('14:00')
+    expect(ask.body).toMatch(/2 "lunch" blocks ahead/)
+  })
+
+  it('the remove ask names a day only when the blocks span days (#161)', async () => {
+    /* the other half of the rule, so it cannot be satisfied by naming the day
+       everywhere: three lunches on ONE day need no day word, and the question
+       still reads exactly what the chips read */
+    await fresh([
+      block({ id: 'a', title: 'Lunch', startMin: 720, endMin: 765 }),
+      block({ id: 'b', title: 'Lunch', startMin: 780, endMin: 825 }),
+      block({ id: 'c', title: 'Lunch', startMin: 840, endMin: 885 }),
+    ])
+    await say('remove the lunch')
+    await settle()
+    const ask = chipMsgs().at(-1)!
+    expect(ask.choices!.map((c) => c.label)).toEqual([
+      'the 12:00',
+      'the 13:00',
+      'the 14:00',
+      'all of them',
+    ])
+    expect(ask.body).toBe(
+      '3 "lunch" blocks ahead — the 12:00, the 13:00, or the 14:00? Tell me which, or say "all of them" to drop them all.'
+    )
+    /* and each word it offers is one the reader takes */
+    for (const word of ['the 12:00', 'the 13:00', 'the 14:00'])
+      expect(typedChipLabel(chat(), word)).toBeTruthy()
+  })
+
+  it('the remove ask, whose question now reads its own chips (#161)', async () => {
     await fresh([
       block({ id: 'l1', title: 'Lunch', dayKey: WED, startMin: 720, endMin: 750 }),
       block({ id: 'l2', title: 'Lunch', dayKey: THU, startMin: 720, endMin: 750 }),
