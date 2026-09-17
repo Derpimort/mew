@@ -123,11 +123,11 @@ export interface ScenarioTaskSpec {
   window?: 'morning' | 'afternoon' | 'evening'
 }
 
-/** Tool results beginning with this token mean the executor already posted the
-    question as clickable chips (#254): a model should END its turn and say
-    nothing more; the keyless floor yields nothing at all — the chips message
-    IS the reply. One token, both paths, so the two can never disagree. */
-export const CHOICES_POSTED = 'The options are on screen as clickable chips'
+/* CHOICES_POSTED lives in ./choicesPosted (re-exported here for the lazy AI
+   adapter and tests): eager code imports it from there, so the keyless boot path
+   only ever `import type`s this module and MEW_VOICE below stays in the lazy AI
+   chunk (#80 headroom). */
+export { CHOICES_POSTED } from './choicesPosted'
 
 /** Executed against the live store; every method returns a short factual
     sentence describing what really happened (a tool_result, not a hope). */

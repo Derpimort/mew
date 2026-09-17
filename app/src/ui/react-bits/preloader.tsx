@@ -2,7 +2,11 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
-import { cn } from '@/lib/utils'
+/* the boot curtain joins its classes with clsx alone, so tailwind-merge (~26 KB)
+   stays off the first-load path (#80 headroom): every class set MEW renders here
+   is conflict-free, so a merge has nothing to resolve (pinned in
+   __tests__/preloader-classes.test.tsx). The settings graph keeps `cn`. */
+import { clsx as cn } from 'clsx'
 
 export interface PreloaderProps {
   /** Whether the preloader is active */
@@ -255,10 +259,7 @@ const Preloader: React.FC<PreloaderProps> = ({
                 delay: hideText ? 0 : index * 0.1,
                 ease: [0.65, 0, 0.35, 1],
               }}
-              className={cn(
-                'text-4xl font-bold text-oklch(1 0 0) dark:text-oklch(0.145 0 0) dark:text-oklch(0.145 0 0) dark:dark:text-oklch(0.985 0 0)',
-                textClassName
-              )}
+              className={cn('text-4xl font-bold', textClassName)}
             >
               {word}
             </motion.span>

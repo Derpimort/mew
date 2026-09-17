@@ -126,6 +126,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - Two quiet details are now held by tests: the day picker keeps the dial's day selected while the
   arrow keys move through the month, and a remembered rule with none of your words shows just where
   it came from.
+- MEW opens on about 43 KB less code: the connected-model instructions and the class-merging helper
+  used by Settings now load only when those are used, not with every start.
 - Three more midnight details are held by tests: a choice picked in the first seconds after
   midnight, before MEW's clock catches up, checks against the new day, a choice that lengthens a
   block checks its day too, and a "done" choice keeps pointing at the block it was offered for even
