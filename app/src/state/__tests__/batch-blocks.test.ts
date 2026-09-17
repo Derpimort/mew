@@ -674,6 +674,7 @@ describe('#75 — the batch_blocks tool', () => {
         { kind: 'shift', deltaMin: 60 },
         3,
         'k7f2',
+        undefined, // #75 slice 3: no scope word in this ask
       ],
       [
         {
@@ -684,6 +685,7 @@ describe('#75 — the batch_blocks tool', () => {
           titleQuery: undefined,
         },
         { kind: 'moveToDay', toDayOffset: 1 },
+        undefined,
         undefined,
         undefined,
       ],

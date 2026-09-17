@@ -561,9 +561,11 @@ export interface ScheduleIntent {
   relStartMin?: number
   /** remove: pin which of several same-named blocks ("22:30"), or drop all */
   remove?: { at?: string; all?: boolean; dayOffset?: number }
-  /** edit/remove: the recurring-edit scope a scope word named (#343) — 'this'
-      (just this one), 'following' (this & the ones after), 'series' (the whole
-      set). Absent on a series block ⇒ the executor asks with chips. */
+  /** edit/remove/batch: the recurring-edit scope a scope word named (#343) —
+      'this' (just this one), 'following' (this & the ones after), 'series' (the
+      whole set). Absent on a series block ⇒ the executor asks with chips. A
+      batch reads it the same way (#75 slice 3), so one vocabulary answers a
+      single edit and a sweep alike. */
   seriesScope?: 'this' | 'following' | 'series'
   /* capture / chat */
   title?: string

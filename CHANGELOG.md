@@ -116,11 +116,17 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   MEW first shows the day, exactly which blocks move where, which stay put and what they would share
   time with, and nothing changes until you say yes. Your yes moves exactly that list: if the week
   changes first, MEW shows you the new one. One "undo that" puts them all back. Calendar events,
-  fixed calls, done blocks and repeating blocks keep their place, and so does any block whose new
-  time would sit over one.
+  fixed calls and done blocks keep their place, and so does any block whose new time would sit over
+  one.
 - Retag a set of blocks the same way: "tag all of tomorrow's calls as work" shows the list first and
-  changes only the tags, never a time. Calendar events, done and repeating blocks keep their tags.
-  "Between 2 and 5pm" picks the blocks that start in that window, for any of these changes.
+  changes only the tags, never a time. Calendar events and done blocks keep their tags. "Between 2
+  and 5pm" picks the blocks that start in that window, for any of these changes.
+- A repeating block is asked about rather than assumed: a change that reaches one asks which
+  occurrences you mean — just this one, this and the ones after, or the whole series — and nothing
+  moves until you answer, not even the one-off blocks beside it. Your answer travels with your yes,
+  so confirming acts instead of asking again. Moving a run onto a single day is the one thing it
+  won't do, since a series keeps its own days: there, "just this one" moves that occurrence and the
+  rest stay where they are.
 
 ### A real choice when a block can't make way
 - When new work lands on one of your own flexible blocks and that block has nowhere clean to go, MEW
@@ -266,6 +272,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   pair through a batch shift, answer a remove ask in words, retag a day holding a calendar event and
   a repeating block, and take a week MEW helped build through the weekly review — each step checking
   both the week and what MEW said. The one thing they found that reads wrong is filed as #149.
+- Two more details of the loose-threads rail are held by tests: a lunch or breather MEW placed for
+  you can never be carried forward, so it never turns up in the rail as a follow-up waiting on you,
+  and a follow-up you have finished leaves the rail instead of sitting there.
 - Six more details of tonight's work are now held by tests: a breather MEW tucks in for pacing
   still reads as flexible, a rest you said never moves reads as fixed, a day holding nothing but
   MEW's own meals never reads as clear, a re-planned lunch keeps the length you said and stays
