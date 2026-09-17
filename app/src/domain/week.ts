@@ -768,6 +768,17 @@ export function resolveRemoval(
    in the span (a fixed call, a calendar event, another block, a done one) stays
    exactly where it is and the merge doesn't happen. */
 
+/** A block's own name for merging: its title before any "—" qualifier,
+    lowercased, with the " (part N)" a split adds (#73) read as the same block
+    (#121). Only that trailing suffix: "Part 2 planning" keeps its name. */
+export function mergeName(b: Pick<Block, 'title'>): string {
+  return b.title
+    .split('—')[0]
+    .trim()
+    .replace(/\s+\(part \d+\)$/i, '')
+    .toLowerCase()
+}
+
 export type MergeCandidates =
   | { status: 'ok'; dayKey: string; parts: Block[] }
   | { status: 'none' }
@@ -785,7 +796,13 @@ export function mergeCandidates(
   todayKey: string,
   opts: { dayKey?: string; at?: number | null } = {}
 ): MergeCandidates {
-  const pool = titleMatches(blocks, query)
+  /* a split's pieces come along with whatever the query names (#121): "deck
+     polish" names "Deck polish" exactly, and its "Deck polish (part 2)" is the
+     same block's other piece */
+  const named = titleMatches(blocks, query)
+  const names = new Set(named.map(mergeName))
+  const pool = blocks
+    .filter((b) => named.includes(b) || (b.status !== 'rolled' && names.has(mergeName(b))))
     .filter((b) => b.dayKey >= todayKey && !isAllDay(b))
     .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
   if (!pool.length) return { status: 'none' }
@@ -860,9 +877,9 @@ export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
   const series = parts.filter((b) => b.recurringBlockId)
   if (series.length) return no('series', series)
   /* one block's parts, not two different blocks that share a word ("deck" matches
-     "Deck polish" and "Deck review"): the merged block would keep only one name */
-  if (new Set(parts.map((b) => b.title.split('—')[0].trim().toLowerCase())).size > 1)
-    return no('titles', parts)
+     "Deck polish" and "Deck review"): the merged block would keep only one name.
+     A split's "(part N)" pieces are the same block (#121) */
+  if (new Set(parts.map(mergeName)).size > 1) return no('titles', parts)
   if (new Set(parts.map((b) => b.tag)).size > 1) return no('tags', parts)
   const startMin = parts[0].startMin
   const endMin = Math.max(...parts.map((b) => b.endMin))

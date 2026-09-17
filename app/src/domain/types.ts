@@ -491,6 +491,7 @@ export interface ScheduleIntent {
     | 'complete'
     | 'move'
     | 'capture'
+    | 'undo'
     | 'clear'
     | 'remove'
     | 'edit'

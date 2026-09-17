@@ -100,6 +100,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   calendar events, done blocks, repeating blocks and blocks with different tags keep their shape.
   Two different blocks that share a word ("Deck polish" and "Deck review") stay as they are too,
   and MEW names both, so a merged block never loses one of its names.
+- A block you split merges back: "merge my two deck polish blocks" joins Deck polish and Deck
+  polish (part 2) into one Deck polish again. While the meeting you split around still sits between
+  them, MEW names it and both pieces stay.
 
 ### Change several blocks at once, with a yes first
 - Say "push everything after 3pm back an hour" or "move all of today's work to tomorrow" and MEW
@@ -135,6 +138,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - "Remove the lunch this thursday", "remove thursday's lunch" and "remove the lunch next thursday at
   12:00" now find the block. The day phrase is read as the day, so only the title is looked up, and
   when the same time repeats across days MEW still asks which with day choices.
+
+### Undo takes back what MEW just did
+- Say "undo that" right after MEW changes your week (something you typed, asked a connected model
+  for, or picked from a choice) and that change comes back: a moved block returns, a split block is
+  whole again, a removed lunch is back. It works without a connected model too, and "undo that"
+  never lands in your inbox as a thought. Undo takes back the latest change, in your very next
+  message.
 
 ### Ask about any stretch of time
 - Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three
@@ -196,6 +206,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - When work is set to run over a walk, a lunch or an evening off, MEW asks once about that rest
   and remembers it, across a restart too. A second rest that day still gets its own ask, even
   while the first one's question stands, and tomorrow starts fresh.
+- When you place work over a rest, the reply names the time it runs over ("it runs over your
+  evening walk 18:00–18:45"), so a rest you chose to keep is never covered without a word. The
+  rest stays where it is.
 
 ### Versioning by the calendar
 - MEW's desktop now names its releases by the calendar: `YYYY.M.PATCH`, so this cycle ships as
