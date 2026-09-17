@@ -238,15 +238,17 @@ describe('the plan-time offer (#322, ask)', () => {
     expect(offers()).toHaveLength(1)
     const offer = offers()[0]
     expect(offer.role).toBe('mew')
+    /* #90: the offer names the blocks it would pad, and the class reads as what it
+       is (work of an hour or more), never "deep-work" */
     expect(offer.body).toBe(
-      `your deep-work blocks tend to run ~20% long — want me to give them room?`
+      `your hour-plus work blocks tend to run ~20% long — want me to give them room? (quarterly report)`
     )
     expect(offer.choices!.map((c) => ({ id: c.id, label: c.label }))).toEqual([
       { id: 'pad', label: 'give them room' },
       { id: 'leave', label: 'leave as-is' },
     ])
     /* the pad reply is a plain ask both floors execute (parse.ts giveRoom) */
-    expect(offer.choices![0].reply).toBe('give my deep-work blocks room')
+    expect(offer.choices![0].reply).toBe('give my hour-plus work blocks room')
     /* reflection, not interrupt: the offer lands AFTER the plan's own reply */
     const bodies = chat().map((m) => m.body)
     expect(bodies.findIndex((b) => /give them room/.test(b))).toBeGreaterThan(
@@ -281,9 +283,14 @@ describe('the plan-time offer (#322, ask)', () => {
     const padded = blocks().find((b) => b.id === placed.id)!
     expect(padded.endMin - padded.startMin).toBe(70) // padDuration(60, 1.2)
     /* a plan-voice confirmation, tools stayed the only mutation path */
-    expect(chat().some((m) => m.role === 'mew' && /Gave your deep-work block/.test(m.body))).toBe(
-      true
-    )
+    expect(
+      chat().some(
+        (m) =>
+          m.role === 'mew' &&
+          m.body ===
+            'Gave quarterly report room — it now runs about 20% longer, sized to how it really goes.'
+      )
+    ).toBe(true)
   })
 
   it('the leave chip is a quiet acknowledgment — nothing on the week changes', async () => {
@@ -356,7 +363,9 @@ describe('per-tag — admin is not over-padded (#322)', () => {
     await useMew.getState().speak('block the quarterly report tomorrow, block groceries tomorrow')
     await settle()
     expect(offers()).toHaveLength(1)
-    expect(offers()[0].body).toContain('deep-work')
+    expect(offers()[0].body).toContain('hour-plus work')
+    expect(offers()[0].body).toContain('(quarterly report)') // names only what it would pad
+    expect(offers()[0].body).not.toMatch(/groceries|deep-work/)
 
     const adminBefore = found('groceries')!
     await useMew.getState().pickChoice(offers()[0].id, 'pad')

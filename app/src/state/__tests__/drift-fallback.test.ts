@@ -657,3 +657,39 @@ describe('#12 — a drop chip re-checks at pick time: its day words mean the day
     expect(lastMew().body).toBe('That choice was for Groceries, so everything stays as it is.')
   })
 })
+
+/* ── #96: the drop chip's pick-time check reads the turn clock ─────────── */
+
+describe('#96 — a drop chip picked in the seconds after midnight, before a tick lands', () => {
+  it('store ticked at Tue 23:59:58, wall at Wed 00:00:02: the check reads Wednesday like the executor, so nothing is removed', async () => {
+    await fresh([
+      ...week0(),
+      block({
+        id: 'groceries-wed',
+        title: 'Groceries',
+        tag: 'private',
+        dayKey: WED,
+        startMin: 14 * 60,
+        endMin: 15.5 * 60,
+        protected: false,
+      }),
+    ])
+    await say(PLACE)
+    await settle()
+    const offer = chipMsgs()[0]
+    vi.setSystemTime(new Date(2026, 5, 9, 23, 59, 58))
+    useMew.getState().tick() // Tuesday's last tick
+    vi.setSystemTime(new Date(2026, 5, 10, 0, 0, 2)) // midnight passes; no tick yet
+    const before = snapshot()
+
+    await useMew.getState().pickChoice(offer.id, 'drop-groceries')
+    await settle()
+
+    expect(snapshot()).toBe(before) // neither Groceries is removed
+    expect(
+      chat()
+        .filter((m) => m.role === 'mew')
+        .at(-1)!.body
+    ).toBe("That choice was for Tuesday's Groceries at 14:00, so everything stays as it is.")
+  })
+})
