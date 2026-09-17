@@ -29,9 +29,12 @@ export function BlockCard({
   /** Clicked-and-held selection: hover stops mattering, the × explains why. */
   pinned?: boolean
   /** The dial is showing another day (#23): time-relative actions (Start now,
-      Interrupt, Move — which re-places into today/tomorrow) mean nothing there;
-      Done, Hold and Remove stay. */
-  offDay?: boolean
+      Interrupt, Move — which re-places into today/tomorrow) mean nothing there.
+      A lived day ('past') keeps Done, Hold and Remove; a day ahead ('future')
+      keeps Hold and Remove only — a mew is credited when a block is finished,
+      never before it happens, exactly as today and Week never offer Done for an
+      upcoming block. */
+  offDay?: 'past' | 'future'
 }) {
   const toggleComplete = useMew((s) => s.toggleComplete)
   const startNow = useMew((s) => s.startNow)
@@ -124,11 +127,11 @@ export function BlockCard({
       {allDay && !done && !block.external && <div className="cacts">{removeControl}</div>}
       {!done && !allDay && (
         <div className="cacts">
-          {offDay ? (
+          {offDay === 'past' ? (
             <button type="button" className="ca pri" onClick={act(() => toggleComplete(block.id))}>
               Done — a mew
             </button>
-          ) : isNow || block.startedAt != null ? (
+          ) : offDay === 'future' ? null : isNow || block.startedAt != null ? (
             <>
               <button
                 type="button"

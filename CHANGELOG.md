@@ -19,7 +19,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   above the clock and see that day's blocks on the same calm face — a lived day wears its full
   wash, a day ahead stays clear, and the centre names the day with its blocks, committed hours
   and mews. One click brings you back to today, where the live countdown belongs, and a day
-  picked in Week carries across. On another day the card keeps Done, Hold and Remove.
+  picked in Week carries across. On a lived day the card keeps Done, Hold and Remove; a day
+  ahead keeps Hold and Remove, so a mew is only ever counted once it's done.
 - The day-progress wash now holds when half the day is complete: the morning disk stays filled
   from noon on, and a lived day shows its whole wash.
 
