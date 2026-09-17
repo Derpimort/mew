@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Block, ChatMessage, MemoryEvent, Settings } from '../../domain/types'
 import { addDaysKey, dayKey } from '../../domain/time'
 import { chatOrder } from '../../adapters/storage-port'
-import { choicesActive } from '../../domain/choices'
+import { choicesActive, typedChipLabel } from '../../domain/choices'
 
 /* ── fakes ────────────────────────────────────────────────────────── */
 
@@ -321,6 +321,171 @@ describe("#139 — a typed chip label is that chip's pick, in every family", () 
     expect(at('g1')).toEqual([TODAY, 18 * 60 + 30, 19 * 60 + 30])
     expect(at('g2')).toEqual([WED, 18 * 60 + 30, 19 * 60 + 30])
     expect(captures()).toEqual([])
+  })
+
+  it('the which-block ask: the label without the day it carries in brackets (#139 slice 2)', async () => {
+    /* found by typing at the real ask: the chips read "the 8:30 (Wednesday)" and
+         typing "the 8:30" became a thought in the inbox — the owner typed what
+         they read, minus a bracket they had no reason to think was load-bearing */
+    const wed = () => [
+      block({ id: 'g1', title: 'Gym', tag: 'health', dayKey: WED, startMin: 510, endMin: 570 }),
+      block({ id: 'g2', title: 'Gym', tag: 'health', dayKey: WED, startMin: 1110, endMin: 1170 }),
+    ]
+    await fresh(wed())
+    await say('move the gym to 15:00')
+    await settle()
+    expect(labels()).toEqual(['the 8:30 (Wednesday)', 'the 18:30 (Wednesday)'])
+    await say('the 8:30')
+    await settle()
+    expect(lastBody()).toBe('Moved — Gym now lives Wednesday at 15:00.')
+    expect(at('g1')).toEqual([WED, 15 * 60, 16 * 60])
+    expect(at('g2')).toEqual([WED, 1110, 1170])
+    expect(captures()).toEqual([])
+  })
+
+  it('the which-block ask: the bare time its own question offers (#139 slice 2)', async () => {
+    /* the ask reads 'two "gym" blocks — 8:30 or 18:30? Which one?' and then
+         declined "8:30". A question that refuses the words it just offered is
+         worse than a missing feature: the owner did exactly what they were told. */
+    await fresh([
+      block({ id: 'a', title: 'Gym', tag: 'health', startMin: 510, endMin: 570 }),
+      block({ id: 'b', title: 'Gym', tag: 'health', startMin: 1110, endMin: 1170 }),
+    ])
+    await say('move the gym to 15:00')
+    await settle()
+    expect(chipMsgs().at(-1)!.body).toBe('two "gym" blocks — 8:30 or 18:30? Which one?')
+    await say('18:30')
+    await settle()
+    expect(lastBody()).toBe('Moved — Gym now lives today at 15:00.')
+    expect(at('b')).toEqual([TODAY, 15 * 60, 16 * 60])
+    expect(at('a')).toEqual([TODAY, 510, 570])
+    expect(captures()).toEqual([])
+  })
+
+  it('the day-load offer answers to its label, exactly as it reads', async () => {
+    /* covered already per the audit, pinned because the per-family risk lives in
+         the ASK rather than the shared reader — this one has no bracket and no
+         article, so it proves the second pass did not break a plain label */
+    await fresh([
+      block({ id: 'spec', title: 'Spec draft — deep work', startMin: 9 * 60, endMin: 13 * 60 }),
+    ])
+    await say('block 2h for the roadmap today')
+    await settle()
+    const load = chat().find((m) => /against your usual/.test(m.body))
+    if (load) {
+      expect(load.choices!.map((c) => c.label)).toEqual(['keep it as planned', 'trim to my usual'])
+      await say('trim to my usual')
+      await settle()
+      expect(captures()).toEqual([])
+      expect(lastBody()).toMatch(/^(Moved|Done)/)
+    }
+  })
+})
+
+describe('#139 — the words a question offers are words the reader accepts', () => {
+  /* The class behind both of slice 2's gaps: MEW's QUESTION and MEW's CHIPS are
+     built from the same data by different code, so a question can offer words its
+     chips do not carry — and the reader keys on the chips. Today that was the
+     which-block ask ("8:30 or 18:30?" while the chips read "the 8:30"). Any ask
+     that enumerates its alternatives in prose is a latent instance.
+
+     This pins the rule rather than the instance: for a real ask, every
+     alternative its own question names must resolve through the reader to exactly
+     one chip. It asks the RESOLVER rather than typing each alternative, so a new
+     case costs one fixture and no week mutation. The honest limit: an ask family
+     added later is only covered once someone adds it below — which is the same
+     limit every journey has, and the comment says so on purpose. */
+
+  /** the alternatives a question names: the tail between its dash and its '?' */
+  const offeredWords = (question: string): string[] => {
+    const tail = question.match(/—\s*(.+?)\?/)
+    if (!tail) return []
+    return tail[1]
+      .split(/,\s*or\s+|\s+or\s+|,\s*/)
+      .map((s) => s.trim())
+      .filter((s) => s && !/^(which|tell me)/i.test(s))
+  }
+
+  const acceptsEveryWordItOffers = () => {
+    const ask = chipMsgs().at(-1)!
+    const words = offeredWords(ask.body)
+    /* LOAD-BEARING, and it looks trivial on purpose-free inspection: without it
+       an ask whose question has no enumerated tail yields [] and the loop below
+       runs zero times, so the invariant would PASS while checking nothing — a
+       green that means nothing, which is this shift's own defect class one level
+       up. coderpa verified the failure mode rather than reading the regex: the
+       scope ask, the drift offer, the batch confirm and a question with no dash
+       all yield [] and therefore fail HERE, loudly. Do not delete this line to
+       tidy the test; delete the test instead if it stops earning its place.
+
+       The boundary, also verified: the tail heuristic equals "the alternatives"
+       only for asks that ENUMERATE their chips in the question. The room offer
+       yields one whole clause ("want me to give them room"), so pointing this at
+       that family would demand the resolver accept a sentence and fail noisily —
+       the right failure mode, but check this first if you extend the table. */
+    expect(words.length).toBeGreaterThan(0)
+    for (const word of words) {
+      const hit = typedChipLabel(chat(), word)
+      expect(hit, `the question offers "${word}" — the reader must accept it`).toBeTruthy()
+      expect(hit!.msgId).toBe(ask.id)
+    }
+    return words
+  }
+
+  it('the which-block ask, two blocks today', async () => {
+    await fresh([
+      block({ id: 'a', title: 'Gym', tag: 'health', startMin: 510, endMin: 570 }),
+      block({ id: 'b', title: 'Gym', tag: 'health', startMin: 1110, endMin: 1170 }),
+    ])
+    await say('move the gym to 15:00')
+    await settle()
+    expect(acceptsEveryWordItOffers()).toEqual(['8:30', '18:30'])
+  })
+
+  it('the which-block ask, three blocks, whose tail reads "a, b, or c"', async () => {
+    await fresh([
+      block({ id: 'a', title: 'Gym', tag: 'health', startMin: 510, endMin: 570 }),
+      block({ id: 'b', title: 'Gym', tag: 'health', startMin: 1110, endMin: 1170 }),
+      block({ id: 'c', title: 'Gym', tag: 'health', startMin: 1200, endMin: 1260 }),
+    ])
+    await say('move the gym to 15:00')
+    await settle()
+    expect(acceptsEveryWordItOffers()).toEqual(['8:30', '18:30', '20:00'])
+  })
+
+  it('the which-block ask, on a day that is not today, so the labels carry brackets', async () => {
+    await fresh([
+      block({ id: 'a', title: 'Gym', tag: 'health', dayKey: WED, startMin: 510, endMin: 570 }),
+      block({ id: 'b', title: 'Gym', tag: 'health', dayKey: WED, startMin: 1110, endMin: 1170 }),
+    ])
+    await say('move the gym to 15:00')
+    await settle()
+    /* the question still offers bare times while the chips carry "(Wednesday)" —
+       the widest gap between the two vocabularies, and the reader spans it */
+    expect(acceptsEveryWordItOffers()).toEqual(['8:30', '18:30'])
+  })
+
+  /* THE REMOVE ASK IS A KNOWN INSTANCE, filed as #161 and NOT fixed here: its
+     question offers "the 12:00 (Wednesday 12:00–12:30)" while its chips read
+     "tomorrow 12:00", so the words it prints resolve to nothing. This invariant
+     found it on its first run, in a family this slice was not fixing.
+
+     Pinned as an EXPECTED FAILURE rather than skipped, per the manager's ruling:
+     the costliest thing this shift found was a test that skipped SILENTLY (five
+     CSP checks, for about a year, every summary line green), and a documented
+     skip repeats that property at a smaller scale — a comment is visible only to
+     whoever opens this file, while an expected fail is visible to everyone who
+     runs the suite. The title carries the issue number so the run output does
+     too. It becomes an ordinary `it` the moment #161 is fixed, and the coverage
+     arrives with no further work. */
+  it.fails('#161: the remove ask offers words its own chips do not carry', async () => {
+    await fresh([
+      block({ id: 'l1', title: 'Lunch', dayKey: WED, startMin: 720, endMin: 750 }),
+      block({ id: 'l2', title: 'Lunch', dayKey: THU, startMin: 720, endMin: 750 }),
+    ])
+    await say('remove the lunch')
+    await settle()
+    acceptsEveryWordItOffers()
   })
 })
 
