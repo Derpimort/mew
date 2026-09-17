@@ -65,6 +65,11 @@ pnpm -C app shoot
 pnpm -C app shoot:overlap
 ```
 
+Both gates run on one pinned calendar day (`app/scripts/lib/shootClock.mjs`, a
+Wednesday), so the seeded week and the canon PNGs are the same whatever weekday
+you run them. `SHOOT_DATE=YYYY-MM-DD pnpm -C app shoot` probes another day (the
+gate is proven for a Monday and mid-week); the pin, not the override, is the gate.
+
 A failing gate is a bug in your change, not the harness. Read the error, fix it,
 re-run. Never ship red.
 
