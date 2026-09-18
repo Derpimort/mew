@@ -110,9 +110,16 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
 0. **Paste every closing keyword into the promotion PR's squash body.** Not the PR description —
    the text that becomes the commit. List **every** issue the RC fixes, not only the ones missing a
    keyword today: both keywords that exist on this RC live inside individual commit messages, and a
-   **squashed** promotion carries none of those 78 messages to `main`, so they evaporate. Seventeen
-   lines is the only form that is correct under a squash *and* a merge commit, and a redundant
+   **squashed** promotion carries none of those 78 messages to `main`, so they evaporate. The whole
+   list is the only form that is correct under a squash *and* a merge commit, and a redundant
    `Closes` is a no-op.
+
+   **The list has two kinds of line, and they are labelled** (2026.9.0: seventeen plus one). The
+   seventeen are **fixes that shipped in this RC** — their issues close because the work is done.
+   The last is a **working artefact consumed by the promotion itself** — the checklist the owner
+   pastes from, which finishes at the moment the promotion lands and nowhere else. They are the same
+   mechanism and different claims, so the label costs a trailing comment and keeps *"how many fixes
+   did this RC close"* answerable straight from the block.
 
    **Build the list by subtraction, not from memory.** The first pass at this block was assembled
    by reading the merge log and it missed `#149` — a fix that shipped in `75501a2`, mentioned in
@@ -132,6 +139,9 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    seventeen below plus six that stay open on purpose: **#22** (the evening epic — a live bug whose
    slices, e.g. #50, are still open), **#23**, **#24** and **#27** (referenced by RC work, no fix
    shipped), **#165** and **#166** (a first slice landed as a pinned test; the fix itself is open).
+   The checklist line is deliberately **not** from that intersection — no RC commit mentions #168,
+   because it is finished by the promotion rather than by a commit. That is the one kind of line the
+   mechanical candidate set cannot produce, so it is added by hand and labelled as what it is.
 
    For 2026.9.0, the curated list (fix mapped to commit, built by the subtraction above):
 
@@ -153,15 +163,18 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    Closes #149
    Closes #160
    Closes #161
+   Closes #168   (the promotion checklist itself — consumed by this promotion, not a fix)
    ```
 
    One per line, deliberately: the check below counts LINES, so a column layout
-   would report 4 and read as a failure.
+   would report 4 and read as a failure. The trailing comment is inert to GitHub — the keyword is
+   matched wherever it sits in the line — and it is what stops the next reader counting eighteen
+   fixes.
 
    Then check it took, **on the commit that reached `main`**:
 
    ```sh
-   git log -1 --format=%B <the promotion commit on main> | grep -c "Closes #"   # expect 17
+   git log -1 --format=%B <the promotion commit on main> | grep -c "Closes #"   # expect 18 (17 fixes + the checklist)
    ```
 
    If the count is short, nothing about the code is affected — the remaining issues just need
