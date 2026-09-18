@@ -5844,13 +5844,17 @@ export const useMew = create<MewState>((set, get) => {
         (n) => `brought back ${spell(n)} rules`
       )
     )
-    /* INSURANCE, NOT A FIX, and said plainly because the difference is the whole
-       lesson of #171: no product path reaches this today. Every undoable action
-       either moves a block or — now — is a preference with a clause of its own,
-       so `parts` cannot currently come out empty, and mutating this line away
-       fails nothing. It is here because the CLASS is what bit us: the moment any
-       future action changes only memory, the dangling em dash returns. A terse
-       true sentence beats a fluent empty one, and this costs one line. */
+    /* NOW REACHABLE AND PINNED — the label on this line has changed, and the
+       change is the point. #176 added it as INSURANCE and said so, because no
+       product path reached it: every undoable action either moved a block or was
+       a preference with a clause of its own. #158's forget-undo made one.
+       The path: with the brain ON, forgetting a rule THIS DEVICE NEVER STORED
+       deletes nothing locally, so undo restores no preference and the only thing
+       it drops is the tombstone — which earns no clause, correctly, because a
+       tombstone is machinery rather than something the owner did. `parts` comes
+       out empty and this line is what answers. See forget-undoable.test.ts;
+       removing this line now fails that pin.
+       A terse true sentence beats a fluent empty one. */
     if (!parts.length) return 'Undone.'
     return `Undone — ${joinHuman(parts)}.`
   }
