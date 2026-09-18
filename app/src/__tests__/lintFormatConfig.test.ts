@@ -55,12 +55,15 @@ describe('package.json scripts', () => {
   const pkg = readJson('package.json')
 
   it('exposes lint, format, and format:check for CI and local fix-all', () => {
-    /* lint runs the dependency-free test-structure guard BEFORE eslint, so a test
-       sitting outside its describe fails the existing lint-full job rather than
-       needing a new CI job (#139 follow-up). Order matters: the cheap read fails
-       fast, and pinning the whole string is the point of this file — a silent
-       edit that dropped the guard would otherwise pass every gate. */
-    expect(pkg.scripts.lint).toBe('node scripts/check-test-structure.mjs && eslint .')
+    /* lint runs the dependency-free guards BEFORE eslint, so their findings fail
+       the existing lint-full job rather than needing a new CI job (#139
+       follow-up, then #171). Order matters: the cheap reads fail fast, and
+       pinning the whole string is the point of this file — a silent edit that
+       dropped a guard would otherwise pass every gate. This pin caught the
+       second guard being added, which is the behaviour it was written for. */
+    expect(pkg.scripts.lint).toBe(
+      'node scripts/check-test-structure.mjs && node scripts/check-shoot-reachable.mjs && eslint .'
+    )
     expect(pkg.scripts.format).toBe('prettier . --write')
     expect(pkg.scripts['format:check']).toBe('prettier . --check')
   })
