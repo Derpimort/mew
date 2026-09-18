@@ -319,6 +319,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   correctly and stored correctly and then quietly dropped in between is the kind of fault that
   looks like MEW ignoring you for no reason, and it used to pass every check we had. The test
   reads the code itself rather than a list someone has to keep up to date, and adds no new package.
+- Two of the visual proofs that check MEW on a real screen can run again. One had been blocked by
+  the welcome tour standing in front of the dial it was trying to photograph; the other was checking
+  for words MEW has since improved, and announced a fault that its own evidence showed wasn't
+  happening. Nothing about MEW changed — the proofs had drifted away from it, and now they agree
+  again.
 - Tonight's newest features are now held together, not only one at a time: four journeys run a split
   pair through a batch shift, answer a remove ask in words, retag a day holding a calendar event and
   a repeating block, and take a week MEW helped build through the weekly review — each step checking
