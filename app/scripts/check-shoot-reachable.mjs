@@ -29,6 +29,15 @@
    delete the excuse. An exemption that outlives its reason is the same defect
    this file exists to catch, so it cannot be allowed to hide here either.
 
+   THE BOUNDARY OF RULE 3, stated rather than left to be discovered: it catches
+   an exemption that became REACHABLE and one whose FILE is gone. It cannot
+   catch "repaired but still unwired", because nothing static can tell a broken
+   proof from a fixed one — that is why the reason beside each entry is a
+   written claim and not a check. So a repair must wire its proof up in the
+   SAME change, which turns the exemption reachable and makes rule 3 delete it
+   for you. A repair that leaves the entry behind leaves a true-looking reason
+   that is false, and this guard would pass.
+
    It does NOT run the proofs. Reachability is cheap and static; running them
    needs a build, a served URL and a browser, and would turn `pnpm lint` into a
    ten-minute job. Which of them belong in CI is a separate decision with the
@@ -52,8 +61,14 @@ import { join } from 'node:path'
     the moment it stops being true. */
 export const KNOWN_BROKEN = [
   // #160's first-run concept tour opens over the dial and eats the pointer:
-  // `locator.hover` times out on `.ob-scrim` intercepting. Nine of the
-  // seventeen proofs call skipOnboarding(); this one predates the tour.
+  // `locator.hover` times out on `.ob-scrim` intercepting. It is the one proof
+  // that predates both the tour and lib/harness.mjs, so it builds its own
+  // browser and page and reaches no bypass. (My first count said eight proofs
+  // lacked one; that grepped the IDIOM, not the behaviour — coderpa classified
+  // all seventeen and four of those eight get it from harness boot(), while
+  // shoot-onboarding must never have one because proving the tour is its job.
+  // Exactly one orphan, not eight: a count right about its subject and wrong
+  // about what it measured.)
   'shoot-dial.mjs',
   // The assertion is frozen on old copy: it demands "rescue drill is now
   // 15:00–15:30" while MEW says "now runs 15:00–15:30". The split it claims is
