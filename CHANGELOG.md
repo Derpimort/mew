@@ -35,10 +35,10 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   squash box is still welcome and no longer the thing the release depends on.
 - Two rules MEW already followed are now held by tests rather than by care. Every action the model
   can take is checked to read every detail it was handed — including where one action builds the
-  work for another, which is the seam a dropped detail used to slip through unnoticed. And the rule
-  for choosing between two blocks that share a name is pinned from both sides: when the time you
-  name matches nothing, the question is about the soonest day instead of offering the same clock
-  twice, and two blocks on the same day stay a real question rather than a silent pick.
+  work for another, where nothing was slipping through but nothing was holding it shut either. And
+  the rule for choosing between two blocks that share a name is pinned from both sides: when the
+  time you name matches nothing, the question is about the soonest day instead of offering the
+  same clock twice, and two blocks on the same day stay a real question rather than a silent pick.
 
 ## [2026.9.0] — 2026-09-18
 
