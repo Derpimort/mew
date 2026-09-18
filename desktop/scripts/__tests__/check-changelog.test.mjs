@@ -220,12 +220,69 @@ test('the pure link helpers: labels, file order, and the compare range', () => {
   assert.equal(checkLinks(PROMO(HEALTHY)).newest, '2026.9.0')
   assert.equal(compareRange(`${C}/v0.7.0...HEAD`), 'v0.7.0...HEAD')
   assert.equal(compareRange('https://example.com/releases/tag/v0.1.0'), null)
-  // A prose link like [semver](…) or a future footnote is not this guard's business.
+  /* THE ASYMMETRY, pinned (#202): a prose REFERENCE like `[semver]: …` is not this
+     guard's business and stays ignored, but a `## [X]` HEADING it cannot classify is
+     collected so it can be named — a heading with brackets in a CHANGELOG is a
+     version by convention, and silently skipping one is the defect #202 filed. */
   assert.deepEqual(versionLinks('## [Notes]\n[semver]: https://semver.org/\n'), {
     headings: [],
     refs: new Map(),
     labels: [],
+    unknown: ['Notes'],
   })
+})
+
+// ── #202: a released label this reader cannot classify must fail LOUDLY and BY NAME.
+
+test('an unrecognised version heading is NAMED, not silently skipped', () => {
+  /* The defect: `## [2026.10.0-rc.1]` fell outside isVersionLabel, so it never
+     entered the watched set. Every rule is "for each version …", so all of them
+     skipped it — no link was demanded for it, and the [Unreleased] range check
+     computed "newest" from the first WATCHED heading while a newer section sat
+     above it. links read 1/1 instead of 1/2 and the guard exited 0. */
+  const text = PROMO(HEALTHY).replace('## [2026.9.0]', '## [2026.10.0-rc.1]')
+  const r = checkChangelog(text)
+  assert.equal(r.ok, false)
+  assert.ok(
+    r.problems.some((p) => p.startsWith('"## [2026.10.0-rc.1]" is a version heading this guard does not recognise')),
+    r.problems.join('; ')
+  )
+  const cli = run(file(text))
+  assert.equal(cli.code, 1, cli.out)
+  assert.match(cli.out, /2026\.10\.0-rc\.1/)
+})
+
+test('it is named even when it is the ONLY version heading, rather than the generic message', () => {
+  /* Before the anti-vacuous return on purpose. A file whose only version heading is
+     unparseable would otherwise fail with "found no version heading" — true, useless,
+     and it hides the label that is the one thing the next person needs. */
+  const only = PREAMBLE + '## [Unreleased]\n\n## [v2026.10]\n\n### A\n- one.\n'
+  const r = checkChangelog(only)
+  assert.equal(r.ok, false)
+  assert.match(r.problems[0], /^"## \[v2026\.10\]" is a version heading this guard does not recognise/)
+  // and the generic one still follows, so the anti-vacuous floor is not lost
+  assert.ok(r.problems.some((p) => /found no "## \[X\.Y\.Z\]" version heading/.test(p)), r.problems.join('; '))
+})
+
+test('THE FALSE-POSITIVE DIRECTION: a fenced example heading is not named', () => {
+  /* .github/RELEASES.md documents this format with exactly such a fenced example,
+     and a rule that fires on documentation is one the next person deletes. The fence
+     stripper already added for the link rules covers this one too. */
+  const withExample =
+    PREAMBLE +
+    '## [Unreleased]\n\nRename it like this:\n\n```\n## [2026.10.0-rc.1] — example\n```\n' +
+    '\n## [2026.9.0] — 2026-09-18\n\n### A\n- one.\n' +
+    RELEASED +
+    HEALTHY
+  const r = checkChangelog(withExample)
+  assert.equal(r.ok, true, r.problems.join('; '))
+  assert.deepEqual(versionLinks(withExample).unknown, [])
+})
+
+test('the committed CHANGELOG.md has no unrecognised heading', () => {
+  /* The other false-positive direction, on the real file rather than a fixture. */
+  const text = readFileSync(COMMITTED, 'utf8')
+  assert.deepEqual(versionLinks(text).unknown, [])
 })
 
 // ── Fenced code blocks. A renderer ignores them, so every reader here must too — and it
