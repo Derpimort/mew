@@ -52,9 +52,20 @@ jobs:
 
       # CANON IS NEVER REWRITTEN IN CI (#171). app/shots/ is gitignored (.gitignore:13)
       # yet nineteen PNGs are force-tracked under it. A proof writes to shots/latest/
-      # by default and only overwrites those tracked baselines when PIN_CANON=1, so
-      # this job must never set it — asserted here rather than trusted, because the
-      # failure mode of getting it wrong is a green run that commits new baselines.
+      # by default and only overwrites those tracked baselines when PIN_CANON=1.
+      #
+      # TWO GUARDS, AND THEY ARE NOT PEERS — the reach of this one is narrower than
+      # it looks, which coderpa measured in review rather than reading. A step's
+      # `run:` is its own shell, so this check sees only what the JOB environment
+      # already holds: a repo/org variable, or a workflow- or job-level `env:`.
+      # It is BLIND to `PIN_CANON=1 node scripts/…` prefixed on a proof step, and
+      # to a step-level `env:` on one — measured: step A reads <unset>, the
+      # inline-prefixed step reads 1, the next step reads <unset> again.
+      # That blind route is the LIKELIER future edit: someone regenerating a
+      # baseline on one step and forgetting to take the prefix off again.
+      # So the porcelain check at the end is the load-bearing one; this step is a
+      # fast, precisely-named failure on the config-level routes it does cover,
+      # saving a build and two minutes of browser time when it fires.
       - name: PIN_CANON must not be set
         run: |
           if [ -n "${PIN_CANON:-}" ]; then
@@ -98,11 +109,15 @@ jobs:
       - name: weekly planning ritual
         run: node scripts/shoot-ritual.mjs http://localhost:5198
 
-      # THE PROOFS MUST NOT DIRTY THE TREE. Measured on 9fe1a88: all twelve run
-      # back to back leave `git status --porcelain` empty, because every write
-      # lands under the gitignored shots/ paths. This step is what keeps that true
-      # — a future edit that starts writing tracked canon fails the gate here
-      # instead of quietly shipping new baselines.
+      # THE PROOFS MUST NOT DIRTY THE TREE, AND THIS IS THE GUARD THAT COVERS EVERY
+      # ROUTE. Measured on 9fe1a88: all twelve run back to back leave
+      # `git status --porcelain` empty, because every write lands under the
+      # gitignored shots/ paths. With PIN_CANON=1 on a SINGLE proof, seven tracked
+      # canon PNGs are modified WHILE THAT PROOF EXITS 0 — a green proof rewriting
+      # the evidence it is judged against, which is how canon rots.
+      # Unlike the env check above, this one does not care HOW PIN_CANON arrived:
+      # it reads the result. A future edit that starts writing tracked canon fails
+      # here instead of quietly shipping new baselines.
       - name: the proofs must not have written tracked files
         if: always()
         working-directory: .
