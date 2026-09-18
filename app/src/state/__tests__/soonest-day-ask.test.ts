@@ -130,8 +130,16 @@ describe('#194 — the which-block ask never names the same time twice', () => {
        one someone deletes in a hurry. The SET is the contract. */
     expect([...times].sort()).toEqual(['19:45', '21:30'])
     expect(new Set(times).size).toBe(times.length)
-    /* and the law itself: Thursday's block is excluded because of its DAY. */
-    expect(ask).not.toContain('Standup')
+    /* THE TIMES ARE THE ONLY DISCRIMINATOR HERE, and that is worth stating so the
+       next reader does not add what I did. The obvious assertion —
+       `expect(ask).not.toContain('Standup')` — CANNOT FIRE: the reply body is
+       `"${baseOf(query)}" blocks — ${times}?` and the chips are
+       `the ${fmtTime}${(Dow)}`, so NO BLOCK TITLE REACHES EITHER ON ANY PATH. It
+       passes whether or not Standup is offered, which is the exact harm it looks
+       like it guards. `9:00` appearing in `times` above is what actually catches
+       it. A negative assertion whose subject can never appear is green by
+       construction — the same defect one layer up from the fixture coincidence
+       this file was rewritten to fix. */
   })
 
   it("the soonest day wins even when the other day's namesake shares no clock time", async () => {
