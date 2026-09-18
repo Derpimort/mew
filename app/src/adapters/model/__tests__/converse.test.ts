@@ -27,9 +27,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('plan')
       return `Done — placed ${places.length}, freed ${frees.length}.`
     }),
-    complete: vi.fn((q) => {
+    complete: vi.fn((args: { query: string }) => {
       calls.push('complete')
-      return `Marked ${q} done.`
+      return `Marked ${args.query} done.`
     }),
     /* move takes one named object since #165, so this stand-in reads the field
        rather than the first position — the string it returns is unchanged */
@@ -58,13 +58,21 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       const { day, tag } = args
       return `here's ${day}${tag ? ` tagged ${tag}` : ''}: - 9:00–10:00 deep work [work]`
     }),
-    findSlot: vi.fn((dur, d, nb, na) => {
-      calls.push('findSlot')
-      return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
-    }),
-    suggestSlots: vi.fn((title, _tag, dur) => {
+    findSlot: vi.fn(
+      (args: {
+        durationMin: number
+        dayOffset: number
+        notBeforeMin?: number
+        notAfterMin?: number
+      }) => {
+        calls.push('findSlot')
+        const { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na } = args
+        return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
+      }
+    ),
+    suggestSlots: vi.fn((args: { title: string; durationMin: number }) => {
       calls.push('suggestSlots')
-      return `Best slots for "${title}" (${dur}m): today 09:00–10:00.`
+      return `Best slots for "${args.title}" (${args.durationMin}m): today 09:00–10:00.`
     }),
     remember: vi.fn((pref: { match: string; value: string }) => {
       calls.push('remember')
@@ -159,7 +167,7 @@ describe('rules adapter — converse', () => {
     const reply = await collect(
       createRulesAdapter(NOW).converse([{ role: 'user', text: 'done with the deck' }], ctx, exec)
     )
-    expect(exec.complete).toHaveBeenCalledWith('deck', undefined)
+    expect(exec.complete).toHaveBeenCalledWith({ query: 'deck', at: undefined })
     expect(reply).toBe('Marked deck done.')
   })
 
@@ -389,7 +397,7 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
       },
     ])
     await runTool('complete_task', { query: 'standup', at: '9am' }, exec)
-    expect(exec.complete).toHaveBeenCalledWith('standup', '9am')
+    expect(exec.complete).toHaveBeenCalledWith({ query: 'standup', at: '9am' })
     await runTool('move_task', { query: 'release', at: '19:45', toDayOffset: 2 }, exec)
     /* the same call, read as one named object since #165. Same values: the query,
        the day offset, no new start, and `at` pinning which block moves. The only
@@ -644,10 +652,10 @@ describe('unified adapter — abort (#117, on the SDK path)', () => {
 
     const exec = mockExec()
     const abort = new AbortController()
-    exec.complete = vi.fn((q: string) => {
+    exec.complete = vi.fn((args: { query: string }) => {
       exec.calls.push('complete')
       abort.abort() // the stop control fires the instant the action commits
-      return `Marked ${q} done.`
+      return `Marked ${args.query} done.`
     })
 
     const adapter = createAiAdapter({

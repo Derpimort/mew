@@ -127,7 +127,7 @@ export function runIntent(
     case 'complete':
       /* an ambiguous name (#334) posts chips and returns CHOICES_POSTED — the
          floor then stays quiet, the chips ARE the reply (the remove precedent) */
-      return quietIfChoices(exec.complete(intent.query ?? '', intent.at))
+      return quietIfChoices(exec.complete({ query: intent.query ?? '', at: intent.at }))
     case 'move':
       return quietIfChoices(
         exec.move({

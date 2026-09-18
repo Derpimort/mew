@@ -10,7 +10,9 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 export type {
   ChatTurn,
+  CompleteArgs,
   EditArgs,
+  FindSlotArgs,
   ListBlocksArgs,
   MergeArgs,
   ModelPort,
@@ -22,6 +24,7 @@ export type {
   ProposeScenariosArgs,
   RelativeMoveArgs,
   ResizeArgs,
+  SuggestSlotsArgs,
   RemoveArgs,
   SplitArgs,
   FreeSpec,

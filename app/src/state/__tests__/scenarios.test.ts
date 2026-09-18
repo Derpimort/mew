@@ -3493,7 +3493,7 @@ describe('nudges defer until the turn completes', () => {
     /* the model streams a two-part reply and completes the deck between the
        parts — exactly the mid-stream tool call that used to splice a card in */
     scriptedModel.chunks = ['On it — ', 'marked done.']
-    scriptedModel.midTurn = (exec) => exec.complete(target.title)
+    scriptedModel.midTurn = (exec) => exec.complete({ query: target.title })
     await say('finish the deck')
 
     const nu = lastNudge('next-up')
@@ -3515,7 +3515,7 @@ describe('nudges defer until the turn completes', () => {
     scriptedModel.midTurn = (exec) => {
       // first chunk already streamed (thinking flipped false) — the nudge fired
       // here must STILL be held by the in-flight turn, not posted
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
       midTurnCount = chat().filter((m) => m.role === 'nudge' && m.nudgeType === 'next-up').length
     }
     await say('finish the deck')
@@ -3535,7 +3535,7 @@ describe('nudges defer until the turn completes', () => {
       // the reasoning is already pinned to the streamed reply before the tool runs
       const streaming = chat().find((m) => m.role === 'mew' && m.body.includes('On it'))
       plannedBeforeAction = streaming?.reasoning
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
     }
     await say('finish the deck')
 
@@ -3566,7 +3566,7 @@ describe('nudges defer until the turn completes', () => {
     scriptedModel.chunks = ['Working on it… ']
     scriptedModel.throwAfter = true // hiccup after the tool call
     scriptedModel.midTurn = (exec) => {
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
     }
     await say('finish the deck')
     expect(useMew.getState().thinking).toBe(false)
@@ -3603,7 +3603,7 @@ describe('the working-status label tracks the turn', () => {
     let midTurnLabel: string | null = '<unset>'
     scriptedModel.chunks = ['On it — ', 'marked done.']
     scriptedModel.midTurn = (exec) => {
-      exec.complete(target.title) // the executor sets the live label
+      exec.complete({ query: target.title }) // the executor sets the live label
       midTurnLabel = working()
     }
     await say('finish the deck')
@@ -3621,7 +3621,7 @@ describe('the working-status label tracks the turn', () => {
     scriptedModel.midTurn = (exec) => {
       exec.capture('a stray thought')
       labels.push(working())
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
       labels.push(working())
     }
     await say('jot a thought then finish the deck')
@@ -3681,7 +3681,7 @@ describe('a turn can be stopped mid-stream', () => {
     /* the tool fires (the week mutates), then the user stops mid-turn */
     scriptedModel.chunks = ['On it — ', 'and more.']
     scriptedModel.midTurn = (exec) => {
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
       useMew.getState().stopSpeaking()
     }
     await say('finish the deck and tidy the rest')
@@ -4281,7 +4281,7 @@ describe('undo an AI action (#162)', () => {
     const memBefore = useMew.getState().memory.filter((e) => e.kind === 'completed').length
     scriptedModel.chunks = ['nice — ', 'oh, reverted.']
     scriptedModel.midTurn = (exec) => {
-      exec.complete(deck.title)
+      exec.complete({ query: deck.title })
       exec.undoLast()
     }
     await say("finished the deck — wait that wasn't done, undo")
@@ -4875,7 +4875,7 @@ describe('tool-call activity cards (#282)', () => {
     useMew.getState().updateSettings({ modelLocation: 'local' })
     const target = deckToday()
     scriptedModel.chunks = ['first — ', 'second.']
-    scriptedModel.midTurn = (exec) => exec.complete(target.title)
+    scriptedModel.midTurn = (exec) => exec.complete({ query: target.title })
     await say('finish the deck')
 
     const c = chat()
@@ -6268,11 +6268,11 @@ describe('reshape without flailing (#325)', () => {
     const seen: string[] = []
     scriptedModel.chunks = ['looking.']
     scriptedModel.midTurn = (exec) => {
-      seen.push(exec.suggestSlots('Dinner', 'private', 45)) // runs
-      seen.push(exec.suggestSlots('Dinner', 'private', 45)) // identical → cached
-      seen.push(exec.suggestSlots('Dinner', 'private', 90)) // different duration → runs
-      seen.push(exec.findSlot(45, 0)) // different tool → runs
-      seen.push(exec.findSlot(45, 0)) // identical → cached
+      seen.push(exec.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 })) // runs
+      seen.push(exec.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 })) // identical → cached
+      seen.push(exec.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 90 })) // different duration → runs
+      seen.push(exec.findSlot({ durationMin: 45, dayOffset: 0 })) // different tool → runs
+      seen.push(exec.findSlot({ durationMin: 45, dayOffset: 0 })) // identical → cached
     }
     await say('find dinner a slot')
 
@@ -6315,11 +6315,11 @@ describe('reshape without flailing (#325)', () => {
     // and one move — then done.
     scriptedModel.steps = [
       { text: "you're right — " },
-      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // first: runs
+      { tool: (e) => e.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 }) }, // first: runs
       { text: 'fair point, ' },
-      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
+      { tool: (e) => e.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 }) }, // dedup
       { text: "you're right again, " },
-      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
+      { tool: (e) => e.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 }) }, // dedup
       { text: 'good catch. ' },
       { tool: (e) => e.move({ query: 'Dinner', toDayOffset: 0, toStartMin: 20 * 60 }) }, // the ONE reshape sweep
       { text: 'all set.' },

@@ -185,13 +185,16 @@ import {
   type ChoiceOption,
   type FreeSpec,
   type MergeArgs,
+  type CompleteArgs,
   type EditArgs,
+  type FindSlotArgs,
   type ListBlocksArgs,
   type MoveArgs,
   type OfferChoicesArgs,
   type ProposeScenariosArgs,
   type RelativeMoveArgs,
   type ResizeArgs,
+  type SuggestSlotsArgs,
   type PlaceSpec,
   type RemoveArgs,
   type SplitArgs,
@@ -3549,7 +3552,9 @@ export const useMew = create<MewState>((set, get) => {
     post([mewMsg(`Removed — ${names}. Its mew is off the count; say "undo that" and it's back.`)])
   }
 
-  function execComplete(query: string, at?: string): string {
+  /* one named object (#165) — see CompleteArgs */
+  function execComplete(args: CompleteArgs): string {
+    const { query, at } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const res = resolveTarget(query, 'complete')
@@ -5516,12 +5521,9 @@ export const useMew = create<MewState>((set, get) => {
     return listReadout(s.blocks, { dayKeys, todayKey, tag })
   }
 
-  function execFindSlot(
-    durationMin: number,
-    dayOffset: number,
-    notBeforeMin?: number,
-    notAfterMin?: number
-  ): string {
+  /* one named object (#165) — see FindSlotArgs */
+  function execFindSlot(args: FindSlotArgs): string {
+    const { durationMin, dayOffset, notBeforeMin, notAfterMin } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const key = addDaysKey(todayKey, dayOffset)
@@ -5574,13 +5576,10 @@ export const useMew = create<MewState>((set, get) => {
   /* suggest_slots: hand the model the scoring oracle's ranked, conflict-free
      candidates (#80) so it places into vetted air. Read-only and keyless —
      scoreSlots scores deterministically; a brain only enriches later. */
-  function execSuggestSlots(
-    title: string,
-    tag: import('../domain/types').Tag,
-    durationMin: number,
-    dueMin?: number,
-    window?: TimeWindow
-  ): string {
+  /* one named object (#165) — see SuggestSlotsArgs */
+  function execSuggestSlots(args: SuggestSlotsArgs): string {
+    const { title, tag, durationMin, dueMin } = args
+    const window = args.window as TimeWindow | undefined
     const clean = title.trim()
     if (!clean) return 'name the task and I will rank where it fits best.'
     const s = get()
@@ -6236,12 +6235,13 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('plan', { places, frees }, () => execPlan(places, frees))
         },
-        complete: (q, at) => {
+        complete: (args) => {
           acted = true
           snapshotForUndo()
           working('marking it done…')
           closeStreamRow()
-          return runChange('complete', { query: q }, () => execComplete(q, at))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('complete', { query: args.query }, () => execComplete(args))
         },
         /* THE OBJECT IS FORWARDED WHOLE, and that is the fix rather than the
            naming (#165): a wrapper that rebuilt it field by field could still
@@ -6300,30 +6300,45 @@ export const useMew = create<MewState>((set, get) => {
             execListBlocks(args)
           )
         },
-        findSlot: (dur, d, nb, na) =>
+        findSlot: (args) =>
           /* #325: an identical slot query this turn returns the cached answer —
-             no second run, no duplicate card */
-          dedupReadOnly(`findSlot:${dur}:${d}:${nb ?? ''}:${na ?? ''}`, () => {
-            working('finding a slot…')
-            closeStreamRow()
-            return runToolWithCard(
-              'findSlot',
-              { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na },
-              () => execFindSlot(dur, d, nb, na) // read-only
-            )
-          }),
-        suggestSlots: (t, tag, dur, due, win) =>
+             no second run, no duplicate card. The dedup key still names every
+             field it depends on: a key built from fewer fields than the call
+             carries would collapse two DIFFERENT questions into one answer. */
+          dedupReadOnly(
+            `findSlot:${args.durationMin}:${args.dayOffset}:${args.notBeforeMin ?? ''}:${args.notAfterMin ?? ''}`,
+            () => {
+              working('finding a slot…')
+              closeStreamRow()
+              return runToolWithCard(
+                'findSlot',
+                {
+                  durationMin: args.durationMin,
+                  dayOffset: args.dayOffset,
+                  notBeforeMin: args.notBeforeMin,
+                  notAfterMin: args.notAfterMin,
+                },
+                () => execFindSlot(args) // read-only
+              )
+            }
+          ),
+        suggestSlots: (args) =>
           /* #325: the same target twice this turn collapses — the ranking
-             already ran; the second call is the flail, not a new question */
-          dedupReadOnly(`suggestSlots:${t}:${tag}:${dur}:${due ?? ''}:${win ?? ''}`, () => {
-            working('finding a slot…')
-            closeStreamRow()
-            return runToolWithCard(
-              'suggestSlots',
-              { title: t, durationMin: dur },
-              () => execSuggestSlots(t, tag, dur, due, win) // read-only
-            )
-          }),
+             already ran; the second call is the flail, not a new question. The
+             key still names all five fields: one built from fewer than the call
+             carries would collapse two different questions into one answer. */
+          dedupReadOnly(
+            `suggestSlots:${args.title}:${args.tag}:${args.durationMin}:${args.dueMin ?? ''}:${args.window ?? ''}`,
+            () => {
+              working('finding a slot…')
+              closeStreamRow()
+              return runToolWithCard(
+                'suggestSlots',
+                { title: args.title, durationMin: args.durationMin },
+                () => execSuggestSlots(args) // read-only
+              )
+            }
+          ),
         queryBrain: (q) => {
           working('checking what I know…')
           closeStreamRow()

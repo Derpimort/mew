@@ -21,7 +21,13 @@ describe('suggest_slots tool', () => {
       { title: 'gym', tag: 'health', durationMin: 60, dueMin: 780, window: 'morning' },
       exec
     )
-    expect(suggestSlots).toHaveBeenCalledWith('gym', 'health', 60, 780, 'morning')
+    expect(suggestSlots).toHaveBeenCalledWith({
+      title: 'gym',
+      tag: 'health',
+      durationMin: 60,
+      dueMin: 780,
+      window: 'morning',
+    })
     expect(out).toContain('Best slots')
   })
 
@@ -33,7 +39,13 @@ describe('suggest_slots tool', () => {
       { title: 'deep work', durationMin: 99999, window: 'midnight' },
       exec
     )
-    expect(suggestSlots).toHaveBeenCalledWith('deep work', 'work', 600, undefined, undefined)
+    expect(suggestSlots).toHaveBeenCalledWith({
+      title: 'deep work',
+      tag: 'work',
+      durationMin: 600,
+      dueMin: undefined,
+      window: undefined,
+    })
   })
 })
 

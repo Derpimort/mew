@@ -830,7 +830,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       return exec.plan(places, frees)
     }
     case 'complete_task':
-      return exec.complete(String(o.query ?? ''), atArg(o.at))
+      return exec.complete({ query: String(o.query ?? ''), at: atArg(o.at) })
     case 'move_task':
       return exec.move({
         query: String(o.query ?? ''),
@@ -867,12 +867,12 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       })
     }
     case 'find_slot':
-      return exec.findSlot(
-        clampInt(o.durationMin, 5, 600, 30),
-        clampInt(o.dayOffset, 0, 13, 0),
-        optInt(o.notBeforeMin, 0, 1439),
-        optInt(o.notAfterMin, 1, 1440)
-      )
+      return exec.findSlot({
+        durationMin: clampInt(o.durationMin, 5, 600, 30),
+        dayOffset: clampInt(o.dayOffset, 0, 13, 0),
+        notBeforeMin: optInt(o.notBeforeMin, 0, 1439),
+        notAfterMin: optInt(o.notAfterMin, 1, 1440),
+      })
     case 'suggest_slots': {
       const win = (['morning', 'afternoon', 'evening'] as const).includes(o.window as never)
         ? (o.window as 'morning')
@@ -880,13 +880,13 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
         ? (o.tag as 'work')
         : 'work'
-      return exec.suggestSlots(
-        String(o.title ?? '').trim(),
+      return exec.suggestSlots({
+        title: String(o.title ?? '').trim(),
         tag,
-        clampInt(o.durationMin, 5, 600, 60),
-        optInt(o.dueMin, 0, 1439),
-        win
-      )
+        durationMin: clampInt(o.durationMin, 5, 600, 60),
+        dueMin: optInt(o.dueMin, 0, 1439),
+        window: win,
+      })
     }
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))

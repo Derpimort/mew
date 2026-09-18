@@ -298,13 +298,49 @@ export interface EditArgs {
   scope?: 'this' | 'following' | 'series'
 }
 
+/** Everything `complete` needs, by name (#165). */
+export interface CompleteArgs {
+  /** the block to check off, as the owner named it */
+  query: string
+  /** #334: the TARGET block's start time — with it, name AND time must both
+      match, so a shared title resolves to exactly one block. Omit it and a bare
+      ambiguous name asks (offer_choices) rather than guessing. */
+  at?: string
+}
+
+/** Everything `findSlot` needs, by name (#165). */
+export interface FindSlotArgs {
+  /** how long the block needs to be */
+  durationMin: number
+  /** days from today to look on */
+  dayOffset: number
+  /** earliest acceptable start, minutes from midnight */
+  notBeforeMin?: number
+  /** latest acceptable end, minutes from midnight */
+  notAfterMin?: number
+}
+
+/** Everything `suggestSlots` needs, by name (#165). */
+export interface SuggestSlotsArgs {
+  /** what the block is for, as the owner named it */
+  title: string
+  /** which part of life it belongs to */
+  tag: import('../../domain/types').Tag
+  /** how long it needs to be */
+  durationMin: number
+  /** the time it has to be done by, minutes from midnight */
+  dueMin?: number
+  /** the part of day the owner asked for */
+  window?: 'morning' | 'afternoon' | 'evening'
+}
+
 export interface ToolExecutor {
   plan(places: PlaceSpec[], frees: FreeSpec[]): string
   /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
       name AND time must both match, so a shared title resolves to exactly one
       block. Omit and a bare ambiguous name asks (offer_choices) rather than
       guessing. */
-  complete(query: string, at?: string): string
+  complete(args: CompleteArgs): string
   /** Move one block. Named fields rather than seven positions (#165): the
       wrapper in store.ts forwards this object WHOLE, so an argument cannot be
       dropped on the way to the executor — which is exactly what happened in
@@ -336,24 +372,13 @@ export interface ToolExecutor {
   listBlocks(args: ListBlocksArgs): string
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
-  findSlot(
-    durationMin: number,
-    dayOffset: number,
-    notBeforeMin?: number,
-    notAfterMin?: number
-  ): string
+  findSlot(args: FindSlotArgs): string
   /** Read-only: the scoring oracle's ranked, conflict-free candidate slots for a
       flexible item — scored by time-of-day fit, rest spacing, and the user's
       rules (#80). The model consults this before placing/moving, then plans the
       slot it ranks first; the executor's auto-placement uses the same scorer, so
       the conflict-free, rest-aware floor holds even if the model skips it. */
-  suggestSlots(
-    title: string,
-    tag: import('../../domain/types').Tag,
-    durationMin: number,
-    dueMin?: number,
-    window?: 'morning' | 'afternoon' | 'evening'
-  ): string
+  suggestSlots(args: SuggestSlotsArgs): string
   /** Change an existing block in place: time, length, title, tag, attention, due.
       Surgical — only the named field(s) of the ONE target change; neighbors are
       untouched. `at` (#334) is the TARGET block's CURRENT start time, pinning
