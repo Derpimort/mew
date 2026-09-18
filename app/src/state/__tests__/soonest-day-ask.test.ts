@@ -103,6 +103,16 @@ describe('#194 — the which-block ask never names the same time twice', () => {
       block({ id: 'wed-early', dayKey: WED_KEY, startMin: 19 * 60 + 45, endMin: 20 * 60 + 45 }),
       block({ id: 'wed-late', dayKey: WED_KEY, startMin: 21 * 60 + 30, endMin: 22 * 60 + 30 }),
       block({ id: 'thu-dupe', dayKey: THU_KEY, startMin: 19 * 60 + 45, endMin: 20 * 60 + 45 }),
+      /* a NON-namesake on the soonest day: without one, `pool` and `blocks` are
+         the same set and `soonestDay(blocks)` survives every test — able to
+         offer a block whose title never matched the query (#194 follow-up). */
+      block({
+        id: 'wed-standup',
+        title: 'Standup',
+        dayKey: WED_KEY,
+        startMin: 9 * 60,
+        endMin: 9 * 60 + 15,
+      }),
     ])
     await say('move the 18:00 release to 21:30')
     await tick()
@@ -114,9 +124,35 @@ describe('#194 — the which-block ask never names the same time twice', () => {
     expect(ask).toMatch(/Which one\?/)
     expect(ask).toContain('"release"')
     const times = timesIn(ask)
-    expect(times).toEqual(['19:45', '21:30'])
-    /* the defect itself, stated as the law rather than as the helper */
+    /* ORDER IS NOT PINNED, DELIBERATELY (#194 follow-up): the ask lists whatever
+       order `candidates` arrives in, which no law fixes, so a legally-correct
+       reorder must not turn this red — a pin that fails on correct behaviour is
+       one someone deletes in a hurry. The SET is the contract. */
+    expect([...times].sort()).toEqual(['19:45', '21:30'])
     expect(new Set(times).size).toBe(times.length)
+    /* and the law itself: Thursday's block is excluded because of its DAY. */
+    expect(ask).not.toContain('Standup')
+  })
+
+  it("the soonest day wins even when the other day's namesake shares no clock time", async () => {
+    /* the fixture above has both namesakes at 19:45, so there "narrowed to the
+       soonest day" and "deduped by clock time" are the same answer. Added as a
+       SECOND pool rather than by editing that one, because 19:45-or-19:45 is the
+       scenario the original pin exists for. Asserting the times are unique is
+       strictly weaker than asserting the DAY: here uniqueness holds either way
+       and only the day tells the two apart. */
+    await boot([
+      block({ id: 'wed-at', dayKey: WED_KEY, startMin: 19 * 60 + 45, endMin: 20 * 60 + 45 }),
+      block({ id: 'thu-late', dayKey: THU_KEY, startMin: 23 * 60, endMin: 23 * 60 + 45 }),
+    ])
+    await say('move the 18:00 release to 21:30')
+    await tick()
+
+    const ask = lastMewBody()
+    expect(ask).toMatch(/Which one\?/)
+    expect(ask).toContain('19:45')
+    /* 23:00 is Thursday's. It is excluded by its DAY, not by its clock. */
+    expect(ask).not.toContain('23:00')
   })
 
   it('two namesakes on the SAME day are still a real ambiguity, and both are offered', async () => {
