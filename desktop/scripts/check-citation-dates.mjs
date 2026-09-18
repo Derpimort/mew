@@ -116,6 +116,22 @@ export function citationsIn(text) {
     occurrences of this line in this file — one means the line was introduced there, more
     than one means it moved and the date is not knowable from this. */
 export function classify({ number, introducedAt, localCreatedAt }) {
+  // NEVER ALLOCATED COMES FIRST, BECAUSE IT DOES NOT DEPEND ON THE DATE AT ALL. If this
+  // repo has never had #N, no date of writing could have meant a local issue — so this
+  // case is certain even when the line is undatable or has moved, and asking git first
+  // would throw that certainty away. It also means these sites need no `git log -S` at
+  // all, which is what makes a whole-repo run affordable.
+  //
+  // The first version of this file checked it LAST, behind both date branches, and a test
+  // asserted the resulting miss as though it were intended — "even though #160 has no
+  // local issue — no date, no verdict". That comment was confidently wrong and is the
+  // reason this ordering is spelled out rather than left to read.
+  if (localCreatedAt === null || localCreatedAt === undefined)
+    return {
+      verdict: 'archive',
+      fires: true,
+      why: `this repo has never allocated #${number}, so the citation cannot mean a local issue whenever it was written`,
+    }
   if (!introducedAt || introducedAt.length === 0)
     return { verdict: 'undatable', fires: false, why: `no commit introduces this line` }
   if (introducedAt.length > 1)
@@ -125,12 +141,6 @@ export function classify({ number, introducedAt, localCreatedAt }) {
       why: `the line moved — ${introducedAt.length} commits changed it, so the date it was written is not knowable from git alone`,
     }
   const written = introducedAt[0]
-  if (localCreatedAt === null || localCreatedAt === undefined)
-    return {
-      verdict: 'archive',
-      fires: true,
-      why: `this repo has never allocated #${number}, so the citation cannot mean a local issue`,
-    }
   if (localCreatedAt > written)
     return {
       verdict: 'archive',
@@ -202,13 +212,18 @@ if (isMain) {
       process.exit(2)
     }
     for (const c of citationsIn(text)) {
-      const r = classify({
-        number: c.number,
-        introducedAt: introducedDates(file, c.line),
-        localCreatedAt: Object.prototype.hasOwnProperty.call(issues, String(c.number))
-          ? issues[String(c.number)]
-          : undefined,
-      })
+      const localCreatedAt = Object.prototype.hasOwnProperty.call(issues, String(c.number))
+        ? issues[String(c.number)]
+        : undefined
+      // A `git log -S` per site is the expensive part, and for a number this repo has
+      // never allocated the answer does not depend on it. Skipping it here is not an
+      // optimisation that changes behaviour: classify() reaches the same verdict either
+      // way, which the fixtures assert both with a date and without one.
+      const introducedAt =
+        localCreatedAt === null || localCreatedAt === undefined
+          ? []
+          : introducedDates(file, c.line)
+      const r = classify({ number: c.number, introducedAt, localCreatedAt })
       const at = `${file}:${c.lineNo}`
       if (r.fires) fired.push(`${at}  #${c.number}  ${r.why}`)
       else if (r.verdict !== 'silent') said.push(`${at}  #${c.number}  ${r.verdict}: ${r.why}`)

@@ -112,10 +112,32 @@ test('a line that MOVED is ambiguous, and is never resolved by taking the first 
   assert.match(r.why, /not knowable/)
 })
 
-test('a line no commit introduces is undatable and says so', () => {
-  const r = classify({ number: 160, introducedAt: [], localCreatedAt: null })
+test('a line no commit introduces is undatable — for a number this repo DOES have', () => {
+  // NOTE, because the first version of this test was wrong in a way worth keeping visible:
+  // it passed `localCreatedAt: null` and asserted `fires: false`, commented "even though
+  // #160 has no local issue — no date, no verdict". That enshrined a MISS as intent. A
+  // number this repo never allocated is certain whatever the date, so the undatable branch
+  // has to be exercised with a number that actually exists here.
+  const r = classify({ number: 160, introducedAt: [], localCreatedAt: '2026-09-17T21:55:37Z' })
   assert.equal(r.verdict, 'undatable')
-  assert.equal(r.fires, false, 'even though #160 has no local issue — no date, no verdict')
+  assert.equal(r.fires, false, 'the date is what is missing, and without it there is no verdict')
+})
+
+test('never-allocated is DATE-INDEPENDENT: it fires with no date, and with an ambiguous one', () => {
+  for (const introducedAt of [[], ['2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z'], ['2026-01-01T00:00:00Z']]) {
+    const r = classify({ number: 9999, introducedAt, localCreatedAt: null })
+    assert.equal(r.fires, true, `never-allocated must fire regardless of ${introducedAt.length} dates`)
+    assert.equal(r.verdict, 'archive')
+    assert.match(r.why, /whenever it was written/)
+  }
+  // the control that makes the loop non-vacuous: the SAME date shapes on a number this
+  // repo does have are NOT certain, so the three greens above come from the number and
+  // not from the dates being permissive
+  assert.equal(classify({ number: 160, introducedAt: [], localCreatedAt: '2026-09-17T21:55:37Z' }).fires, false)
+  assert.equal(
+    classify({ number: 160, introducedAt: ['2026-01-01T00:00:00Z', '2026-06-01T00:00:00Z'], localCreatedAt: '2026-09-17T21:55:37Z' }).fires,
+    false
+  )
 })
 
 /* THE ONE-DIRECTIONALITY ITSELF, asserted rather than left to the header. */
