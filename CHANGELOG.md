@@ -22,6 +22,13 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+### Under the hood
+- The release notes now hold their own links together: every version in this file has to carry its
+  compare link at the bottom, the Unreleased link has to point at the newest release, and no version
+  may be listed twice. Publishing a version is a three-part hand edit and only two parts were ever
+  checked, so the third could be missed and the new version would read as plain text among links
+  while every gate stayed green.
+
 ## [2026.9.0] — 2026-09-18
 
 ### The dial on any day
