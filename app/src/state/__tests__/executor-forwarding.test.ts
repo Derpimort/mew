@@ -90,6 +90,30 @@ function wrapperShapes(): { wrappers: Map<string, Wrapper>; properties: number }
         if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) continue
         const used = new Set<string>()
         const collect = (x: ts.Node): void => {
+          /* AN IDENTIFIER CAN APPEAR WITHOUT REFERENCING ANYTHING, and counting
+             those two cases would let a dropped argument hide behind a mention of
+             its own name: `o.fromDayOffset` carries it as the right-hand side of a
+             property access, and `{ fromDayOffset: 1 }` carries it as a literal
+             key. Neither reads the parameter. With the argument dropped at the
+             call and either shape anywhere in the same body, every test in this
+             file passed — a masked drop, which is the exact bug this pin exists
+             for wearing a disguise the pin could not see.
+             It matters most where the pin matters most: #165's real fix is
+             options objects, which are a world of `{ name: value }`, so the naive
+             reader would degrade exactly as the refactor it is holding the line
+             for lands. Found in review by coderpb, who also wrote and ran these
+             four lines; kept here because the file's header claims the AST cannot
+             be fooled by text, and this was the one way it still could be.
+             Shorthand (`{ fromDayOffset }`) and computed keys
+             (`{ [fromDayOffset]: 1 }`) DO reference, and both still count. */
+          if (ts.isPropertyAccessExpression(x)) {
+            collect(x.expression) // `o` references; `.name` does not
+            return
+          }
+          if (ts.isPropertyAssignment(x) && !ts.isComputedPropertyName(x.name)) {
+            collect(x.initializer) // the value references; the key does not
+            return
+          }
           if (ts.isIdentifier(x)) used.add(x.text)
           x.forEachChild(collect)
         }
