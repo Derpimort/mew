@@ -50,32 +50,22 @@
 // Exit 0 = the description will close what it claims, 1 = it will not, 2 = unreadable.
 
 import { readFileSync } from 'node:fs'
+import { withoutFences } from './check-changelog.mjs'
 
 /* GitHub's own set, and the spellings matter: this repo has closed an issue by accident
    from "whoever fixes #161 deletes the skip" in ordinary prose, and a line-start-only
    reader missed two of four on the promotion commit. Case-insensitive, anywhere. */
 const KEYWORD = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/gi
 
-/** Pure: the text with every fenced code block removed, fences included. A fence opens
-    on ``` or ~~~ and closes on the next one of the SAME kind; an unterminated fence runs
-    to the end, which is what GitHub does with it too. */
-export function withoutFences(text) {
-  const out = []
-  let fence = null
-  for (const line of text.split('\n')) {
-    const m = /^\s*(`{3,}|~{3,})/.exec(line)
-    if (fence) {
-      if (m && m[1][0] === fence) fence = null
-      continue
-    }
-    if (m) {
-      fence = m[1][0]
-      continue
-    }
-    out.push(line)
-  }
-  return out.join('\n')
-}
+/* withoutFences lives in check-changelog.mjs and is IMPORTED rather than copied.
+   The two were byte-identical for one merge cycle on purpose — the manager ruled
+   that coupling two PRs under review to save a duplicated pure function was the
+   worse trade, since it serialises them and invalidates two independent reviews.
+   Both have landed, so the copy goes. Re-exported because this module's callers
+   and its own cases already import it from here, and because the sharing should be
+   visible in the public surface rather than hidden in an import line. */
+export { withoutFences }
+
 
 /** Pure: the text with HTML comments removed. GitHub does not link a keyword inside
     one, and unlike a four-space indented block the delimiters are unambiguous, so
