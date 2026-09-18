@@ -249,17 +249,28 @@ function argsConsumers(): Map<string, ArgsConsumer> {
       const type = n.parameters[0]?.type?.getText()
       if (type && /Args$/.test(type)) {
         const param = n.parameters[0].name.getText()
+        /* CARRIERS: every name that holds this object's fields — the parameter,
+           anything assigned from it, a copy `const c = { ...args }`, and the
+           remainder of a destructure `const { a, ...rest } = args`. Grown to a
+           FIXPOINT BEFORE the read pass, so a carrier declared after its first use
+           cannot be missed by walk order. */
         const aliases = new Set([param])
         for (let before = -1; before !== aliases.size;) {
           before = aliases.size
           const grow = (x: ts.Node): void => {
-            if (
-              ts.isVariableDeclaration(x) &&
-              x.initializer &&
-              ts.isIdentifier(x.name) &&
-              aliases.has(x.initializer.getText())
-            )
-              aliases.add(x.name.getText())
+            if (ts.isVariableDeclaration(x) && x.initializer) {
+              const from = x.initializer
+              const fromCarrier =
+                aliases.has(from.getText()) ||
+                (ts.isObjectLiteralExpression(from) &&
+                  from.properties.some(
+                    (pr) => ts.isSpreadAssignment(pr) && aliases.has(pr.expression.getText())
+                  ))
+              if (fromCarrier && ts.isIdentifier(x.name)) aliases.add(x.name.getText())
+              if (aliases.has(from.getText()) && ts.isObjectBindingPattern(x.name))
+                for (const el of x.name.elements)
+                  if (el.dotDotDotToken) aliases.add(el.name.getText())
+            }
             x.forEachChild(grow)
           }
           grow(n.body)
@@ -267,26 +278,50 @@ function argsConsumers(): Map<string, ArgsConsumer> {
         const read = new Set<string>()
         let whole = false
         const collect = (x: ts.Node): void => {
-          /* `const { a, b } = args` reads a and b; `...rest` takes the remainder */
+          /* `const { a, b } = <carrier>` reads a and b. The `...rest` element is a
+             CARRIER, registered above — it is neither a read nor a departure. */
           if (
             ts.isVariableDeclaration(x) &&
             x.initializer &&
             aliases.has(x.initializer.getText()) &&
             ts.isObjectBindingPattern(x.name)
           )
-            for (const el of x.name.elements) {
-              if (el.dotDotDotToken) whole = true
-              else read.add((el.propertyName ?? el.name).getText())
-            }
-          /* `args.at` / `opts.at` */
+            for (const el of x.name.elements)
+              if (!el.dotDotDotToken) read.add((el.propertyName ?? el.name).getText())
+          /* `args.at` / `opts.at` / `copy.at` */
           if (ts.isPropertyAccessExpression(x) && aliases.has(x.expression.getText()))
             read.add(x.name.getText())
-          /* `{ ...args }` and `f(...args)` carry every field */
-          if (ts.isSpreadAssignment(x) && aliases.has(x.expression.getText())) whole = true
-          if (ts.isSpreadElement(x) && aliases.has(x.expression.getText())) whole = true
-          /* `f(args)` hands the object on entire — that IS forwarding whole */
-          if (ts.isCallExpression(x) && x.arguments.some((a) => aliases.has(a.getText())))
-            whole = true
+          /* `whole` MEANS THE OBJECT REACHES ANOTHER EXECUTOR ENTIRE, and nothing
+             weaker. It switches the field-by-field rule off for this function, so
+             every way of setting it is a way of turning the clause off.
+
+             coderpa found the first door in review: ANY CallExpression receiving the
+             object set it, and it does not have to be the forward. Measured on
+             `execResize` — dropping the `scope` read fails naming `ResizeArgs.scope`;
+             dropping it AND adding `console.debug('resize', args)` passes 5/5. A
+             debug line put the clause to sleep with no signal that it had.
+             TESTING THAT FIX FOUND TWO MORE DOORS OF THE SAME SHAPE, both measured:
+             `const copy = { ...args }` and `const { query: _q, ...rest } = args` each
+             still escaped, because a copy and a remainder were being treated as
+             departures. They are not — a copy nobody forwards drops exactly as much
+             as the original.
+
+             So a copy or a remainder is a CARRIER, and only an `exec*` call receiving
+             a carrier — bare, or spread into the object literal it is called with —
+             counts as the object leaving. That keeps the idiom #183 recommends
+             (`execEdit({ query, ...rest })`) and closes all three doors. Measured on
+             this tree: NONE of the sixteen consumers sets `whole` today, so the
+             narrowing costs no false positive, and the hatch exists for the
+             forward-whole shape rather than as a general escape. */
+          if (ts.isCallExpression(x) && /^exec[A-Z]/.test(x.expression.getText())) {
+            const carries = (a: ts.Node): boolean =>
+              aliases.has(a.getText()) ||
+              (ts.isObjectLiteralExpression(a) &&
+                a.properties.some(
+                  (pr) => ts.isSpreadAssignment(pr) && aliases.has(pr.expression.getText())
+                ))
+            if (x.arguments.some(carries)) whole = true
+          }
           x.forEachChild(collect)
         }
         collect(n.body)
