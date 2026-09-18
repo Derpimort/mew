@@ -314,6 +314,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - One more detail of a change that spans days is held by tests: when the blocks that STAY put are
   the ones on other days, each still reads with its own day, so the list you approve can be checked
   against your week afterwards.
+- The wiring between what MEW understands and what it does is now held by a test of its own: every
+  tool MEW can run is checked to be handed every detail it was given. A detail that gets read
+  correctly and stored correctly and then quietly dropped in between is the kind of fault that
+  looks like MEW ignoring you for no reason, and it used to pass every check we had. The test
+  reads the code itself rather than a list someone has to keep up to date, and adds no new package.
 - Tonight's newest features are now held together, not only one at a time: four journeys run a split
   pair through a batch shift, answer a remove ask in words, retag a day holding a calendar event and
   a repeating block, and take a week MEW helped build through the weekly review — each step checking
