@@ -334,13 +334,42 @@ describe('week model', () => {
     it('a missed time narrows its candidates to the soonest day, never "19:45 or 19:45?"', () => {
       const todayAt = mk({ title: 'Release', dayKey: D, startMin: 19 * 60 + 45 })
       const wedAt = mk({ title: 'Release', dayKey: '2026-06-10', startMin: 19 * 60 + 45 })
-      const r = findTarget([wedAt, todayAt], 'release', D, { at: 18 * 60 })
+      /* a NON-namesake on the soonest day, so `pool` and `blocks` are different
+         sets (#194 follow-up). Without it the one-word slip `soonestDay(blocks)`
+         survives every test, and it is worse than an empty offer: it can hand
+         back a block whose title never matched the query. */
+      const standup = mk({ title: 'Standup', dayKey: D, startMin: 9 * 60 })
+      const r = findTarget([wedAt, todayAt, standup], 'release', D, { at: 18 * 60 })
       expect(r.status).toBe('ambiguous')
       if (r.status === 'ambiguous') {
         expect(r.candidates.map((b) => b.id)).toEqual([todayAt.id])
         // the part the reader would notice: no clock time offered twice
         const times = r.candidates.map((b) => b.startMin)
         expect(new Set(times).size).toBe(times.length)
+      }
+    })
+
+    /* #194 follow-up — THE FIXTURE ABOVE CONTAINS A COINCIDENCE. Both its
+       namesakes sit at 19:45, so "narrowed to the soonest day" and "deduped by
+       clock time" produce the same answer there, and a mutant that narrows ONLY
+       when two candidates share a start minute survives it and the whole suite.
+       This case removes the coincidence by ADDING a pool, never by editing that
+       one: 19:45-and-19:45 is the scenario the original pin is named for, and
+       changing its time to make a mutant die would have retired it silently.
+       THE LESSON, for whoever writes the next one: asserting the offered times
+       are UNIQUE is strictly weaker than asserting the candidates are narrowed
+       to the SOONEST DAY. Pin the day; distinctness of the clock is a symptom
+       that happens to coincide with it. */
+    it("the soonest day wins even when the other day's namesake shares no clock time", () => {
+      const todayAt = mk({ title: 'Release', dayKey: D, startMin: 19 * 60 + 45 })
+      const thuLate = mk({ title: 'Release', dayKey: '2026-06-10', startMin: 23 * 60 })
+      const r = findTarget([thuLate, todayAt], 'release', D, { at: 18 * 60 })
+      expect(r.status).toBe('ambiguous')
+      if (r.status === 'ambiguous') {
+        expect(r.candidates.map((b) => b.id)).toEqual([todayAt.id])
+        // the DAY is the law; 23:00 is on a later day and must not be offered
+        expect(r.candidates.every((b) => b.dayKey === D)).toBe(true)
+        expect(r.candidates.map((b) => b.startMin)).not.toContain(23 * 60)
       }
     })
 
