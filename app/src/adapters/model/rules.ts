@@ -178,7 +178,9 @@ export function runIntent(
           ? { startMin: sp.gapStartMin, endMin: sp.gapEndMin }
           : { query: sp.aroundQuery ?? '', ...(sp.aroundAt ? { at: sp.aroundAt } : {}) }
       return quietIfChoices(
-        exec.split(intent.query ?? '', around, {
+        exec.split({
+          query: intent.query ?? '',
+          around,
           at: intent.at,
           tailMin: sp.tailMin,
           dayOffset: sp.dayOffset,
@@ -230,7 +232,11 @@ export function runIntent(
     case 'merge':
       /* #74: join same-tag blocks on one day into one — the executor refuses (and
          says why) anything that isn't the owner's own open blocks across free air */
-      return exec.merge(intent.query ?? '', intent.merge?.dayOffset, intent.at)
+      return exec.merge({
+        query: intent.query ?? '',
+        dayOffset: intent.merge?.dayOffset,
+        at: intent.at,
+      })
     case 'giveRoom':
       /* #322: the "give them room" chip — resize the just-placed blocks of one
          focus class up to how the kind really runs. Same executor the keyed
@@ -246,7 +252,8 @@ export function runIntent(
          series block) the this/following/series scope chips (#343) — the floor
          stays quiet and the chips/confirm message IS the reply. */
       return quietIfChoices(
-        exec.remove(intent.query ?? '', {
+        exec.remove({
+          query: intent.query ?? '',
           ...(intent.remove ?? {}),
           ...(intent.seriesScope ? { scope: intent.seriesScope } : {}),
         })
@@ -293,11 +300,13 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
   /* a which-block chip re-asks with the target's time ("the Deck polish at 9:00") */
   const pinned = ask.query.match(/^(.+?)\s+at\s+(\d{1,2}:\d{2})$/)
   return quietIfChoices(
-    exec.split(
-      pinned ? pinned[1] : ask.query,
-      { startMin: ask.gapStartMin, endMin: ask.gapEndMin },
-      { tailMin: ask.tailMin, dayOffset, ...(pinned ? { at: pinned[2] } : {}) }
-    )
+    exec.split({
+      query: pinned ? pinned[1] : ask.query,
+      around: { startMin: ask.gapStartMin, endMin: ask.gapEndMin },
+      tailMin: ask.tailMin,
+      dayOffset,
+      ...(pinned ? { at: pinned[2] } : {}),
+    })
   )
 }
 

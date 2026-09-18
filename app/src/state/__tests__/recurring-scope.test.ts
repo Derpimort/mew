@@ -394,7 +394,7 @@ describe('an explicit scope in the ask applies directly — no chip prompt (AC2,
   it('a keyed model that passes scope:series deletes the whole set directly', async () => {
     await fresh(standupSeries(), [], 'local')
     scriptedModel.chunks = ['Cleared.']
-    scriptedModel.midTurn = (exec) => exec.remove('standup', { scope: 'series' })
+    scriptedModel.midTurn = (exec) => exec.remove({ query: 'standup', scope: 'series' })
     await say('scrap every standup')
     await settle()
 

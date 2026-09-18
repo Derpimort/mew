@@ -4138,7 +4138,7 @@ describe('recurring blocks (#159)', () => {
     let removeResult = ''
     scriptedModel.chunks = ['Okay — ', 'cleared them all.']
     scriptedModel.midTurn = (exec) => {
-      removeResult = exec.remove('pilates', { all: true })
+      removeResult = exec.remove({ query: 'pilates', all: true })
     }
     await say('cancel all my pilates sessions')
     expect(useMew.getState().blocks.some((b) => b.title === 'Pilates')).toBe(false)

@@ -45,9 +45,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('edit')
       return `Updated ${q}.`
     }),
-    remove: vi.fn((q) => {
+    remove: vi.fn((args: { query: string }) => {
       calls.push('remove')
-      return `Removed ${q}.`
+      return `Removed ${args.query}.`
     }),
     analyze: vi.fn((d) => {
       calls.push('analyze')
@@ -113,9 +113,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('giveRoom')
       return `Gave your ${fc} blocks room.`
     }),
-    split: vi.fn((q) => {
+    split: vi.fn((args: { query: string }) => {
       calls.push('split')
-      return `Split ${q}.`
+      return `Split ${args.query}.`
     }),
   }
 }
@@ -186,11 +186,13 @@ describe('rules adapter — the rescue split ask (#286), through the one split e
       )
     )
     expect(exec.calls).toEqual(['split'])
-    expect(exec.split).toHaveBeenCalledWith(
-      'deck',
-      { startMin: 13 * 60, endMin: 13 * 60 + 45 },
-      { tailMin: 45, dayOffset: 0 }
-    )
+    /* one named object since #165 — same block, same gap, same kept length */
+    expect(exec.split).toHaveBeenCalledWith({
+      query: 'deck',
+      around: { startMin: 13 * 60, endMin: 13 * 60 + 45 },
+      tailMin: 45,
+      dayOffset: 0,
+    })
     expect(reply).toBe('Split deck.')
   })
 
@@ -203,9 +205,9 @@ describe('rules adapter — the rescue split ask (#286), through the one split e
         exec
       )
     )
-    const [, gap, opts] = (exec.split as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(gap).toEqual({ startMin: 780, endMin: 825 })
-    expect(opts).toMatchObject({ tailMin: 45, dayOffset: 3 }) // Tue → Friday
+    const [args] = (exec.split as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(args.around).toEqual({ startMin: 780, endMin: 825 })
+    expect(args).toMatchObject({ tailMin: 45, dayOffset: 3 }) // Tue → Friday
   })
 
   it("a which-block chip re-asks with the target's time, and it pins the target", async () => {
@@ -217,11 +219,13 @@ describe('rules adapter — the rescue split ask (#286), through the one split e
         exec
       )
     )
-    expect(exec.split).toHaveBeenCalledWith(
-      'deck',
-      { startMin: 780, endMin: 825 },
-      { tailMin: 45, dayOffset: 0, at: '12:00' }
-    )
+    expect(exec.split).toHaveBeenCalledWith({
+      query: 'deck',
+      around: { startMin: 780, endMin: 825 },
+      tailMin: 45,
+      dayOffset: 0,
+      at: '12:00',
+    })
   })
 })
 
@@ -396,9 +400,12 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
     await runTool('remove_blocks', { query: 'sleep', at: '22:30' }, exec)
     await runTool('remove_blocks', { query: 'prod release', all: true }, exec)
     const removeCalls = (exec.remove as ReturnType<typeof vi.fn>).mock.calls
-    expect(removeCalls[0]).toEqual(['prod release', { at: undefined, all: false }])
-    expect(removeCalls[1]).toEqual(['sleep', { at: '22:30', all: false }])
-    expect(removeCalls[2]).toEqual(['prod release', { at: undefined, all: true }])
+    /* query and its disambiguators now ride in ONE object (#165) rather than a
+       query plus an opts bag; the three rows assert the same values they always
+       did, and the pair that used to be able to drift apart cannot any more */
+    expect(removeCalls[0]).toEqual([{ query: 'prod release', at: undefined, all: false }])
+    expect(removeCalls[1]).toEqual([{ query: 'sleep', at: '22:30', all: false }])
+    expect(removeCalls[2]).toEqual([{ query: 'prod release', at: undefined, all: true }])
     expect(await runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
     expect(await runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
       'Slot 45m day 0 [-,1020].'

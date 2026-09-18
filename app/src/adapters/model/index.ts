@@ -10,11 +10,14 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 export type {
   ChatTurn,
+  MergeArgs,
   ModelPort,
   MoveArgs,
   ToolExecutor,
   WeekContext,
   PlaceSpec,
+  RemoveArgs,
+  SplitArgs,
   FreeSpec,
   ChoiceOption,
   ScenarioTaskSpec,

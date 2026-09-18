@@ -894,7 +894,8 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const d = o.dayOffset
       const dayOffset =
         typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 13 ? d : undefined
-      return exec.remove(String(o.query ?? ''), {
+      return exec.remove({
+        query: String(o.query ?? ''),
         at,
         all,
         ...(scope ? { scope } : {}),
@@ -1042,7 +1043,11 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       return 'nothing to batch — op must be shift, move_to_day or set_tag'
     }
     case 'merge_blocks':
-      return exec.merge(String(o.query ?? ''), optInt(o.dayOffset, 0, 13), atArg(o.at))
+      return exec.merge({
+        query: String(o.query ?? ''),
+        dayOffset: optInt(o.dayOffset, 0, 13),
+        at: atArg(o.at),
+      })
     case 'move_relative': {
       const dirs = ['earlier', 'later', 'next_day', 'next_free'] as const
       const direction = dirs.includes(o.direction as never)
@@ -1066,9 +1071,10 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (startMin != null && endMin != null) {
         if (endMin <= startMin)
           return 'nothing to split around — aroundEndMin must come after aroundStartMin'
-        return exec.split(query, { startMin, endMin }, opts)
+        return exec.split({ query, around: { startMin, endMin }, ...opts })
       }
-      if (aroundQuery) return exec.split(query, { query: aroundQuery, at: atArg(o.aroundAt) }, opts)
+      if (aroundQuery)
+        return exec.split({ query, around: { query: aroundQuery, at: atArg(o.aroundAt) }, ...opts })
       return 'nothing to split around — pass aroundStartMin + aroundEndMin, or aroundQuery'
     }
     case 'give_room': {

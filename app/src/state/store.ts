@@ -184,8 +184,11 @@ import {
   type ChatTurn,
   type ChoiceOption,
   type FreeSpec,
+  type MergeArgs,
   type MoveArgs,
   type PlaceSpec,
+  type RemoveArgs,
+  type SplitArgs,
   type ScenarioTaskSpec,
   type ToolExecutor,
   type WeekContext,
@@ -3940,7 +3943,10 @@ export const useMew = create<MewState>((set, get) => {
       one-off blocks of one tag merge, and only across free air: anything else
       in the span, or a calendar / done / repeating / other-tag part, means
       nothing changes and the reply names it. */
-  function execMerge(query: string, dayOffset?: number, at?: string): string {
+  /* one named object (#165) — see MergeArgs; destructured here so the body below
+     is untouched */
+  function execMerge(args: MergeArgs): string {
+    const { query, dayOffset, at } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     /* "today" / "tomorrow" / "on Thursday" — reads right mid-sentence */
@@ -4360,11 +4366,12 @@ export const useMew = create<MewState>((set, get) => {
       history); part 2 is a new block with the same tag, attention and
       protection. One setBlocks under the wrapper's single snapshot, so one undo
       takes the whole split back, and a work split paces rest like a placement. */
-  function execSplit(
-    query: string,
-    around: { startMin: number; endMin: number } | { query: string; at?: string },
-    opts: { at?: string; tailMin?: number; dayOffset?: number; scope?: RecurScope } = {}
-  ): string {
+  /* one named object (#165) — see SplitArgs. `opts` used to arrive as a third
+     positional bag; its fields are now siblings of query and around, and the
+     body reads them through the same `opts` name so nothing below moved. */
+  function execSplit(args: SplitArgs): string {
+    const { query, around } = args
+    const opts: { at?: string; tailMin?: number; dayOffset?: number; scope?: RecurScope } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -5214,10 +5221,11 @@ export const useMew = create<MewState>((set, get) => {
     return `${CHOICES_POSTED}: ${scenarios.map((sc) => `"${sc.name}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
   }
 
-  function execRemove(
-    query: string,
-    opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = {}
-  ): string {
+  /* one named object (#165) — see RemoveArgs. The body reads its pins through
+     the same `opts` name, so nothing below this line moved. */
+  function execRemove(args: RemoveArgs): string {
+    const { query } = args
+    const opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     /* #62: a named day pins which occurrence; a time alone never reaches across days */
@@ -6261,12 +6269,13 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('edit', { query: q }, () => execEdit(q, patch, at, scope))
         },
-        remove: (q, opts) => {
+        remove: (args) => {
           acted = true
           snapshotForUndo()
           working('taking it off…')
           closeStreamRow()
-          return runChange('remove', { query: q }, () => execRemove(q, opts))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('remove', { query: args.query }, () => execRemove(args))
         },
         analyze: (d) => {
           working('reading your week…')
@@ -6378,12 +6387,15 @@ export const useMew = create<MewState>((set, get) => {
             () => execBatch(selector, op, confirmCount, confirmToken, scope)
           )
         },
-        merge: (q, dayOffset, at) => {
+        merge: (args) => {
           acted = true
           snapshotForUndo()
           working('merging them…')
           closeStreamRow()
-          return runChange('merge', { query: q, dayOffset }, () => execMerge(q, dayOffset, at))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('merge', { query: args.query, dayOffset: args.dayOffset }, () =>
+            execMerge(args)
+          )
         },
         relativeMove: (q, direction, amountMin, at) => {
           acted = true
@@ -6394,12 +6406,13 @@ export const useMew = create<MewState>((set, get) => {
             execRelativeMove(q, direction, amountMin, at)
           )
         },
-        split: (q, around, opts) => {
+        split: (args) => {
           acted = true
           snapshotForUndo()
           working('splitting it…')
           closeStreamRow()
-          return runChange('split', { query: q }, () => execSplit(q, around, opts))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('split', { query: args.query }, () => execSplit(args))
         },
         giveRoom: (focusClass) => {
           acted = true

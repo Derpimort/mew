@@ -175,6 +175,58 @@ export interface MoveArgs {
   fromDayOffset?: number
 }
 
+/** Everything `merge` needs, by name (#165). Same rule as MoveArgs: the wrapper
+    forwards this object whole, because naming the fields alone would not stop a
+    rebuilt object dropping an optional one. */
+export interface MergeArgs {
+  /** the blocks to merge, as the owner named them */
+  query: string
+  /** days from today of the pair to merge, when the ask named a day */
+  dayOffset?: number
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+}
+
+/** Everything `split` needs, by name (#165). The opts bag is flattened in: one
+    object per call rather than two positions and a bag, and the wrapper forwards
+    it whole. */
+export interface SplitArgs {
+  /** the block to split, as the owner named it */
+  query: string
+  /** the gap to split around: a clock range, or another block (its title words
+      plus `at`, e.g. the 1pm call) */
+  around: { startMin: number; endMin: number } | { query: string; at?: string }
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+  /** how long the second piece runs — the rescue chip's "keep Nm after"; without
+      it part 2 keeps the rest of the block's length */
+  tailMin?: number
+  /** days from today of the one to split */
+  dayOffset?: number
+  /** how a RECURRING block's split lands; omit on a series block and the
+      executor asks with this/following/series chips */
+  scope?: 'this' | 'following' | 'series'
+}
+
+/** Everything `remove` needs, by name (#165). The opts bag is flattened in, so
+    there is one object to forward whole rather than a query and a bag that can
+    drift apart. */
+export interface RemoveArgs {
+  /** the blocks to remove, as the owner named them */
+  query: string
+  /** the start time pinning which of several same-named blocks to drop */
+  at?: string
+  /** drop every match rather than asking */
+  all?: boolean
+  /** #343: how a RECURRING block's delete lands — 'this' drops the next
+      occurrence alone, 'following' splits the series and drops from that day
+      forward, 'series' clears the whole linked set. Omit it on a series block
+      and the executor asks with this/following/series chips. */
+  scope?: 'this' | 'following' | 'series'
+  /** #62: days from today of the one to remove — with `at`, pins one occurrence */
+  dayOffset?: number
+}
+
 export interface ToolExecutor {
   plan(places: PlaceSpec[], frees: FreeSpec[]): string
   /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
@@ -202,16 +254,7 @@ export interface ToolExecutor {
       next occurrence alone, 'following' splits the series and drops from that day
       forward, 'series' clears the whole linked set (as all:true does). Omit it on
       a series block and the executor asks with this/following/series chips. */
-  remove(
-    query: string,
-    opts?: {
-      at?: string
-      all?: boolean
-      scope?: 'this' | 'following' | 'series'
-      /** #62: days from today of the one to remove — with `at`, pins one occurrence */
-      dayOffset?: number
-    }
-  ): string
+  remove(args: RemoveArgs): string
   /** Read-only day x-ray: dead gaps, overlong streaks, missing buffers, load. */
   analyze(dayOffset: number): string
   /** Read-only itemized readout of the live week (#333) — each block's exact
@@ -334,7 +377,7 @@ export interface ToolExecutor {
       owner's own open, one-off blocks of one tag merge, and only across free
       air: a fixed call, a [calendar] event, a done block or another block in
       the span means nothing changes, and the reply says which. */
-  merge(query: string, dayOffset?: number, at?: string): string
+  merge(args: MergeArgs): string
   /** Batch (#75): ONE op over the blocks a selector picks on one day — shift by
       minutes, or move to another day. A wide batch (3+ blocks, or any move to
       another day) is OFFERED first as a confirm naming every block it moves and
@@ -380,16 +423,7 @@ export interface ToolExecutor {
       after"). A calendar block is never split, a series occurrence asks this /
       following / series first (or takes `scope`), and part 2 lands only in free
       time. `at` pins which of several same-named blocks; `dayOffset` the day. */
-  split(
-    query: string,
-    around: { startMin: number; endMin: number } | { query: string; at?: string },
-    opts?: {
-      at?: string
-      tailMin?: number
-      dayOffset?: number
-      scope?: 'this' | 'following' | 'series'
-    }
-  ): string
+  split(args: SplitArgs): string
   /** Give the just-placed blocks of one focus class room (#322) — resize them
       LONGER, in place, by the factor the user's OWN completion history shows for
       that kind (deep work vs admin). This is what the "give them room?" chip
