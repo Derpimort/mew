@@ -172,6 +172,39 @@ test('anti-vacuous: no version heading fails rather than passing on an empty set
   assert.match(checkChangelog(PREAMBLE + '## [Unreleased]\n').summary, /links: 0\/0 versions linked/)
 })
 
+test('a keep-both duplicate of [Unreleased] fails in EITHER order (coderpa, #186 review)', () => {
+  /* THE POINT IS ORDER-INDEPENDENCE, not that it fails. `refs` is a Map, so the
+     LAST definition won: the same two lines passed when the merge left the stale
+     one first and failed when it left it second. One developer's resolution would
+     have been green and another's red with identical content. */
+  const stale = `[Unreleased]: ${C}/v0.7.0...HEAD\n`
+  const good = `[Unreleased]: ${C}/v2026.9.0...HEAD\n`
+  const rest = `[2026.9.0]: ${C}/v0.7.0...v2026.9.0\n[0.7.0]: ${C}/v0.6.0...v0.7.0\n`
+  const dup = 'duplicate link reference: "[Unreleased]:"'
+  const staleFirst = checkChangelog(PROMO('\n' + stale + good + rest))
+  const goodFirst = checkChangelog(PROMO('\n' + good + stale + rest))
+  assert.equal(staleFirst.ok, false, 'stale line first')
+  assert.equal(goodFirst.ok, false, 'stale line second')
+  assert.ok(staleFirst.problems.includes(dup), staleFirst.problems.join('; '))
+  assert.ok(goodFirst.problems.includes(dup), goodFirst.problems.join('; '))
+})
+
+test('a keep-both duplicate of the whole link block is named label by label', () => {
+  /* The defect this file was written for — "a keep-both re-sync kept both copies"
+     — applied to the block this guard adds. The duplicate rules above it run only
+     inside [Unreleased], so the block was the one part they could not see. */
+  const r = checkChangelog(PROMO(HEALTHY + HEALTHY))
+  assert.equal(r.ok, false)
+  assert.deepEqual(
+    r.problems.filter((x) => x.startsWith('duplicate link reference')),
+    [
+      'duplicate link reference: "[Unreleased]:"',
+      'duplicate link reference: "[2026.9.0]:"',
+      'duplicate link reference: "[0.7.0]:"',
+    ]
+  )
+})
+
 test('the pure link helpers: labels, file order, and the compare range', () => {
   const { headings, refs } = versionLinks(PROMO(HEALTHY))
   assert.deepEqual(headings, ['Unreleased', '2026.9.0', '0.7.0'])
@@ -180,7 +213,11 @@ test('the pure link helpers: labels, file order, and the compare range', () => {
   assert.equal(compareRange(`${C}/v0.7.0...HEAD`), 'v0.7.0...HEAD')
   assert.equal(compareRange('https://example.com/releases/tag/v0.1.0'), null)
   // A prose link like [semver](…) or a future footnote is not this guard's business.
-  assert.deepEqual(versionLinks('## [Notes]\n[semver]: https://semver.org/\n'), { headings: [], refs: new Map() })
+  assert.deepEqual(versionLinks('## [Notes]\n[semver]: https://semver.org/\n'), {
+    headings: [],
+    refs: new Map(),
+    labels: [],
+  })
 })
 
 test('the committed CHANGELOG.md passes the guard', () => {

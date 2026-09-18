@@ -31,7 +31,10 @@
 // And across the whole file:
 //   - every "## [X.Y.Z]" heading has a matching "[X.Y.Z]:" link reference, and every
 //     version link reference has a heading (a deleted section must not leave one behind);
-//   - "[Unreleased]:" compares v<newest released version>...HEAD.
+//   - "[Unreleased]:" compares v<newest released version>...HEAD;
+//   - no version label is defined twice — a keep-both re-sync duplicates the link
+//     block as readily as it duplicates a section, and a Map lookup would silently
+//     take the last line, making the verdict depend on the order of the merge.
 // Only the *existence* of each version's link is checked, not its range: the range is
 // history and does not always read v<prev>...v<this> (e.g. [0.3.0] ends at a bare sha,
 // 26024e7, from before the tag existed). [Unreleased] is the one that must track the
@@ -89,13 +92,22 @@ const isVersionLabel = (label) => label === 'Unreleased' || /^\d+\.\d+\.\d+$/.te
 export function versionLinks(text) {
   const headings = []
   const refs = new Map()
+  /* EVERY reference line in order, duplicates kept. `refs` is a Map, so a second
+     "[Unreleased]:" overwrites the first and the verdict would depend on which
+     order a keep-both merge happened to leave them in — the same two lines
+     passing for one developer and failing for another. The list is what makes
+     that visible; the Map stays for lookup. */
+  const labels = []
   for (const line of text.split('\n')) {
     const h = /^## \[([^\]]+)\]/.exec(line)
     if (h && isVersionLabel(h[1])) headings.push(h[1])
     const r = /^\[([^\]]+)\]:\s*(\S+)/.exec(line)
-    if (r && isVersionLabel(r[1])) refs.set(r[1], r[2])
+    if (r && isVersionLabel(r[1])) {
+      labels.push(r[1])
+      refs.set(r[1], r[2])
+    }
   }
-  return { headings, refs }
+  return { headings, refs, labels }
 }
 
 /** Pure: the compare range of a GitHub compare URL ("v0.7.0...HEAD"), or null. */
@@ -108,7 +120,7 @@ export function compareRange(target) {
  *  Newest = the first version heading in the file, which is the Keep a Changelog order
  *  the whole file (and desktop.yml's release-notes awk) already relies on. */
 export function checkLinks(text) {
-  const { headings, refs } = versionLinks(text)
+  const { headings, refs, labels } = versionLinks(text)
   const released = headings.filter((h) => h !== 'Unreleased')
   // Anti-vacuous: no version headings means the parser stopped matching, not that the
   // file is clean. Every other rule here is "for each heading …" and would pass on an
@@ -124,8 +136,15 @@ export function checkLinks(text) {
     }
   }
   const missing = released.filter((v) => !refs.has(v))
-  const problems = missing.map(
-    (v) => `version [${v}] has a section heading but no link reference — add a "[${v}]: …/compare/…" line at the bottom.`
+  /* The same rule this file already applies to sections and bullets, one block
+     down: a keep-both re-sync duplicates the link block too, and that is the very
+     defect this script was written for — but the duplicate rules above run only
+     INSIDE [Unreleased], so the block was the one part not covered by them. */
+  const problems = duplicates(labels).map((l) => `duplicate link reference: "[${l}]:"`)
+  problems.push(
+    ...missing.map(
+      (v) => `version [${v}] has a section heading but no link reference — add a "[${v}]: …/compare/…" line at the bottom.`
+    )
   )
   for (const label of refs.keys()) {
     if (label !== 'Unreleased' && !headings.includes(label)) {
