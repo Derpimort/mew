@@ -23,6 +23,18 @@ page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
 
 await page.goto(`${base}/?t=${t}`)
 await page.waitForSelector('.nx-stage')
+/* Past the first-run concept tour (#171). This proof predates the tour and
+   nobody ran it afterwards, so it sat red: the tour's `.ob-scrim` is a
+   role=dialog laid over the whole stage, and every `stage.hover()` below timed
+   out on an intercepted pointer event. The failure looked like the dial, and
+   the dial was fine.
+   These are the same two lines `lib/harness.mjs` `boot()` runs, deliberately
+   copied rather than imported: this script builds its own browser and page, and
+   migrating it to the harness the night before a promotion is a bigger change
+   than the one that was needed. The WAIT is half the fix — configuring the flag
+   without waiting for the scrim to detach just races it. */
+await page.evaluate(() => window.__mewConfigure?.({ hasSeenOnboarding: true }))
+await page.waitForSelector('.ob-scrim', { state: 'detached', timeout: 5000 }).catch(() => {})
 await page.waitForTimeout(900)
 
 const stage = page.locator('.nx-stage')
