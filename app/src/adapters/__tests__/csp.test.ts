@@ -118,7 +118,7 @@ describe.skipIf(!existsSync(DIST_HTML))('CSP — built bundle has no inline styl
   })
 })
 
-/* ── SRI decision guard (follow-up to #198; ARCHITECTURE §8 + D11) ───────────
+/* ── SRI decision guard (follow-up to mew-archive#198; ARCHITECTURE §8 + D11) ─
    Subresource Integrity was deliberately NOT adopted: the self-hosted bundle is
    same-origin + Vite content-hashed (integrity-by-name), and the only cross-origin
    script — Google Identity Services — rotates with no stable hash and is injected
