@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "node scripts/check-test-structure.mjs && eslint .",
+    "lint": "node scripts/check-test-structure.mjs && node scripts/check-shoot-reachable.mjs && eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier . --write",
     "format:check": "prettier . --check",
@@ -22,6 +22,16 @@
     "shoot:onboarding": "node scripts/shoot-onboarding.mjs",
     "shoot:ritual": "node scripts/shoot-ritual.mjs",
     "shoot:scaffold": "node scripts/shoot-scaffold.mjs",
+    "shoot:allday": "node scripts/shoot-allday.mjs",
+    "shoot:console-brain": "node scripts/shoot-console-brain.mjs",
+    "shoot:daypicker": "node scripts/shoot-daypicker.mjs",
+    "shoot:dayview": "node scripts/shoot-dayview.mjs",
+    "shoot:desktop": "node scripts/shoot-desktop.mjs",
+    "shoot:oauth": "node scripts/shoot-oauth.mjs",
+    "shoot:review": "node scripts/shoot-review.mjs",
+    "shoot:sustenance": "node scripts/shoot-sustenance.mjs",
+    "shoot:threads": "node scripts/shoot-threads.mjs",
+    "shoot:update": "node scripts/shoot-update.mjs",
     "prepare": "cd .. && husky || true"
   },
   "dependencies": {
