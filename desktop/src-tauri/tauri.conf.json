@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MEW",
-  "version": "2026.9.0",
+  "version": "2026.10.0-rc.1",
   "identifier": "com.derpimort.mew",
   "build": {
     "beforeDevCommand": "pnpm --dir ../app dev",
@@ -46,7 +46,7 @@
     ],
     "windows": {
       "wix": {
-        "version": "26.9.0"
+        "version": "26.10.0"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
