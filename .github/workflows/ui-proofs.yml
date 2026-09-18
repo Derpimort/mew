@@ -102,9 +102,12 @@ jobs:
 
       - run: pnpm build
 
-      # One build, one preview server, twelve proofs against the same bytes.
+      # One build, one preview server, sixteen proofs against the same bytes.
       # Each proof is its own step so a failure names itself in the job summary
       # instead of hiding inside a loop's exit code.
+      # THIS COUNT AND THE TWO BELOW TRACK THE STEP LIST — if you add or remove a
+      # proof, grep this file for the spelled-out number before you push. It has
+      # gone stale once already, in the change that wired the four below.
       - name: serve
         run: |
           pnpm exec vite preview --port 5198 --strictPort &
@@ -145,8 +148,15 @@ jobs:
         run: node scripts/shoot-sustenance.mjs http://localhost:5198
 
       # THE PROOFS MUST NOT DIRTY THE TREE, AND THIS IS THE GUARD THAT COVERS EVERY
-      # ROUTE. Measured on 9fe1a88: all twelve run back to back leave
-      # `git status --porcelain` empty, because every write lands under the
+      # ROUTE. RE-MEASURED FOR SIXTEEN — the twelve-proof figure this line used to
+      # carry was the justification for an assertion that had grown to cover four
+      # more writers, and sixteen is not twelve plus a guess. Two readings:
+      # locally on the 6cac4f31 tree, all sixteen back to back leave
+      # `git status --porcelain` empty (159.32s; the twelve were 132.92s). And in
+      # CI on a clean runner, run 35382513436 — steps 10-25 are the sixteen
+      # proofs, all success, and step 26 is this guard, success. The CI reading is
+      # the load-bearing one: a local `git status` can only suggest this.
+      # Every write lands under the
       # gitignored shots/ paths. With PIN_CANON=1 on a SINGLE proof, seven tracked
       # canon PNGs are modified WHILE THAT PROOF EXITS 0 — a green proof rewriting
       # the evidence it is judged against, which is how canon rots.
@@ -163,7 +173,7 @@ jobs:
             echo "$dirty"
             exit 1
           fi
-          echo "tree clean after all twelve proofs"
+          echo "tree clean after all sixteen proofs"
 
       - uses: actions/upload-artifact@v7
         if: always()
