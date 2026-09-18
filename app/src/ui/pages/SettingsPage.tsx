@@ -3,7 +3,13 @@
    and model settings keep their full behavior, re-skinned. */
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { activePrefsFrom, brainIsOn, mewBrain, useMew, type SidecarStatus } from '../../state/store'
+import {
+  brainIsOn,
+  mewBrain,
+  standingRulebook,
+  useMew,
+  type SidecarStatus,
+} from '../../state/store'
 import {
   DEFAULT_SETTINGS,
   type PetId,
@@ -15,6 +21,7 @@ import { project } from '../../domain/project'
 import { dayKey, fmtTime, minOfDay } from '../../domain/time'
 import { aggregates } from '../../domain/memory'
 import { computeInsights, insightsCard } from '../../domain/insights'
+import { energyProfile } from '../../domain/energy'
 import { Button, Segc, Tgl } from '../primitives'
 import { PETS, petById } from '../primitives/pets'
 import { backupPath, isTauri, openBackupFolder } from '../../adapters/desktop'
@@ -25,6 +32,8 @@ import { memoryConsole } from '../../domain/console'
 import { ApiKeySetupFlow } from '../components/ApiKeySetupFlow'
 import { keySetupView } from '../components/apiKeySetup'
 import SimpleGraph from '../react-bits/simple-graph'
+import { PlannableHoursField } from '../components/PlannableHoursField'
+import { plannableOf } from '../../domain/plannable'
 
 const TAGS: VisibleTag[] = ['work', 'private', 'health']
 const VIS_CLASS = { details: 'det', busy: 'busy', hidden: 'hid' } as const
@@ -225,12 +234,16 @@ function NoticedFromStore() {
 }
 
 /* store → presenter wiring for the memory console (#330): "what I've picked up
-   about you." Reads LOCAL memory alone (activePrefsFrom over local, brain-off
-   by law) into the pure domain presenter, and passes the tools-only edit/forget
-   actions down. The console skin (MemoryConsole) stays headless-testable. */
+   about you." Reads the rulebook the planners apply (standingRulebook: local
+   memory, merged with the brain's list once a brain answered, with brain-only
+   rules marked, #71; brain off it is local memory alone) into the pure domain
+   presenter, and passes the tools-only edit/forget actions down. The console skin (MemoryConsole) stays headless-testable. */
 function MemoryConsoleFromStore() {
   const memory = useMew((s) => s.memory)
   const nowMs = useMew((s) => s.nowMs)
+  /* #71: the applied rulebook — brain-only rules join (marked) once a brain answers */
+  const settings = useMew((s) => s.settings)
+  const brainPrefs = useMew((s) => s.brainPrefs)
   const confirmTaskRule = useMew((s) => s.confirmTaskRule)
   const forgetRule = useMew((s) => s.forgetRule)
   const reEnableRule = useMew((s) => s.reEnableRule)
@@ -238,9 +251,15 @@ function MemoryConsoleFromStore() {
   const forgetStandingPref = useMew((s) => s.forgetStandingPref)
   const data = useMemo(() => {
     const now = new Date(nowMs)
-    const insights = computeInsights(memory, aggregates(memory, now), now)
-    return memoryConsole({ events: memory, prefs: activePrefsFrom(memory, null), insights })
-  }, [memory, nowMs])
+    const agg = aggregates(memory, now)
+    const insights = computeInsights(memory, agg, now)
+    return memoryConsole({
+      events: memory,
+      ...standingRulebook({ memory, settings, brainPrefs }),
+      insights,
+      energy: energyProfile(memory, agg, now), // #15: the band × task-type rows
+    })
+  }, [memory, nowMs, settings, brainPrefs])
   return (
     <MemoryConsole
       data={data}
@@ -1047,6 +1066,16 @@ function NudgesCard() {
             {quietLabel}
           </button>
         </span>
+      </SetRow>
+      {/* #22: the plannable day — its own fact; quiet hours never shorten it */}
+      <SetRow
+        t="Plannable hours"
+        s="Where MEW places and suggests time. Separate from quiet hours."
+      >
+        <PlannableHoursField
+          hours={plannableOf(settings)}
+          onCommit={(hours) => updateSettings({ plannableHours: hours })}
+        />
       </SetRow>
       <SetRow
         t="Morning brief"

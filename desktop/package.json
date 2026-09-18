@@ -1,12 +1,13 @@
 {
   "name": "mew-desktop",
   "private": true,
-  "version": "0.6.0-rc.1",
+  "version": "2026.9.0",
   "scripts": {
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
     "icon": "tauri icon ./icon-src.png",
+    "test": "node --test scripts/__tests__/*.test.mjs",
     "audit": "osv-scanner scan source --lockfile pnpm-lock.yaml",
     "audit:desktop": "cargo audit --deny warnings --file src-tauri/Cargo.lock"
   },

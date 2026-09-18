@@ -273,7 +273,8 @@ describe('duplicate copies a block; the original stays put (#335)', () => {
     await fresh([block({ id: 'deck', startMin: 9 * 60, endMin: 10 * 60 })], [], 'local')
     // keyed turn: duplicate the deck starting tomorrow, DAILY for 3 days
     scriptedModel.midTurn = (exec) =>
-      exec.duplicate('deck', {
+      exec.duplicate({
+        query: 'deck',
         toDayOffset: 1,
         rrule: { freq: 'DAILY', interval: 1, count: 3 },
       })

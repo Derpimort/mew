@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Block } from '../../domain/types'
 import { useMew } from '../../state/store'
-import { isBackground, isFixedTime } from '../../domain/week'
+import { isAllDay, isBackground, isFixedTime } from '../../domain/week'
 import {
   type ColRect,
   type DragState,
@@ -26,8 +26,10 @@ import {
 const DRAG_THRESHOLD = 4
 /* same transparency rule the domain uses (conflictsWith / findFreeSlot): an
    optional block holds no slot unless it's fixed-time; a background block never
-   holds the slot. Kept identical so the live ghost glow matches a real drop. */
-const transparent = (b: Block): boolean => (!!b.optional && !isFixedTime(b)) || isBackground(b)
+   holds the slot, nor does an all-day label (#27). Kept identical so the live
+   ghost glow matches a real drop. */
+const transparent = (b: Block): boolean =>
+  (!!b.optional && !isFixedTime(b)) || isBackground(b) || isAllDay(b)
 
 export interface GridDrag {
   /** live drag, or null when idle — the view dims the source + renders the ghost */

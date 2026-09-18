@@ -584,9 +584,12 @@ describe('a seeded Tuesday morning', () => {
       expect(msg.role).toBe('mew')
       expect(msg.body).toMatch(/2 "prod release" blocks ahead/)
       expect(msg.choices).toBeDefined()
-      expect(msg.choices!.map((c) => c.label)).toEqual(['the 14:00', 'the 10:00', 'both'])
-      expect(msg.choices!.find((c) => c.label === 'the 14:00')!.reply).toBe(
-        'remove prod release 14:00'
+      /* #161: the candidates sit on different days, so each chip names its day —
+         the question now reads these same words, and "the 14:00" alone never told
+         the owner WHICH 14:00 they were dropping */
+      expect(msg.choices!.map((c) => c.label)).toEqual(['today 14:00', 'tomorrow 10:00', 'both'])
+      expect(msg.choices!.find((c) => c.label === 'today 14:00')!.reply).toBe(
+        'remove prod release today at 14:00'
       )
       expect(msg.choices!.find((c) => c.label === 'both')!.reply).toBe('remove all prod release')
       /* the floor stayed quiet: exactly one message asks, nothing dropped yet */
@@ -596,12 +599,12 @@ describe('a seeded Tuesday morning', () => {
 
     it('a pick posts the reply as a user turn, resolves the removal, and goes inert', async () => {
       const msg = await twoProdReleases()
-      const pick = msg.choices!.find((c) => c.label === 'the 14:00')!
+      const pick = msg.choices!.find((c) => c.label === 'today 14:00')!
       await useMew.getState().pickChoice(msg.id, pick.id)
 
       /* the pick IS an ordinary user message — the model saw a normal turn */
       const userTurns = chat().filter((m) => m.role === 'user')
-      expect(userTurns[userTurns.length - 1].body).toBe('remove prod release 14:00')
+      expect(userTurns[userTurns.length - 1].body).toBe('remove prod release today at 14:00')
       expect(lastMsg().body).toMatch(/^Removed — /)
 
       /* the week changed through the remove tool, not through the chips */
@@ -652,7 +655,7 @@ describe('a seeded Tuesday morning', () => {
       await useMew.getState().hydrate()
       const back = chat().find((m) => m.id === msg.id)!
       expect(back.choices).toBeDefined()
-      expect(back.choices!.map((c) => c.label)).toEqual(['the 14:00', 'the 10:00', 'both'])
+      expect(back.choices!.map((c) => c.label)).toEqual(['today 14:00', 'tomorrow 10:00', 'both'])
       expect(back.choices![0].picked).toBe(true)
     })
 
@@ -662,11 +665,14 @@ describe('a seeded Tuesday morning', () => {
       let result = ''
       scriptedModel.chunks = ['on it.']
       scriptedModel.midTurn = (exec) => {
-        result = exec.offerChoices('where should the deck live?', [
-          { label: '15:00', reply: 'place the deck at 15:00' },
-          { label: '16:30', reply: 'place the deck at 16:30' },
-          { label: 'pick for me', reply: 'pick a slot for the deck yourself' },
-        ])
+        result = exec.offerChoices({
+          prompt: 'where should the deck live?',
+          options: [
+            { label: '15:00', reply: 'place the deck at 15:00' },
+            { label: '16:30', reply: 'place the deck at 16:30' },
+            { label: 'pick for me', reply: 'pick a slot for the deck yourself' },
+          ],
+        })
       }
       await say('find a slot for the deck')
 
@@ -1571,8 +1577,8 @@ describe('#323 — meals stay sane under packing/reshape', () => {
     scriptedModel.midTurn = (exec) => {
       // the transcript itself: MEW squeezed lunch to 15:19 and placed dinner
       // 18:15 — both derived by the model, neither startStated
-      result = exec.plan(
-        [
+      result = exec.plan({
+        places: [
           { title: 'Lunch', tag: 'private', dayOffset: 0, startMin: 15 * 60 + 19, durationMin: 45 },
           {
             title: 'Dinner',
@@ -1582,8 +1588,8 @@ describe('#323 — meals stay sane under packing/reshape', () => {
             durationMin: 60,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('pack my afternoon')
 
@@ -3487,7 +3493,7 @@ describe('nudges defer until the turn completes', () => {
     /* the model streams a two-part reply and completes the deck between the
        parts — exactly the mid-stream tool call that used to splice a card in */
     scriptedModel.chunks = ['On it — ', 'marked done.']
-    scriptedModel.midTurn = (exec) => exec.complete(target.title)
+    scriptedModel.midTurn = (exec) => exec.complete({ query: target.title })
     await say('finish the deck')
 
     const nu = lastNudge('next-up')
@@ -3509,7 +3515,7 @@ describe('nudges defer until the turn completes', () => {
     scriptedModel.midTurn = (exec) => {
       // first chunk already streamed (thinking flipped false) — the nudge fired
       // here must STILL be held by the in-flight turn, not posted
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
       midTurnCount = chat().filter((m) => m.role === 'nudge' && m.nudgeType === 'next-up').length
     }
     await say('finish the deck')
@@ -3529,7 +3535,7 @@ describe('nudges defer until the turn completes', () => {
       // the reasoning is already pinned to the streamed reply before the tool runs
       const streaming = chat().find((m) => m.role === 'mew' && m.body.includes('On it'))
       plannedBeforeAction = streaming?.reasoning
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
     }
     await say('finish the deck')
 
@@ -3560,7 +3566,7 @@ describe('nudges defer until the turn completes', () => {
     scriptedModel.chunks = ['Working on it… ']
     scriptedModel.throwAfter = true // hiccup after the tool call
     scriptedModel.midTurn = (exec) => {
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
     }
     await say('finish the deck')
     expect(useMew.getState().thinking).toBe(false)
@@ -3597,7 +3603,7 @@ describe('the working-status label tracks the turn', () => {
     let midTurnLabel: string | null = '<unset>'
     scriptedModel.chunks = ['On it — ', 'marked done.']
     scriptedModel.midTurn = (exec) => {
-      exec.complete(target.title) // the executor sets the live label
+      exec.complete({ query: target.title }) // the executor sets the live label
       midTurnLabel = working()
     }
     await say('finish the deck')
@@ -3615,7 +3621,7 @@ describe('the working-status label tracks the turn', () => {
     scriptedModel.midTurn = (exec) => {
       exec.capture('a stray thought')
       labels.push(working())
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
       labels.push(working())
     }
     await say('jot a thought then finish the deck')
@@ -3675,7 +3681,7 @@ describe('a turn can be stopped mid-stream', () => {
     /* the tool fires (the week mutates), then the user stops mid-turn */
     scriptedModel.chunks = ['On it — ', 'and more.']
     scriptedModel.midTurn = (exec) => {
-      exec.complete(target.title)
+      exec.complete({ query: target.title })
       useMew.getState().stopSpeaking()
     }
     await say('finish the deck and tidy the rest')
@@ -3877,9 +3883,10 @@ describe('a message typed while MEW works queues, then sends exactly once', () =
       /* the chips land mid-turn (fresh, unsuperseded — only the phase gate
          can park them), and the pick fires while the SAME turn still runs:
          `thinking` is already false (a token streamed) but turnInFlight holds */
-      exec.offerChoices('where should the deck live?', [
-        { label: '15:00', reply: 'place the deck at 15:00' },
-      ])
+      exec.offerChoices({
+        prompt: 'where should the deck live?',
+        options: [{ label: '15:00', reply: 'place the deck at 15:00' }],
+      })
       const offer = chat().find((m) => m.choices?.length === 1)!
       thinkingAtPick = useMew.getState().thinking
       void useMew.getState().pickChoice(offer.id, offer.choices![0].id)
@@ -4077,8 +4084,8 @@ describe('recurring blocks (#159)', () => {
     toolResult = ''
     scriptedModel.chunks = ['On it — ', 'placed.']
     scriptedModel.midTurn = (exec) => {
-      toolResult = exec.plan(
-        [
+      toolResult = exec.plan({
+        places: [
           {
             title: 'Pilates',
             tag: 'health',
@@ -4088,8 +4095,8 @@ describe('recurring blocks (#159)', () => {
             rrule: weeklyRule,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('pilates every monday and wednesday at 7 for 12 weeks')
   }
@@ -4135,7 +4142,7 @@ describe('recurring blocks (#159)', () => {
     let removeResult = ''
     scriptedModel.chunks = ['Okay — ', 'cleared them all.']
     scriptedModel.midTurn = (exec) => {
-      removeResult = exec.remove('pilates', { all: true })
+      removeResult = exec.remove({ query: 'pilates', all: true })
     }
     await say('cancel all my pilates sessions')
     expect(useMew.getState().blocks.some((b) => b.title === 'Pilates')).toBe(false)
@@ -4164,8 +4171,8 @@ describe('recurring blocks (#159)', () => {
     useMew.getState().updateSettings({ modelLocation: 'local' })
     scriptedModel.chunks = ['On it.']
     scriptedModel.midTurn = (exec) =>
-      exec.plan(
-        [
+      exec.plan({
+        places: [
           {
             title: 'Journal',
             tag: 'private',
@@ -4175,8 +4182,8 @@ describe('recurring blocks (#159)', () => {
             rrule: { freq: 'DAILY', interval: 1 },
           },
         ],
-        []
-      )
+        frees: [],
+      })
     await say('journal every day')
     // open-ended daily → today + 52 weeks (≈365 days), bounded well under 800
     const journals = useMew.getState().blocks.filter((b) => b.title === 'Journal')
@@ -4207,14 +4214,14 @@ describe('undo an AI action (#162)', () => {
     let placedCount = 0
     scriptedModel.chunks = ['On it — ', 'and undone.']
     scriptedModel.midTurn = (exec) => {
-      placedReply = exec.plan(
-        [
+      placedReply = exec.plan({
+        places: [
           { title: 'audit prep', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 },
           { title: 'budget pass', tag: 'work', dayOffset: 1, startMin: 11 * 60, durationMin: 60 },
           { title: 'vendor sync', tag: 'work', dayOffset: 1, startMin: 13 * 60, durationMin: 30 },
         ],
-        []
-      )
+        frees: [],
+      })
       placedCount = useMew.getState().blocks.length - before
       undoReply = exec.undoLast()
     }
@@ -4237,10 +4244,12 @@ describe('undo an AI action (#162)', () => {
     const tomorrow = addDaysKey(dayKey(TUE(0)), 1)
     scriptedModel.chunks = ['placed it — ', 'and rolled it back.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'dentist', tag: 'health', dayOffset: 1, startMin: 15 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'dentist', tag: 'health', dayOffset: 1, startMin: 15 * 60, durationMin: 60 },
+        ],
+        frees: [],
+      })
       exec.undoLast()
     }
     await say('book the dentist tomorrow at 3 — no wait, undo')
@@ -4256,7 +4265,7 @@ describe('undo an AI action (#162)', () => {
     const { id, dayKey: origDay, startMin: origStart } = deck
     scriptedModel.chunks = ['moving it… ', 'put back.']
     scriptedModel.midTurn = (exec) => {
-      exec.move(deck.title, 3, 14 * 60) // push to +3 days at 14:00
+      exec.move({ query: deck.title, toDayOffset: 3, toStartMin: 14 * 60 }) // push to +3 days at 14:00
       undoSawMoved(id, origDay, origStart) // proves the move landed before undo
       exec.undoLast()
     }
@@ -4274,7 +4283,7 @@ describe('undo an AI action (#162)', () => {
     const memBefore = useMew.getState().memory.filter((e) => e.kind === 'completed').length
     scriptedModel.chunks = ['nice — ', 'oh, reverted.']
     scriptedModel.midTurn = (exec) => {
-      exec.complete(deck.title)
+      exec.complete({ query: deck.title })
       exec.undoLast()
     }
     await say("finished the deck — wait that wasn't done, undo")
@@ -4295,12 +4304,14 @@ describe('undo an AI action (#162)', () => {
     let movedDay = ''
     scriptedModel.chunks = ['working… ', 'last bit undone.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'briefing', tag: 'work', dayOffset: 1, startMin: 10 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'briefing', tag: 'work', dayOffset: 1, startMin: 10 * 60, durationMin: 60 },
+        ],
+        frees: [],
+      })
       const placed = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!
-      exec.move(placed.title, 2, 16 * 60) // move it again — this is the LAST mutation
+      exec.move({ query: placed.title, toDayOffset: 2, toStartMin: 16 * 60 }) // move it again — this is the LAST mutation
       movedDay = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!.dayKey
       exec.undoLast() // reverses only the move, not the plan
     }
@@ -4351,10 +4362,12 @@ describe('undo an AI action (#162)', () => {
     const userTurns = () => chat().filter((m) => m.role === 'user').length
     scriptedModel.chunks = ['placed — ', 'and undone, all good.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'errand', tag: 'work', dayOffset: 1, startMin: 12 * 60, durationMin: 30 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'errand', tag: 'work', dayOffset: 1, startMin: 12 * 60, durationMin: 30 },
+        ],
+        frees: [],
+      })
       exec.undoLast()
     }
     const before = userTurns()
@@ -4372,10 +4385,10 @@ describe('undo an AI action (#162)', () => {
     // turn 1: place then undo — the snapshot is consumed
     scriptedModel.chunks = ['done — ', 'undone.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'sync', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 }],
-        []
-      )
+      exec.plan({
+        places: [{ title: 'sync', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 }],
+        frees: [],
+      })
       exec.undoLast()
     }
     await say('add a sync tomorrow then undo')
@@ -4868,7 +4881,7 @@ describe('tool-call activity cards (#282)', () => {
     useMew.getState().updateSettings({ modelLocation: 'local' })
     const target = deckToday()
     scriptedModel.chunks = ['first — ', 'second.']
-    scriptedModel.midTurn = (exec) => exec.complete(target.title)
+    scriptedModel.midTurn = (exec) => exec.complete({ query: target.title })
     await say('finish the deck')
 
     const c = chat()
@@ -4930,14 +4943,17 @@ describe('tool-call activity cards (#282)', () => {
     useMew.getState().updateSettings({ modelLocation: 'local' })
     scriptedModel.chunks = ['on it.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'deep work', tag: 'work', dayOffset: 1, startMin: 540, durationMin: 60 }],
-        []
-      )
-      exec.offerChoices('keep it?', [
-        { label: 'yes', reply: 'keep it' },
-        { label: 'no', reply: 'undo that' },
-      ])
+      exec.plan({
+        places: [{ title: 'deep work', tag: 'work', dayOffset: 1, startMin: 540, durationMin: 60 }],
+        frees: [],
+      })
+      exec.offerChoices({
+        prompt: 'keep it?',
+        options: [
+          { label: 'yes', reply: 'keep it' },
+          { label: 'no', reply: 'undo that' },
+        ],
+      })
       exec.undoLast()
     }
     await say('plan tomorrow morning')
@@ -5354,11 +5370,14 @@ describe('#293 — plan mode scenario picker', () => {
     scriptedModel.midTurn = (exec) => {
       /* the model posts the picker mid-turn, then a click lands while the
          turn is still mewing — the phase gate must swallow it */
-      exec.proposeScenarios('', [
-        { title: 'deck', tag: 'work' },
-        { title: 'budget review', tag: 'work' },
-        { title: 'inbox sweep', tag: 'work' },
-      ])
+      exec.proposeScenarios({
+        prompt: '',
+        tasks: [
+          { title: 'deck', tag: 'work' },
+          { title: 'budget review', tag: 'work' },
+          { title: 'inbox sweep', tag: 'work' },
+        ],
+      })
       const m = chat().find((x) => (x.scenarios?.length ?? 0) > 0)!
       useMew.getState().pickScenario(m.id, m.scenarios![0].id)
     }
@@ -5447,8 +5466,27 @@ describe('#293 — plan mode scenario picker', () => {
     useMew.getState().updateSettings({ planMode: 'off' })
     await say(BRAINDUMP)
     expect(chat().some((m) => (m.scenarios?.length ?? 0) > 0)).toBe(false)
-    expect(lastMsg().body).toMatch(/^Done — /) // placed in one pass, today's behavior
-    expect(useMew.getState().blocks.some((b) => b.title === 'deck')).toBe(true)
+    /* placed in one pass. #22: the evening is real now, so five land Tuesday
+       (before, two "couldn't hold — the day is full" while 18:30–22:30 sat
+       empty) and the day-load kindness line leads the reply. #116: the sixth
+       has no hour left today from 9:40, so it's named with tomorrow's opening,
+       never back-filled into 8:00–9:00, which had already gone by */
+    expect(lastMsg().body).toMatch(
+      /^that's \S+h of work against your usual \S+ — want me to keep it kind\?$/
+    )
+    for (const title of ['deck', 'budget review', 'gym session', 'inbox sweep', 'errands'])
+      expect(
+        useMew.getState().blocks.some((b) => b.title === title && b.dayKey === dayKey(TUE(9, 40))),
+        title
+      ).toBe(true)
+    expect(useMew.getState().blocks.some((b) => b.title === 'reading time')).toBe(false)
+    expect(
+      chat().some((m) =>
+        m.body.includes(
+          'No 60-min window is left today for "reading time" inside the hours I plan in (8:00–22:30).'
+        )
+      )
+    ).toBe(true)
 
     await fresh(TUE(9, 40))
     useMew.getState().updateSettings({ planMode: 'always' })
@@ -5485,7 +5523,10 @@ describe('#293 — plan mode scenario picker', () => {
       /* one huge task on an empty week: every profile collapses to the same
          earliest fit, the engine dedupes to ONE scenario, and the executor
          suggests it in prose instead of a one-card picker */
-      result = exec.proposeScenarios('', [{ title: 'mega build', tag: 'work', durationMin: 600 }])
+      result = exec.proposeScenarios({
+        prompt: '',
+        tasks: [{ title: 'mega build', tag: 'work', durationMin: 600 }],
+      })
     }
     await say('plan the mega build')
     expect(result).toMatch(/^One shape fits — /)
@@ -5812,10 +5853,13 @@ describe('#304 — the weekly planning ritual', () => {
     let asked = ''
     scriptedModel.chunks = ['reading the week.']
     scriptedModel.midTurn = (exec) => {
-      asked = exec.offerChoices('what matters most this week?', [
-        { label: 'the deck', reply: 'the deck matters most — plan the week around it' },
-        { label: 'the roadmap', reply: 'the roadmap matters most — plan the week around it' },
-      ])
+      asked = exec.offerChoices({
+        prompt: 'what matters most this week?',
+        options: [
+          { label: 'the deck', reply: 'the deck matters most — plan the week around it' },
+          { label: 'the roadmap', reply: 'the roadmap matters most — plan the week around it' },
+        ],
+      })
     }
     await say('plan my week')
     expect(asked).toMatch(/^The options are on screen as clickable chips/)
@@ -5825,11 +5869,14 @@ describe('#304 — the weekly planning ritual', () => {
     /* the answer arrives as the next user turn; the model closes with ONE propose */
     scriptedModel.chunks = ['here are the shapes.']
     scriptedModel.midTurn = (exec) => {
-      exec.proposeScenarios('', [
-        { title: 'The deck', tag: 'work', durationMin: 120 },
-        { title: 'Deep work I', tag: 'work', durationMin: 90 },
-        { title: 'Deep work II', tag: 'work', durationMin: 90 },
-      ])
+      exec.proposeScenarios({
+        prompt: '',
+        tasks: [
+          { title: 'The deck', tag: 'work', durationMin: 120 },
+          { title: 'Deep work I', tag: 'work', durationMin: 90 },
+          { title: 'Deep work II', tag: 'work', durationMin: 90 },
+        ],
+      })
     }
     await useMew.getState().pickChoice(question.id, question.choices![0].id)
     scriptedModel.midTurn = null
@@ -6227,11 +6274,11 @@ describe('reshape without flailing (#325)', () => {
     const seen: string[] = []
     scriptedModel.chunks = ['looking.']
     scriptedModel.midTurn = (exec) => {
-      seen.push(exec.suggestSlots('Dinner', 'private', 45)) // runs
-      seen.push(exec.suggestSlots('Dinner', 'private', 45)) // identical → cached
-      seen.push(exec.suggestSlots('Dinner', 'private', 90)) // different duration → runs
-      seen.push(exec.findSlot(45, 0)) // different tool → runs
-      seen.push(exec.findSlot(45, 0)) // identical → cached
+      seen.push(exec.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 })) // runs
+      seen.push(exec.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 })) // identical → cached
+      seen.push(exec.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 90 })) // different duration → runs
+      seen.push(exec.findSlot({ durationMin: 45, dayOffset: 0 })) // different tool → runs
+      seen.push(exec.findSlot({ durationMin: 45, dayOffset: 0 })) // identical → cached
     }
     await say('find dinner a slot')
 
@@ -6252,8 +6299,8 @@ describe('reshape without flailing (#325)', () => {
     // so meal-sanity keeps it — #323)
     scriptedModel.chunks = ['ok.']
     scriptedModel.midTurn = (exec) =>
-      exec.plan(
-        [
+      exec.plan({
+        places: [
           {
             title: 'Dinner',
             tag: 'private',
@@ -6263,8 +6310,8 @@ describe('reshape without flailing (#325)', () => {
             durationMin: 45,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     await say('dinner at 7')
     scriptedModel.reset()
 
@@ -6274,13 +6321,13 @@ describe('reshape without flailing (#325)', () => {
     // and one move — then done.
     scriptedModel.steps = [
       { text: "you're right — " },
-      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // first: runs
+      { tool: (e) => e.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 }) }, // first: runs
       { text: 'fair point, ' },
-      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
+      { tool: (e) => e.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 }) }, // dedup
       { text: "you're right again, " },
-      { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
+      { tool: (e) => e.suggestSlots({ title: 'Dinner', tag: 'private', durationMin: 45 }) }, // dedup
       { text: 'good catch. ' },
-      { tool: (e) => e.move('Dinner', 0, 20 * 60) }, // the ONE reshape sweep
+      { tool: (e) => e.move({ query: 'Dinner', toDayOffset: 0, toStartMin: 20 * 60 }) }, // the ONE reshape sweep
       { text: 'all set.' },
     ]
     await say('align dinner better — it should be at 8')

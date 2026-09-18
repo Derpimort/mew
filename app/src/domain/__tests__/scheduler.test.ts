@@ -384,6 +384,7 @@ describe('scheduler — driftCollisions (own-vs-own drift #324)', () => {
     expect(r.drifts).toEqual([])
     expect(r.fixed).toEqual([])
     expect(r.stuck).toEqual([]) // neither drifted nor offered — protect-rest owns it
+    expect(r.rests).toEqual([rest]) // #122: named in the placement reply
   })
 
   it('no clean slot → the flexible block is stuck (the offer_choices fallback), not silently overlapped', () => {
@@ -406,7 +407,7 @@ describe('scheduler — driftCollisions (own-vs-own drift #324)', () => {
     const lunch = mk({ title: 'Lunch', tag: 'private', startMin: 12 * 60, endMin: 12 * 60 + 45 })
     const bg = push({ attention: 'background' })
     const r = driftCollisions([lunch, bg], bg, D, NOW)
-    expect(r).toEqual({ drifts: [], fixed: [], stuck: [] })
+    expect(r).toEqual({ drifts: [], fixed: [], stuck: [], rests: [] })
   })
 })
 

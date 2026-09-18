@@ -1,0 +1,39 @@
+name: release-guard
+
+# Release-version guard (CalVer, see .github/RELEASES.md): the config shape, the MSI
+# version mapping and the guard's own cases, on every PR that touches them — and the
+# release-notes guard: [Unreleased] must never repeat a section or a bullet (a keep-both
+# CHANGELOG re-sync did exactly that on the v2026.09 RC; it is the release body).
+# desktop.yml's `check` job only fires on PRs into main, so without this a PR into
+# the RC could break tauri.conf.json or the guard unnoticed until promotion. ~20s.
+#
+# Its own workflow, not a job in ci.yml: ci.yml's path filter is app/**, and a
+# desktop-only change must not pay for typecheck/unit/lint/bundle (~2 runner-minutes
+# each). The job keeps the name `release-guard`, so the check reads the same on PRs.
+on:
+  pull_request:
+    # RC branches are vYYYY.MM-rcN (CalVer, e.g. v2026.09-rc1): 'v*-rc*' matches them;
+    # 'v*-rc' stays for the legacy spelling. See .github/RELEASES.md.
+    branches: [develop, main, 'v*-rc', 'v*-rc*']
+    paths:
+      - 'desktop/src-tauri/tauri.conf.json'
+      - 'desktop/package.json'
+      - 'desktop/scripts/**'
+      - 'CHANGELOG.md'
+      - '.github/workflows/release-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 22 }
+      - run: node desktop/scripts/check-release-version.mjs --shape
+      - run: node --test desktop/scripts/__tests__/check-release-version.test.mjs
+      - run: node desktop/scripts/check-changelog.mjs CHANGELOG.md
+      - run: node --test desktop/scripts/__tests__/check-changelog.test.mjs

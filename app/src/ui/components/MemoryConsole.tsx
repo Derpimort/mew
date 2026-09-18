@@ -76,17 +76,14 @@ export function MemoryConsole({
                 your rhythm
               </div>
               {data.rhythm.map((r) => (
-                <div key={r.claim} data-claim={r.claim} className="set-row">
+                <div key={`${r.claim}:${r.label}`} data-claim={r.claim} className="set-row">
                   <div style={{ minWidth: 0 }}>
                     <div className="rt">{r.label}</div>
                     <div className="rs">{r.value}</div>
                   </div>
                 </div>
               ))}
-              <div style={SRC}>
-                more of your rhythm — deep work vs admin by energy — arrives with energy-aware
-                scheduling.
-              </div>
+              <div style={SRC}>from what you finished in the last four weeks, on this device.</div>
             </>
           )}
 
@@ -305,7 +302,12 @@ function StandingRuleRow({
   }
 
   return (
-    <div data-claim="stated" className="set-row" style={{ alignItems: 'flex-start' }}>
+    <div
+      /* #71: a brain-only rule traces to the brain; a local one to your own words */
+      data-claim={r.fromBrain ? 'brain' : 'stated'}
+      className="set-row"
+      style={{ alignItems: 'flex-start' }}
+    >
       <div style={{ minWidth: 0, flex: 1 }}>
         <div className="rt">{r.match}</div>
         {editing ? (
@@ -337,7 +339,10 @@ function StandingRuleRow({
         ) : (
           <>
             <div className="rs">{r.value}</div>
-            <div style={SRC}>you told me: "{r.stated}"</div>
+            <div style={SRC}>
+              {r.fromBrain ? 'from your brain' : 'you told me'}
+              {r.stated ? `: "${r.stated}"` : ''}
+            </div>
           </>
         )}
       </div>

@@ -145,12 +145,31 @@ const logTail = await page.evaluate(() => {
     .join('\n')
 })
 console.log('log tail:', logTail.slice(-300).replace(/\s+/g, ' '))
+/* #171: both of these asserted WORDS THE PRODUCT NO LONGER SAYS, and the first
+   one's failure text claimed a regression its own evidence refuted — it printed
+   "the split did not shrink the block to the meeting edge" one line under a log
+   showing MEW doing exactly that. The reply now reads
+     Split — rescue drill now runs 15:00–15:30, and rescue drill (part 2) picks
+     up 16:00–17:00, leaving 15:30–16:00 free.
+   so "is now" became "now runs" and "is held for" became "picks up". The second
+   assertion was stale too and invisible behind the first, which means repairing
+   only the reported failure would have turned one red into another.
+   Ruled out before touching them, by running the proof rather than reasoning: not
+   a product bug (the times asserted are exactly the times produced), not a stale
+   read (the split reply is present and last in the captured tail), and not an
+   obsolete proof (the FACTS are unchanged — only the connectives moved).
+   Matched on the fact, not the prose: the subject, a SHORT gap, then its span.
+   The gap is bounded on purpose — every row's text is concatenated into one line,
+   so an unbounded `[^\n]*` would only assert "these two strings both appear
+   somewhere in the tail" and would pass on a reply that paired the wrong block
+   with the wrong time. Ten characters is the real connective; twenty-four leaves
+   room to reword without letting two different messages satisfy one assertion. */
 assert(
-  /rescue drill is now 15:00–15:30/i.test(logTail),
+  /rescue drill[^\n]{0,24}15:00–15:30/i.test(logTail),
   'the split did not shrink the block to the meeting edge'
 )
 assert(
-  /16:00–17:00 is held for rescue drill \(part 2\)/i.test(logTail),
+  /rescue drill \(part 2\)[^\n]{0,24}16:00–17:00/i.test(logTail),
   'the split did not place the kept tail after the meeting'
 )
 await stickToBottom()

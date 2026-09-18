@@ -10,15 +10,31 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 export type {
   ChatTurn,
+  BatchArgs,
+  CompleteArgs,
+  DuplicateArgs,
+  EditArgs,
+  FindSlotArgs,
+  ListBlocksArgs,
+  MergeArgs,
   ModelPort,
+  MoveArgs,
   ToolExecutor,
   WeekContext,
+  OfferChoicesArgs,
   PlaceSpec,
+  PlanArgs,
+  ProposeScenariosArgs,
+  RelativeMoveArgs,
+  ResizeArgs,
+  SuggestSlotsArgs,
+  RemoveArgs,
+  SplitArgs,
   FreeSpec,
   ChoiceOption,
   ScenarioTaskSpec,
 } from './types'
-export { CHOICES_POSTED } from './types'
+export { CHOICES_POSTED } from './choicesPosted'
 export { classifyFailure, type FailureKind } from './retry'
 export type { RemoteProvider } from './aiAdapter'
 /* The guided-setup key probe (#161) — plain fetch, no SDK, so importing it never

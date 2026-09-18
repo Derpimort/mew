@@ -6,8 +6,10 @@
 
    Budgets are the single source of truth here and mirror CONTRIBUTING.md. They
    live just above today's measured sizes so an untouched tree is green while a
-   real regression (e.g. re-bundling react/three/the AI SDK into the main chunk,
-   or +50KB of new app code) trips the gate with a clear message.
+   real regression (e.g. re-bundling react/three/the AI SDK into the eager app,
+   or +50KB of new app code) trips the gate with a clear message. `main` is one
+   SUM, the eager app: the entry chunk plus every chunk it statically imports
+   outside the named families (#80); every other budget rates each chunk alone.
 
    Usage: node scripts/check-bundle-size.mjs [distDir]   (default: ./dist)
    Exit 0 = within budget, 1 = over budget, 2 = no manifest (build first).
@@ -27,16 +29,19 @@ const KB = 1024
 // they get their own (larger) ceilings; every other lazy chunk falls under the
 // strict `lazy` default. See vite.config.ts codeSplitting.groups.
 export const BUDGETS = {
-  // entry (main) chunk — first paint depends on it, kept tightest. Lowered
-  // 370→340 for v0.6 (#340): onboarding, the plan-mode scenario picker, and the
-  // Settings route now lazy-load, so ~52 KB of first-paint-optional UI left the
-  // eager graph (first-load 764→712 KB). This budget bounds the eager APP code
-  // the entry carries (~309 KB today = first-load − vendor); rolldown may keep
-  // that in this one chunk or hoist its shared parts into eager SIBLING chunks
-  // (e.g. Button/rules — first-load, not lazy, so they count under `firstLoad`),
-  // in which case the entry file itself reads smaller. 340 is the real ceiling
-  // on the eager app either way, with modest headroom over 309.
-  main: 340 * KB,
+  // main = the EAGER APP: the entry chunk plus every chunk it statically imports
+  // outside the named families (vendor/three/ai), counted as ONE sum (#80).
+  // Rolldown hoists shared eager code out of the entry into sibling chunks
+  // (Button/rules/primitives today), so the entry file alone reads ~117 KB while
+  // the eager app is ~381 KB. The gate used to rate those siblings as lazy
+  // (300 KB each) and cap only the entry file, so this line never bounded what it
+  // claimed. Re-set 340→440 for v2026.09: v0.6's 309 KB eager app grew to 381 KB
+  // on the RC (the all-day lane and dial badges, plannable hours, the prefs merge)
+  // and ~401 KB with the queue behind it, all unmeasured. 440 keeps v0.6's ~10%
+  // headroom over 401, so +40 KB of new eager app code trips it.
+  // History: 370→340 for v0.6 (#340), when onboarding, the plan-mode picker and
+  // the Settings route went lazy (first-load 764→712 KB).
+  main: 440 * KB,
   // always-loaded vendor split: react, react-dom, zustand, dexie
   vendor: 460 * KB,
   // backstop only: three.js / @react-three were removed (the ambient WebGL anims
@@ -46,11 +51,16 @@ export const BUDGETS = {
   // lazy, only when a model call runs: ai + @ai-sdk/* (off the first-load path).
   // 560→580 for v0.5: the streaming + tool-loop paths grew it ~1 KB past the
   // old line; headroom restored, still lazy so first-load is unaffected.
-  ai: 580 * KB,
+  // 580→620 for v2026.09 (#54): the ai-sdk security group (ai 7.0.92, @ai-sdk/openai
+  // 4.0.58, anthropic 4.0.49, openai-compatible 3.0.43 + provider-utils/gateway)
+  // grew the chunk 550→600 KB, spread across the providers — still lazy, first load
+  // unchanged (~772 KB). Per-provider lazy loading is its own follow-up, not a
+  // security bump's job.
+  ai: 620 * KB,
   // any other lazy chunk (dynamic import())
   lazy: 300 * KB,
   // what a first visit actually downloads: the entry chunk + everything it
-  // statically imports (today: main + vendor). The three / ai chunks are lazy
+  // statically imports (the eager app + vendor). The three / ai chunks are lazy
   // and excluded. This is the budget that maps to "total build < 1.2 MB".
   firstLoad: 1200 * KB,
   // grand total of every JS chunk shipped (uncompressed) — a backstop so no
@@ -66,27 +76,35 @@ export const BUDGETS = {
 const isThreeChunk = (name) => /^three(\.|-|$)|react-three|fiber/i.test(name)
 
 /** Sort one chunk into a budget category by its manifest role + name.
- *  entry → 'main'; a named group chunk → that group; everything else → 'lazy'. */
-export function categorize(chunk) {
+ *  entry → 'main'; a named group chunk → that group; a chunk the entry statically
+ *  imports (`eager`, from eagerFiles) → 'main' too, since it is eager app code the
+ *  entry just didn't keep in its own file (#80); everything else → 'lazy'. */
+export function categorize(chunk, eager = null) {
   if (chunk.isEntry) return 'main'
   if (chunk.name === 'vendor') return 'vendor'
   if (isThreeChunk(chunk.name)) return 'three'
   if (chunk.name === 'ai') return 'ai'
+  if (eager?.has(chunk.file)) return 'main'
   return 'lazy'
 }
 
 /** Pure policy: given the JS chunks ({ file, name, isEntry, bytes }) and a
- *  budget map, return the rated chunks plus total + first-load verdicts and a
- *  list of human-readable failures. `eagerFiles` is the set of chunk `file`s a
- *  first visit downloads (entry + its static imports); when omitted it's
- *  derived from chunk roles (main + vendor) so the function stays pure +
- *  testable. No filesystem, no process. */
+ *  budget map, return the rated chunks plus main + total + first-load verdicts
+ *  and a list of human-readable failures. `eagerFiles` is the set of chunk
+ *  `file`s a first visit downloads (entry + its static imports); when omitted
+ *  it's derived from chunk roles (main + vendor), so main is the entry alone and
+ *  the function stays pure + testable. No filesystem, no process. */
 export function evaluate(chunks, budgets = BUDGETS, eagerFiles = null) {
   const rated = chunks.map((c) => {
-    const category = categorize(c)
-    const budget = budgets[category]
-    return { ...c, category, budget, over: c.bytes > budget }
+    const category = categorize(c, eagerFiles)
+    return { ...c, category, budget: budgets[category] }
   })
+  /* main is one sum over the eager app's files (#80), so its chunks share the
+     verdict; every other category rates each chunk against its own ceiling */
+  const mainChunks = rated.filter((c) => c.category === 'main')
+  const mainBytes = mainChunks.reduce((sum, c) => sum + c.bytes, 0)
+  const mainOver = mainBytes > budgets.main
+  for (const c of rated) c.over = c.category === 'main' ? mainOver : c.bytes > c.budget
   const totalBytes = rated.reduce((sum, c) => sum + c.bytes, 0)
   const totalOver = totalBytes > budgets.total
 
@@ -96,8 +114,17 @@ export function evaluate(chunks, budgets = BUDGETS, eagerFiles = null) {
   const firstLoadOver = firstLoadBytes > budgets.firstLoad
 
   const failures = []
+  if (mainOver) {
+    const parts = [...mainChunks]
+      .sort((a, b) => b.bytes - a.bytes)
+      .map((c) => `${c.file} ${kb(c.bytes)}`)
+      .join(' + ')
+    failures.push(
+      `main (the eager app: ${parts}) is ${kb(mainBytes)} — over the ${kb(budgets.main)} main budget by ${kb(mainBytes - budgets.main)}.`
+    )
+  }
   for (const c of rated) {
-    if (c.over) {
+    if (c.over && c.category !== 'main') {
       failures.push(
         `${c.file} (${c.category}) is ${kb(c.bytes)} — over the ${kb(c.budget)} ${c.category} budget by ${kb(c.bytes - c.budget)}.`
       )
@@ -116,6 +143,9 @@ export function evaluate(chunks, budgets = BUDGETS, eagerFiles = null) {
 
   return {
     chunks: rated,
+    mainBytes,
+    mainBudget: budgets.main,
+    mainOver,
     totalBytes,
     totalBudget: budgets.total,
     firstLoadBytes,
@@ -137,8 +167,10 @@ export function formatReport(result) {
     .sort((a, b) => b.bytes - a.bytes)
     .map((c) => {
       const mark = c.over ? '🔴' : '✅'
-      return `| ${mark} | \`${c.file}\` | ${c.category} | ${kb(c.bytes)} | ${kb(c.budget)} |`
+      const budget = c.category === 'main' ? 'in main' : kb(c.budget)
+      return `| ${mark} | \`${c.file}\` | ${c.category} | ${kb(c.bytes)} | ${budget} |`
     })
+  const mainMark = result.mainOver ? '🔴' : '✅'
   const firstLoadMark = result.firstLoadOver ? '🔴' : '✅'
   const totalMark = result.totalOver ? '🔴' : '✅'
   return [
@@ -147,6 +179,7 @@ export function formatReport(result) {
     '| | chunk | category | size | budget |',
     '| --- | --- | --- | ---: | ---: |',
     ...rows,
+    `| ${mainMark} | **main** (entry + its static non-vendor chunks) | | **${kb(result.mainBytes)}** | **${kb(result.mainBudget)}** |`,
     `| ${firstLoadMark} | **first load** (eager) | | **${kb(result.firstLoadBytes)}** | **${kb(result.firstLoadBudget)}** |`,
     `| ${totalMark} | **total** | | **${kb(result.totalBytes)}** | **${kb(result.totalBudget)}** |`,
     '',

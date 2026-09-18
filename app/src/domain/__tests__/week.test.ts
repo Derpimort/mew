@@ -71,7 +71,8 @@ describe('week model', () => {
   })
 
   it('returns null when the day cannot hold the duration', () => {
-    const blocks = [mk({ startMin: 8 * 60, endMin: 18 * 60 })]
+    // #22: the default window runs to the plannable end (22:30), so "full" means through 22:00
+    const blocks = [mk({ startMin: 8 * 60, endMin: 22 * 60 })]
     expect(findFreeSlot(blocks, D, 60)).toBeNull()
   })
 
@@ -93,6 +94,31 @@ describe('week model', () => {
       endMin: 10 * 60,
       status: 'open',
     })
+  })
+
+  it('a day holding only MEW’s own scaffolding is not clear (#144 review M4)', () => {
+    /* the scaffolding is filtered out of the day's items, so what keeps an
+       all-scaffolding day from reading "clear, rest earned" is the length guard */
+    const lunch = mk({
+      title: 'Lunch',
+      tag: 'private',
+      startMin: 12 * 60,
+      endMin: 12 * 60 + 45,
+      placedBy: 'sustenance',
+    })
+    const dinner = mk({
+      title: 'Dinner',
+      tag: 'private',
+      startMin: 18 * 60 + 30,
+      endMin: 19 * 60 + 30,
+      placedBy: 'sustenance',
+    })
+    expect(dayClear([lunch, dinner], D)).toBe(false)
+    /* with one of the owner's own blocks, done, the day is clear even though
+       the seeded meals are still open */
+    const own = mk({ startMin: 9 * 60, endMin: 10 * 60 })
+    expect(dayClear(complete([own, lunch, dinner], own.id, 0), D)).toBe(true)
+    expect(dayClear([own, lunch, dinner], D)).toBe(false)
   })
 
   it('dayClear ignores rest blocks and needs every task done', () => {
@@ -387,7 +413,8 @@ describe('week model', () => {
         endMin: 20 * 60 + 5,
       })
       const next = nextSlotAfter([board, rest], board, 19 * 60 + 50)
-      expect(next).toMatchObject({ dayKey: D, startMin: 20 * 60 + 5 })
+      // later in the evening, after the break (ends 20:05) — #22: at the round 20:30
+      expect(next).toMatchObject({ dayKey: D, startMin: 20 * 60 + 30 })
     })
 
     it('falls to tomorrow morning when the evening is full', () => {
@@ -539,9 +566,10 @@ describe('week model', () => {
       const own = mk({ id: 'own', startMin: 9 * 60, endMin: 9 * 60 + 30 })
       const m = meeting({ id: 'm', startMin: 9 * 60 + 10, endMin: 9 * 60 + 40 }) // buffer 30 → [8:40,10:10]
       // sorting by inflated start is what keeps the 60-min fit off the meeting's buffer
+      // #22: clear of the buffer (ends 10:10), at the round 10:30
       expect(findFreeSlot([own, m], D, 60, 8 * 60, 18 * 60, 30)).toEqual({
-        startMin: 10 * 60 + 10,
-        endMin: 11 * 60 + 10,
+        startMin: 10 * 60 + 30,
+        endMin: 11 * 60 + 30,
       })
     })
   })
@@ -920,8 +948,8 @@ describe('nextFreeSlot — the cross-day "next free slot" search (#335)', () => 
   })
 
   it('rolls forward to the next day when today is packed to the cap', () => {
-    // fill the whole working day so nothing fits today → the search steps to D+1
-    const full = [mk({ startMin: 8 * 60, endMin: 18 * 60 + 30 })]
+    // fill the whole plannable day (#22: 8:00–22:30) so nothing fits today → the search steps to D+1
+    const full = [mk({ startMin: 8 * 60, endMin: 22 * 60 + 30 })]
     const slot = nextFreeSlot(full, D, 8 * 60, 60)
     expect(slot).toEqual({ dayKey: '2026-06-10', startMin: 8 * 60 })
   })
@@ -938,10 +966,10 @@ describe('nextFreeSlot — the cross-day "next free slot" search (#335)', () => 
   })
 
   it('returns null when nothing fits inside the horizon', () => {
-    // every day full across a 1-day horizon
+    // every plannable day (#22: 8:00–22:30) full across a 1-day horizon
     const wall = [
-      mk({ dayKey: D, startMin: 8 * 60, endMin: 18 * 60 + 30 }),
-      mk({ dayKey: '2026-06-10', startMin: 8 * 60, endMin: 18 * 60 + 30 }),
+      mk({ dayKey: D, startMin: 8 * 60, endMin: 22 * 60 + 30 }),
+      mk({ dayKey: '2026-06-10', startMin: 8 * 60, endMin: 22 * 60 + 30 }),
     ]
     expect(nextFreeSlot(wall, D, 8 * 60, 60, 1)).toBeNull()
   })

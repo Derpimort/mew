@@ -2,8 +2,9 @@
    source of truth; everything here is synchronous and side-effect free. */
 
 import type { Block, Capture, PrefPayload, Tag } from './types'
+import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
 import { flexOverride, parseTimeValue } from './prefs'
-import { addDaysKey, fmtTime, uid } from './time'
+import { addDaysKey, fmtTime, snapStart, uid } from './time'
 
 /** Background holds the clock, not the user — a different axis from
     optional (which holds no time at all). Undefined ⇒ focus. */
@@ -11,6 +12,30 @@ export function isBackground(b: Block): boolean {
   return b.attention === 'background'
 }
 
+/** All-day holds neither time nor you — a label on the day (#27). The ONE
+    predicate every time-claim reader skips on: slot search, conflicts, load,
+    live-now, rescue, nudges, insights. */
+export function isAllDay(b: Block): boolean {
+  return b.allDay === true
+}
+
+/** The all-day entries labelling `dayKey` — a multi-day span (dayKey …
+    endDayKey, inclusive) labels every day it covers, not only its first.
+    Rolled blocks stay out, same as blocksForDay. */
+export function allDayOn(blocks: Block[], dayKey: string): Block[] {
+  return blocks
+    .filter(
+      (b) =>
+        isAllDay(b) &&
+        b.status !== 'rolled' &&
+        b.dayKey <= dayKey &&
+        dayKey <= (b.endDayKey ?? b.dayKey)
+    )
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.title.localeCompare(b.title))
+}
+
+/* The classic working day: close-the-loop (dayEndMin) and the load math read
+   it. Placement reads the plannable hours instead (#22) — the evening exists. */
 export const DAY_START = 8 * 60
 export const DAY_END = 18 * 60 + 30
 export const LOAD_SCALE_MIN = 10 * 60 // week-rail bars are % of a 10h day
@@ -25,9 +50,10 @@ export function duration(b: Block): number {
   return b.endMin - b.startMin
 }
 
-/** Deep work = a work block of an hour or more. Used for load math + realistic best. */
+/** Deep work = a work block of an hour or more. Used for load math + realistic best.
+    An all-day label is never deep work, whatever its span. */
 export function isDeep(b: Block): boolean {
-  return b.tag === 'work' && duration(b) >= 60
+  return b.tag === 'work' && !isAllDay(b) && duration(b) >= 60
 }
 
 /** Day load by rail segment (health rides with private in the bars; legend stays work/private/rest). */
@@ -37,7 +63,7 @@ export function loadBySegment(
 ): { work: number; priv: number; rest: number } {
   const out = { work: 0, priv: 0, rest: 0 }
   for (const b of blocksForDay(blocks, dayKey)) {
-    if (b.optional) continue // tentative time isn't load
+    if (b.optional || isAllDay(b)) continue // tentative time and day labels aren't load
     const d = duration(b)
     if (b.tag === 'work') out.work += d
     else if (b.tag === 'rest') out.rest += d
@@ -66,12 +92,12 @@ export interface Rollup {
 
 /** How much the matching blocks have eaten across `dayKeys` — real sums from
     the live week, never an estimate. Optional blocks hold no time and stay
-    out, same as load math. */
+    out, same as load math; so do all-day labels. */
 export function rollup(blocks: Block[], dayKeys: string[], match: (b: Block) => boolean): Rollup {
   const days = new Set(dayKeys)
   const out: Rollup = { plannedMin: 0, doneMin: 0, done: 0, open: 0, rolled: 0 }
   for (const b of blocks) {
-    if (!days.has(b.dayKey) || b.optional || !match(b)) continue
+    if (!days.has(b.dayKey) || b.optional || isAllDay(b) || !match(b)) continue
     if (b.status === 'rolled') {
       out.rolled++
       continue // a rolled block's time moved with it — counting both doubles it
@@ -108,7 +134,8 @@ export function isFixedTime(b: Block, prefs: PrefPayload[] = []): boolean {
 /** Open, time-holding blocks overlapping [startMin,endMin) that day. Optional
     blocks are transparent — unless they're fixed-time (a tentative interview
     still matters). Background blocks are transparent unconditionally: they
-    hold the clock, not the slot — meetings place straight over them. */
+    hold the clock, not the slot — meetings place straight over them. All-day
+    labels hold no slot at all: MEW schedules straight through a holiday. */
 export function conflictsWith(
   blocks: Block[],
   dayKey: string,
@@ -123,6 +150,7 @@ export function conflictsWith(
       b.status === 'open' &&
       (!b.optional || isFixedTime(b, prefs)) &&
       !isBackground(b) &&
+      !isAllDay(b) &&
       overlaps(b.startMin, b.endMin, startMin, endMin)
   )
 }
@@ -142,8 +170,8 @@ export function findFreeSlot(
   blocks: Block[],
   dayKey: string,
   durationMin: number,
-  windowStart = DAY_START,
-  windowEnd = DAY_END,
+  windowStart = DEFAULT_PLANNABLE_HOURS.startMin,
+  windowEnd = DEFAULT_PLANNABLE_HOURS.endMin,
   /* #302: EXTERNAL meetings inflate by bufferMin (via busySpan) so an
      auto-slotted placement keeps clear of a meeting's edges; default 0 ⇒
      byte-identical. Inflate THEN sort — a left-inflated meeting can precede an
@@ -152,19 +180,23 @@ export function findFreeSlot(
 ): { startMin: number; endMin: number } | null {
   /* optional events don't hold time — except fixed-time ones (a tentative
      interview is still an interview; auto-placement keeps clear of it).
-     background blocks don't hold the slot either: place right over them */
+     background blocks don't hold the slot either: place right over them.
+     all-day labels are transparent: people work on holidays */
   const day = blocksForDay(blocks, dayKey)
-    .filter((b) => (!b.optional || isFixedTime(b)) && !isBackground(b))
+    .filter((b) => (!b.optional || isFixedTime(b)) && !isBackground(b) && !isAllDay(b))
     .map((b) => busySpan(b, bufferMin))
     .sort((a, b) => a.startMin - b.startMin)
+  /* #22: every gap's start snaps to a human time (snapStart) — a quarter-hour
+     cursor stays put, so already-round inputs land byte-identically */
   let cursor = windowStart
   for (const b of day) {
     if (b.endMin <= cursor) continue
-    if (b.startMin - cursor >= durationMin) break
+    const fit = snapStart(cursor, Math.min(b.startMin, windowEnd) - durationMin)
+    if (fit != null) return { startMin: fit, endMin: fit + durationMin }
     cursor = Math.max(cursor, b.endMin)
   }
-  if (cursor + durationMin > windowEnd) return null
-  return { startMin: cursor, endMin: cursor + durationMin }
+  const fit = snapStart(cursor, windowEnd - durationMin)
+  return fit == null ? null : { startMin: fit, endMin: fit + durationMin }
 }
 
 /** The soonest genuinely clear window of `durationMin`, scanning `todayKey`
@@ -180,12 +212,13 @@ export function nextFreeSlot(
   fromMin: number,
   durationMin: number,
   horizonDays = 13,
-  bufferMin = 0
+  bufferMin = 0,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: the owner's plannable day
 ): { dayKey: string; startMin: number } | null {
   for (let off = 0; off <= horizonDays; off++) {
     const key = addDaysKey(todayKey, off)
-    const windowStart = off === 0 ? Math.max(DAY_START, fromMin) : DAY_START
-    const slot = findFreeSlot(blocks, key, durationMin, windowStart, DAY_END, bufferMin)
+    const windowStart = off === 0 ? Math.max(hours.startMin, fromMin) : hours.startMin
+    const slot = findFreeSlot(blocks, key, durationMin, windowStart, hours.endMin, bufferMin)
     if (slot) return { dayKey: key, startMin: slot.startMin }
   }
   return null
@@ -196,6 +229,13 @@ export function nextFreeSlot(
     the time owns its slot (schedule around it) — the block itself is still
     fully editable/removable. The two are different facts. */
 export function contextMarkers(b: Block): string {
+  /* an all-day entry reads as a day label, tag-neutral — its clock span is
+     not a time it holds, so the model never has to explain one away (#27) */
+  if (isAllDay(b)) {
+    const parts = [b.endDayKey ? `all-day through ${b.endDayKey}` : 'all-day']
+    if (b.external) parts.push('calendar')
+    return parts.join(', ')
+  }
   const parts = [b.tag as string]
   if (b.external) parts.push('calendar')
   else if (isFixedTime(b)) parts.push('fixed')
@@ -233,6 +273,7 @@ export function overlappingFocus(blocks: Block[], target: Block): Block[] {
       b.id !== target.id &&
       b.status === 'open' &&
       (b.attention ?? 'focus') === 'focus' &&
+      !isAllDay(b) &&
       overlaps(b.startMin, b.endMin, target.startMin, target.endMin)
   )
 }
@@ -258,7 +299,10 @@ export function freeWindows(
   bufferMin = 0
 ): { startMin: number; endMin: number }[] {
   const busy = blocksForDay(blocks, dayKey)
-    .filter((b) => b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b))
+    .filter(
+      (b) =>
+        b.status === 'open' && (!b.optional || isFixedTime(b)) && !isBackground(b) && !isAllDay(b)
+    )
     .map((b) => busySpan(b, bufferMin))
     .sort((a, b) => a.startMin - b.startMin)
   const out: { startMin: number; endMin: number }[] = []
@@ -285,7 +329,7 @@ export function tightMeetingJunction(
 ): number | null {
   if (bufferMin <= 0) return null
   const ext = blocksForDay(blocks, dayKey)
-    .filter((b) => b.status === 'open' && b.external)
+    .filter((b) => b.status === 'open' && b.external && !isAllDay(b))
     .sort((a, b) => a.startMin - b.startMin)
   for (let i = 1; i < ext.length; i++) {
     if (ext[i].startMin - ext[i - 1].endMin <= bufferMin) return ext[i].startMin
@@ -299,7 +343,8 @@ export function tightMeetingJunction(
 export function nextSlotAfter(
   blocks: Block[],
   b: Block,
-  fromMin: number
+  fromMin: number,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: the owner's plannable day
 ): { dayKey: string; startMin: number } | null {
   const from = Math.max(b.startMin, fromMin)
   const today = findFreeSlot(
@@ -307,11 +352,11 @@ export function nextSlotAfter(
     b.dayKey,
     duration(b),
     from,
-    Math.max(DAY_END, 22 * 60 + 30)
+    hours.endMin
   )
   if (today) return { dayKey: b.dayKey, startMin: today.startMin }
   const tomorrow = addDaysKey(b.dayKey, 1)
-  const slot = findFreeSlot(blocks, tomorrow, duration(b), 9 * 60)
+  const slot = findFreeSlot(blocks, tomorrow, duration(b), 9 * 60, hours.endMin)
   return slot ? { dayKey: tomorrow, startMin: slot.startMin } : null
 }
 
@@ -329,15 +374,21 @@ export interface PlaceSpec {
   /** Links a block to its recurring series; the rule it came from (#159). */
   recurringBlockId?: string
   rrule?: Block['rrule']
+  /** MEW's own scaffolding (#123) */
+  placedBy?: Block['placedBy']
 }
 
 /** Place a block; when no explicit time, the first free slot wins. Returns null if the day is full. */
-export function place(blocks: Block[], spec: PlaceSpec): Block | null {
+export function place(
+  blocks: Block[],
+  spec: PlaceSpec,
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS // #22: first-fit looks inside the plannable day
+): Block | null {
   let startMin = spec.startMin
   let endMin = spec.endMin
   const dur = spec.durationMin ?? (startMin != null && endMin != null ? endMin - startMin : 60)
   if (startMin == null) {
-    const slot = findFreeSlot(blocks, spec.dayKey, dur)
+    const slot = findFreeSlot(blocks, spec.dayKey, dur, hours.startMin, hours.endMin)
     if (!slot) return null
     startMin = slot.startMin
     endMin = slot.endMin
@@ -358,6 +409,7 @@ export function place(blocks: Block[], spec: PlaceSpec): Block | null {
     ...(spec.due != null ? { due: spec.due } : {}),
     ...(spec.recurringBlockId != null ? { recurringBlockId: spec.recurringBlockId } : {}),
     ...(spec.rrule != null ? { rrule: spec.rrule } : {}),
+    ...(spec.placedBy ? { placedBy: spec.placedBy } : {}),
   }
 }
 
@@ -665,6 +717,10 @@ export interface RemovalOpts {
   /** Remove every match, not just one — only when the user explicitly says
       "both/all/every" ("drop both prod release blocks"). */
   all?: boolean
+  /** A day-key pin (#62): only blocks on this day are candidates. Lets a reply
+      name one occurrence when the same title sits at the same time on several
+      days ("remove the lunch on thursday at 12:00"). */
+  day?: string
 }
 
 /** Resolve which open, ahead blocks a removal actually touches — pure, so the
@@ -679,7 +735,9 @@ export function resolveRemoval(
   opts: RemovalOpts,
   todayKey: string
 ): { remove: Block[]; candidates: Block[] } {
-  const matches = findAllByQuery(blocks, query).filter((b) => b.dayKey >= todayKey)
+  const matches = findAllByQuery(blocks, query).filter(
+    (b) => b.dayKey >= todayKey && (opts.day == null || b.dayKey === opts.day)
+  )
   if (matches.length <= 1) return { remove: matches, candidates: [] }
 
   const at = opts.at != null ? parseTimeValue(opts.at) : null
@@ -687,13 +745,182 @@ export function resolveRemoval(
     const pinned = matches.filter((b) => b.startMin === at)
     /* an `at` that hits nothing is a miss, not a license to drop all — report
        the matches so the caller can ask which one they meant */
-    return pinned.length ? { remove: pinned, candidates: [] } : { remove: [], candidates: matches }
+    if (!pinned.length) return { remove: [], candidates: matches }
+    /* #62: a time pins a start MINUTE, not a day. The same title at 12:00 on
+       several days is several blocks the owner didn't single out, so ask
+       (unless they said all). Removing them all was silent data loss. */
+    const days = new Set(pinned.map((b) => b.dayKey))
+    if (days.size > 1 && !opts.all) return { remove: [], candidates: pinned }
+    return { remove: pinned, candidates: [] }
   }
 
   if (opts.all) return { remove: matches, candidates: [] }
 
   /* several matches, no pin, no explicit "all" → ask, never nuke */
   return { remove: [], candidates: matches }
+}
+
+/* ── merge (#74): adjacent same-tag blocks become one ───────────────────
+   "merge my two deck blocks" names blocks by title; the parts are the matches
+   on ONE day (never across days). The run keeps its first block — its id grows
+   to span every part — and the rest go. A merge only ever joins the owner's
+   own open, one-off blocks of one tag, and only across free air: anything else
+   in the span (a fixed call, a calendar event, another block, a done one) stays
+   exactly where it is and the merge doesn't happen. */
+
+/** A block's own name for merging: its title before any "—" qualifier,
+    lowercased, with the " (part N)" a split adds (#73) read as the same block
+    (#121). Only that trailing suffix: "Part 2 planning" keeps its name. */
+export function mergeName(b: Pick<Block, 'title'>): string {
+  return b.title
+    .split('—')[0]
+    .trim()
+    .replace(/\s+\(part \d+\)$/i, '')
+    .toLowerCase()
+}
+
+export type MergeCandidates =
+  | { status: 'ok'; dayKey: string; parts: Block[] }
+  | { status: 'none' }
+  /** one match on the day asked about (or on every day): nothing to join */
+  | { status: 'single'; block: Block }
+
+/** The blocks a merge ask names. `dayKey` pins the day; `at` pins the run's
+    first block (the run is then that block and the next match after it that
+    day). With neither, the run is every match on the soonest day (today on)
+    that has at least two. Done and calendar matches are included on purpose,
+    so mergeRun can say why they don't merge rather than skip them silently. */
+export function mergeCandidates(
+  blocks: Block[],
+  query: string,
+  todayKey: string,
+  opts: { dayKey?: string; at?: number | null } = {}
+): MergeCandidates {
+  /* a split's pieces come along with whatever the query names (#121): "deck
+     polish" names "Deck polish" exactly, and its "Deck polish (part 2)" is the
+     same block's other piece */
+  const named = titleMatches(blocks, query)
+  const names = new Set(named.map(mergeName))
+  const pool = blocks
+    .filter((b) => named.includes(b) || (b.status !== 'rolled' && names.has(mergeName(b))))
+    .filter((b) => b.dayKey >= todayKey && !isAllDay(b))
+    .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+  if (!pool.length) return { status: 'none' }
+  const onDay = (k: string) => pool.filter((b) => b.dayKey === k)
+  if (opts.at != null) {
+    const first = pool.find(
+      (b) => b.startMin === opts.at && (opts.dayKey == null || b.dayKey === opts.dayKey)
+    )
+    if (!first) return { status: 'none' }
+    const next = onDay(first.dayKey).find((b) => b.id !== first.id && b.startMin >= first.startMin)
+    return next
+      ? { status: 'ok', dayKey: first.dayKey, parts: [first, next] }
+      : { status: 'single', block: first }
+  }
+  if (opts.dayKey != null) {
+    const parts = onDay(opts.dayKey)
+    if (!parts.length) return { status: 'none' }
+    return parts.length === 1
+      ? { status: 'single', block: parts[0] }
+      : { status: 'ok', dayKey: opts.dayKey, parts }
+  }
+  const days = [...new Set(pool.map((b) => b.dayKey))]
+  const day = days.find((k) => onDay(k).length >= 2)
+  return day
+    ? { status: 'ok', dayKey: day, parts: onDay(day) }
+    : { status: 'single', block: pool[0] }
+}
+
+export type MergeRun =
+  | {
+      ok: true
+      keep: Block
+      removeIds: string[]
+      startMin: number
+      endMin: number
+      /** the kept block as it becomes: the span, holding its time as firmly as
+          its firmest part — protected if any part was, background only if every
+          part was, and the earliest due */
+      merged: Block
+    }
+  | {
+      ok: false
+      /** what stops it, in the order checked; `blockers` for 'blocked', the
+          offending parts for the rest */
+      reason: 'few' | 'days' | 'external' | 'done' | 'series' | 'titles' | 'tags' | 'blocked'
+      parts: Block[]
+      blockers: Block[]
+    }
+
+/** Can these blocks become one? Pure. The span runs from the earliest start to
+    the latest end; the kept block is the earliest. */
+export function mergeRun(blocks: Block[], ids: string[]): MergeRun {
+  const parts = blocks
+    .filter((b) => ids.includes(b.id))
+    .sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin)
+  const no = (
+    reason: Exclude<MergeRun, { ok: true }>['reason'],
+    offending: Block[],
+    blockers: Block[] = []
+  ): MergeRun => ({
+    ok: false,
+    reason,
+    parts: offending,
+    blockers,
+  })
+  if (parts.length < 2) return no('few', parts)
+  if (new Set(parts.map((b) => b.dayKey)).size > 1) return no('days', parts)
+  const external = parts.filter((b) => b.external)
+  if (external.length) return no('external', external)
+  const done = parts.filter((b) => b.status !== 'open')
+  if (done.length) return no('done', done)
+  const series = parts.filter((b) => b.recurringBlockId)
+  if (series.length) return no('series', series)
+  /* one block's parts, not two different blocks that share a word ("deck" matches
+     "Deck polish" and "Deck review"): the merged block would keep only one name.
+     A split's "(part N)" pieces are the same block (#121) */
+  if (new Set(parts.map(mergeName)).size > 1) return no('titles', parts)
+  if (new Set(parts.map((b) => b.tag)).size > 1) return no('tags', parts)
+  const startMin = parts[0].startMin
+  const endMin = Math.max(...parts.map((b) => b.endMin))
+  /* only free air may sit between the parts: every other block that holds time
+     in the span stays put and stops the merge — done blocks included, all-day
+     labels and background blocks aside (they hold no slot) */
+  const partIds = new Set(parts.map((b) => b.id))
+  const blockers = blocksForDay(blocks, parts[0].dayKey).filter(
+    (b) =>
+      !partIds.has(b.id) &&
+      !isAllDay(b) &&
+      !isBackground(b) &&
+      b.startMin < endMin &&
+      b.endMin > startMin
+  )
+  if (blockers.length) return no('blocked', parts, blockers)
+  const keep = parts[0]
+  const dues = parts.map((b) => b.due).filter((d): d is number => d != null)
+  const { attention: _attention, due: _due, optional: _optional, ...rest } = keep
+  const merged: Block = {
+    ...rest,
+    startMin,
+    endMin,
+    protected: parts.some((b) => b.protected),
+    ...(parts.every((b) => b.attention === 'background')
+      ? { attention: 'background' as const }
+      : keep.attention === 'focus'
+        ? { attention: 'focus' as const }
+        : {}),
+    ...(dues.length ? { due: Math.min(...dues) } : {}),
+    /* tentative only if every part was: one firm part holds the whole span */
+    ...(parts.every((b) => b.optional) ? { optional: true } : {}),
+  }
+  return {
+    ok: true,
+    keep,
+    removeIds: parts.slice(1).map((b) => b.id),
+    startMin,
+    endMin,
+    merged,
+  }
 }
 
 /** Conversational referent resolution (#320) — turn a parse.ts sentinel
@@ -808,21 +1035,27 @@ export function seriesMembership(blocks: Block[], block: Block): SeriesMembershi
   return { recurringBlockId: block.recurringBlockId, position, count }
 }
 
-/** All of the day's non-rest items are done → the day is clear, rest is earned. */
+/** All of the day's non-rest items are done → the day is clear, rest is earned.
+    A holiday label is not an item: it never holds a day open, and neither does
+    the scaffolding MEW placed itself (a seeded meal, a pacing breather: #123). */
 export function dayClear(blocks: Block[], dayKey: string): boolean {
-  const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest' && !b.optional)
+  const day = blocksForDay(blocks, dayKey).filter(
+    (b) => b.tag !== 'rest' && !b.optional && !isAllDay(b) && !b.placedBy
+  )
   return day.length > 0 && day.every((b) => b.status === 'done')
 }
 
+/** The day's unfinished items: the owner's own open blocks. MEW's scaffolding
+    (a seeded lunch) is never "not done" work to close the loop on or carry. */
 export function openItems(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional
+    (b) => b.status === 'open' && b.tag !== 'rest' && !b.optional && !isAllDay(b) && !b.placedBy
   )
 }
 
 /** The working day ends at the later of 18:30 and the last non-rest block. */
 export function dayEndMin(blocks: Block[], dayKey: string): number {
-  const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest')
+  const day = blocksForDay(blocks, dayKey).filter((b) => b.tag !== 'rest' && !isAllDay(b))
   return Math.max(DAY_END, ...day.map((b) => b.endMin))
 }
 
@@ -831,7 +1064,7 @@ export function dayEndMin(blocks: Block[], dayKey: string): number {
 export interface LooseThreads {
   /** background blocks actually started and inside their window right now */
   running: Block[]
-  /** focus commitments whose window passed today without completion */
+  /** the owner's own focus commitments whose window passed today without completion */
   slipped: Block[]
   /** interrupt follow-ups: open blocks some rolled block points at (rolledToId) */
   paused: Block[]
@@ -840,9 +1073,10 @@ export interface LooseThreads {
 }
 
 /** A pure derived query — nothing here is persisted, so it can never go
-    stale. Optional invites never slip (they hold no commitment), and the
-    groups may overlap by design: membership is per-definition, not a
-    partition. */
+    stale. Optional invites never slip (they hold no commitment), nor does the
+    scaffolding MEW placed itself (a seeded meal, a pacing breather: #123) —
+    the rail is the owner's own loose ends, never MEW's. The groups may overlap
+    by design: membership is per-definition, not a partition. */
 export function looseThreads(
   blocks: Block[],
   captures: Capture[],
@@ -859,7 +1093,13 @@ export function looseThreads(
       nowMin < b.endMin
   )
   const slipped = day.filter(
-    (b) => b.status === 'open' && !isBackground(b) && !b.optional && b.endMin < nowMin
+    (b) =>
+      b.status === 'open' &&
+      !isBackground(b) &&
+      !b.optional &&
+      !isAllDay(b) &&
+      !b.placedBy &&
+      b.endMin < nowMin
   )
   const rolledTargets = new Set(blocks.map((b) => b.rolledToId).filter((id): id is string => !!id))
   const paused = blocks.filter((b) => b.status === 'open' && rolledTargets.has(b.id))

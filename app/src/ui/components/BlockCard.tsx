@@ -1,12 +1,14 @@
 /* The block detail card — shared by both views (DESIGN_LANGUAGE §3).
    Actions resolve through the store; external (calendar) events get no
-   move/hold — not ours to move. */
+   move/hold — not ours to move. An all-day entry (#27) is a label on the day:
+   no clock line, no Done (a holiday isn't a mew), nothing that starts, moves
+   or holds it — only Remove, when the label is MEW's own. */
 
 import { useState, type CSSProperties } from 'react'
 import { useMew } from '../../state/store'
 import type { Block } from '../../domain/types'
-import { fmtTime } from '../../domain/time'
-import { duration } from '../../domain/week'
+import { fmtDow, fmtTime } from '../../domain/time'
+import { duration, isAllDay } from '../../domain/week'
 
 export function BlockCard({
   block,
@@ -15,6 +17,7 @@ export function BlockCard({
   onClose,
   variant,
   pinned,
+  offDay,
 }: {
   block: Block
   isNow: boolean
@@ -25,6 +28,13 @@ export function BlockCard({
   variant?: 'center' | 'dock'
   /** Clicked-and-held selection: hover stops mattering, the × explains why. */
   pinned?: boolean
+  /** The dial is showing another day (#23): time-relative actions (Start now,
+      Interrupt, Move — which re-places into today/tomorrow) mean nothing there.
+      A lived day ('past') keeps Done, Hold and Remove; a day ahead ('future')
+      keeps Hold and Remove only — a mew is credited when a block is finished,
+      never before it happens, exactly as today and Week never offer Done for an
+      upcoming block. */
+  offDay?: 'past' | 'future'
 }) {
   const toggleComplete = useMew((s) => s.toggleComplete)
   const startNow = useMew((s) => s.startNow)
@@ -34,6 +44,7 @@ export function BlockCard({
   const removeBlock = useMew((s) => s.removeBlock)
 
   const done = block.status === 'done'
+  const allDay = isAllDay(block)
   const life = block.tag !== 'work'
   const act = (fn: () => void) => () => {
     fn()
@@ -83,25 +94,44 @@ export function BlockCard({
       <div className="cbody">
         <div className="ct">{block.title}</div>
         <div className="cm">
-          {fmtTime(block.startMin)} – {fmtTime(block.endMin)} · {duration(block)} min
-          {block.protected ? ' · held' : ''}
+          {allDay ? (
+            <>
+              all day
+              {block.endDayKey ? ` · ${fmtDow(block.dayKey)} – ${fmtDow(block.endDayKey)}` : ''}
+            </>
+          ) : (
+            <>
+              {fmtTime(block.startMin)} – {fmtTime(block.endMin)} · {duration(block)} min
+            </>
+          )}
+          {block.protected && !allDay ? ' · held' : ''}
           {done ? ' · done' : ''}
           {block.optional ? " · tentative — doesn't hold the time" : ''}
         </div>
         <span className={'ctag' + (life ? ' life' : '')}>
           {block.external
-            ? 'calendar'
-            : block.tag === 'work'
-              ? 'work'
-              : block.tag === 'rest'
-                ? 'rest · earned'
-                : 'life'}
+            ? allDay
+              ? 'calendar · all day'
+              : 'calendar'
+            : allDay
+              ? 'all day'
+              : block.tag === 'work'
+                ? 'work'
+                : block.tag === 'rest'
+                  ? 'rest · earned'
+                  : 'life'}
           {block.optional ? ' · optional' : ''}
         </span>
       </div>
-      {!done && (
+      {/* an all-day label holds no clock: its only action is Remove, when it's MEW's own */}
+      {allDay && !done && !block.external && <div className="cacts">{removeControl}</div>}
+      {!done && !allDay && (
         <div className="cacts">
-          {isNow || block.startedAt != null ? (
+          {offDay === 'past' ? (
+            <button type="button" className="ca pri" onClick={act(() => toggleComplete(block.id))}>
+              Done — a mew
+            </button>
+          ) : offDay === 'future' ? null : isNow || block.startedAt != null ? (
             <>
               <button
                 type="button"
@@ -130,14 +160,16 @@ export function BlockCard({
           )}
           {!block.external && (
             <>
-              <button
-                type="button"
-                className="ca sec"
-                title="re-place this block in the next free slot"
-                onClick={act(() => moveToNextFree(block.id))}
-              >
-                Move
-              </button>
+              {!offDay && (
+                <button
+                  type="button"
+                  className="ca sec"
+                  title="re-place this block in the next free slot"
+                  onClick={act(() => moveToNextFree(block.id))}
+                >
+                  Move
+                </button>
+              )}
               <button
                 type="button"
                 className="ca sec"

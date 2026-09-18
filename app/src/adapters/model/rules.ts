@@ -4,18 +4,15 @@
 
 import { insightsCard } from '../../domain/insights'
 import { ritualTasks } from '../../domain/nudges/weekly'
-import { inferTag, parseCommand as ruleParse } from '../../domain/parse'
+import { parseCommand as ruleParse } from '../../domain/parse'
 import { normalizeRrule } from '../../domain/recurrence'
 import { parseSplitAsk, type SplitAsk } from '../../domain/rescue'
+import { RITUAL_ASK } from '../../domain/chipEffect' // #94: one home with the chip resolver
 import { weekdayOffset } from '../../domain/time'
 import type { PlanMode, ScheduleIntent, Tag } from '../../domain/types'
-import {
-  CHOICES_POSTED,
-  type ChatTurn,
-  type ModelPort,
-  type ToolExecutor,
-  type WeekContext,
-} from './types'
+import { CHOICES_POSTED } from './choicesPosted'
+import { ownerView } from './modelNotes'
+import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 
 const CHAT_REPLIES: [RegExp, (ctx: WeekContext) => string][] = [
   [
@@ -75,96 +72,183 @@ export function runIntent(
          same the model reads from its tool description: three items on
          'auto', two on 'always', never on 'off'. */
       const unpinned = (p: (typeof places)[number]) =>
-        p.startMin == null && p.dayOffset == null && !p.rrule && p.attention !== 'background'
+        p.startMin == null &&
+        p.dayOffset == null &&
+        !p.rrule &&
+        p.attention !== 'background' &&
+        p.window == null // #117: "tonight" is the owner's own word on when
       const floor = planMode === 'always' ? 2 : 3
       if (planMode !== 'off' && !frees.length && places.length >= floor && places.every(unpinned)) {
-        const out = exec.proposeScenarios(
-          '',
-          places.map((p) => ({
+        const out = exec.proposeScenarios({
+          prompt: '',
+          tasks: places.map((p) => ({
             title: p.title,
             tag: p.tag,
             durationMin: p.durationMin,
             due: p.due,
-          }))
-        )
+          })),
+        })
         /* the executor may have posted the picker (#254 pattern): its result
            then addresses a model — the floor stays quiet, the cards ARE the
            reply. A fall-through line (single shape, nothing fits) speaks. */
         return quietIfChoices(out)
       }
-      return exec.plan(
-        places.map((p) => ({
-          title: p.title,
-          tag: p.tag,
-          dayOffset: p.dayOffset ?? 0,
-          startMin: p.startMin,
-          // #323: the deterministic parser only ever reads a time the user typed
-          // ("dinner at 6") — never a reshape — so an explicit time here is stated
-          startStated: p.startMin != null || undefined,
-          durationMin: p.durationMin,
-          // #322: same logic for length — a parsed duration is always the user's
-          // own words, so it's stated (and stated word wins: never auto-padded)
-          durationStated: p.durationMin != null || undefined,
-          protected: p.protected,
-          attention: p.attention,
-          due: p.due,
-          rrule: p.rrule,
-        })),
-        frees.map((f) => ({
-          dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
-          startMin: f.startMin,
-          endMin: f.endMin,
-        }))
+      /* #116: an ask that no longer fits today posts its tomorrow offer as chips;
+         the floor stays quiet then, the chips ARE the reply */
+      return quietIfChoices(
+        exec.plan({
+          places: places.map((p) => ({
+            title: p.title,
+            tag: p.tag,
+            dayOffset: p.dayOffset ?? 0,
+            startMin: p.startMin,
+            // #323: the deterministic parser only ever reads a time the user typed
+            // ("dinner at 6") — never a reshape — so an explicit time here is stated
+            startStated: p.startMin != null || undefined,
+            durationMin: p.durationMin,
+            // #322: same logic for length — a parsed duration is always the user's
+            // own words, so it's stated (and stated word wins: never auto-padded)
+            durationStated: p.durationMin != null || undefined,
+            protected: p.protected,
+            attention: p.attention,
+            due: p.due,
+            rrule: p.rrule,
+            window: p.window,
+            afterDinner: p.afterDinner,
+          })),
+          frees: frees.map((f) => ({
+            dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
+            startMin: f.startMin,
+            endMin: f.endMin,
+          })),
+        })
       )
     }
     case 'complete':
       /* an ambiguous name (#334) posts chips and returns CHOICES_POSTED — the
          floor then stays quiet, the chips ARE the reply (the remove precedent) */
-      return quietIfChoices(exec.complete(intent.query ?? '', intent.at))
+      return quietIfChoices(exec.complete({ query: intent.query ?? '', at: intent.at }))
     case 'move':
       return quietIfChoices(
-        exec.move(
-          intent.query ?? '',
-          intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
-            ? Number(intent.toDayKey)
-            : undefined,
-          intent.toStartMin,
-          intent.relStartMin, // #320: a relative shift ("30 min earlier") the executor applies
-          intent.at // #334: the target block's current start, pinning which of several
-        )
+        exec.move({
+          query: intent.query ?? '',
+          toDayOffset:
+            intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
+              ? Number(intent.toDayKey)
+              : undefined,
+          toStartMin: intent.toStartMin,
+          relStartMin: intent.relStartMin, // #320: a relative shift ("30 min earlier")
+          at: intent.at, // #334: the target block's current start, pinning which of several
+          // #49 allowOverlap is model-only — the keyless floor never grants one, so it is
+          // absent rather than passed as undefined; the executor's default stands either way
+          fromDayOffset: intent.fromDayOffset, // #160: a day the ask named pins WHICH block moves
+        })
       )
     case 'capture':
       return exec.capture(intent.title ?? '')
+    case 'undo':
+      /* #118: the same undo the keyed model calls — never a capture */
+      return exec.undoLast()
     case 'clear':
       return exec.clear(intent.scope ?? 'upcoming')
     case 'edit':
       // #343: a scope word ("just this one", "from now on") the parser lifted off
       // rides through; absent on a series block, the executor asks with chips.
       return quietIfChoices(
-        exec.edit(intent.query ?? '', intent.edit ?? {}, intent.at, intent.seriesScope)
+        exec.edit({
+          query: intent.query ?? '',
+          patch: intent.edit ?? {},
+          at: intent.at,
+          scope: intent.seriesScope,
+        })
       )
     case 'resize':
       /* #335: a duration-only change keeping the start — routes through the same
          executor edit path, so an ambiguous name or a series block asks with
          chips (CHOICES_POSTED) exactly as edit does. */
       return quietIfChoices(
-        exec.resize(intent.query ?? '', intent.resize ?? {}, intent.at, intent.seriesScope)
+        exec.resize({
+          query: intent.query ?? '',
+          resize: intent.resize ?? {},
+          at: intent.at,
+          scope: intent.seriesScope,
+        })
       )
     case 'duplicate':
       /* #335: copy to another day/time — an ambiguous source name asks with
          chips; the keyless floor stays quiet and the chips ARE the reply. */
-      return quietIfChoices(exec.duplicate(intent.query ?? '', intent.duplicate ?? {}, intent.at))
+      return quietIfChoices(
+        exec.duplicate({ query: intent.query ?? '', ...(intent.duplicate ?? {}), at: intent.at })
+      )
+    case 'split': {
+      /* #73: split a block around a clock range or another block. The same
+         executor the rescue chip's split runs, so an ambiguous name or a series
+         block asks with chips (CHOICES_POSTED) exactly as edit does. */
+      const sp = intent.split ?? {}
+      const around =
+        sp.gapStartMin != null && sp.gapEndMin != null
+          ? { startMin: sp.gapStartMin, endMin: sp.gapEndMin }
+          : { query: sp.aroundQuery ?? '', ...(sp.aroundAt ? { at: sp.aroundAt } : {}) }
+      return quietIfChoices(
+        exec.split({
+          query: intent.query ?? '',
+          around,
+          at: intent.at,
+          tailMin: sp.tailMin,
+          dayOffset: sp.dayOffset,
+          scope: intent.seriesScope,
+        })
+      )
+    }
     case 'relmove':
       /* #335: a relative nudge (earlier/later/next_day/next_free) — same chip
          behavior on an ambiguous name as a move. */
       return quietIfChoices(
-        exec.relativeMove(
-          intent.query ?? '',
-          intent.relmove?.direction ?? 'later',
-          intent.relmove?.amountMin,
-          intent.at
-        )
+        exec.relativeMove({
+          query: intent.query ?? '',
+          direction: intent.relmove?.direction ?? 'later',
+          amountMin: intent.relmove?.amountMin,
+          at: intent.at,
+        })
       )
+    case 'batch': {
+      /* #75: a wide batch posts its confirm as chips — the floor stays quiet,
+         the chips ARE the reply; a yes re-asks with the count it named */
+      const bt = intent.batch
+      if (!bt) return `nothing to batch — name the blocks and the change`
+      if (bt.op === 'setTag' && !bt.toTag)
+        return `nothing to tag — say which tag (work, private, health or rest)`
+      const op =
+        bt.op === 'shift'
+          ? { kind: 'shift' as const, deltaMin: bt.deltaMin ?? 0 }
+          : bt.op === 'setTag'
+            ? { kind: 'setTag' as const, tag: bt.toTag! } // #75 slice 2: a retag
+            : { kind: 'moveToDay' as const, toDayOffset: bt.toDayOffset ?? 0 }
+      return quietIfChoices(
+        exec.batch({
+          selector: {
+            dayOffset: bt.dayOffset,
+            afterMin: bt.afterMin,
+            beforeMin: bt.beforeMin,
+            tag: bt.tag,
+            titleQuery: bt.titleQuery,
+          },
+          op,
+          confirmCount: bt.confirmCount,
+          confirmToken: bt.confirmToken,
+          /* #75 slice 3: the scope word a chip re-issued ("just this one") */
+          scope: intent.seriesScope,
+        })
+      )
+    }
+    case 'merge':
+      /* #74: join same-tag blocks on one day into one — the executor refuses (and
+         says why) anything that isn't the owner's own open blocks across free air */
+      return exec.merge({
+        query: intent.query ?? '',
+        dayOffset: intent.merge?.dayOffset,
+        at: intent.at,
+      })
     case 'giveRoom':
       /* #322: the "give them room" chip — resize the just-placed blocks of one
          focus class up to how the kind really runs. Same executor the keyed
@@ -180,7 +264,8 @@ export function runIntent(
          series block) the this/following/series scope chips (#343) — the floor
          stays quiet and the chips/confirm message IS the reply. */
       return quietIfChoices(
-        exec.remove(intent.query ?? '', {
+        exec.remove({
+          query: intent.query ?? '',
           ...(intent.remove ?? {}),
           ...(intent.seriesScope ? { scope: intent.seriesScope } : {}),
         })
@@ -206,17 +291,17 @@ export function runIntent(
          returns — one executor path, so keyless and keyed can't drift. The
          executor's listBlocks never mutates and never snapshots; the readout
          string is the reply the floor yields verbatim. */
-      return exec.listBlocks(intent.list?.day ?? 0, intent.list?.tag)
+      return exec.listBlocks({ day: intent.list?.day ?? 0, tag: intent.list?.tag })
   }
 }
 
-/** Execute a rescue split ask (#286) by composing the two EXISTING tools —
-    shrink the block to end where the gap opens (edit), then place the kept
-    tail after it (plan) — the same two calls a keyed model makes from the
-    same words. No new mutation path: the executor's tools stay the only way
-    the week changes. The tail gets a distinct base title because execPlan
-    de-dups on exact base (#89) and would otherwise MOVE the piece just
-    shrunk instead of placing a second one. */
+/** Execute a rescue split ask (#286): "split the deck around 13:00-13:45, keep
+    45m after". It runs the one split executor (#73) with the chip's exact
+    numbers (the gap to vacate, the length to keep after it, the day), the same
+    door a typed "split the deck around the 1pm call" and the keyed split_block
+    tool use, so the three can never drift apart. The executor never places a
+    second piece unless the first was found and split, and an ambiguous name or
+    a series block posts chips (the floor stays quiet; the chips ARE the reply). */
 export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
   const dayOffset =
     ask.dayWord == null
@@ -224,32 +309,23 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
       : ask.dayWord === 'tomorrow'
         ? 1
         : (weekdayOffset(ask.dayWord, now) ?? 0)
-  const shrunk = exec.edit(ask.query, { endMin: ask.gapStartMin })
-  /* execEdit's miss shape is stable ("I couldn't find …") and pinned in tests:
-     with no block to shrink, placing a stray tail would double time — stop. An
-     ambiguous target (#334) posts chips and returns CHOICES_POSTED; the split is
-     off until the user picks, so bail there too rather than place a lone tail. */
-  if (shrunk.startsWith(`I couldn't find`) || shrunk.startsWith(CHOICES_POSTED)) return shrunk
-  const placed = exec.plan(
-    [
-      {
-        title: `${ask.query} (part 2)`,
-        tag: inferTag(ask.query),
-        dayOffset,
-        startMin: ask.gapEndMin,
-        durationMin: ask.tailMin,
-        protected: true,
-      },
-    ],
-    []
+  /* a which-block chip re-asks with the target's time ("the Deck polish at 9:00") */
+  const pinned = ask.query.match(/^(.+?)\s+at\s+(\d{1,2}:\d{2})$/)
+  return quietIfChoices(
+    exec.split({
+      query: pinned ? pinned[1] : ask.query,
+      around: { startMin: ask.gapStartMin, endMin: ask.gapEndMin },
+      tailMin: ask.tailMin,
+      dayOffset,
+      ...(pinned ? { at: pinned[2] } : {}),
+    })
   )
-  return `${shrunk} ${placed}`
 }
 
 /* "plan my week" / "plan the week" — the weekly ritual's ask (#304), typed or
-   via the Sunday chip. Deliberately narrow: "plan my day" and every phrase
-   carrying its own items stay with the grammar. */
-const RITUAL_ASK = /^\s*plan\s+(?:my|the)\s+week\b/i
+   via the Sunday chip — is RITUAL_ASK, kept in domain/chipEffect.ts so a picked
+   ritual chip resolves by the same words (#94). Deliberately narrow: "plan my
+   day" and every phrase carrying its own items stay with the grammar. */
 
 /** The keyless ritual route (#304): skip the shaping questions (a floor has
     none to ask) and go straight to the picker with the standing defaults —
@@ -261,14 +337,14 @@ const RITUAL_ASK = /^\s*plan\s+(?:my|the)\s+week\b/i
     braindump auto-offer; an explicit "plan my week" is the user choosing the
     picker. */
 function runRitual(ctx: WeekContext, exec: ToolExecutor): string {
-  const out = exec.proposeScenarios(
-    '',
-    ritualTasks({
+  const out = exec.proposeScenarios({
+    prompt: '',
+    tasks: ritualTasks({
       realisticBestH: ctx.realisticBestH,
       captures: ctx.openCaptures ?? [],
       prefs: ctx.prefs ?? [],
-    })
-  )
+    }),
+  })
   /* the picker posted (#254 pattern): the cards ARE the reply — stay quiet.
      A fall-through line (one shape, nothing fits) speaks. */
   return out.startsWith(CHOICES_POSTED) ? '' : out
@@ -283,17 +359,18 @@ export function createRulesAdapter(now: () => Date, planMode: PlanMode = 'auto')
          ahead of the grammar — parse.ts has no single intent for shrink+place */
       const split = parseSplitAsk(last)
       if (split) {
-        yield runSplit(split, exec, now())
+        yield ownerView(runSplit(split, exec, now()))
         return
       }
       /* the weekly ritual (#304) rides ahead of the grammar the same way —
          to the block clause, "plan my week" reads as placing "my week" */
       if (RITUAL_ASK.test(last)) {
-        yield runRitual(ctx, exec)
+        yield ownerView(runRitual(ctx, exec))
         return
       }
       const intent = ruleParse(last, now())
-      yield runIntent(intent, exec, ctx, last, planMode)
+      /* the floor SPEAKS the tool result, so model-only notes stay out (#119) */
+      yield ownerView(runIntent(intent, exec, ctx, last, planMode))
     },
   }
 }
@@ -349,6 +426,7 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
       ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
     }
   if (kind === 'capture' && typeof o.title === 'string') return { kind, title: o.title }
+  if (kind === 'undo') return { kind }
   if (kind === 'remove' && typeof o.query === 'string' && o.query.trim()) {
     const at = typeof o.at === 'string' && o.at.trim() ? o.at.trim() : undefined
     const all = o.all === true
@@ -431,6 +509,38 @@ export function sanitizeIntent(raw: unknown): ScheduleIntent | null {
         direction: rm.direction as (typeof dirs)[number],
         amountMin: optInt(rm.amountMin, 5, 600),
       },
+      ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
+    }
+  }
+  if (kind === 'batch') {
+    // #75: one op over a selector — a valid op is required, else drop.
+    const bt = (o.batch && typeof o.batch === 'object' ? o.batch : o) as Record<string, unknown>
+    const tags = ['work', 'private', 'health', 'rest'] as const
+    if (bt.op !== 'shift' && bt.op !== 'moveToDay' && bt.op !== 'setTag') return null
+    return {
+      kind,
+      batch: {
+        dayOffset: optInt(bt.dayOffset, 0, 13),
+        afterMin: optInt(bt.afterMin, 0, 1439),
+        beforeMin: optInt(bt.beforeMin, 1, 1440),
+        tag: tags.includes(bt.tag as never) ? (bt.tag as (typeof tags)[number]) : undefined,
+        titleQuery: typeof bt.titleQuery === 'string' ? bt.titleQuery : undefined,
+        op: bt.op,
+        deltaMin: optInt(bt.deltaMin, -720, 720),
+        toDayOffset: optInt(bt.toDayOffset, 0, 13),
+        toTag: tags.includes(bt.toTag as never) ? (bt.toTag as (typeof tags)[number]) : undefined,
+        confirmCount: optInt(bt.confirmCount, 1, 500),
+        confirmToken: typeof bt.confirmToken === 'string' ? bt.confirmToken : undefined,
+      },
+    }
+  }
+  if (kind === 'merge' && typeof o.query === 'string' && o.query.trim()) {
+    // #74: join same-tag blocks — a loose model may nest the day or hang it top-level.
+    const mg = (o.merge && typeof o.merge === 'object' ? o.merge : o) as Record<string, unknown>
+    return {
+      kind,
+      query: o.query,
+      merge: { dayOffset: optInt(mg.dayOffset, 0, 13) },
       ...(atOf(o.at) ? { at: atOf(o.at) } : {}),
     }
   }

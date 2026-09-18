@@ -47,6 +47,7 @@ pnpm install --frozen-lockfile
 npx tsc -b        # strict typecheck — no errors
 npx vitest run    # the domain + adapter + store suite — all green
 pnpm build        # production bundle succeeds (also enforces the size-budget warning)
+node scripts/check-bundle-size.mjs dist   # hard bundle budgets (CI: ci.yml `bundle` job)
 ```
 
 **Tests live with behavior.** Add them at the right layer:
@@ -65,6 +66,38 @@ pnpm -C app shoot
 pnpm -C app shoot:overlap
 ```
 
+Both gates run on one pinned calendar day (`app/scripts/lib/shootClock.mjs`, a
+Wednesday), so the seeded week and the canon PNGs are the same whatever weekday
+you run them. `SHOOT_DATE=YYYY-MM-DD pnpm -C app shoot` probes another day (the
+gate is proven for a Monday and mid-week); the pin, not the override, is the gate.
+Probe caveats: a malformed `SHOOT_DATE` stops the run (it never falls back silently); only
+a probe may self-seed the done block, so on the pin a week with no seeded done block fails;
+a Sunday probe fails day-load (a Sunday week has no days ahead to tint).
+
+**A run writes to `app/shots/latest/` and leaves the tracked canon alone.** That directory sits
+inside the gitignored `app/shots/`, so an ordinary run — gate, probe or scenario proof — leaves
+`git status` clean. Re-pinning canon is deliberate:
+
+```sh
+PIN_CANON=1 pnpm -C app shoot        # writes 1-focus-rest … 8-sync-paused in place
+git add -f app/shots/<file>          # review the image diff, then commit it
+```
+
+It used to be the other way round: every run rewrote the committed PNGs and the remedy was
+remembering `git checkout -- app/shots` afterwards. Two runs in one night rewrote seven and then
+sixteen of them, each caught only because someone looked. A proof that silently rewrites the
+evidence it is judged against can be made to agree with whatever the code now does, so the
+overwrite now costs a keystroke and the restore costs nothing.
+
+**Who owns which canon** (`app/shots/`, re-pin with `git add -f <file>`): `shoot.mjs` owns
+`1-focus-rest` … `8-sync-paused`. The scenario proofs run keyless against the same preview
+(`node scripts/shoot-<name>.mjs http://localhost:5199`) on the shared `scripts/lib/harness.mjs`
+and `lib/tauri-stub.mjs`: `shoot-update.mjs` owns `update-1-offer`, `update-2-accepted`;
+`shoot-desktop.mjs` owns `desktop-1-restore-offer`, `desktop-2-settings-row`, `desktop-3-restored`;
+`shoot-threads.mjs` owns `threads-1-pill` … `threads-4-resumed`; `shoot-oauth.mjs` owns
+`oauth-1-connecting`, `oauth-2-after-redirect`. The scenario proofs document shipped features;
+they are not merge gates.
+
 A failing gate is a bug in your change, not the harness. Read the error, fix it,
 re-run. Never ship red.
 
@@ -75,10 +108,11 @@ re-run. Never ship red.
 MEW uses a calm two-tier gitflow, and CI matches it so day-to-day work stays
 fast and the heavy suite runs only when it earns its keep:
 
-- **Feature branches → PR into `develop`.** This fires the **quick gate**
-  (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`), and lint
-  (ESLint + Prettier `--check`). It's all pure-JS and lands in ~2-3 min, so you
-  get fast feedback on every push.
+- **Feature branches → PR into `develop`** (or the active RC, `v*-rc*`). This fires
+  the **quick gate** (`ci.yml`): typecheck (`tsc -b`), unit tests (`vitest run`),
+  lint (ESLint + Prettier `--check`), and the **`bundle`** job (`pnpm build` + the
+  hard bundle budgets, §4). It lands in a few minutes, so you get fast feedback on
+  every push.
 - **Promote with a `develop → main` PR.** A PR whose base is `main` is a release
   promotion, and it runs the **full suite** on top of the quick gate: the app
   build + `cargo check` (`desktop.yml`), Playwright e2e (`e2e.yml`), Lighthouse
@@ -107,20 +141,26 @@ Two checks guard it:
 
 1. **`pnpm build` warns** when any single chunk exceeds **400 KB** (uncompressed) —
    `build.chunkSizeWarningLimit`.
-2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build` in the
-   `desktop.yml` check job) when a chunk or the total crosses its hard budget. It
-   reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
-   the job summary.
+2. **CI fails** (`app/scripts/check-bundle-size.mjs`, run after `pnpm build`) when a
+   chunk or the total crosses its hard budget. It runs in the quick gate's **`bundle`
+   job** (`ci.yml`) on every PR into `develop` and the RC, and in the `desktop.yml`
+   check job on PRs into `main` (where `bundle` skips, so the minutes don't double).
+   It reads the build manifest, stats each chunk, and prints a per-chunk breakdown to
+   the job summary. The policy itself is unit-tested (`app/scripts/__tests__/`), and
+   those tests run in `pnpm test`, so a broken budget rule fails CI too.
 
 **Budgets** (uncompressed; the targets to keep):
 
-- **main (entry) chunk < 340 KB** — first paint depends on it; keep it tightest.
-  (Lowered from 370 KB for v0.6 (#340): onboarding, the plan-mode picker, and the
-  Settings route now lazy-load, so ~52 KB of first-paint-optional UI left the eager
-  graph. The budget bounds the eager app code the entry carries (~309 KB = first-load
-  minus vendor); rolldown may hoist that shared eager code into first-load sibling
-  chunks, so the entry file itself can read smaller — 340 is the ceiling on the eager
-  app either way. First-load total still well under 1200 KB.)
+- **main (the eager app) < 440 KB** — first paint depends on it; keep it tightest.
+  It's **one sum**: the entry chunk plus every chunk the entry statically imports
+  outside the named families (`vendor`, `three`, `ai`). Rolldown hoists shared eager
+  code out of the entry into sibling chunks (`Button`, `rules`, `primitives` today),
+  so the entry file alone reads ~117 KB while the eager app is ~381 KB. Those siblings
+  are rated `main`, not `lazy` (#80). Re-set 340 → 440 KB for v2026.09: the gate
+  used to cap only the entry file, so the eager app grew unmeasured from v0.6's 309 KB
+  to ~381 KB on the RC and ~401 KB with the queue behind it. 440 keeps v0.6's ~10%
+  headroom. (History: 370 → 340 for v0.6 (#340), when onboarding, the plan-mode
+  picker and the Settings route went lazy.)
 - **vendor chunk < 460 KB** — react, react-dom, zustand, dexie, lucide + the motion family
   (motion 12.41+ ships a non-dissolvable re-export shim, so framer-motion/motion-dom ride here).
 - **lazy chunks < 300 KB** by default. The known-heavy lazy families have their own
@@ -128,7 +168,7 @@ Two checks guard it:
   at the top of `app/scripts/check-bundle-size.mjs`; everything else holds the
   300 KB line.
 - **first-load JS < 1.2 MB** — the entry chunk plus everything it statically imports
-  (today main + vendor), i.e. what a first visit actually downloads. `three` and
+  (the eager app + vendor), i.e. what a first visit actually downloads. `three` and
   `ai` are lazy and excluded. The script also caps the grand total of all chunks so
   nothing grows unbounded.
 

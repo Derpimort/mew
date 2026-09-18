@@ -28,9 +28,11 @@ import {
   rescueOptions,
   withinDayWords,
 } from '../domain/rescue'
+import { parseCommand } from '../domain/parse'
 import {
   addDaysKey,
   dayKey,
+  dayWord,
   fmtDowLong,
   fmtLongDate,
   fmtShortDate,
@@ -38,15 +40,23 @@ import {
   fromDayKey,
   inQuietHours,
   minOfDay,
+  snapStart,
   spell,
-  stripWeekPhrase,
   uid,
   weekKey,
   weekKeys,
-  weekOffsetFromQuestion,
-  weekOffsetLabel,
 } from '../domain/time'
+import { rangeDayKeys, rangeStartLabel, readRange, stripRangePhrase } from '../domain/timeRange'
 import * as week from '../domain/week'
+import { nextPartTitle, splitGeometry, SPLIT_MIN_PIECE } from '../domain/split'
+import {
+  batchToken,
+  planBatch,
+  type BatchOp,
+  type BatchScope,
+  type BatchSelector,
+  type BatchSkip,
+} from '../domain/batch'
 import { search as searchDomain, type SearchHit, type SearchKind } from '../domain/search'
 import {
   describeRrule,
@@ -84,8 +94,16 @@ import {
   type SlotQuery,
   type TimeWindow,
 } from '../domain/scheduler'
+import { pastEndNote, plannableLabel, plannableOf } from '../domain/plannable'
 import { correctMeal, mealClassOf, scaffoldDay, scaffoldLine } from '../domain/sustenance'
-import { buildCtx, evaluateEvent, evaluateTick, type EngineState } from '../domain/nudges/engine'
+import { CAPTURE_NUDGE_NOTE, DRIFT_OFFER_NOTE } from '../adapters/model/modelNotes'
+import {
+  buildCtx,
+  evaluateEvent,
+  evaluateTick,
+  recordFired,
+  type EngineState,
+} from '../domain/nudges/engine'
 import type { NudgeInstance } from '../domain/nudges/library'
 import { coalesceNudges } from '../domain/nudges/queue'
 import { NEW_CALENDAR_DEFAULTS } from '../domain/project'
@@ -99,6 +117,7 @@ import {
   condenseChatPage,
   condensedChatSlug,
   debriefPage,
+  forgottenPrefPage,
   knownProjectsFrom,
   learnedRulePage,
   makeChatBatcher,
@@ -106,6 +125,7 @@ import {
   prefPage,
   slugify,
 } from '../adapters/brain/senses'
+import { brainOnlyPrefKeys, mergeActivePrefs, prefKey, prefReplayPlan } from '../domain/prefMerge'
 import {
   adoptSidecarSnapshot,
   effectiveBrain,
@@ -119,6 +139,7 @@ import {
   batchAdminRule,
   deepWorkAnytime,
   parseTimeValue,
+  matchesPref,
   resolveTaskSpec,
   type LearnedRule,
 } from '../domain/prefs'
@@ -162,8 +183,23 @@ import {
   selectAdapters,
   type ChatTurn,
   type ChoiceOption,
-  type FreeSpec,
+  type MergeArgs,
+  type BatchArgs,
+  type CompleteArgs,
+  type DuplicateArgs,
+  type EditArgs,
+  type FindSlotArgs,
+  type ListBlocksArgs,
+  type MoveArgs,
+  type OfferChoicesArgs,
+  type ProposeScenariosArgs,
+  type RelativeMoveArgs,
+  type ResizeArgs,
+  type SuggestSlotsArgs,
   type PlaceSpec,
+  type PlanArgs,
+  type RemoveArgs,
+  type SplitArgs,
   type ScenarioTaskSpec,
   type ToolExecutor,
   type WeekContext,
@@ -175,11 +211,23 @@ import {
   type ScenarioTask,
 } from '../domain/scenarios'
 import { weekScaffold } from '../domain/scaffold'
-import { choicesActive, scenariosActive } from '../domain/choices'
+import {
+  choicesActive,
+  scenariosActive,
+  typedChipLabel,
+  typedRemoveAnswer,
+} from '../domain/choices'
+import { chipReplyEffect, chipStillMeans } from '../domain/chipEffect'
 import { createNotifier, type NotifyActionId } from '../adapters/notify'
 import { logger } from '../adapters/logger'
 import { googleAccount } from '../adapters/calendar/google'
-import { adoptOrphanedExternals, mergePull, runSync, syncWindow } from '../adapters/calendar/sync'
+import {
+  adoptOrphanedExternals,
+  healAllDayBlocks,
+  mergePull,
+  runSync,
+  syncWindow,
+} from '../adapters/calendar/sync'
 import { icsToRemoteEvents } from '../adapters/calendar/ics'
 import type { RemoteCalendar } from '../adapters/calendar/types'
 import { ReauthRequiredError } from '../adapters/calendar/types'
@@ -219,17 +267,64 @@ export const mewBrain = brain
 /** re-exported so the UI reads sidecar state through the store, not the adapter */
 export type { SidecarStatus } from '../adapters/brain/sidecar'
 
-/* the always-on pref slice: brain-backed when connected, memory-backed
-   otherwise. Cached per session; refreshed after every remember. */
+/* the brain's copy of the rulebook, cached per session and refreshed after every
+   remember/forget and on (re)connect. What APPLIES is always the merge with local
+   memory (activePrefsFrom): local rules and forgets win, and brain-only rules join. */
 let brainPrefs: PrefPayload[] | null = null
+/* #71: every write to the cache is mirrored into state, so the memory console (a
+   React surface) re-renders when the brain's list lands or changes */
+function setBrainPrefs(prefs: PrefPayload[] | null): void {
+  brainPrefs = prefs
+  if (useMew.getState().brainPrefs !== prefs) useMew.setState({ brainPrefs: prefs })
+}
 function refreshBrainPrefs(): void {
   if (!brainOn()) {
-    brainPrefs = null
+    setBrainPrefs(null)
     return
   }
   void brain.listPrefs().then((prefs) => {
-    brainPrefs = prefs
+    setBrainPrefs(prefs)
+    replayLocalPrefs(prefs)
   })
+}
+
+/* #15: what the owner told MEW while the brain was away (or forgot since) reaches
+   the brain once it answers. The plan comes from the pure merge rule
+   (prefReplayPlan). A session ledger keyed by brain + rule + value makes each
+   replay happen exactly once. Nothing is claimed unless the brain proves
+   reachable, so a down brain is simply retried on the next connect. */
+const replayedPrefs = new Set<string>()
+function replayLocalPrefs(fromBrain: PrefPayload[]): void {
+  const s = useMew.getState()
+  if (!s.hydrated || !brainOn()) return
+  const plan = prefReplayPlan(s.memory, fromBrain)
+  if (!plan.remember.length && !plan.forget.length) return
+  const brainKey = effectiveBrainKey(s.settings)
+  void (async () => {
+    if (!(await brain.health())) return
+    let wrote = false
+    /* claim before the write (a concurrent replay can't double it), then confirm
+       the brain is still there: ingest never throws, so a brain that went away
+       mid-loop releases the claim and stops — the next reachable connect replays
+       it instead of the ledger remembering a write that never landed */
+    const replay = async (id: string, page: Parameters<typeof brain.ingest>[0]) => {
+      if (replayedPrefs.has(id)) return true
+      replayedPrefs.add(id)
+      await brain.ingest(page)
+      if (await brain.health()) return (wrote = true)
+      replayedPrefs.delete(id)
+      return false
+    }
+    for (const p of plan.remember)
+      if (!(await replay(`${brainKey}|${prefKey(p)}|${p.value}`, prefPage(p)))) return
+    for (const p of plan.forget)
+      if (!(await replay(`${brainKey}|${prefKey(p)}|forgotten`, forgottenPrefPage(p)))) return
+    // re-read the brain's copy; no second replay, the ledger already holds these
+    if (wrote)
+      void brain.listPrefs().then((prefs) => {
+        setBrainPrefs(prefs)
+      })
+  })()
 }
 
 /** newest-first, deduped by kind+match — the standing rulebook, as data */
@@ -237,22 +332,26 @@ export function activePrefsFrom(
   memory: MemoryEvent[],
   fromBrain: PrefPayload[] | null
 ): PrefPayload[] {
-  const source: PrefPayload[] = fromBrain?.length
-    ? fromBrain
-    : [...memory]
-        .reverse()
-        .filter((e) => e.kind === 'preference' && e.pref)
-        .map((e) => e.pref!)
-  const seen = new Set<string>()
-  const out: PrefPayload[] = []
-  for (const p of source) {
-    const key = `${p.kind}:${p.match.toLowerCase()}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    out.push(p)
-    if (out.length >= 15) break
+  /* #15: ONE merge rule (domain/prefMerge.ts). Local rules and forgets win, and
+     brain-only rules join. The brain's list used to REPLACE local memory whenever
+     it held anything, dropping rules told to MEW while it was away and bringing
+     back rules the owner had forgotten. */
+  return mergeActivePrefs(memory, fromBrain)
+}
+
+/** #71: the standing rulebook the owner sees — exactly what the planners read
+    (the merge with the brain's list when a brain answered, local memory alone
+    otherwise), plus which of those rules come from the brain alone. One selector
+    for the memory console and the keyless "what do you know about me?" reply. */
+export function standingRulebook(s: Pick<MewState, 'memory' | 'settings' | 'brainPrefs'>): {
+  prefs: PrefPayload[]
+  brainOnly: Set<string>
+} {
+  const fromBrain = brainIsOn(s.settings) ? s.brainPrefs : null
+  return {
+    prefs: activePrefsFrom(s.memory, fromBrain),
+    brainOnly: brainOnlyPrefKeys(s.memory, fromBrain),
   }
-  return out
 }
 
 /** the same rulebook, rendered for the context block */
@@ -339,6 +438,10 @@ export interface MewState {
       beat). Settings renders it so a dead built-in brain is visibly dead —
       the user can always answer "is my brain on?" (#249). */
   brainSidecar: SidecarStatus
+  /** Non-persisted (#71): the brain's copy of the standing rulebook, as last
+      listed this session (null until a brain answers, or with the brain off).
+      Mirrors the store's cache so the memory console can show brain-only rules. */
+  brainPrefs: PrefPayload[] | null
 
   engine: EngineState
   lastActivityMs: number
@@ -410,9 +513,10 @@ export interface MewState {
       message queued this IS stop-and-send: the settle drain in speak's
       finally fires it — same action, no second path. */
   stopSpeaking(): void
-  /** Read-only history answer: real sums from the asked week — this one, or
-      a past one ("last week", "two weeks ago") — + brain recall color. Never
-      mutates — chat is where the reply lands, via the tool. */
+  /** Read-only history answer: real sums over the stretch the question names
+      — this week, a past one ("last week", "two weeks ago"), or any span
+      ("since August 1", "the last three weeks", "this month") — + brain recall
+      color. Never mutates — chat is where the reply lands, via the tool. */
   queryBrain(question: string): Promise<string>
   toggleComplete(blockId: string): void
   /** Record the conversational referent (#320) — the block the user just
@@ -451,12 +555,13 @@ export interface MewState {
   openWeeklyReview(): WeeklyReview
   /** Close the weekly review surface ("leave them" / Esc). */
   closeWeeklyReview(): void
-  /** Roll the owner-SELECTED carried blocks forward into `targetWeekKey`, through
-      the executor (the normal plan path) — never a direct mutation. Only ids that
-      pass isRollCandidate move (own + flexible + open): a mew, an external event,
-      or a fixed-time block handed in is refused at the gate, so nothing rolls
-      that the owner didn't pick from a legitimate carried set. Human-in-the-loop
-      by construction. */
+  /** Roll the owner-SELECTED carried blocks forward into `targetWeekKey` — each
+      lands on its same weekday and the original is marked rolled (week.roll, the
+      evening roll's primitive), so it leaves the carried set and one "undo that"
+      takes the whole roll back (#19). Only ids that pass isRollCandidate move
+      (own + flexible + open): a mew, an external event, or a fixed-time block
+      handed in is refused at the gate, so nothing rolls that the owner didn't
+      pick from a legitimate carried set. Human-in-the-loop by construction. */
   rollForward(blockIds: string[], targetWeekKey: string): void
   /** Draft the owner's learned week-shape for `targetWeekKey` (#349) — confirmed
       rules, their recurrences, and learned energy bands, laid AROUND existing/
@@ -560,7 +665,9 @@ export interface MewState {
       does, then the same rescue-offer pass runs — with no network and no
       OAuth. Each call is one complete simulated listing for its calendar
       (an event absent from a later call reads as deleted, same as a real
-      pull). RC verification is one paste: window.__mewSimulatePull. */
+      pull). RC verification is one paste: window.__mewSimulatePull. An
+      all-day entry (#27) rides the same seam: `allDay: true` (+ an inclusive
+      `endDayKey` for a multi-day span); its clock span is ignored. */
   simulatePull(
     events: {
       eventId: string
@@ -570,6 +677,8 @@ export interface MewState {
       dayKey?: string
       calId?: string
       optional?: boolean
+      allDay?: boolean
+      endDayKey?: string
     }[]
   ): void
 
@@ -727,6 +836,29 @@ export function isAcknowledgmentOnly(body: string): boolean {
     ordinary user turn; the week changes only through tools. */
 function choicesMsg(body: string, choices: ChatChoice[]): ChatMessage {
   return { id: uid(), role: 'mew', body, ts: nowFn(), choices }
+}
+
+/** The drift drop chip's exactness guard (#12): its reply resolves exactly as
+    execRemove will (the day pin becomes the resolver's day) to block `id` and
+    nothing else. It runs when the chip is offered AND again when it's picked:
+    the reply's day words mean the day it's spoken, so a chip picked after
+    midnight has to single out its block all over again. */
+function dropReplySinglesOut(
+  blocks: Block[],
+  reply: string,
+  now: Date,
+  todayKey: string,
+  id: string
+): boolean {
+  const e = chipReplyEffect(blocks, reply, now, todayKey) // #94: the one chip resolver
+  return (
+    e?.kind === 'remove' &&
+    Array.isArray(e.remove) &&
+    e.remove.length === 1 &&
+    e.remove[0] === id &&
+    Array.isArray(e.candidates) &&
+    !e.candidates.length
+  )
 }
 
 /** The #293 scenario-picker message shape — the chips pattern with cards:
@@ -969,13 +1101,72 @@ function nudgeMsg(n: NudgeInstance): ChatMessage {
     (#102: an explicit time is the user's judgment — place it, then offer). */
 function clashNote(clash: Block[], prefs: PrefPayload[] = []): string {
   if (!clash.length) return ''
-  const parts = clash.map((c) => {
-    const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
-    return week.isFixedTime(c, prefs)
-      ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
-      : `${base} (flexible — offer to drift it, don't move it unasked)`
-  })
-  return ` — note: it overlaps ${parts.join(' and ')}`
+  /* a protected rest isn't "flexible": protect-rest owns it, so it's named the
+     way #122 names it, with no offer to drift it */
+  const rests = clash.filter((c) => !week.isFixedTime(c, prefs) && isProtectedRest(c))
+  const parts = clash
+    .filter((c) => !rests.includes(c))
+    .map((c) => {
+      const base = `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+      return week.isFixedTime(c, prefs)
+        ? `${base} (fixed${c.optional ? ', tentative' : ''} — it can't move)`
+        : `${base} (flexible${DRIFT_OFFER_NOTE})`
+    })
+  return `${parts.length ? ` — note: it overlaps ${parts.join(' and ')}` : ''}${restRunsOver(rests)}`
+}
+
+/** A protected rest: sacred time protect-rest owns, never moved by a placement
+    and never called flexible (#122) */
+function isProtectedRest(b: Block): boolean {
+  return b.tag === 'rest' && b.protected
+}
+
+/** #122's words for the protected rest a change runs over ('' when none):
+    " — it runs over your evening walk 18:00–18:45" */
+function restRunsOver(rests: Block[]): string {
+  return rests.length
+    ? ` — it runs over your ${andList(
+        rests.map(
+          (r) =>
+            `${r.title.split('—')[0].trim().toLowerCase()} ${fmtTime(r.startMin)}–${fmtTime(r.endMin)}`
+        )
+      )}`
+    : ''
+}
+
+/** #49: a GRANTED overlap — the owner said, in their own words this turn, that
+    sharing time is fine. It covers their own FLEXIBLE blocks only: fixed-time
+    and [calendar] blocks are scheduled around, never over, so a landing on one
+    is refused (and a grant can't be read as licence to cover a meeting). */
+function grantedOverlap(
+  blocks: Block[],
+  dayKey: string,
+  startMin: number,
+  endMin: number,
+  selfId: string | undefined,
+  prefs: PrefPayload[]
+): { refuse: Block[]; shares: Block[] } {
+  const clash = week.conflictsWith(blocks, dayKey, startMin, endMin, selfId, prefs)
+  return {
+    refuse: clash.filter((c) => week.isFixedTime(c, prefs)),
+    shares: clash.filter((c) => !week.isFixedTime(c, prefs)),
+  }
+}
+/** the receipt of a granted overlap: named plainly, no offer to drift */
+function sharedTimeNote(shares: Block[]): string {
+  if (!shares.length) return ''
+  const names = shares.map(
+    (c) => `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+  )
+  return ` — it shares time with ${names.join(' and ')}, as you said`
+}
+/** why a granted overlap still didn't land: the fixed or calendar block, named */
+function overlapRefusal(title: string, startMin: number, refuse: Block[]): string {
+  const names = refuse.map(
+    (c) =>
+      `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.external ? 'from your calendar' : 'fixed'})`
+  )
+  return `"${title.split('—')[0].trim()}" stays unplaced at ${fmtTime(startMin)}: it would sit over ${names.join(' and ')}, and those are scheduled around, never over — name another time and I'll place it`
 }
 
 /** #324 own-vs-own collision drift — the placement-time sibling of #345's
@@ -993,7 +1184,7 @@ function driftReply(
   todayKey: string,
   nowMin: number,
   prefs: PrefPayload[]
-): { blocks: Block[]; note: string; driftedIds: string[] } {
+): { blocks: Block[]; note: string; driftedIds: string[]; stuckIds: string[] } {
   const res = driftCollisions(blocks, placed, todayKey, nowMin, prefs)
   let next = blocks
   const driftedIds: string[] = []
@@ -1012,14 +1203,22 @@ function driftReply(
   const driftPart = moved.length ? ` — moved ${moved.join(', ')} to clear ${placedBase}` : ''
   // external/fixed never move — the same honest note clashNote has always given
   const fixedPart = clashNote(res.fixed, prefs)
-  const stuckPart = res.stuck.length
-    ? ` — note: ${res.stuck
-        .map((b) => b.title.split('—')[0].trim())
-        .join(
-          ' and '
-        )} still overlaps ${placedBase} with no clean slot to drift to — offer to shift the work, drop it, or keep the overlap (don't leave it unasked)`
+  /* #12: no clean slot to drift to — the note states the fact only; the
+     executor's offerDriftChoices turns it into a real choice (chips) */
+  const stuckNames = res.stuck.map((b) => b.title.split('—')[0].trim())
+  const stuckPart = stuckNames.length
+    ? ` — ${stuckNames.join(' and ')} still ${stuckNames.length === 1 ? 'shares' : 'share'} that time`
     : ''
-  return { blocks: next, note: `${driftPart}${fixedPart}${stuckPart}`, driftedIds }
+  /* #122: work over a protected rest stays where it was asked and the rest
+     stays too, so the reply names the time it runs over; a rest the owner kept
+     after protect-rest's one ask would otherwise go unmentioned */
+  const restPart = restRunsOver(res.rests)
+  return {
+    blocks: next,
+    note: `${driftPart}${fixedPart}${stuckPart}${restPart}`,
+    driftedIds,
+    stuckIds: res.stuck.map((b) => b.id),
+  }
 }
 
 function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = false): WeekContext {
@@ -1055,6 +1254,8 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
     todayKey,
     todayLabel: fmtLongDate(now),
     nowLabel: fmtTime(minOfDay(now)),
+    /* #22: the model reasons about the bounds instead of guessing them */
+    plannableHours: plannableLabel(plannableOf(s.settings)),
     weekSummary: summary,
     ...(referent ? { referent } : {}),
     realisticBestH: agg.realisticBestH,
@@ -1068,7 +1269,12 @@ function weekContext(s: MewState, recallLines: string[] = [], recallDegraded = f
        shows, over LOCAL memory (brain-off by law), so reply and card are one
        summary. Computed here so runIntent stays a pure render of ctx. */
     knownLines: consoleSummary(
-      memoryConsole({ events: s.memory, prefs: activePrefsFrom(s.memory, null), insights })
+      memoryConsole({
+        events: s.memory,
+        ...standingRulebook(s), // #71: the card's rulebook, brain rows only once it answered
+        insights,
+        energy: energyProfile(s.memory, agg, now), // #15: rhythm rows, parity with the card
+      })
     ),
     recallLines,
     recallDegraded,
@@ -1566,7 +1772,7 @@ export const useMew = create<MewState>((set, get) => {
 
   function markFired(n: NudgeInstance, nowMs: number) {
     set((s) => {
-      const lastFired = { ...s.engine.lastFired, [n.type]: { ts: nowMs, key: n.key } }
+      const lastFired = recordFired(s.engine.lastFired, n, nowMs, dayKey(new Date(nowMs)))
       return {
         engine: {
           lastFired,
@@ -1606,7 +1812,7 @@ export const useMew = create<MewState>((set, get) => {
     for (const c of conflicts) {
       const key = rescueKey(c)
       if (lastFired[key]) continue // this landing was already offered
-      const options = rescueOptions(s.blocks, c, todayKey, minOfDay(now))
+      const options = rescueOptions(s.blocks, c, todayKey, minOfDay(now), plannableOf(s.settings))
       if (options.length) {
         msgs.push(choicesMsg(rescueLine(c, todayKey), options))
       } else if (!withinDayWords(c.block.dayKey, todayKey)) {
@@ -1757,6 +1963,117 @@ export const useMew = create<MewState>((set, get) => {
      on. Under the ask setting, under the pad floor, or with a stated duration,
      this says nothing. */
   let pendingEstimateMsgs: ChatMessage[] = []
+
+  /* No clean drift (#12): new explicit work landed on the owner's own flexible
+     blocks and one of them has nowhere clean to go. The owner gets ONE chips
+     message with the honest ways forward: shift the work to its next clean
+     slot, drop the flexible block, or keep both. Every chip's reply is a plain
+     ask the executor runs (so it's keyless-safe: the rules floor parses each
+     one), and a chip is offered only when that exact reply resolves to exactly
+     its block through the same resolvers the executor uses. A pick can never
+     touch a block its label didn't name. Nothing moves until a pick. Parked
+     like the day-load chips (#301) so the ask lands after the turn's reply.
+     Returns whether chips went out, so the reply can say the options are on
+     screen. */
+  /* One clock per turn (#96). The store clock (nowMs) only moves on a tick —
+     every 5 s, on visibility, on the shell's tick — while a turn can start in the
+     seconds after midnight before one lands. Everything a turn resolves (the rules
+     floor's day words, every executor's todayKey, the model's week context) reads
+     nowMs, so bring it to now once, first. Forward only: the store clock never
+     runs backwards under a turn. */
+  function syncTurnClock() {
+    const now = nowFn()
+    if (now > get().nowMs) set({ nowMs: now })
+  }
+
+  let pendingDriftMsgs: ChatMessage[] = []
+  function offerDriftChoices(
+    stuck: { placedId: string; stuckIds: string[] }[],
+    todayKey: string
+  ): boolean {
+    const s = get()
+    const now = new Date(s.nowMs)
+    const hours = plannableOf(s.settings)
+    const base = (b: Block) => b.title.split('\u2014')[0].trim()
+    const msgs: ChatMessage[] = []
+    for (const rec of stuck) {
+      const placed = s.blocks.find((b) => b.id === rec.placedId)
+      if (!placed) continue
+      const flex = rec.stuckIds
+        .map((id) => s.blocks.find((b) => b.id === id))
+        .filter(
+          (b): b is Block =>
+            b != null &&
+            b.status === 'open' &&
+            b.dayKey === placed.dayKey &&
+            b.startMin < placed.endMin &&
+            b.endMin > placed.startMin
+        )
+      if (!flex.length) continue // resolved in the meantime — nothing to ask
+      const choices: ChatChoice[] = []
+
+      /* shift the work: its next clean slot at or after where it asked to be */
+      const slot = week.nextSlotAfter(s.blocks, placed, placed.startMin, hours)
+      const toDay = slot ? dayWord(slot.dayKey, todayKey) : null
+      if (slot && toDay) {
+        const reply = `move the ${base(placed)} at ${fmtTime(placed.startMin)} to ${toDay} at ${fmtTime(slot.startMin)}`
+        const ask = parseCommand(reply, now)
+        const hit =
+          ask.kind === 'move' && ask.at
+            ? week.findTarget(s.blocks, ask.query ?? '', todayKey, {
+                at: parseTimeValue(ask.at),
+              })
+            : null
+        const landsOn =
+          ask.toDayKey != null && /^\d+$/.test(ask.toDayKey)
+            ? addDaysKey(todayKey, Number(ask.toDayKey))
+            : null
+        if (
+          hit?.status === 'ok' &&
+          hit.block.id === placed.id &&
+          landsOn === slot.dayKey &&
+          ask.toStartMin === slot.startMin
+        )
+          choices.push({
+            id: 'shift',
+            label: `move ${base(placed)} to ${toDay === 'today' ? '' : `${toDay} `}${fmtTime(slot.startMin)}`,
+            reply,
+          })
+      }
+
+      /* drop the flexible block: only a one-off (a series asks this/following/
+         series first) that its own reply singles out. The reply names its DAY
+         (#62's day pin: "today", "tomorrow", "on thursday"), so a same-titled
+         block at the same time on another day no longer hides the chip. Past the
+         day words (a week or more out) it stays day-less, and the exactness guard
+         below withholds it whenever that could reach another day. */
+      for (const b of flex.slice(0, 3)) {
+        if (b.recurringBlockId) continue
+        const word = dayWord(b.dayKey, todayKey)
+        const onDay =
+          word == null ? '' : word === 'today' || word === 'tomorrow' ? ` ${word}` : ` on ${word}`
+        const reply = `remove the ${base(b)}${onDay} at ${fmtTime(b.startMin)}`
+        if (dropReplySinglesOut(s.blocks, reply, now, todayKey, b.id))
+          choices.push({ id: `drop-${b.id}`, label: `drop ${base(b)}`, reply })
+      }
+
+      if (!choices.length) continue // no exact way to act — the plain note stands
+      choices.push({ id: 'keep', label: 'keep both', reply: 'ok, keep both as they are' })
+      const overlapStart = Math.max(placed.startMin, Math.min(...flex.map((b) => b.startMin)))
+      const overlapEnd = Math.min(placed.endMin, Math.max(...flex.map((b) => b.endMin)))
+      const names = [...flex.map(base), base(placed)] // "a, b and c", however many are stuck
+      msgs.push(
+        choicesMsg(
+          `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]} share ${fmtTime(overlapStart)}\u2013${fmtTime(overlapEnd)}, with no clean slot to drift to. How should it go?`,
+          choices
+        )
+      )
+    }
+    if (!msgs.length) return false
+    if (turnInFlight) pendingDriftMsgs.push(...msgs)
+    else queueMicrotask(() => post(msgs))
+    return true
+  }
   let pendingEstimatePad: { ids: string[]; factor: number; focusClass: FocusClass } | null = null
   function offerEstimateGuard(
     placed: { id: string; focusClass: FocusClass }[],
@@ -1795,8 +2112,11 @@ export const useMew = create<MewState>((set, get) => {
     const pct = Math.round((factor - 1) * 100)
     const label = FOCUS_CLASS_LABEL[focusClass]
     pendingEstimatePad = { ids, factor, focusClass }
+    /* #90: name the blocks the pad would touch, so the offer never lets a class
+       word stand in for what it changes */
+    const names = namesOfBlocks(s.blocks, ids)
     const msg = choicesMsg(
-      `your ${label} blocks tend to run ~${pct}% long — want me to give them room?`,
+      `your ${label} blocks tend to run ~${pct}% long — want me to give them room? (${listShort(names)})`,
       [
         { id: 'pad', label: 'give them room', reply: `give my ${label} blocks room` },
         { id: 'leave', label: 'leave as-is', reply: 'ok, leave them as they are' },
@@ -1848,10 +2168,11 @@ export const useMew = create<MewState>((set, get) => {
     )
     setBlocks(next)
     pendingEstimatePad = null // one pad per offer
-    const label = FOCUS_CLASS_LABEL[focusClass]
     const n = targets.length
     const pct = Math.round((pad.factor - 1) * 100)
-    return `Gave your ${label} block${n === 1 ? '' : 's'} room — ${n} now run${n === 1 ? 's' : ''} about ${pct}% longer, sized to how they really go.`
+    /* #90: name what grew, the same names the offer promised */
+    const names = andList(namesOfBlocks(targets, [...grown]))
+    return `Gave ${names} room — ${n === 1 ? 'it now runs' : `${n} now run`} about ${pct}% longer, sized to how ${n === 1 ? 'it really goes' : 'they really go'}.`
   }
 
   /* task→person link snapshot for the delegate nudge — fetched once per
@@ -1994,7 +2315,23 @@ export const useMew = create<MewState>((set, get) => {
     })
     burnSustenanceKey(todayKey, s.nowMs)
     if (!specs.length) return // fed (or wall-to-wall): nothing to add, nothing to say
-    runToolWithCard('plan', { places: specs, frees: [] }, () => execPlan(specs, []))
+    const before = new Set(get().blocks.map((b) => b.id))
+    runToolWithCard('plan', { places: specs, frees: [] }, () =>
+      execPlan({ places: specs, frees: [] })
+    )
+    /* #123: the meals (and any breather) this pass placed are MEW's scaffolding,
+       never the owner's work to carry into next week */
+    const placed = get().blocks.filter((b) => !before.has(b.id) && !b.placedBy)
+    if (placed.length) {
+      const ids = new Set(placed.map((b) => b.id))
+      setBlocks(
+        get().blocks.map((b) =>
+          ids.has(b.id)
+            ? { ...b, placedBy: b.tag === 'rest' ? ('pacing' as const) : ('sustenance' as const) }
+            : b
+        )
+      )
+    }
     post([mewMsg(scaffoldLine(specs))])
   }
 
@@ -2043,6 +2380,7 @@ export const useMew = create<MewState>((set, get) => {
     if (!open.length) return []
     return fitOffers(open, s.blocks, s.memory, new Date(s.nowMs), {
       energyFit: s.settings.energyFit !== 'off',
+      hours: plannableOf(s.settings), // #22
     })
   }
 
@@ -2334,6 +2672,13 @@ export const useMew = create<MewState>((set, get) => {
       pendingEstimateMsgs = []
       post(msgs)
     }
+    /* the no-clean-drift ask (#12) rides the same beat: it's a direct question
+       about this turn's own placement, so it comes after the reply too */
+    if (pendingDriftMsgs.length) {
+      const msgs = pendingDriftMsgs
+      pendingDriftMsgs = []
+      post(msgs)
+    }
   }
 
   function setBlocks(blocks: Block[]) {
@@ -2367,13 +2712,19 @@ export const useMew = create<MewState>((set, get) => {
     return confirmedRulesFrom(s.memory)
   }
 
-  function execPlan(places: PlaceSpec[], frees: FreeSpec[]): string {
+  /* one named object (#165) — see PlanArgs */
+  function execPlan(args: PlanArgs): string {
+    const { places, frees } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
     let blocks = s.blocks
     const lines: string[] = []
     const mealNotes: string[] = [] // #323: one aside per meal the guardrail moved or named
+    /* #116: a place with no time that today's remaining hours can't hold is
+       named honestly (never back-filled into the morning), with the next open
+       time as the offer */
+    const noRoom: { note: string; offer: ChoiceOption | null }[] = []
     let placedDeep: Block | null = null
     const touchedDays = new Set<string>() // days a rest-pacing pass should re-check (#103)
     /* #322: blocks this run newly PLACED without a stated duration, by focus
@@ -2396,9 +2747,11 @@ export const useMew = create<MewState>((set, get) => {
        clear in this same pass and names what moved (external/fixed stay put, an
        honest note); every other placement keeps the place-then-offer note
        (#102). `blocks` must already hold `landed`. Mutates blocks + touchedDays. */
+    const stuckDrifts: { placedId: string; stuckIds: string[] }[] = [] // #12
     const collisionNote = (landed: Block, key: string): string => {
       if (landed.tag === 'work' && !week.isBackground(landed)) {
         const d = driftReply(blocks, landed, todayKey, minOfDay(now), prefs)
+        if (d.stuckIds.length) stuckDrifts.push({ placedId: landed.id, stuckIds: d.stuckIds })
         blocks = d.blocks
         for (const id of d.driftedIds) {
           const b = blocks.find((x) => x.id === id)
@@ -2448,7 +2801,7 @@ export const useMew = create<MewState>((set, get) => {
          RRULE (sync.ts has no rrule field by design). A confirmed rule may
          supply the recurrence itself (#328), routed here like an explicit one. */
       if (prefd.rrule) {
-        const anchorStart = prefd.startMin ?? week.DAY_START
+        const anchorStart = prefd.startMin ?? plannableOf(s.settings).startMin
         const durationMin = prefd.durationMin ?? 60
         const windowEnd = addDaysKey(key, RRULE_DEFAULT_WEEKS * 7)
         const occs = expandRrule(prefd.rrule, key, anchorStart, durationMin, key, windowEnd)
@@ -2500,8 +2853,8 @@ export const useMew = create<MewState>((set, get) => {
       const bgAutoStart =
         bg && prefd.startMin == null
           ? key === todayKey
-            ? Math.max(week.DAY_START, Math.ceil(minOfDay(now) / 5) * 5)
-            : week.DAY_START
+            ? Math.max(plannableOf(s.settings).startMin, Math.ceil(minOfDay(now) / 5) * 5)
+            : plannableOf(s.settings).startMin
           : prefd.startMin
       /* de-dup (#89): re-planning a block that already lives in the target day
          is a MOVE, not a twin. Match on the EXACT base title (before any "—"
@@ -2520,22 +2873,47 @@ export const useMew = create<MewState>((set, get) => {
                 b.title.split('—')[0].trim().toLowerCase() === reBase
             )
           : undefined
+      /* #135: a re-plan has ONE length for choosing its slot and for the block
+         that lands there: the length the owner stated this turn, else the block's
+         own. Scoring with one and moving with the other landed it over the next
+         block */
+      const replanLen = existing
+        ? p.durationStated && p.durationMin != null
+          ? p.durationMin
+          : existing.endMin - existing.startMin
+        : undefined
       /* the deterministic floor: with no explicit/ruled time (and not a
          background hold), the scoring oracle (#80) picks the slot —
          conflict-free by construction and rest-aware — so even a model that
          skips suggest_slots can't stack work into a busy gap. */
       let start = bgAutoStart
+      /* #117: "tonight" / "this evening" / "after dinner" place from the classic
+         day's end, and "after dinner" after that day's dinner too */
+      const eveningFrom = (k: string): number =>
+        Math.max(
+          week.DAY_END,
+          ...(p.afterDinner
+            ? week
+                .blocksForDay(blocks, k)
+                .filter((b) => b.status === 'open' && mealClassOf(b.title) === 'dinner')
+                .map((b) => b.endMin)
+            : [])
+        )
       if (start == null && !bg) {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
         const q: SlotQuery = {
           title: p.title,
           tag,
-          durationMin: prefd.durationMin ?? 60,
+          durationMin: replanLen ?? prefd.durationMin ?? 60,
           ...(p.due != null ? { due: p.due } : {}),
           /* #328: a confirmed window is FIRM here — the scorer collapses
              off-window, so "deck → mornings" lands in the morning. No confirmed
              window ⇒ unset ⇒ today's soft tag-default scoring, byte-identical. */
-          ...(prefd.window != null ? { window: prefd.window, windowFirm: prefd.windowFirm } : {}),
+          ...(p.window != null
+            ? { window: p.window, windowFirm: true } // #117: the owner's own words this turn
+            : prefd.window != null
+              ? { window: prefd.window, windowFirm: prefd.windowFirm }
+              : {}),
         }
         const best = scoreSlots(
           occupied,
@@ -2546,8 +2924,9 @@ export const useMew = create<MewState>((set, get) => {
           undefined, // weights: the default profile
           undefined, // horizonDays: the default week
           undefined, // mealBase: the circadian default (#298)
-          bufferMin // #302: keep MEW's placements shy of external meetings
-        ).find((c) => c.dayKey === key)
+          bufferMin, // #302: keep MEW's placements shy of external meetings
+          plannableOf(s.settings) // #22: the owner's plannable day
+        ).find((c) => c.dayKey === key && (p.window == null || c.startMin >= eveningFrom(key)))
         if (best) start = best.startMin
       }
       /* #323 the meal guardrail: the circadian window + inter-meal gap engage
@@ -2559,9 +2938,7 @@ export const useMew = create<MewState>((set, get) => {
          domain, so keyed and keyless behave identically. */
       if (start != null && !bg && p.startMin != null && mealClassOf(p.title)) {
         const occupied = existing ? blocks.filter((b) => b.id !== existing.id) : blocks
-        const durationMin = existing
-          ? existing.endMin - existing.startMin
-          : (prefd.durationMin ?? 60)
+        const durationMin = replanLen ?? prefd.durationMin ?? 60
         const fix = correctMeal(
           occupied,
           key,
@@ -2579,29 +2956,111 @@ export const useMew = create<MewState>((set, get) => {
       }
       if (existing) {
         const landStart = start ?? existing.startMin
-        blocks = week.move(blocks, existing.id, key, landStart)
+        /* #49: a granted overlap never lands on a fixed or calendar block */
+        const grant = p.allowOverlap
+          ? grantedOverlap(blocks, key, landStart, landStart + replanLen!, existing.id, prefs)
+          : null
+        if (grant?.refuse.length) {
+          lines.push(overlapRefusal(p.title, landStart, grant.refuse))
+          continue
+        }
+        blocks = week.move(blocks, existing.id, key, landStart, replanLen)
         const moved = blocks.find((b) => b.id === existing.id)!
         targetedIds.push(moved.id) // #320
         if (week.isDeep(moved)) placedDeep = moved
         if (moved.tag === 'work' && !week.isBackground(moved)) touchedDays.add(key)
-        const clashPart = collisionNote(moved, key)
+        const clashPart = grant ? sharedTimeNote(grant.shares) : collisionNote(moved, key)
         lines.push(
           `moved ${p.title.split('—')[0].trim()} to ${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(moved.startMin)}–${fmtTime(moved.endMin)}${clashPart}`
         )
         continue
       }
-      const placed = week.place(blocks, {
-        title: p.title,
-        tag,
-        dayKey: key,
-        startMin: start,
-        durationMin: prefd.durationMin,
-        protected: prefd.protected ?? !microRest,
-        attention: prefd.attention,
-        due: p.due,
-      })
+      /* #116: an auto-placed block never starts in the past — today's first-fit
+         looks from now, and a day already lived has no slot to find */
+      const planHours = plannableOf(s.settings) // #22: a first-fit fallback stays inside the plannable day
+      const auto = start == null && !bg
+      const placed =
+        auto && key < todayKey
+          ? null
+          : week.place(
+              blocks,
+              {
+                title: p.title,
+                tag,
+                dayKey: key,
+                startMin: start,
+                durationMin: prefd.durationMin,
+                protected: prefd.protected ?? !microRest,
+                attention: prefd.attention,
+                due: p.due,
+              },
+              auto && (key === todayKey || p.window != null)
+                ? {
+                    ...planHours,
+                    startMin: Math.max(
+                      planHours.startMin,
+                      key === todayKey ? minOfDay(now) : 0,
+                      p.window != null ? eveningFrom(key) : 0
+                    ),
+                  }
+                : planHours
+            )
+      if (!placed && auto && key <= todayKey) {
+        const base = p.title.split('—')[0].trim()
+        const dur = prefd.durationMin ?? 60
+        const evening = p.window != null // #117: an evening ask stays in the evening
+        const from = Math.max(
+          planHours.startMin,
+          minOfDay(now),
+          evening ? eveningFrom(todayKey) : 0
+        )
+        const tonight =
+          key === todayKey
+            ? pastEndNote(
+                blocks,
+                todayKey,
+                from,
+                dur,
+                planHours,
+                evening ? 'tonight' : 'today',
+                bufferMin
+              )
+            : null
+        const nextKey = addDaysKey(todayKey, 1)
+        const next = week.findFreeSlot(
+          blocks,
+          nextKey,
+          dur,
+          Math.max(planHours.startMin, evening ? eveningFrom(nextKey) : 0),
+          planHours.endMin,
+          bufferMin
+        )
+        const why =
+          key === todayKey
+            ? `No ${dur}-min window is left ${evening ? 'tonight' : 'today'} for "${base}" inside the hours I plan in (${plannableLabel(planHours)}).`
+            : `${fmtDowLong(key)} has already gone by, so "${base}" needs a day ahead.`
+        noRoom.push({
+          note: `${why}${tonight ? ` ${tonight}` : ''}${next ? ` Tomorrow ${fmtTime(next.startMin)}–${fmtTime(next.endMin)} is open.` : ''}`,
+          offer: next
+            ? {
+                label: `tomorrow ${fmtTime(next.startMin)}`,
+                reply: `block ${dur % 60 === 0 ? `${dur / 60}h` : `${dur} min`} for ${base} tomorrow at ${fmtTime(next.startMin)}`,
+              }
+            : null,
+        })
+        continue
+      }
       if (!placed) {
         lines.push(`${fmtDowLong(key)} couldn't hold "${p.title}" — the day is full`)
+        continue
+      }
+      /* #49: a granted overlap shares time with the owner's flexible blocks as
+         asked (no drift, no offer) — and never lands on a fixed or calendar one */
+      const grant = p.allowOverlap
+        ? grantedOverlap(blocks, key, placed.startMin, placed.endMin, placed.id, prefs)
+        : null
+      if (grant?.refuse.length) {
+        lines.push(overlapRefusal(p.title, placed.startMin, grant.refuse))
         continue
       }
       blocks = [...blocks, placed]
@@ -2612,7 +3071,7 @@ export const useMew = create<MewState>((set, get) => {
       /* background holds the clock, not the slot — placing one over a meeting
          (or vice versa) is the point, never a collision to warn about; a work
          placement over own flexible blocks drifts them clear (#324) */
-      const clashPart = collisionNote(placed, key)
+      const clashPart = grant ? sharedTimeNote(grant.shares) : collisionNote(placed, key)
       lines.push(
         `${key === todayKey ? 'today' : fmtDowLong(key)} ${fmtTime(placed.startMin)}–${fmtTime(placed.endMin)} is held for ${p.title}${week.isBackground(placed) ? ' (running in the background)' : ''}${credit ? ` — ${credit}` : applied.length ? ' (your standing rule)' : usual ? ' (your usual)' : ''}${placed.due != null ? ` · due ${fmtTime(placed.due)}` : ''}${clashPart}`
       )
@@ -2634,7 +3093,16 @@ export const useMew = create<MewState>((set, get) => {
       blocks = [...blocks, guard]
       lines.push(`${fmtDowLong(key)} ${f.startMin === 13 * 60 ? 'afternoon ' : ''}kept free`)
     }
-    if (!lines.length) return 'nothing was placed'
+    if (!lines.length) {
+      /* #116: the only ask couldn't fit today — say so and offer the next open
+         time; nothing lands until the owner picks it */
+      if (noRoom.length === 1 && noRoom[0].offer)
+        return postChoices(noRoom[0].note, [
+          noRoom[0].offer,
+          { label: 'not now', reply: 'ok, not now' },
+        ])
+      return noRoom.length ? noRoom.map((r) => r.note).join(' ') : 'nothing was placed'
+    }
 
     /* pacing rest (#103): a long unbroken work run earns one short breather.
        The pass is pure and idempotent — it returns at most one rest per day
@@ -2642,33 +3110,12 @@ export const useMew = create<MewState>((set, get) => {
        stacks rests. A free seam gets an UNPROTECTED micro-rest (≤20m, the same
        absorbable pacing rest a reshape can dissolve); a wall-to-wall run that
        would need a committed block displaced is only OFFERED, never seized. */
-    const restNotes: string[] = []
-    for (const key of touchedDays) {
-      const r = restInsertion(blocks, key)
-      if (!r) continue
-      const when = key === todayKey ? 'today' : fmtDowLong(key)
-      if (r.kind === 'place') {
-        const rest = week.place(blocks, {
-          title: 'Breather',
-          tag: 'rest',
-          dayKey: key,
-          startMin: r.startMin,
-          endMin: r.endMin,
-          protected: false,
-        })
-        if (rest) {
-          blocks = [...blocks, rest]
-          restNotes.push(
-            `tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`
-          )
-        }
-      } else {
-        restNotes.push(
-          `${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`
-        )
-      }
-    }
+    const paced = paceRest(blocks, touchedDays, todayKey, minOfDay(now))
+    blocks = paced.blocks
+    const restNotes = paced.notes
     setBlocks(blocks)
+    /* #12: any own flexible block left overlapping gets a real choice (chips) */
+    const driftAsk = stuckDrifts.length ? offerDriftChoices(stuckDrifts, todayKey) : false
 
     /* referent (#320): a single-block plan is the one unambiguous "it" — set it.
        A multi-block plan or a kept-free window is ambiguous by construction, so
@@ -2699,7 +3146,10 @@ export const useMew = create<MewState>((set, get) => {
           week.isDeep(b) &&
           b.status !== 'rolled'
       ).length
-      observation = ` That's your ${ordinal(deepCount)} deep-work block this week.`
+      /* #90: the count names the class in the room offer's own words — the same
+         turn's offer says "hour-plus work", so an inbox sweep isn't a "deep-work
+         block" one message earlier */
+      observation = ` That's your ${ordinal(deepCount)} ${FOCUS_CLASS_LABEL.deep} block this week.`
       /* the meter speaking for this day makes the right-size aside a second
          voice in the same turn — the chips carry the offer, the count stands */
       if (agg.realisticBestH != null && !guarded.has(placedDeep.dayKey)) {
@@ -2709,19 +3159,13 @@ export const useMew = create<MewState>((set, get) => {
         }
       }
     }
-    let pacing = ''
-    if (restNotes.length) {
-      const joined = joinHuman(restNotes)
-      pacing = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
+    const pacing = asideSentences(restNotes)
     /* #323: the meal guardrail's asides — a moved or kept meal named once, in
        the same positive voice as the pacing note above */
-    let mealAside = ''
-    if (mealNotes.length) {
-      const joined = joinHuman(mealNotes)
-      mealAside = ` ${joined.charAt(0).toUpperCase()}${joined.slice(1)}.`
-    }
-    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}`
+    const mealAside = asideSentences(mealNotes)
+    const choiceAside = driftAsk ? ' The options for that overlap are on screen.' : ''
+    const noRoomAside = noRoom.length ? ` ${noRoom.map((r) => r.note).join(' ')}` : ''
+    return `Done — ${joinHuman(lines)}.${observation}${pacing}${mealAside}${choiceAside}${noRoomAside}`
   }
 
   /* completions through CHAT celebrate in the reply itself — the celebrate
@@ -2757,15 +3201,106 @@ export const useMew = create<MewState>((set, get) => {
     captures: Capture[]
     memory: MewState['memory']
   } | null = null
-  /* a scenario pick applies OUTSIDE any turn (#293) — the user's very next
-     message ("undo that") must still reach it, so this flag carries the pick's
-     snapshot across exactly one speak() entry instead of the usual fresh-
-     exchange reset. One turn only: the moment that next turn runs (mutating or
-     not), the ordinary #162 lifecycle owns the snapshot again. */
-  let pickSnapshotHolds = false
+  /* the owner's very next message reaches MEW's last change (#120): a change
+     made in a turn (typed, keyed or a picked chip) or by a tap outside any turn
+     (#293: a scenario pick, a drag, a confirmed remove) keeps its snapshot across
+     exactly one speak() entry, so "undo that" right after takes it back. One
+     message only: the entry after that clears it, and a change made in the
+     meantime replaces it, so an undo always takes back the newest change. */
+  let snapshotHolds = false
   function snapshotForUndo() {
     const s = get()
     preMutationSnapshot = { blocks: s.blocks, captures: s.captures, memory: s.memory }
+    snapshotHolds = true
+    undoLeft = null
+  }
+
+  /* the week as MEW's last change left it (#130): the undo restores the snapshot
+     whole, so it acts only while the week is still exactly what that change
+     left. A calendar sync, a checkbox, a capture or any other change since would
+     be swept back with it, so the undo declines and changes nothing. Compared by
+     what the owner can change on a block (its title, day, time, status, tag,
+     protection, attention, optional flag, due and start; an inbox item's status;
+     the completion ledger), never by clock ticks or nudge bookkeeping. */
+  type WeekMark = {
+    blocks: Map<string, { sig: string; title: string; status: string; external: boolean }>
+    captures: Map<string, { status: string; title: string }>
+    mews: Set<string>
+  }
+  let undoLeft: WeekMark | null = null
+  function weekMark(): WeekMark {
+    const s = get()
+    return {
+      blocks: new Map(
+        s.blocks.map((b) => [
+          b.id,
+          {
+            sig: [
+              b.title,
+              b.dayKey,
+              b.startMin,
+              b.endMin,
+              b.status,
+              b.tag,
+              b.protected,
+              b.attention ?? '',
+              b.optional ?? false,
+              b.due ?? '',
+              b.startedAt ?? '',
+            ].join('|'),
+            title: baseOf(b.title),
+            status: b.status,
+            external: !!b.external,
+          },
+        ])
+      ),
+      captures: new Map(s.captures.map((c) => [c.id, { status: c.status, title: c.title }])),
+      mews: new Set(s.memory.filter((e) => e.kind === 'completed').map((e) => e.id)),
+    }
+  }
+  /** a change is complete: remember the week it left */
+  function markUndoLeft() {
+    if (preMutationSnapshot) undoLeft = weekMark()
+  }
+  /** a change made through a tool: its receipt card, then the mark of the week it left */
+  function runChange(
+    name: string,
+    args: Record<string, unknown> | undefined,
+    run: () => string
+  ): string {
+    return runToolWithCard(name, args, () => {
+      const out = run()
+      markUndoLeft()
+      return out
+    })
+  }
+  /** what changed the week since `mark`, as the owner would name it (empty: nothing) */
+  function changedSince(mark: WeekMark): string[] {
+    const now = weekMark()
+    const out: string[] = []
+    for (const [id, b] of now.blocks) {
+      const was = mark.blocks.get(id)
+      if (!was)
+        out.push(b.external ? `${b.title} came in from your calendar` : `${b.title} was added`)
+      else if (was.sig !== b.sig)
+        out.push(
+          b.status === 'done' && was.status !== 'done'
+            ? `${b.title} was checked off`
+            : `${was.title} changed`
+        )
+    }
+    for (const [id, b] of mark.blocks) if (!now.blocks.has(id)) out.push(`${b.title} was removed`)
+    for (const [id, c] of now.captures) {
+      const was = mark.captures.get(id)
+      if (!was) out.push(`"${c.title}" went into your inbox`)
+      else if (was.status !== c.status) out.push(`"${c.title}" changed in your inbox`)
+    }
+    for (const [id, c] of mark.captures)
+      if (!now.captures.has(id)) out.push(`"${c.title}" left your inbox`)
+    const mewsChanged =
+      now.mews.size !== mark.mews.size || [...now.mews].some((id) => !mark.mews.has(id))
+    if (!out.length && mewsChanged) out.push('a mew was logged')
+    return out
   }
 
   /* ── conversational referents (#320) ────────────────────────────────────
@@ -2859,15 +3394,24 @@ export const useMew = create<MewState>((set, get) => {
       by resolveTarget; this owns the plain-title path the executors shared. */
   function resolvePrecise(
     query: string,
-    op: 'complete' | 'move' | 'edit' | 'duplicate',
+    op: 'complete' | 'move' | 'edit' | 'duplicate' | 'split',
     at: string | undefined,
     includeDone: boolean,
-    reissue: (b: Block) => string
+    reissue: (b: Block) => string,
+    /* #73: a day the ask named pins the target to that day's blocks */
+    onDay?: string,
+    /* #160: the day to NAME in a miss. Deliberately separate from onDay, which
+       some callers default (the rescue split passes today), so only a day the
+       owner actually said reaches the sentence — otherwise a miss on an ask that
+       named no day reads "I couldn't find X on today", which is both wrong and
+       not English. */
+    askedDay?: string
   ): { block: Block } | { reply: string } {
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const atMin = at ? parseTimeValue(at) : null
-    const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone })
+    const pool = onDay ? s.blocks.filter((b) => b.dayKey === onDay) : s.blocks
+    const r = week.findTarget(pool, query, todayKey, { at: atMin, includeDone })
     if (r.status === 'ok') return { block: r.block }
     if (r.status === 'ambiguous') {
       const base = baseOf(query)
@@ -2877,7 +3421,7 @@ export const useMew = create<MewState>((set, get) => {
           ? `${times[0]} or ${times[1]}`
           : `${times.slice(0, -1).join(', ')}, or ${times[times.length - 1]}`
       return {
-        reply: execOfferChoices(
+        reply: postChoices(
           `${spell(r.candidates.length)} "${base}" blocks — ${tail}? Which one?`,
           r.candidates.slice(0, 5).map((b) => ({
             label: `the ${fmtTime(b.startMin)}${b.dayKey === todayKey ? '' : ` (${fmtDowLong(b.dayKey)})`}`,
@@ -2893,9 +3437,21 @@ export const useMew = create<MewState>((set, get) => {
           ? 'to move'
           : op === 'duplicate'
             ? 'to duplicate'
-            : 'to change'
+            : op === 'split'
+              ? 'to split'
+              : 'to change'
+    /* #160: a day the ask named belongs in the miss too. Without it, "move the
+       gym on friday" with gyms on Wednesday and Thursday reads `I couldn't find
+       "gym"` — wrong about the one thing the parser got right, and it tells an
+       owner looking at two gyms that they have none. */
+    const word = askedDay ? dayWord(askedDay, todayKey) : null
+    const when = !askedDay
+      ? ''
+      : word === 'today' || word === 'tomorrow'
+        ? ` ${word}`
+        : ` on ${fmtDowLong(askedDay)}` // weekdays read capitalised, as everywhere else MEW names one
     return {
-      reply: `I couldn't find "${query}"${at ? ` at ${at}` : ''} ${verb} — say it another way?`,
+      reply: `I couldn't find "${query}"${at ? ` at ${at}` : ''}${when} ${verb} — say it another way?`,
     }
   }
 
@@ -2952,14 +3508,13 @@ export const useMew = create<MewState>((set, get) => {
   /** Delete blocks the user explicitly confirmed removing (chat chip or block
       card, one path) — including DONE ones, whose completion event is dropped
       too so history stays honest and mews-today (derived) recounts. Snapshots
-      for undo and holds it across the next typed turn (the pickScenario pattern),
+      for undo, which holds across the next typed turn like every change (#120),
       so "undo that" restores the block AND its mew. Runs outside a chat turn. */
   function removeBlocksConfirmed(ids: string[]): void {
     const s = get()
     const targets = s.blocks.filter((b) => ids.includes(b.id))
     if (!targets.length) return
     snapshotForUndo()
-    pickSnapshotHolds = true // survive the next turn's fresh-exchange reset, so "undo that" reaches it
     const todayKey = dayKey(new Date(s.nowMs))
     /* drop each removed DONE block's completion event — one per block, matched
        the way toggleComplete's un-complete does (dayKey + planned length), each
@@ -2991,6 +3546,7 @@ export const useMew = create<MewState>((set, get) => {
     persistBlocks(kept)
     storage.deleteBlocks(ids).catch(() => {})
     if (dropEv.size) persistDeleteMemory([...dropEv])
+    markUndoLeft()
     dismissExternal(targets) // an external we deleted stays gone across a re-sync
     if (targets.some((b) => b.id === get().lastReferent?.blockId)) clearReferent()
     const names = targets
@@ -3002,7 +3558,9 @@ export const useMew = create<MewState>((set, get) => {
     post([mewMsg(`Removed — ${names}. Its mew is off the count; say "undo that" and it's back.`)])
   }
 
-  function execComplete(query: string, at?: string): string {
+  /* one named object (#165) — see CompleteArgs */
+  function execComplete(args: CompleteArgs): string {
+    const { query, at } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const res = resolveTarget(query, 'complete')
@@ -3041,23 +3599,25 @@ export const useMew = create<MewState>((set, get) => {
     return `Marked ${base} done — that's a mew, ${spell(live.mewsToday)} today.${tail}`
   }
 
-  function execMove(
-    query: string,
-    toDayOffset?: number,
-    toStartMin?: number,
-    /* #320: a relative start shift ("30 min earlier" = −30) — the referent's
-       CURRENT start + delta, on the same day, clamped inside the day. Read here
-       (not in parse.ts, which is pure) because only the live block knows its
-       current start; today move needs an absolute target, so the math lives at
-       resolution. */
-    relStartMin?: number,
-    /* #334: the TARGET block's current start time, pinning which of several
-       same-named blocks to move — distinct from toStartMin (its new start). */
-    at?: string
-  ): string {
+  /* One named object rather than seven positions (#165). Every field is
+     documented on MoveArgs in adapters/model/types.ts; the notes that used to
+     sit on these parameters live there now, beside the field each describes.
+     Destructured immediately so the body below is unchanged — this is a
+     signature refactor and nothing inside it moved. */
+  function execMove(args: MoveArgs): string {
+    const {
+      query,
+      toDayOffset,
+      toStartMin,
+      relStartMin,
+      at,
+      allowOverlap = false,
+      fromDayOffset,
+    } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
+    const fromDay = fromDayOffset != null ? addDaysKey(todayKey, fromDayOffset) : undefined
     const res = resolveTarget(query, 'move')
     if ('reply' in res) return res.reply
     let target: Block | undefined
@@ -3074,14 +3634,21 @@ export const useMew = create<MewState>((set, get) => {
         'move',
         at,
         false, // a done block isn't moved — it's in the past, completed
-        (b) => `move ${baseOf(query)} at ${fmtTime(b.startMin)} ${dest}`
+        (b) => `move ${baseOf(query)} at ${fmtTime(b.startMin)} ${dest}`,
+        fromDay,
+        fromDay // the move's day pin only exists when the ask named one
       )
       if ('reply' in r) return r.reply
       target = r.block
     }
-    if (!target) return `I couldn't find "${query}" to move — say it another way?`
+    /* #160: a day the ask named appears in the miss as well, so the reply is not
+       wrong about the one thing the parser got right */
+    if (!target)
+      return fromDay
+        ? `I couldn't find "${query}" on ${dayWord(fromDay, todayKey) ?? fmtDowLong(fromDay)} to move — say it another way?`
+        : `I couldn't find "${query}" to move — say it another way?`
     const toKey = toDayOffset != null ? addDaysKey(todayKey, toDayOffset) : target.dayKey
-    return moveResolved(target, toKey, toStartMin, relStartMin)
+    return moveResolved(target, toKey, toStartMin, relStartMin, allowOverlap)
   }
 
   /** Move an already-resolved block to (toKey, start) — the shared tail of
@@ -3094,11 +3661,33 @@ export const useMew = create<MewState>((set, get) => {
     target: Block,
     toKey: string,
     toStartMin?: number,
-    relStartMin?: number
+    relStartMin?: number,
+    /* #49: the owner said, this turn, that overlapping is fine (flexible only) */
+    allowOverlap = false
   ): string {
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
+    const grantPrefs = allowOverlap ? activePrefsFrom(s.memory, brainOn() ? brainPrefs : null) : []
+    /* #49: a granted overlap is checked BEFORE anything changes (an external
+       target's detach included): it never lands on a fixed or calendar block */
+    const grantStart =
+      toStartMin ??
+      (relStartMin != null
+        ? Math.max(0, Math.min(24 * 60 - week.duration(target), target.startMin + relStartMin))
+        : undefined)
+    const grant =
+      allowOverlap && grantStart != null
+        ? grantedOverlap(
+            s.blocks,
+            toKey,
+            grantStart,
+            grantStart + week.duration(target),
+            target.id,
+            grantPrefs
+          )
+        : null
+    if (grant?.refuse.length) return overlapRefusal(target.title, grantStart!, grant.refuse)
     /* an imported event CAN be moved — moving it takes ownership: detach from
        the source and tombstone it so a re-sync leaves your placement alone (a
        VAGUE referent onto an external event already refused, upstream) */
@@ -3124,6 +3713,7 @@ export const useMew = create<MewState>((set, get) => {
          (#302) the same as plan/findSlot/suggestSlots — an explicit toStartMin
          above skips this branch entirely (explicit intent wins). */
       const bufferMin = s.settings.meetingBufferMin ?? 0
+      const hours = plannableOf(s.settings)
       const q: SlotQuery = {
         title: target.title,
         tag: target.tag,
@@ -3138,7 +3728,8 @@ export const useMew = create<MewState>((set, get) => {
         undefined, // weights: the default profile
         undefined, // horizonDays: the default week
         undefined, // mealBase: the circadian default (#298)
-        bufferMin // #302: keep the moved block shy of external meetings
+        bufferMin, // #302: keep the moved block shy of external meetings
+        hours // #22: the owner's plannable day
       ).find((c) => c.dayKey === toKey)
       if (best) start = best.startMin
       else {
@@ -3146,8 +3737,8 @@ export const useMew = create<MewState>((set, get) => {
           blocks.filter((b) => b.id !== target.id),
           toKey,
           week.duration(target),
-          toKey === todayKey ? minOfDay(now) + 15 : undefined,
-          undefined, // windowEnd: the working-day cap
+          toKey === todayKey ? minOfDay(now) + 15 : hours.startMin,
+          hours.endMin, // #22: the plannable day's end
           bufferMin // #302: the first-fit fallback honors the buffer too
         )
         if (!slot) return `${fmtDowLong(toKey)} can't hold it — want a different day?`
@@ -3160,10 +3751,14 @@ export const useMew = create<MewState>((set, get) => {
        drifts them clear in the same pass and names what moved; other moves keep
        the honest place-then-offer note. External/fixed are never moved. */
     let clashPart: string
-    if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
+    let moveStuck: string[] = [] // #12
+    if (grant) {
+      clashPart = sharedTimeNote(grant.shares) // #49: as the owner said — no drift, no offer
+    } else if (landedBlock.tag === 'work' && !week.isBackground(landedBlock)) {
       const d = driftReply(moved, landedBlock, todayKey, minOfDay(now), prefs)
       moved = d.blocks
       clashPart = d.note
+      moveStuck = d.stuckIds
     } else {
       const landed = week.conflictsWith(
         moved,
@@ -3177,7 +3772,10 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(moved)
     noteReferentId(target.id) // the turn touched one block — "it" now points here
-    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}`
+    const moveAsk = moveStuck.length
+      ? offerDriftChoices([{ placedId: target.id, stuckIds: moveStuck }], todayKey)
+      : false
+    return `Moved — ${target.title.split('—')[0].trim()} now lives ${toKey === todayKey ? 'today' : fmtDowLong(toKey)} at ${fmtTime(start)}.${clashPart}${moveAsk ? ' The options for that overlap are on screen.' : ''}`
   }
 
   /* ── granular calendar ops (#335) ────────────────────────────────────────
@@ -3196,18 +3794,15 @@ export const useMew = create<MewState>((set, get) => {
       the start never moves (applyEditPatch/execEdit keep it when only the
       duration changes). durationMin sets an absolute length; relDurationMin a
       signed delta ("30 min longer"). */
-  function execResize(
-    query: string,
-    resize: { durationMin?: number; relDurationMin?: number },
-    at?: string,
-    scope?: RecurScope
-  ): string {
-    return execEdit(
+  /* one named object (#165) — see ResizeArgs */
+  function execResize(args: ResizeArgs): string {
+    const { query, resize, at, scope } = args
+    return execEdit({
       query,
-      { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
+      patch: { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
       at,
-      scope
-    )
+      scope,
+    })
   }
 
   /** Copy a block to another day/time (#335) — the original is untouched and the
@@ -3219,15 +3814,15 @@ export const useMew = create<MewState>((set, get) => {
       makes the copy a repeating series, expanded and linked like a planned
       recurrence (#159). An external source copies into an owned block; the
       calendar original is never moved or detached. */
-  function execDuplicate(
-    query: string,
-    opts: {
+  /* one named object (#165) — see DuplicateArgs. The opts bag is flattened into
+     it, so the body reads its three fields through the same `opts` name. */
+  function execDuplicate(args: DuplicateArgs): string {
+    const { query, at } = args
+    const opts: {
       toDayOffset?: number
       toStartMin?: number
       rrule?: import('../domain/recurrence').Rrule
-    },
-    at?: string
-  ): string {
+    } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3302,12 +3897,13 @@ export const useMew = create<MewState>((set, get) => {
     let startMin = opts.toStartMin
     if (startMin == null) {
       if (toKey === target.dayKey) {
+        const hours = plannableOf(s.settings) // #22
         const slot = week.findFreeSlot(
           s.blocks,
           toKey,
           dur,
-          toKey === todayKey ? minOfDay(now) + 15 : undefined,
-          undefined,
+          toKey === todayKey ? minOfDay(now) + 15 : hours.startMin,
+          hours.endMin,
           bufferMin
         )
         if (!slot)
@@ -3333,10 +3929,12 @@ export const useMew = create<MewState>((set, get) => {
     /* the copy is a placement, so it drifts own flexible work and words fixed/
        external clashes exactly like plan/move (#324) — never moving a neighbor. */
     let note: string
+    let copyStuck: string[] = [] // #12
     if (made.tag === 'work' && !week.isBackground(made)) {
       const d = driftReply(blocks, made, todayKey, minOfDay(now), prefs)
       blocks = d.blocks
       note = d.note
+      copyStuck = d.stuckIds
     } else {
       const clash = week.isBackground(made)
         ? []
@@ -3345,8 +3943,344 @@ export const useMew = create<MewState>((set, get) => {
     }
     setBlocks(blocks)
     noteReferentId(made.id) // the fresh copy is now "it"
+    const copyAsk = copyStuck.length
+      ? offerDriftChoices([{ placedId: made.id, stuckIds: copyStuck }], todayKey)
+      : false
     const when = toKey === todayKey ? 'today' : fmtDowLong(toKey)
-    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}`
+    return `Copied — ${base} now also lives ${when} at ${fmtTime(startMin)}–${fmtTime(startMin + dur)}.${note}${copyAsk ? ' The options for that overlap are on screen.' : ''}`
+  }
+
+  /** Merge (#74): join the matched same-tag blocks on one day into ONE block.
+      The earliest keeps its id and grows to span the run; the others go. One
+      mutation through setBlocks (the executor wrapper snapshots first, so a
+      single "undo that" brings every part back). Only the owner's own open,
+      one-off blocks of one tag merge, and only across free air: anything else
+      in the span, or a calendar / done / repeating / other-tag part, means
+      nothing changes and the reply names it. */
+  /* one named object (#165) — see MergeArgs; destructured here so the body below
+     is untouched */
+  function execMerge(args: MergeArgs): string {
+    const { query, dayOffset, at } = args
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    /* "today" / "tomorrow" / "on Thursday" — reads right mid-sentence */
+    const dayWordOf = (k: string) =>
+      k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : `on ${fmtDowLong(k)}`
+    const named = (b: Block) => `${baseOf(b.title)} at ${fmtTime(b.startMin)}`
+    const cands = week.mergeCandidates(s.blocks, query, todayKey, {
+      dayKey: dayOffset != null ? addDaysKey(todayKey, dayOffset) : undefined,
+      at: at ? parseTimeValue(at) : null,
+    })
+    if (cands.status === 'none')
+      return `I couldn't find "${query}"${at ? ` at ${at}` : ''} to merge — say it another way?`
+    if (cands.status === 'single')
+      return `${named(cands.block)} ${dayWordOf(cands.block.dayKey)} is the only "${baseOf(query)}" there, so there's nothing to merge it with.`
+    const run = week.mergeRun(
+      s.blocks,
+      cands.parts.map((b) => b.id)
+    )
+    const day = dayWordOf(cands.dayKey)
+    if (!run.ok) {
+      const list = (bs: Block[]) => joinHuman(bs.map(named))
+      switch (run.reason) {
+        case 'external':
+          return `${list(run.parts)} came in from your calendar — I merge only blocks I placed, so everything stays as it is.`
+        case 'done':
+          return `${list(run.parts)} is already done — a mew stays a mew, so everything stays as it is.`
+        case 'series':
+          return `${list(run.parts)} repeats — I keep a repeating block whole, so everything stays as it is.`
+        case 'titles': {
+          /* one name per block: a split's pieces are one block, named without
+             their "(part N)" (#121 review) */
+          const names = [
+            ...new Map(
+              run.parts.map((b) => [
+                week.mergeName(b),
+                baseOf(b.title).replace(/\s+\(part \d+\)$/i, ''),
+              ])
+            ).values(),
+          ]
+          return `${andList(names)} are different blocks — name the one whose parts you want joined, and I'll merge them. Everything stays as it is for now.`
+        }
+        case 'tags': {
+          const tags = [...new Set(run.parts.map((b) => b.tag))].join(' and ')
+          return `those "${baseOf(run.parts[0].title)}" blocks ${day} are tagged ${tags} — give them one tag and I'll merge them. Everything stays as it is for now.`
+        }
+        case 'blocked': {
+          const why = (b: Block) =>
+            b.external
+              ? 'from your calendar'
+              : week.isFixedTime(b, activePrefsFrom(s.memory, brainOn() ? brainPrefs : null))
+                ? 'fixed'
+                : b.status === 'done'
+                  ? 'done'
+                  : 'its own block'
+          const between = joinHuman(
+            run.blockers.map(
+              (b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)} (${why(b)})`
+            )
+          )
+          return `${between} sits between them ${day}, so everything stays as it is.`
+        }
+        default:
+          return `there's nothing to merge there — everything stays as it is.`
+      }
+    }
+    const keep = run.keep
+    const removeIds = new Set(run.removeIds)
+    const next = s.blocks
+      .filter((b) => !removeIds.has(b.id))
+      .map((b) => (b.id === keep.id ? run.merged : b))
+    setBlocks(next)
+    storage.deleteBlocks(run.removeIds).catch(() => {})
+    noteReferentId(keep.id) // the merged block is now "it"
+    const n = run.removeIds.length + 1
+    return `Merged — ${baseOf(keep.title)} now runs ${day} ${fmtTime(run.startMin)}–${fmtTime(run.endMin)} as one block (${n} joined).`
+  }
+
+  /** Batch (#75): ONE op over the blocks a selector picks on one day. The plan is
+      pure (domain/batch.ts): what moves where, what stays put and why. A narrow
+      batch (1–2 blocks, same day) acts directly like today's single ops; a wide
+      one (3+ blocks, or any move to another day) is OFFERED first as a confirm
+      naming every move, every block that stays put and every block a move would
+      share time with, and nothing changes until the owner says yes. The yes
+      re-asks in the keyless batch grammar with the count and the list token it
+      named: if the plan no longer moves exactly that list, MEW offers again.
+      One setBlocks under the wrapper's snapshot, so one undo reverses the lot;
+      a collision the batch leaves speaks in the existing clash wording. */
+  /* one named object (#165) — see BatchArgs. Destructured here so the body
+     below is untouched: selIn and opIn keep their names, and scope still means
+     "absent asks with chips before touching a series" (#75 slice 3). */
+  function execBatch(args: BatchArgs): string {
+    const { selector: selIn, op: opIn, confirmCount, confirmToken } = args
+    const scope = args.scope as BatchScope | undefined
+    const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
+    const sel: BatchSelector = {
+      dayKey: addDaysKey(todayKey, selIn.dayOffset ?? 0),
+      /* an edge at the day's own ends picks every block anyway */
+      afterMin: selIn.afterMin != null && selIn.afterMin > 0 ? selIn.afterMin : undefined,
+      beforeMin: selIn.beforeMin != null && selIn.beforeMin < 24 * 60 ? selIn.beforeMin : undefined,
+      tag: selIn.tag,
+      titleQuery: selIn.titleQuery?.trim() || undefined,
+    }
+    const op: BatchOp =
+      opIn.kind === 'shift'
+        ? { kind: 'shift', deltaMin: opIn.deltaMin }
+        : opIn.kind === 'setTag'
+          ? { kind: 'setTag', tag: opIn.tag } // #75 slice 2: a retag, in place
+          : { kind: 'moveToDay', toDayKey: addDaysKey(todayKey, opIn.toDayOffset) }
+    const retag = op.kind === 'setTag'
+    /* a day as MEW says it: "today", "tomorrow", "Thursday", and past this week
+       the date too ("Wednesday, Jun 17"), since a weekday alone says this week's */
+    const dayName = (k: string) => {
+      const w = dayWord(k, todayKey)
+      return w === 'today' || w === 'tomorrow'
+        ? w
+        : w
+          ? fmtDowLong(k)
+          : `${fmtDowLong(k)}, ${fmtShortDate(k)}`
+    }
+    const onDay = (k: string) => {
+      const d = dayName(k)
+      return d === 'today' || d === 'tomorrow' ? d : `on ${d}`
+    }
+    if (op.kind === 'shift' && !op.deltaMin)
+      return `nothing to shift — say how far (30 min, an hour).`
+    if (op.kind === 'moveToDay' && op.toDayKey === sel.dayKey)
+      return `those already live ${onDay(sel.dayKey)}, so everything stays as it is.`
+
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const plan = planBatch(s.blocks, sel, op, prefs, scope)
+    /* #75 slice 3 review: an answered series is the first plan whose list can
+       cross days, and a sweep's offer is the sentence the owner says yes to — so
+       when it does, every row names its own day and the change drops the day
+       claim it can no longer make. A move onto one day is not this case: its own
+       wording already names both days, and every row lands on the target. A
+       single-day sweep reads exactly as it did before. */
+    const spansDays =
+      op.kind !== 'moveToDay' &&
+      new Set([...plan.moves.map((m) => m.dayKey), ...plan.skipped.map((sk) => sk.block.dayKey)])
+        .size > 1
+    const what = [
+      sel.titleQuery ? `"${sel.titleQuery}"` : sel.tag ? `your ${sel.tag} blocks` : 'everything',
+      /* both edges read as one window (#75 slice 2) */
+      sel.afterMin != null && sel.beforeMin != null
+        ? `starting between ${fmtTime(sel.afterMin)} and ${fmtTime(sel.beforeMin)}`
+        : sel.afterMin != null
+          ? `starting after ${fmtTime(sel.afterMin)}`
+          : sel.beforeMin != null
+            ? `starting before ${fmtTime(sel.beforeMin)}`
+            : '',
+      onDay(sel.dayKey),
+    ]
+      .filter(Boolean)
+      .join(' ')
+    /* every offer and receipt names its day, so the day a yes acts on is on
+       screen before the yes */
+    const onDayOf = (k: string) => (spansDays ? '' : ` ${onDay(k)}`)
+    const change =
+      op.kind === 'shift'
+        ? `${Math.abs(op.deltaMin)} min ${op.deltaMin > 0 ? 'later' : 'earlier'}${onDayOf(sel.dayKey)}`
+        : op.kind === 'setTag'
+          ? `as ${op.tag}${onDayOf(sel.dayKey)}`
+          : `from ${dayName(sel.dayKey)} to ${dayName(op.toDayKey)}`
+    const why = (sk: BatchSkip): string =>
+      sk.reason === 'calendar'
+        ? 'from your calendar'
+        : sk.reason === 'fixed'
+          ? 'fixed'
+          : sk.reason === 'done'
+            ? 'done'
+            : sk.reason === 'repeating'
+              ? /* a move onto one day asks nothing, so the reason says what does
+                   work: this occurrence can go, the run keeps its own days */
+                op.kind === 'moveToDay'
+                ? 'repeats — "just this one" moves this one'
+                : 'repeats'
+              : sk.reason === 'series-day'
+                ? 'repeats, and a series keeps its own days'
+                : sk.reason === 'off-day'
+                  ? 'would leave the day'
+                  : sk.reason === 'already'
+                    ? `already ${op.kind === 'setTag' ? op.tag : ''}`
+                    : `would sit over ${andList((sk.on ?? []).map((b) => `${baseOf(b.title)} ${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`))}`
+    /* a row's own day, once the list crosses days: "Gym Wednesday 18:00→18:30"
+       reads as one thing the owner can check against the week afterwards */
+    const rowDay = (k: string) => (spansDays ? ` ${dayName(k)}` : '')
+    const stays = plan.skipped.map(
+      (sk) =>
+        `${baseOf(sk.block.title)}${rowDay(sk.block.dayKey)} ${fmtTime(sk.block.startMin)} (${why(sk)})`
+    )
+    const staysLine = !stays.length
+      ? ''
+      : retag
+        ? ` ${andList(stays)} ${stays.length === 1 ? 'keeps its tag' : 'keep their tags'}.`
+        : ` ${andList(stays)} ${stays.length === 1 ? 'stays' : 'stay'} where ${stays.length === 1 ? 'it is' : 'they are'}.`
+    /* the words a chip re-asks in: always the keyless batch grammar, for every
+       selector a batch holds, so a pick means the same list on either floor. The
+       day is named (never 'today' by position), so a chip clicked after midnight
+       still asks for the day it was offered for (#96). `tail` is what the pick
+       adds: a yes with its count and token, or a scope word (#75 slice 3). */
+    const batchAsk = (tail: string): string => {
+      const dayRef = (k: string) => dayWord(k, todayKey) ?? k
+      const edges = [
+        sel.afterMin != null ? `after ${fmtTime(sel.afterMin)}` : '',
+        sel.beforeMin != null ? `before ${fmtTime(sel.beforeMin)}` : '',
+      ]
+        .filter(Boolean)
+        .join(' and ')
+      const words = sel.titleQuery ? `"${sel.titleQuery.replace(/["“”]/g, '')}"` : ''
+      if (op.kind === 'shift') {
+        const who =
+          sel.tag || words ? ['all', sel.tag, words].filter(Boolean).join(' ') : 'everything'
+        const d = dayRef(sel.dayKey)
+        const dayPart = d === 'today' || d === 'tomorrow' ? d : `on ${d}`
+        const by = `${op.deltaMin > 0 ? 'later' : 'earlier'} by ${Math.abs(op.deltaMin)} min`
+        return [`push ${who}`, edges, dayPart, by].filter(Boolean).join(' ') + tail
+      }
+      const who = [sel.tag, words].filter(Boolean).join(' ') || 'blocks'
+      return op.kind === 'setTag'
+        ? [`tag all ${dayRef(sel.dayKey)}'s ${who}`, edges, `as ${op.tag}`]
+            .filter(Boolean)
+            .join(' ') + tail
+        : [`move all ${dayRef(sel.dayKey)}'s ${who}`, edges, `to ${dayRef(op.toDayKey)}`]
+            .filter(Boolean)
+            .join(' ') + tail
+    }
+
+    /* #75 slice 3: a repeating block in the sweep, with no answer yet — one calm
+       question, and NOTHING moves until it is answered. Asking first (rather
+       than moving the one-offs now and asking after) is what keeps a pick exact:
+       each chip re-issues this same ask with its scope word, so a sweep that had
+       already shifted its one-off blocks would shift them a second time. Only a
+       series that still holds more than one open occurrence raises it — with a
+       single occurrence the three answers collapse into one. A move onto ONE day
+       never asks: two of the three answers cannot act on it (a series keeps its
+       own days), so the reply names the occurrence and says what does work.
+       The `scope` guard below is belt-and-braces: a plan given an answer reports
+       no 'repeating' skip at all (pinned as an invariant in batch-slice3), so
+       this can't loop even if that ever changed. */
+    const askable =
+      scope || op.kind === 'moveToDay'
+        ? []
+        : plan.skipped.filter(
+            (sk) =>
+              sk.reason === 'repeating' &&
+              (week.seriesMembership(s.blocks, sk.block)?.count ?? 0) > 1
+          )
+    if (askable.length) {
+      const names = andList([...new Set(askable.map((sk) => baseOf(sk.block.title)))])
+      return postChoices(`${names} repeat${askable.length === 1 ? 's' : ''} — which do you mean?`, [
+        { label: 'just this one', reply: batchAsk(' just this one') },
+        { label: 'this & the ones after', reply: batchAsk(' this and following') },
+        { label: 'the whole series', reply: batchAsk(' across the whole series') },
+      ])
+    }
+
+    if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
+    if (!plan.moves.length)
+      return `nothing there can ${retag ? 'be tagged' : 'move'} ${change}:${staysLine} Everything stays as it is.`
+
+    const n = plan.moves.length
+    const line = (m: (typeof plan.moves)[number]) =>
+      op.kind === 'shift'
+        ? `${baseOf(m.block.title)}${rowDay(m.dayKey)} ${fmtTime(m.block.startMin)}→${fmtTime(m.startMin)}`
+        : `${baseOf(m.block.title)}${rowDay(m.dayKey)} ${fmtTime(m.startMin)}`
+    const byId = new Map(plan.moves.map((m) => [m.block.id, m]))
+    const next = s.blocks.map((b) => {
+      const m = byId.get(b.id)
+      if (!m) return b
+      return m.tag
+        ? { ...b, tag: m.tag }
+        : { ...b, dayKey: m.dayKey, startMin: m.startMin, endMin: m.endMin }
+    })
+    /* the blocks that stay put which each move would share time with (a retag
+       moves nothing, so it shares nothing new) */
+    const sharing = plan.moves.map((m) => ({
+      m,
+      with: retag
+        ? []
+        : week
+            .conflictsWith(next, m.dayKey, m.startMin, m.endMin, m.block.id, prefs)
+            .filter((c) => !byId.has(c.id)),
+    }))
+    /* wide by what the ask SELECTED, not by what can move: "push everything after
+       7pm" over four blocks, two of which stay put, is shown first, list and all */
+    const wide = plan.selected.length >= 3 || op.kind === 'moveToDay'
+    const token = batchToken(plan)
+    /* a yes names a list: it acts only while the plan still moves exactly that
+       list (its count and its token), else MEW offers again, even when the plan
+       left would be narrow enough to act directly */
+    if ((wide || confirmCount != null) && (confirmCount !== n || confirmToken !== token)) {
+      /* the yes carries the answer the sweep is already acting on (#75 slice 3),
+         so confirming does not raise the series question a second time — the
+         scope phrase is lifted off the ask before the grammar reads it, and the
+         yes tail is read off the end, so the two never collide */
+      const yes = `${scope ? ` ${scopeWord(scope)}` : ''} — yes, all ${n} · ${token}`
+      const reply = batchAsk(yes)
+      const shares = sharing
+        .filter((x) => x.with.length)
+        .map(
+          (x) =>
+            `${baseOf(x.m.block.title)} ${fmtTime(x.m.startMin)} would share time with ${andList(x.with.map((c) => `${baseOf(c.title)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`))}`
+        )
+      const sharesLine = shares.length ? ` ${shares.join(' · ')}.` : ''
+      const changed = confirmCount != null ? 'the week changed since then — ' : ''
+      return postChoices(
+        `${changed}${retag ? 'tag' : 'move'} ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
+        [
+          { label: 'do it', reply },
+          { label: 'not now', reply: 'ok, leave them as they are' },
+        ]
+      )
+    }
+
+    setBlocks(next)
+    /* a collision the batch leaves with a block that stayed put speaks in the
+       existing clash wording (#324), never a second vocabulary */
+    const clash = [...new Map(sharing.flatMap((x) => x.with).map((c) => [c.id, c])).values()]
+    return `${retag ? 'Tagged' : 'Moved'} ${n} block${n === 1 ? '' : 's'} ${change} — ${plan.moves.map(line).join(' · ')}.${staysLine}${clashNote(clash, prefs)}`
   }
 
   /** Move a block relative to where it is now, with no absolute time (#335).
@@ -3355,12 +4289,9 @@ export const useMew = create<MewState>((set, get) => {
       clear slot from now (week.nextFreeSlot, which lands clear of fixed/external
       by construction). One resolution (reusing #345 targeting), then the shared
       move tail — drift, clash, and ownership are never re-implemented. */
-  function execRelativeMove(
-    query: string,
-    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
-    amountMin?: number,
-    at?: string
-  ): string {
+  /* one named object (#165) — see RelativeMoveArgs */
+  function execRelativeMove(args: RelativeMoveArgs): string {
+    const { query, direction, amountMin, at } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3406,13 +4337,306 @@ export const useMew = create<MewState>((set, get) => {
       fromMin,
       durMin,
       13,
-      bufferMin
+      bufferMin,
+      plannableOf(s.settings) // #22
     )
     if (!slot)
       return `I couldn't find a clear ${durMin}-min slot in the next two weeks — want me to make room?`
     if (slot.dayKey === target.dayKey && slot.startMin === target.startMin)
       return `${target.title.split('—')[0].trim()} already sits in the earliest open slot — nothing to move.`
     return moveResolved(target, slot.dayKey, slot.startMin)
+  }
+
+  /** Split one block into two around a gap (#73, the #16 command surface). One
+      executor for every door: the typed "split the deck around the 1pm call",
+      the keyed split_block tool, and the rescue chip's exact "split the deck
+      around 13:00-13:45, keep 45m after" (rules.ts runSplit). The geometry is
+      domain/split.ts; this owns the laws and the ONE mutation:
+      — a [calendar] block is never split (it isn't MEW's to cut); the block
+        split AROUND may be one, and that is the common case;
+      — a series occurrence asks this / following / series first;
+      — a gap outside the block, or a piece under 15 min, asks instead of guessing;
+      — part 2 lands only in free time: if anything sits there, nothing changes
+        and the reply names it (fixed-time is scheduled around, never over).
+      The first piece is the original block, shortened in place (same id and
+      history); part 2 is a new block with the same tag, attention and
+      protection. One setBlocks under the wrapper's single snapshot, so one undo
+      takes the whole split back, and a work split paces rest like a placement. */
+  /* one named object (#165) — see SplitArgs. `opts` used to arrive as a third
+     positional bag; its fields are now siblings of query and around, and the
+     body reads them through the same `opts` name so nothing below moved. */
+  function execSplit(args: SplitArgs): string {
+    const { query, around } = args
+    const opts: { at?: string; tailMin?: number; dayOffset?: number; scope?: RecurScope } = args
+    const s = get()
+    const now = new Date(s.nowMs)
+    const todayKey = dayKey(now)
+    const q = baseOf(query)
+    /* every chip this op posts re-asks in the typed grammar, with its day spoken
+       (so a pick after midnight re-checks it, #94) and any rescue tail length */
+    const dayPhrase = (key: string): string => {
+      const w = dayWord(key, todayKey)
+      return w == null ? '' : w === 'today' || w === 'tomorrow' ? ` ${w}` : ` on ${w}`
+    }
+    const keep = opts.tailMin != null ? `, keep ${opts.tailMin}m after` : ''
+    const scoped = (sc?: RecurScope) => (sc ? ` ${scopeWord(sc)}` : '')
+    const clock = (g: { startMin: number; endMin: number }) =>
+      `${fmtTime(g.startMin)}-${fmtTime(g.endMin)}`
+    const aroundAsTyped =
+      'startMin' in around
+        ? clock(around)
+        : `the ${around.at ? `${around.at} ` : ''}${around.query}`
+
+    const onDay = opts.dayOffset != null ? addDaysKey(todayKey, opts.dayOffset) : undefined
+    const res = resolveTarget(query, 'edit')
+    if ('reply' in res) return res.reply
+    let target: Block | undefined
+    if ('block' in res) target = res.block
+    else {
+      const r = resolvePrecise(
+        query,
+        'split',
+        opts.at,
+        false,
+        (b) =>
+          `split ${q} at ${fmtTime(b.startMin)} around ${aroundAsTyped}${keep}${dayPhrase(b.dayKey)}${scoped(opts.scope)}`,
+        onDay
+      )
+      if ('reply' in r) return r.reply
+      target = r.block
+    }
+    if (!target) return `I couldn't find "${query}" to split — say it another way?`
+    const t = target
+    const base = t.title.split('—')[0].trim()
+    const when = t.dayKey === todayKey ? 'today' : fmtDowLong(t.dayKey)
+    if (t.external)
+      return `${base} came in from a connected calendar — it's not mine to split. I can split one of your own blocks around it instead.`
+    if (t.status !== 'open') return `${base} is already done, so it stays whole.`
+    noteReferentId(t.id) // the turn touched one block — "it" now points here
+
+    /* the gap: a clock range as given, or the span of the block to split around
+       on the same day (it may be a calendar event — that's the common case) */
+    let gap: { startMin: number; endMin: number }
+    let aroundName: string | null = null
+    if ('startMin' in around) {
+      gap = { startMin: around.startMin, endMin: around.endMin }
+    } else {
+      const pool = s.blocks.filter((b) => b.dayKey === t.dayKey && b.id !== t.id)
+      const atMin = around.at ? parseTimeValue(around.at) : null
+      const r = week.findTarget(pool, around.query, todayKey, { at: atMin, includeDone: true })
+      if (r.status === 'ambiguous') {
+        return postChoices(
+          `which "${baseOf(around.query)}" should ${base} split around?`,
+          r.candidates.slice(0, 5).map((c) => ({
+            label: `around the ${fmtTime(c.startMin)}`,
+            reply: `split ${q} at ${fmtTime(t.startMin)} around ${clock(c)}${keep}${dayPhrase(t.dayKey)}${scoped(opts.scope)}`,
+          }))
+        )
+      }
+      if (r.status !== 'ok') {
+        return `I couldn't find "${around.query}"${around.at ? ` at ${around.at}` : ''} ${when === 'today' ? 'today' : `on ${when}`} to split ${base} around — say its time?`
+      }
+      gap = { startMin: r.block.startMin, endMin: r.block.endMin }
+      aroundName = `${r.block.title.split('—')[0].trim()} ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)}`
+    }
+    const gapName = aroundName ?? `${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)}`
+
+    /* #343: a live series asks how far the split reaches, re-asked with the
+       resolved clock gap so this & following / the whole series can apply it */
+    const membership = week.seriesMembership(s.blocks, t)
+    if (membership && membership.count > 1 && opts.scope !== 'this') {
+      if (!opts.scope) {
+        return offerRecurringScope(
+          base,
+          (sc) =>
+            `split ${q} at ${fmtTime(t.startMin)} around ${clock(gap)}${keep}${dayPhrase(t.dayKey)} ${scopeWord(sc)}`
+        )
+      }
+      return splitSeries(t, gap, opts.tailMin, opts.scope, todayKey)
+    }
+
+    const geo = splitGeometry(t, gap.startMin, gap.endMin, opts.tailMin)
+    if (!geo.ok) return splitRefusal(geo.reason, base, t, gap, gapName, opts.tailMin)
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    let blocks = s.blocks.map((b) => (b.id === t.id ? { ...t, endMin: geo.head.endMin } : b))
+    /* part 2 is an explicit-time landing, so it follows the drop law (#347): a
+       fixed, calendar or protected block there bounces it and nothing changes.
+       An unprotected own-flexible neighbour (a paced breather, a meal) yields
+       through #324 drift when part 2 is focus work, exactly as a placed block
+       would; any other part 2 needs the time genuinely free. */
+    const focusWork = t.tag === 'work' && !week.isBackground(t)
+    if (!week.isBackground(t)) {
+      const blockers = moveBlockedBy(
+        blocks,
+        t.dayKey,
+        geo.tail.startMin,
+        geo.tail.endMin,
+        t.id,
+        prefs
+      )
+      const busy = focusWork
+        ? blockers
+        : week.conflictsWith(blocks, t.dayKey, geo.tail.startMin, geo.tail.endMin, t.id, prefs)
+      if (busy.length) return splitNoRoom(base, geo.tail, busy)
+    }
+    const tail = week.place(blocks, {
+      title: nextPartTitle(base),
+      tag: t.tag,
+      dayKey: t.dayKey,
+      startMin: geo.tail.startMin,
+      endMin: geo.tail.endMin,
+      protected: t.protected,
+      attention: t.attention,
+    })!
+    blocks = [...blocks, tail]
+    let driftNote = ''
+    let stuckIds: string[] = []
+    if (focusWork) {
+      const d = driftReply(blocks, tail, todayKey, minOfDay(now), prefs)
+      blocks = d.blocks
+      driftNote = d.note
+      stuckIds = d.stuckIds
+    }
+    const paced = focusWork
+      ? paceRest(blocks, [t.dayKey], todayKey, minOfDay(now))
+      : { blocks, notes: [] }
+    setBlocks(paced.blocks)
+    const choices = stuckIds.length
+      ? offerDriftChoices([{ placedId: tail.id, stuckIds }], todayKey)
+      : false
+    const pacing = asideSentences(paced.notes)
+    const onWhen = when === 'today' ? '' : ` on ${when}`
+    const between = aroundName ? `, around ${aroundName}` : `, leaving ${gapName} free`
+    return `Split — ${base} now runs ${fmtTime(geo.head.startMin)}–${fmtTime(geo.head.endMin)}${onWhen}, and ${tail.title} picks up ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}${between}${driftNote}.${pacing}${choices ? ' The options for that overlap are on screen.' : ''}`
+  }
+
+  /** #73: split every open occurrence a scope reaches around the same clock gap
+      — 'series' all of them, 'following' this one and the ones after (re-linked
+      as their own series from here, the way applyEditScope bounds an edit). An
+      occurrence the gap doesn't fit, or whose part 2 would land on something,
+      stays whole and is named; the rest split exactly as a single split does. */
+  function splitSeries(
+    target: Block,
+    gap: { startMin: number; endMin: number },
+    tailMin: number | undefined,
+    scope: 'following' | 'series',
+    todayKey: string
+  ): string {
+    const s = get()
+    const rid = target.recurringBlockId
+    const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
+    const bound = scope === 'following' ? splitSeriesFrom(target.rrule, target.dayKey) : null
+    const newId = scope === 'following' ? uid() : null
+    const affected = s.blocks
+      .filter(
+        (b) =>
+          b.recurringBlockId === rid &&
+          b.status === 'open' &&
+          (scope === 'series' || b.dayKey >= target.dayKey)
+      )
+      .sort((a, b) => a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin)
+    let blocks = s.blocks
+    const days = new Set<string>()
+    const whole: string[] = []
+    let splitCount = 0
+    for (const occ of affected) {
+      const relink = newId
+        ? { recurringBlockId: newId, ...(bound?.tail ? { rrule: bound.tail } : {}) }
+        : {}
+      const geo = splitGeometry(occ, gap.startMin, gap.endMin, tailMin)
+      const shortened = geo.ok
+        ? blocks.map((b) => (b.id === occ.id ? { ...occ, endMin: geo.head.endMin } : b))
+        : blocks
+      const clash = geo.ok
+        ? week.conflictsWith(
+            shortened,
+            occ.dayKey,
+            geo.tail.startMin,
+            geo.tail.endMin,
+            occ.id,
+            prefs
+          )
+        : []
+      if (!geo.ok || clash.length) {
+        whole.push(occ.dayKey === todayKey ? 'today' : fmtDowLong(occ.dayKey))
+        if (newId) blocks = blocks.map((b) => (b.id === occ.id ? { ...occ, ...relink } : b))
+        continue
+      }
+      blocks = blocks.map((b) =>
+        b.id === occ.id ? { ...occ, endMin: geo.head.endMin, ...relink } : b
+      )
+      const base = occ.title.split('—')[0].trim()
+      const tail = week.place(blocks, {
+        title: nextPartTitle(base),
+        tag: occ.tag,
+        dayKey: occ.dayKey,
+        startMin: geo.tail.startMin,
+        endMin: geo.tail.endMin,
+        protected: occ.protected,
+        attention: occ.attention,
+      })!
+      blocks = [...blocks, tail]
+      splitCount++
+      if (tail.tag === 'work' && !week.isBackground(tail)) days.add(occ.dayKey)
+    }
+    const base = target.title.split('—')[0].trim()
+    if (!splitCount)
+      return `none of the ${base} blocks had room to split around ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)}, so they all stay whole — pick another gap?`
+    if (newId && bound?.head) {
+      blocks = blocks.map((b) =>
+        b.recurringBlockId === rid && b.status !== 'rolled' && b.dayKey < target.dayKey
+          ? { ...b, rrule: bound.head }
+          : b
+      )
+    }
+    const paced = paceRest(blocks, days, todayKey, minOfDay(new Date(s.nowMs)))
+    setBlocks(paced.blocks)
+    const reach =
+      scope === 'series'
+        ? 'across the whole series'
+        : `from ${target.dayKey === todayKey ? 'today' : fmtDowLong(target.dayKey)} on`
+    const kept = whole.length
+      ? ` ${joinHuman(whole).charAt(0).toUpperCase()}${joinHuman(whole).slice(1)} had no room for it, so ${whole.length === 1 ? 'that one stays' : 'those stay'} whole.`
+      : ''
+    const pacing = asideSentences(paced.notes)
+    return `Split — ${base} ${reach}: ${splitCount} block${splitCount === 1 ? '' : 's'} now pause ${fmtTime(gap.startMin)}–${fmtTime(gap.endMin)} and pick up again after.${kept}${pacing}`
+  }
+
+  /** #73: why a split didn't happen, asked plainly — nothing changed. */
+  function splitRefusal(
+    reason: 'outside' | 'short-head' | 'short-tail' | 'past-midnight',
+    base: string,
+    b: Block,
+    gap: { startMin: number; endMin: number },
+    gapName: string,
+    tailMin: number | undefined
+  ): string {
+    const span = `${fmtTime(b.startMin)}–${fmtTime(b.endMin)}`
+    if (reason === 'outside')
+      return `${base} runs ${span}, so ${gapName} sits outside it — name a time inside it and I'll split it there.`
+    if (reason === 'short-head')
+      return `splitting ${base} at ${fmtTime(gap.startMin)} would leave just ${gap.startMin - b.startMin} min before the gap — pick a split with at least ${SPLIT_MIN_PIECE} min on each side?`
+    if (reason === 'short-tail') {
+      const rest = tailMin ?? b.endMin - gap.startMin
+      return `splitting ${base} around ${gapName} would leave just ${Math.max(0, rest)} min for part 2 — pick a split with at least ${SPLIT_MIN_PIECE} min on each side?`
+    }
+    return `the rest of ${base} would run past midnight, and a split keeps both pieces on the same day — pick an earlier gap?`
+  }
+
+  /** #73: part 2 only lands in free time — name what sits there; nothing changed. */
+  function splitNoRoom(
+    base: string,
+    tail: { startMin: number; endMin: number },
+    clash: Block[]
+  ): string {
+    const names = clash.map(
+      (c) => `${c.title.split('—')[0].trim()} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)}`
+    )
+    const list =
+      names.length > 1
+        ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+        : names[0]
+    return `the rest of ${base} (${tail.endMin - tail.startMin} min, ${fmtTime(tail.startMin)}–${fmtTime(tail.endMin)}) would run into ${list}, and part 2 only goes where it fits — clear that or pick another gap, and I'll split it.`
   }
 
   function execCapture(title: string): string {
@@ -3422,7 +4646,7 @@ export const useMew = create<MewState>((set, get) => {
     set((st) => ({ captures: [...st.captures, capture] }))
     persistCaptures([capture])
     fireEventNudges({ newCapture: capture })
-    return `Captured "${clean}". (The when-&-where nudge with a proposed slot is already posted — don't propose another time yourself.)`
+    return `Captured "${clean}".${CAPTURE_NUDGE_NOTE}`
   }
 
   /* ── recurring-edit scope (#343) ─────────────────────────────────────────
@@ -3463,7 +4687,7 @@ export const useMew = create<MewState>((set, get) => {
       chat-only. `reissue(scope)` builds each chip's complete ask; the pick
       arrives as an ordinary user turn and routes through the executor. */
   function offerRecurringScope(base: string, reissue: (scope: RecurScope) => string): string {
-    return execOfferChoices(`"${base}" repeats — which do you mean?`, [
+    return postChoices(`"${base}" repeats — which do you mean?`, [
       { label: 'just this one', reply: reissue('this') },
       { label: 'this & the ones after', reply: reissue('following') },
       { label: 'the whole series', reply: reissue('series') },
@@ -3611,15 +4835,12 @@ export const useMew = create<MewState>((set, get) => {
     return `Removed — ${base} from ${when} on (${tail.length} block${tail.length === 1 ? '' : 's'}); the earlier ones stay.`
   }
 
-  function execEdit(
-    query: string,
-    patch: EditPatch,
-    /* #334: the TARGET block's current start time, pinning which of several
-       same-named blocks to change — distinct from patch.startMin (a retime). */
-    at?: string,
-    /* #343: the recurring-edit scope for a series block — absent asks (chips). */
-    scope?: RecurScope
-  ): string {
+  /* one named object (#165) — see EditArgs. `at` pins which of several
+     same-named blocks (#334, distinct from patch.startMin, a retime); `scope` is
+     the recurring-edit scope, and absent asks with chips (#343). */
+  function execEdit(args: EditArgs): string {
+    const { query, at, scope } = args
+    const patch: EditPatch = args.patch
     const s = get()
     const res = resolveTarget(query, 'edit')
     if ('reply' in res) return res.reply
@@ -3728,39 +4949,53 @@ export const useMew = create<MewState>((set, get) => {
     ...['first', 'last', 'past', 'next', 'previous', 'recent', 'earlier', 'final'],
   ])
 
-  /** History/entity answers: the asked week supplies the NUMBERS (rollup over
-      real blocks — never an estimate), the brain supplies citable color. The
-      question names its week: "last week" / "two weeks ago" reach back through
-      block history (kept forever), so past weeks answer with real sums even
-      with no brain; no time phrase means this week. "Eaten" means held clock
-      time. The subject is matched as a title fragment, so projects, tasks,
-      and people all answer — and a name only ever spoken to the keyless floor
-      (which lowercases titles) still resolves. */
+  /** History/entity answers: the asked stretch supplies the NUMBERS (rollup
+      over real blocks — never an estimate), the brain supplies citable color.
+      The question names its stretch (domain/timeRange): "last week" / "two
+      weeks ago" reach back one Mon–Sun week, "since August 1" / "the last three
+      weeks" / "this month" any span of days — block history is kept forever,
+      so past stretches answer with real sums even with no brain; no time
+      phrase means this week, and a span longer than a year keeps its most
+      recent year. "Eaten" means held clock time. The subject is matched as a
+      title fragment, so projects, tasks, and people all answer — and a name
+      only ever spoken to the keyless floor (which lowercases titles) still
+      resolves. */
   async function execQueryBrain(question: string): Promise<string> {
     const s = get()
+    const todayKey = dayKey(new Date(s.nowMs))
     const known = knownProjectsFrom(s.blocks.map((b) => b.title))
-    /* a subject NAMED with week words ("Last week review", asked by name)
+    /* a subject NAMED with time words ("Last week review", asked by name)
        must not be mis-windowed by the phrase parser: when a known project
-       or a block title that carries a week phrase matches the un-stripped
-       question, it IS the subject and the window stays the live week */
+       or a block title that carries a time phrase matches the un-stripped
+       question, it IS the subject, and the stretch is read from the rest of
+       the question (none left means the live week) */
     const rawSlug = `-${slugify(question)}-`
+    const timeWorded = (name: string) => stripRangePhrase(name, todayKey) !== name
     const namedHit: [string, string] | null =
       [...known.entries()].find(
-        ([slug, name]) => stripWeekPhrase(name) !== name && rawSlug.includes(`-${slug}-`)
+        ([slug, name]) => timeWorded(name) && rawSlug.includes(`-${slug}-`)
       ) ??
       s.blocks
         .map((b) => b.title.split('—')[0].trim())
-        .filter((t) => t && stripWeekPhrase(t) !== t)
+        .filter((t) => t && timeWorded(t))
         .map((t): [string, string] => [slugify(t), t])
         .find(([slug]) => slug && rawSlug.includes(`-${slug}-`)) ??
       null
-    /* which Mon–Sun window the question means — and the question with the
-       week phrase removed, so "gym last week" never reads as one title */
-    const offset = namedHit ? 0 : weekOffsetFromQuestion(question)
-    const subjectText = namedHit ? question : stripWeekPhrase(question)
-    const label = weekOffsetLabel(offset)
+    /* which stretch the question means — and the question with the time
+       phrase removed, so "gym since August 1" never reads as one title */
+    const read = readRange(
+      namedHit
+        ? question
+            .replace(/['’]/g, '')
+            .replace(new RegExp(`\\b${namedHit[0].split('-').join('[^a-z0-9]+')}\\b`, 'i'), ' ')
+        : question,
+      todayKey
+    )
+    const range = read.range
+    const subjectText = namedHit ? question : read.rest
+    const label = range.capped ? `${range.label} (the most recent year)` : range.label
     const qSlug = `-${slugify(subjectText)}-`
-    /* subject: the week-worded name if one matched, else a declared project
+    /* subject: the time-worded name if one matched, else a declared project
        named in the question, else the noun the question's own shape points
        at ("how much has X eaten", "how long did X take", "my X sessions") —
        single-token captures are stoplist-checked so a bare function word
@@ -3803,8 +5038,8 @@ export const useMew = create<MewState>((set, get) => {
       else recall = got
     }
 
-    if (slug && name) {
-      const days = weekKeys(new Date(s.nowMs), offset)
+    if (slug && name && !range.future) {
+      const days = rangeDayKeys(range)
       const r = week.rollup(s.blocks, days, (b) => slugify(b.title).includes(slug))
       if (r.plannedMin > 0 || r.rolled > 0) {
         const h = (min: number) =>
@@ -3812,8 +5047,9 @@ export const useMew = create<MewState>((set, get) => {
         const openMin = r.plannedMin - r.doneMin
         const parts = [
           `${name} ${label}: ${h(r.plannedMin)} across ${r.done + r.open} block${r.done + r.open === 1 ? '' : 's'}`,
-          /* a past week that finished clean needs no "0h still open" tail */
-          offset < 0 && openMin === 0
+          /* nothing open needs no "0h still open" tail — for a past week (as
+             ever) and for any other stretch; this week keeps its pre-#8 words */
+          openMin === 0 && (range.kind === 'days' || range.toDayKey < todayKey)
             ? `${h(r.doneMin)} done`
             : `${h(r.doneMin)} done, ${h(openMin)} still open`,
         ]
@@ -3824,7 +5060,7 @@ export const useMew = create<MewState>((set, get) => {
     }
 
     /* no local numbers — recall may still know it; absent both, say so
-       honestly, naming the week the question asked about. "Or the brain" is
+       honestly, naming the stretch the question asked about. "Or the brain" is
        claimed only when the brain really answered: an unanswering brain is
        named as such (it may know more) — its silence is never passed off as
        an empty history (#249) */
@@ -3834,7 +5070,13 @@ export const useMew = create<MewState>((set, get) => {
       brainOn() && !brainAnswered
         ? ` I'm running on what I know on-device — the brain didn't answer just now, so it may know more; worth asking again in a moment.`
         : ''
-    if (offset < 0)
+    if (range.future)
+      return `${rangeStartLabel(range, todayKey)} is still ahead, so there's nothing to look back on yet.${brainSilent}`
+    if (range.kind === 'days') {
+      const blocksOf = range.fromDayKey === range.toDayKey ? "that day's" : "those days'"
+      return `I can't see ${name ?? 'that'} ${label} — nothing in ${blocksOf} blocks${brainChecked} mentions it.${brainSilent}`
+    }
+    if (range.weekOffset < 0)
       return `I can't see ${name ?? 'that'} ${label} — nothing in that week's blocks${brainChecked} mentions it.${brainSilent}`
     return `I can't see ${name ?? 'that'} yet — nothing in this week's blocks${brainChecked} mentions it.${brainSilent}`
   }
@@ -3845,7 +5087,15 @@ export const useMew = create<MewState>((set, get) => {
       (pickChoice), so tools remain the only mutation path. The returned
       string leads with CHOICES_POSTED: the model reads it as "end your turn",
       the keyless floor reads it as "stay quiet — the chips ARE the reply". */
-  function execOfferChoices(prompt: string, options: ChoiceOption[]): string {
+  /* one named object (#165) — see OfferChoicesArgs. The tool-facing entry
+     delegates to postChoices, which keeps the two-argument shape the store's own
+     ask sites have always used: seven of them build a prompt and a list inline,
+     and wrapping each in an object would be churn with nothing to forget. The
+     WRAPPER is what must forward wholesale, and it does. */
+  function execOfferChoices(args: OfferChoicesArgs): string {
+    return postChoices(args.prompt, args.options)
+  }
+  function postChoices(prompt: string, options: ChoiceOption[]): string {
     post([
       choicesMsg(
         prompt,
@@ -3873,7 +5123,21 @@ export const useMew = create<MewState>((set, get) => {
       along), so a preview is sized and windowed the way the apply will be.
       Every scenario is validated against the live week at post time — the
       engine is conflict-free by construction, the gate keeps that checked. */
-  function execProposeScenarios(prompt: string, specs: ScenarioTaskSpec[]): string {
+  /* one named object (#165) — see ProposeScenariosArgs. `requote` stays a
+     SECOND parameter rather than a field: it is not part of the tool's contract,
+     it is an internal flag only the stale-plan re-offer below sets, and folding
+     it into the args object would let a model-facing call set it. The wrapper
+     still passes args alone, which is what the forwarding pin checks. */
+  function execProposeScenarios(
+    args: ProposeScenariosArgs,
+    /* #81: a stale plan's re-offer re-quotes the STORED places — their lengths
+       are already the honest quote (pre-sized under "always", as asked
+       otherwise), so each carries its own stated flag and nothing is pre-sized
+       a second time */
+    requote = false
+  ): string {
+    const { prompt } = args
+    const specs = args.tasks as (ScenarioTaskSpec & { durationStated?: boolean })[]
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3897,8 +5161,10 @@ export const useMew = create<MewState>((set, get) => {
           ...(t.due != null ? { due: t.due } : {}),
           // a stated window, else a confirmed rule's — the engine honors both
           ...(r.spec.window ? { window: r.spec.window } : {}),
-          // #322: a length in the ask is the user's word — "always" leaves it be
-          ...(t.durationMin != null ? { durationStated: true } : {}),
+          // #322: a length in the ask is the user's word — "always" leaves it be.
+          // A re-quote (#81) keeps each place's own flag instead: every stored
+          // place has a length, but only the stated ones were the owner's word.
+          ...((requote ? t.durationStated : t.durationMin != null) ? { durationStated: true } : {}),
         }
       })
     if (!tasks.length) return 'nothing to propose — name the tasks and I will lay out the week.'
@@ -3917,7 +5183,9 @@ export const useMew = create<MewState>((set, get) => {
        preview AND the applied quote both carry honest lengths. off/ask ⇒ absent
        ⇒ scenarios are byte-identical to today. */
     const estimateFactor =
-      s.settings.estimateAutosize === 'always' ? estimateFactorByTag(s.memory, now) : undefined
+      s.settings.estimateAutosize === 'always' && !requote // #81: never pre-size a quote twice
+        ? estimateFactorByTag(s.memory, now)
+        : undefined
     const all = generateScenarios(s.blocks, tasks, {
       nowMin: minOfDay(now),
       todayKey,
@@ -3960,12 +5228,15 @@ export const useMew = create<MewState>((set, get) => {
     return `${CHOICES_POSTED}: ${scenarios.map((sc) => `"${sc.name}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
   }
 
-  function execRemove(
-    query: string,
-    opts: { at?: string; all?: boolean; scope?: RecurScope } = {}
-  ): string {
+  /* one named object (#165) — see RemoveArgs. The body reads its pins through
+     the same `opts` name, so nothing below this line moved. */
+  function execRemove(args: RemoveArgs): string {
+    const { query } = args
+    const opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
+    /* #62: a named day pins which occurrence; a time alone never reaches across days */
+    const day = opts.dayOffset != null ? addDaysKey(todayKey, opts.dayOffset) : undefined
     /* #343: "the whole series" (scope:'series') sweeps the linked set exactly as
        an explicit all does — both flow through seriesOf below. */
     const scope = opts.scope
@@ -3987,7 +5258,7 @@ export const useMew = create<MewState>((set, get) => {
       ;({ remove: matches, candidates } = week.resolveRemoval(
         s.blocks,
         query,
-        { at: opts.at, all: wholeSeries },
+        { at: opts.at, all: wholeSeries, day },
         todayKey
       ))
       /* no OPEN target by that name — it may name DONE block(s). The cage lifts
@@ -3998,7 +5269,7 @@ export const useMew = create<MewState>((set, get) => {
         const atMin = opts.at ? parseTimeValue(opts.at) : null
         const r = week.findTarget(s.blocks, query, todayKey, { at: atMin, includeDone: true })
         const hits = r.status === 'ok' ? [r.block] : r.status === 'ambiguous' ? r.candidates : []
-        doneProposal = hits.filter((b) => b.status === 'done')
+        doneProposal = hits.filter((b) => b.status === 'done' && (day == null || b.dayKey === day))
       }
     }
     if (doneProposal.length) return proposeDoneRemoval(baseOf(query), doneProposal, todayKey)
@@ -4023,41 +5294,94 @@ export const useMew = create<MewState>((set, get) => {
     /* several share the title and nothing singled one out — name them with
        their times and ask, rather than dropping a block they didn't mean */
     if (!matches.length && candidates.length > 1) {
-      const when = (b: Block) =>
-        `the ${fmtTime(b.startMin)} (${b.dayKey === todayKey ? '' : `${fmtDowLong(b.dayKey)} `}${fmtTime(b.startMin)}–${fmtTime(b.endMin)})`
-      const list = candidates.map(when)
-      const tail =
-        list.length === 2
-          ? `${list[0]} or ${list[1]}`
-          : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
       const base = query.split('—')[0].trim()
       /* the question rides a chips message (#254) — the same structure the
          offer_choices tool posts, so the keyless floor gets clickable answers
          too. Each reply is a complete remove the parser (and any model) acts
          on; times dedupe because `at` pins by start minute — one chip removes
          exactly what typing that time would. ≤5 chips: 4 times + the sweep. */
+      /* #62: when the SAME time repeats across days, a time-only chip would
+         match every one of them again, so each block gets a chip that names
+         its day ("remove lunch on thursday at 12:00"). Distinct times keep the
+         time-only chips (each is already exact). A block past the day words
+         (7+ days out) gets no chip, since its reply would land on the wrong day;
+         the question text still names it. */
+      /* #161: the chips name their DAY whenever the candidates span more than one
+         — not only when a time repeats. The narrower rule left a question like
+         "the 12:00, the 13:00, or the 13:20?" for three blocks on three days: one
+         vocabulary with the day dropped, so the owner could answer but could not
+         tell which block they were answering about. Naming the day in the chip
+         keeps the question and the chips in one vocabulary AND keeps the day,
+         which is what the bracketed form used to carry. */
+      const spansDays = new Set(candidates.map((b) => b.dayKey)).size > 1
       const seen = new Set<string>()
-      const timeOptions = candidates
-        .filter((b) => {
-          const t = fmtTime(b.startMin)
-          if (seen.has(t)) return false
-          seen.add(t)
-          return true
-        })
-        .slice(0, 4)
-        .map((b) => ({
-          label: `the ${fmtTime(b.startMin)}`,
-          reply: `remove ${base} ${fmtTime(b.startMin)}`,
-        }))
-      return execOfferChoices(
-        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "both" to drop them all.`,
-        [
-          ...timeOptions,
-          { label: candidates.length === 2 ? 'both' : 'all of them', reply: `remove all ${base}` },
-        ]
+      /* each chip remembers the block it speaks for, so the question can be
+         written in the chips' own words (#161) rather than in a second dialect */
+      const chips = spansDays
+        ? candidates
+            .map((b) => ({ b, word: dayWord(b.dayKey, todayKey) }))
+            .filter((x): x is { b: Block; word: string } => x.word != null)
+            .slice(0, 4)
+            .map(({ b, word }) => ({
+              block: b,
+              label: `${word} ${fmtTime(b.startMin)}`,
+              reply: `remove ${base} ${word === 'today' || word === 'tomorrow' ? word : `on ${word}`} at ${fmtTime(b.startMin)}`,
+            }))
+        : candidates
+            .filter((b) => {
+              const t = fmtTime(b.startMin)
+              if (seen.has(t)) return false
+              seen.add(t)
+              return true
+            })
+            .slice(0, 4)
+            .map((b) => ({
+              block: b,
+              label: `the ${fmtTime(b.startMin)}`,
+              reply: `remove ${base} ${fmtTime(b.startMin)}`,
+            }))
+      const timeOptions = chips.map(({ label, reply }) => ({ label, reply }))
+      /* #161: the question names each block in the WORDS OF ITS OWN CHIP, so the
+         alternatives it offers are alternatives the owner can type back. It used
+         to describe them ("the 12:00 (Wednesday 12:00–12:30)") while the chips
+         read "tomorrow 12:00" — two vocabularies for one ask, and typing what the
+         question printed resolved to nothing. Where two candidates share a start
+         time the ask offered the same words twice, distinguished only by the
+         bracket nobody would type.
+         A candidate with no chip keeps the descriptive form: the chip list is
+         capped and skips blocks past the day words, and the question naming every
+         block is a guarantee older than this fix (#62). */
+      const labelOf = new Map(chips.map((c) => [c.block.id, c.label]))
+      const when = (b: Block) =>
+        labelOf.get(b.id) ??
+        `the ${fmtTime(b.startMin)} (${b.dayKey === todayKey ? '' : `${fmtDowLong(b.dayKey)} `}${fmtTime(b.startMin)}–${fmtTime(b.endMin)})`
+      const list = candidates.map(when)
+      const tail =
+        list.length === 2
+          ? `${list[0]} or ${list[1]}`
+          : `${list.slice(0, -1).join(', ')}, or ${list[list.length - 1]}`
+      /* #124: the line names the all-chip in its own words — "both" for two,
+         "all of them" for three or more */
+      const everyOne = candidates.length === 2 ? 'both' : 'all of them'
+      return postChoices(
+        `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "${everyOne}" to drop them all.`,
+        [...timeOptions, { label: everyOne, reply: `remove all ${base}` }]
       )
     }
-    if (!matches.length) return `I couldn't find "${query}" ahead to remove — say it another way?`
+    /* #160: when a day was named and understood, the reply that explains the miss
+       says so. Without it, "remove the gym on friday" with gyms on Wednesday and
+       Thursday answers `I couldn't find "gym"` — wrong about the one thing the
+       parser got right, and it reads as "you have no gym" to an owner looking at
+       two of them. */
+    if (!matches.length) {
+      const w = dayWord(day ?? '', todayKey)
+      const when = !day
+        ? ' ahead'
+        : w === 'today' || w === 'tomorrow'
+          ? ` ${w}`
+          : ` on ${fmtDowLong(day)}`
+      return `I couldn't find "${query}"${when} to remove — say it another way?`
+    }
     /* "drop all the gym sessions" (#159): an explicit all over a recurring block
        removes the WHOLE linked series (every open occurrence, past or ahead),
        not just the ahead substring matches — so the recurringBlockId drops with
@@ -4126,16 +5450,37 @@ export const useMew = create<MewState>((set, get) => {
       ...(prefd.attention != null ? { attention: prefd.attention } : {}),
     })
     if (!placed) return false
-    setBlocks([...s.blocks, placed])
-    const updated: Capture = { ...cap, status: 'placed', placedBlockId: placed.id }
-    set((st) => ({ captures: st.captures.map((c) => (c.id === cap.id ? updated : c)) }))
-    persistCaptures([updated])
     const todayKey = dayKey(new Date(s.nowMs))
-    post([
-      mewMsg(
-        `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`
-      ),
-    ])
+    /* #21: the tool path every placement takes — a receipt card in the log and
+       ONE undo. Its snapshot holds across the owner's next message ("undo
+       that"), like every change's (#120); undo returns the capture to the inbox. */
+    snapshotForUndo()
+    const utcDay = (k: string) => {
+      const [y, m, d] = k.split('-').map(Number)
+      return Date.UTC(y, m - 1, d) / 86_400_000
+    }
+    runChange(
+      'plan',
+      {
+        places: [
+          {
+            title: cap.title,
+            dayOffset: utcDay(toDayKey) - utcDay(todayKey),
+            startMin,
+            durationMin,
+          },
+        ],
+      },
+      () => {
+        setBlocks([...get().blocks, placed])
+        const updated: Capture = { ...cap, status: 'placed', placedBlockId: placed.id }
+        set((st) => ({ captures: st.captures.map((c) => (c.id === cap.id ? updated : c)) }))
+        persistCaptures([updated])
+        const line = `Placed — "${cap.title}" lives ${toDayKey === todayKey ? 'today' : fmtDowLong(toDayKey)} at ${fmtTime(startMin)}.`
+        post([mewMsg(line)])
+        return line
+      }
+    )
     return true
   }
 
@@ -4158,7 +5503,9 @@ export const useMew = create<MewState>((set, get) => {
   /* list_blocks (#333): MEW's eyes on the calendar — the itemized, addressable
      readout analyze lacks. Read-only like execAnalyze: reads the live week and
      hands it to the pure formatter, mutating nothing and taking no snapshot. */
-  function execListBlocks(day: number | 'week', tag?: import('../domain/types').Tag): string {
+  /* one named object (#165) — see ListBlocksArgs */
+  function execListBlocks(args: ListBlocksArgs): string {
+    const { day, tag } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const dayKeys =
@@ -4168,62 +5515,71 @@ export const useMew = create<MewState>((set, get) => {
     return listReadout(s.blocks, { dayKeys, todayKey, tag })
   }
 
-  function execFindSlot(
-    durationMin: number,
-    dayOffset: number,
-    notBeforeMin?: number,
-    notAfterMin?: number
-  ): string {
+  /* one named object (#165) — see FindSlotArgs */
+  function execFindSlot(args: FindSlotArgs): string {
+    const { durationMin, dayOffset, notBeforeMin, notAfterMin } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const key = addDaysKey(todayKey, dayOffset)
     const label = key === todayKey ? 'today' : fmtDowLong(key)
     const bufferMin = s.settings.meetingBufferMin ?? 0 // #302: shy of meeting edges
+    const hours = plannableOf(s.settings) // #22: the day find_slot searches by default
     const floor = Math.max(
-      notBeforeMin ?? week.DAY_START,
+      notBeforeMin ?? hours.startMin,
       key === todayKey ? minOfDay(new Date(s.nowMs)) + 5 : 0
     )
-    const ceil = notAfterMin ?? 22 * 60 + 30
-    const fit = week
-      .freeWindows(s.blocks, key, floor, ceil, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
-    if (fit) {
-      return `Clear window ${label}: ${fmtTime(fit.startMin)}–${fmtTime(fit.startMin + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
+    const ceil = notAfterMin ?? hours.endMin
+    /* #22: the window a model will place at starts at a human time — the first
+       free gap whose snapped start still holds the duration */
+    const firstFit = (k: string, from: number, to: number): number | null => {
+      for (const w of week.freeWindows(s.blocks, k, from, to, bufferMin)) {
+        const at = snapStart(w.startMin, w.endMin - durationMin)
+        if (at != null) return at
+      }
+      return null
+    }
+    const fit = firstFit(key, floor, ceil)
+    if (fit != null) {
+      return `Clear window ${label}: ${fmtTime(fit)}–${fmtTime(fit + durationMin)} (checked against every time-holding block${notAfterMin ? `, ends before ${fmtTime(ceil)}` : ''}).`
     }
     /* honest alternatives: same day without the ceiling, then tomorrow */
-    const later = week
-      .freeWindows(s.blocks, key, floor, 22 * 60 + 30, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
+    const later = firstFit(key, floor, hours.endMin)
     const nextKey = addDaysKey(key, 1)
-    const nextDay = week
-      .freeWindows(s.blocks, nextKey, 9 * 60, 22 * 60 + 30, bufferMin)
-      .find((w) => w.endMin - w.startMin >= durationMin)
+    const nextDay = firstFit(nextKey, 9 * 60, hours.endMin)
     const alts = [
-      later
-        ? `later ${label} ${fmtTime(later.startMin)}–${fmtTime(later.startMin + durationMin)}`
-        : null,
-      nextDay
-        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay.startMin)}–${fmtTime(nextDay.startMin + durationMin)}`
+      later != null ? `later ${label} ${fmtTime(later)}–${fmtTime(later + durationMin)}` : null,
+      nextDay != null
+        ? `${nextKey === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(nextKey)} ${fmtTime(nextDay)}–${fmtTime(nextDay + durationMin)}`
         : null,
     ].filter(Boolean)
-    return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''}`
+    const options = alts.length ? ` Nearest clear options: ${alts.join(', or ')}.` : ''
+    /* #22: never claim a gap is held when the free air only runs past the
+       plannable end — name the bounds and the real free time instead. A
+       stated ceiling inside the day is the user's own limit, so it keeps its
+       wording (the air it rules out is theirs to rule out). */
+    const pastEnd =
+      notAfterMin == null
+        ? pastEndNote(s.blocks, key, floor, durationMin, hours, label, bufferMin)
+        : null
+    if (pastEnd) {
+      return `No ${durationMin}-min window ${label} fits inside the hours I plan in (${plannableLabel(hours)}). ${pastEnd}${options}`
+    }
+    return `No clear ${durationMin}-min window ${label}${notAfterMin ? ` before ${fmtTime(ceil)}` : ''} — every gap is held by something fixed or committed.${options}`
   }
 
   /* suggest_slots: hand the model the scoring oracle's ranked, conflict-free
      candidates (#80) so it places into vetted air. Read-only and keyless —
      scoreSlots scores deterministically; a brain only enriches later. */
-  function execSuggestSlots(
-    title: string,
-    tag: import('../domain/types').Tag,
-    durationMin: number,
-    dueMin?: number,
-    window?: TimeWindow
-  ): string {
+  /* one named object (#165) — see SuggestSlotsArgs */
+  function execSuggestSlots(args: SuggestSlotsArgs): string {
+    const { title, tag, durationMin, dueMin } = args
+    const window = args.window as TimeWindow | undefined
     const clean = title.trim()
     if (!clean) return 'name the task and I will rank where it fits best.'
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
+    const hours = plannableOf(s.settings)
     const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
     const q: SlotQuery = {
       title: clean,
@@ -4241,17 +5597,44 @@ export const useMew = create<MewState>((set, get) => {
       undefined, // weights: the default profile
       undefined, // horizonDays: the default week
       undefined, // mealBase: the circadian default (#298)
-      s.settings.meetingBufferMin ?? 0 // #302: shy of external meetings
+      s.settings.meetingBufferMin ?? 0, // #302: shy of external meetings
+      hours // #22: candidates span the owner's plannable day
     )
+    /* #22: tonight past the plannable end is real free time — name it rather
+       than let an empty or tomorrow-only ranking read as "tonight is held" */
+    const tonight = ranked.some((c) => c.dayKey === todayKey)
+      ? null
+      : pastEndNote(
+          s.blocks,
+          todayKey,
+          Math.max(hours.startMin, minOfDay(now)),
+          durationMin,
+          hours,
+          'today',
+          s.settings.meetingBufferMin ?? 0,
+          dueMin
+        )
     if (!ranked.length) {
+      if (tonight) {
+        return `No ${durationMin}-min slot for "${clean}" fits inside the hours I plan in (${plannableLabel(hours)})${dueMin != null ? ' before its deadline today' : ' this week'}. ${tonight}`
+      }
       return `No conflict-free ${durationMin}-min slot for "${clean}"${dueMin != null ? ' before its deadline today' : ' in the next week'} — every fit is held by something fixed. Shorten it or free some time.`
     }
     const label = (k: string) =>
       k === todayKey ? 'today' : k === addDaysKey(todayKey, 1) ? 'tomorrow' : fmtDowLong(k)
-    const top = ranked
-      .slice(0, 4)
-      .map((c) => `${label(c.dayKey)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.why})`)
-    return `Best slots for "${clean}", highest first: ${joinHuman(top)}. Place the first unless the user wants another.`
+    const shown = ranked.slice(0, 4)
+    const top = shown.map(
+      (c) => `${label(c.dayKey)} ${fmtTime(c.startMin)}–${fmtTime(c.endMin)} (${c.why})`
+    )
+    /* #22: an evening slot ranks low by design, so tomorrow can fill the list —
+       when tonight still has room, say so, or the model reads it as held */
+    const evening = shown.some((c) => c.dayKey === todayKey)
+      ? undefined
+      : ranked.find((c) => c.dayKey === todayKey && c.endMin > week.DAY_END)
+    const eveningPart = evening
+      ? ` Tonight is open too: ${fmtTime(evening.startMin)}–${fmtTime(evening.endMin)}.`
+      : ''
+    return `Best slots for "${clean}", highest first: ${joinHuman(top)}. Place the first unless the user wants another.${eveningPart}${tonight ? ` ${tonight}` : ''}`
   }
 
   function execClear(scope: import('../domain/types').ClearScope): string {
@@ -4319,7 +5702,22 @@ export const useMew = create<MewState>((set, get) => {
      finds none and says so (one step back, not a history rewind). */
   function execUndo(): string {
     const snap = preMutationSnapshot
-    if (!snap) return `nothing to undo yet — I haven't changed the week this turn.`
+    if (!snap)
+      return `nothing to undo right now — I can take back my last change in your very next message.`
+    /* a snapshot with no mark of the week its change left can't be checked:
+       fail closed rather than restore blind (#130 review) */
+    if (!undoLeft) {
+      preMutationSnapshot = null
+      return `nothing to undo right now — I can take back my last change in your very next message.`
+    }
+    const since = changedSince(undoLeft)
+    if (since.length) {
+      /* #130: restoring the snapshot would sweep these back too — decline, change nothing */
+      preMutationSnapshot = null
+      undoLeft = null
+      const named = since.length > 2 ? [...since.slice(0, 2), 'more'] : since
+      return `something else changed since, so I can't take that back cleanly: ${joinHuman(named)}.`
+    }
     const s = get()
 
     const snapBlockIds = new Set(snap.blocks.map((b) => b.id))
@@ -4380,11 +5778,106 @@ export const useMew = create<MewState>((set, get) => {
       parts.push(
         `brought back ${removed.length === 1 ? base(removed[0]) : `${spell(removed.length)} blocks`}`
       )
-    if (changed.length)
-      parts.push(
-        `put ${changed.length === 1 ? base(changed[0]) : `${spell(changed.length)} blocks`} back where ${changed.length === 1 ? 'it' : 'they'} ${changed.length === 1 ? 'was' : 'were'}`
+    /* #149: name what actually came back. `changed` is object identity, so read
+       the fields: only a block whose day or time moved is "back where it was",
+       and a retag, a resize or a rename each get their own words instead of a
+       sentence describing a move that never happened. A block that changed in
+       several ways takes the largest fact — where it sits — and anything else
+       that differs falls back to "as it was", which is true of every field. */
+    const kindOf = (b: Block): 'moved' | 'length' | 'name' | 'tag' | 'other' => {
+      const live = liveBlockById.get(b.id)!
+      if (b.dayKey !== live.dayKey || b.startMin !== live.startMin) return 'moved'
+      if (b.endMin !== live.endMin) return 'length'
+      if (b.title !== live.title) return 'name'
+      if (b.tag !== live.tag) return 'tag'
+      return 'other'
+    }
+    const back = <T>(xs: T[], one: (x: T) => string, many: (n: number) => string) =>
+      xs.length ? [xs.length === 1 ? one(xs[0]) : many(xs.length)] : []
+    const by = (k: ReturnType<typeof kindOf>) => changed.filter((b) => kindOf(b) === k)
+    parts.push(
+      ...back(
+        by('moved'),
+        (b) => `put ${base(b)} back where it was`,
+        (n) => `put ${spell(n)} blocks back where they were`
+      ),
+      ...back(
+        by('length'),
+        (b) => `put ${base(b)} back to its old length`,
+        (n) => `put ${spell(n)} blocks back to their old lengths`
+      ),
+      ...back(
+        by('name'),
+        (b) => `called it ${base(b)} again`,
+        (n) => `put ${spell(n)} names back`
+      ),
+      ...back(
+        by('tag'),
+        (b) => `put ${base(b)} back to ${b.tag}`,
+        (n) => `put ${spell(n)} tags back`
+      ),
+      ...back(
+        by('other'),
+        (b) => `put ${base(b)} back as it was`,
+        (n) => `put ${spell(n)} blocks back as they were`
       )
+    )
     if (addedCaptureIds.length) parts.push(`cleared the note I'd jotted`)
+    /* #176: a standing rule has NO BLOCK, so every clause above passed it by and
+       the sentence came out `Undone — .` — the #149 class on the one kind #149
+       did not cover. Only `preference` earns a clause: an ordinary undo also
+       drops drift and completion notes, and naming those would put a rule
+       sentence on every undo that never touched one.
+       BOTH DIRECTIONS ARE NOW REACHABLE AND BOTH ARE PINNED. When this was
+       written only the dropped one was: `remember` snapshotted for undo and
+       `forgetStandingPref` did not, so a forgotten rule could not be undone at
+       all, and this comment said so rather than letting the restore branch read
+       as tested. #158 gave forget its snapshot — the owner's condition is "undo
+       allowed for EVERY action", and forgetting is one — which is what reaches
+       the restore clause. See forget-undoable.test.ts. */
+    const ruleName = (e: MemoryEvent) => e.pref?.match ?? 'that'
+    /* a rule MEW worked out for itself is named the way the console names it —
+       "what I've picked up" — so the receipt cannot be read as the other kind of
+       rule, the kind the owner told MEW. Two buttons say "forget" and #182 is
+       what happens when their two halves are confused; the words keep them
+       apart. A `dismissed_rule` tombstone still earns no clause: it is
+       machinery, not something the owner did. */
+    const pickedName = (e: MemoryEvent) => e.rule?.match ?? 'that'
+    const droppedSet = new Set(droppedMemIds)
+    parts.push(
+      ...back(
+        s.memory.filter((e) => droppedSet.has(e.id) && e.kind === 'preference'),
+        (e) => `took back the rule about ${ruleName(e)}`,
+        (n) => `took back ${spell(n)} rules`
+      ),
+      ...back(
+        restoredMem.filter((e) => e.kind === 'preference'),
+        (e) => `brought back the rule about ${ruleName(e)}`,
+        (n) => `brought back ${spell(n)} rules`
+      ),
+      ...back(
+        s.memory.filter((e) => droppedSet.has(e.id) && e.kind === 'learned_rule'),
+        (e) => `took back what I'd picked up about ${pickedName(e)}`,
+        (n) => `took back ${spell(n)} things I'd picked up`
+      ),
+      ...back(
+        restoredMem.filter((e) => e.kind === 'learned_rule'),
+        (e) => `brought back what I'd picked up about ${pickedName(e)}`,
+        (n) => `brought back ${spell(n)} things I'd picked up`
+      )
+    )
+    /* NOW REACHABLE AND PINNED — the label on this line has changed, and the
+       change is the point. #176 added it as INSURANCE and said so, because no
+       product path reached it: every undoable action either moved a block or was
+       a preference with a clause of its own. #158's forget-undo made one.
+       The path: with the brain ON, forgetting a rule THIS DEVICE NEVER STORED
+       deletes nothing locally, so undo restores no preference and the only thing
+       it drops is the tombstone — which earns no clause, correctly, because a
+       tombstone is machinery rather than something the owner did. `parts` comes
+       out empty and this line is what answers. See forget-undoable.test.ts;
+       removing this line now fails that pin.
+       A terse true sentence beats a fluent empty one. */
+    if (!parts.length) return 'Undone.'
     return `Undone — ${joinHuman(parts)}.`
   }
 
@@ -4426,6 +5919,7 @@ export const useMew = create<MewState>((set, get) => {
     queuedSpeak: null,
     lastReferent: null,
     brainSidecar: 'off',
+    brainPrefs: null,
 
     engine: { lastFired: {}, lastDriftBlockId: null },
     lastActivityMs: nowFn(),
@@ -4528,9 +6022,13 @@ export const useMew = create<MewState>((set, get) => {
         if (lastFired['weekly-ritual']?.key === bootWeek && !ritualDelivered) {
           delete lastFired['weekly-ritual']
         }
+        /* heal the 0:00–23:59 blocks a pre-#27 pull minted from all-day events
+           back into all-day labels — FIRST, so a healed label the orphan sweep
+           then adopts as native is still never pushed */
+        const healed = healAllDayBlocks(loaded.blocks)
         /* heal blocks whose source calendar is gone (restored backup, cleared
            connections): adopt them as MEW's own so sync can place them again */
-        const swept = adoptOrphanedExternals(loaded.blocks, settings.calendars)
+        const swept = adoptOrphanedExternals(healed.blocks, settings.calendars)
         /* the scaffold key (#299) heals by the same chat-as-truth rule: today's
            key with NO meal-class block on today AND no scaffold line in today's
            chat means the pass never landed — drop the key so it re-runs (the
@@ -4563,7 +6061,7 @@ export const useMew = create<MewState>((set, get) => {
           hydrated: true,
           nowMs: nowFn(),
         })
-        if (swept.adopted) persistBlocks(swept.blocks)
+        if (swept.adopted || healed.healed) persistBlocks(swept.blocks)
         if (cards.flipped.length) persistChat(cards.flipped)
       }
       /* the persisted binding registers on every desktop boot — and again
@@ -4674,14 +6172,38 @@ export const useMew = create<MewState>((set, get) => {
     async speak(text: string) {
       const trimmed = text.trim()
       if (!trimmed) return
+      /* #131: a typed answer to a live remove ask is that chip's pick — the
+         same path as the tap, #94's pick-time re-check included — never a new
+         ask or a thought for the inbox */
+      syncTurnClock() // #96: one today for the parse, the executors and the model
+      const typed = typedRemoveAnswer(get().chat, trimmed, get().nowMs)
+      if (typed && 'choiceId' in typed) return get().pickChoice(typed.msgId, typed.choiceId)
+      /* #139: any live chip, typed exactly as it reads on screen, is that chip's
+         pick — the rescue offer, a no-room time, a batch confirm, a scope ask.
+         Only when the remove ask's own reader had nothing to say about it, so
+         "both" for three blocks still gets its plain answer rather than a pick. */
+      if (!typed) {
+        const label = typedChipLabel(get().chat, trimmed)
+        if (label) return get().pickChoice(label.msgId, label.choiceId)
+      }
       post([{ id: uid(), role: 'user', body: trimmed, ts: nowFn() }])
+      if (typed) {
+        /* a count word that doesn't fit the ask ("both" for three) is answered
+           plainly: nothing changes, and it's never a thought for the inbox. It
+           is still a message, so an older undo hold lets go here (#130) */
+        if (snapshotHolds) snapshotHolds = false
+        else preMutationSnapshot = null
+        /* the ask's own chips ride the line home: the answer settled the ones
+           above, so these are how a tap — or "the thursday one" — still lands */
+        post([typed.choices ? choicesMsg(typed.clarify, typed.choices) : mewMsg(typed.clarify)])
+        return
+      }
       set({ thinking: true })
       turnInFlight = true // executors' nudges park until this turn finishes (#115)
-      /* a fresh exchange — "undo that" reaches only this turn's last action
-         (#162). The one exception: a scenario pick just applied outside any
-         turn (#293) — its snapshot survives THIS entry so the immediate
-         "undo that" can take the picked plan back. */
-      if (pickSnapshotHolds) pickSnapshotHolds = false
+      /* "undo that" reaches MEW's last change through this one message (#120,
+         #162, #293): a snapshot taken before this entry survives it once, and
+         one older than that clears here */
+      if (snapshotHolds) snapshotHolds = false
       else preMutationSnapshot = null
       /* fresh cancel handle for this turn; .signal rides into the adapter so a
          user 'stop' aborts the live stream/fetch (#117) */
@@ -4755,27 +6277,35 @@ export const useMew = create<MewState>((set, get) => {
          undo_last_action can take back exactly that one change (#162). The
          read-only tools below never snapshot — there's nothing to reverse. */
       const exec: ToolExecutor = {
-        plan: (places, frees) => {
+        plan: (args) => {
           acted = true
           snapshotForUndo()
           working('placing blocks…')
           closeStreamRow()
-          return runToolWithCard('plan', { places, frees }, () => execPlan(places, frees))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('plan', { places: args.places, frees: args.frees }, () => execPlan(args))
         },
-        complete: (q, at) => {
+        complete: (args) => {
           acted = true
           snapshotForUndo()
           working('marking it done…')
           closeStreamRow()
-          return runToolWithCard('complete', { query: q }, () => execComplete(q, at))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('complete', { query: args.query }, () => execComplete(args))
         },
-        move: (q, d, t, rel, at) => {
+        /* THE OBJECT IS FORWARDED WHOLE, and that is the fix rather than the
+           naming (#165): a wrapper that rebuilt it field by field could still
+           forget an optional one with tsc green, which is precisely how #160
+           shipped. Nothing here may destructure `args`. */
+        move: (args) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
-          return runToolWithCard('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
-            execMove(q, d, t, rel, at)
+          return runChange(
+            'move',
+            { query: args.query, toDayOffset: args.toDayOffset, toStartMin: args.toStartMin },
+            () => execMove(args)
           )
         },
         capture: (t) => {
@@ -4783,64 +6313,82 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('jotting it down…')
           closeStreamRow()
-          return runToolWithCard('capture', { title: t }, () => execCapture(t))
+          return runChange('capture', { title: t }, () => execCapture(t))
         },
         clear: (scope) => {
           acted = true
           snapshotForUndo()
           working('clearing the time…')
           closeStreamRow()
-          return runToolWithCard('clear', { scope }, () => execClear(scope))
+          return runChange('clear', { scope }, () => execClear(scope))
         },
-        edit: (q, patch, at, scope) => {
+        edit: (args) => {
           acted = true
           snapshotForUndo()
           working('reshaping it…')
           closeStreamRow()
-          return runToolWithCard('edit', { query: q }, () => execEdit(q, patch, at, scope))
+          return runChange('edit', { query: args.query }, () => execEdit(args))
         },
-        remove: (q, opts) => {
+        remove: (args) => {
           acted = true
           snapshotForUndo()
           working('taking it off…')
           closeStreamRow()
-          return runToolWithCard('remove', { query: q }, () => execRemove(q, opts))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('remove', { query: args.query }, () => execRemove(args))
         },
         analyze: (d) => {
           working('reading your week…')
           closeStreamRow()
           return runToolWithCard('analyze', { dayOffset: d }, () => execAnalyze(d)) // read-only: not an action
         },
-        listBlocks: (day, tag) => {
+        listBlocks: (args) => {
           working('listing your blocks…')
           closeStreamRow()
           // read-only: not an action — no acted flag, no undo snapshot
-          return runToolWithCard('listBlocks', { day, tag }, () => execListBlocks(day, tag))
+          return runToolWithCard('listBlocks', { day: args.day, tag: args.tag }, () =>
+            execListBlocks(args)
+          )
         },
-        findSlot: (dur, d, nb, na) =>
+        findSlot: (args) =>
           /* #325: an identical slot query this turn returns the cached answer —
-             no second run, no duplicate card */
-          dedupReadOnly(`findSlot:${dur}:${d}:${nb ?? ''}:${na ?? ''}`, () => {
-            working('finding a slot…')
-            closeStreamRow()
-            return runToolWithCard(
-              'findSlot',
-              { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na },
-              () => execFindSlot(dur, d, nb, na) // read-only
-            )
-          }),
-        suggestSlots: (t, tag, dur, due, win) =>
+             no second run, no duplicate card. The dedup key still names every
+             field it depends on: a key built from fewer fields than the call
+             carries would collapse two DIFFERENT questions into one answer. */
+          dedupReadOnly(
+            `findSlot:${args.durationMin}:${args.dayOffset}:${args.notBeforeMin ?? ''}:${args.notAfterMin ?? ''}`,
+            () => {
+              working('finding a slot…')
+              closeStreamRow()
+              return runToolWithCard(
+                'findSlot',
+                {
+                  durationMin: args.durationMin,
+                  dayOffset: args.dayOffset,
+                  notBeforeMin: args.notBeforeMin,
+                  notAfterMin: args.notAfterMin,
+                },
+                () => execFindSlot(args) // read-only
+              )
+            }
+          ),
+        suggestSlots: (args) =>
           /* #325: the same target twice this turn collapses — the ranking
-             already ran; the second call is the flail, not a new question */
-          dedupReadOnly(`suggestSlots:${t}:${tag}:${dur}:${due ?? ''}:${win ?? ''}`, () => {
-            working('finding a slot…')
-            closeStreamRow()
-            return runToolWithCard(
-              'suggestSlots',
-              { title: t, durationMin: dur },
-              () => execSuggestSlots(t, tag, dur, due, win) // read-only
-            )
-          }),
+             already ran; the second call is the flail, not a new question. The
+             key still names all five fields: one built from fewer than the call
+             carries would collapse two different questions into one answer. */
+          dedupReadOnly(
+            `suggestSlots:${args.title}:${args.tag}:${args.durationMin}:${args.dueMin ?? ''}:${args.window ?? ''}`,
+            () => {
+              working('finding a slot…')
+              closeStreamRow()
+              return runToolWithCard(
+                'suggestSlots',
+                { title: args.title, durationMin: args.durationMin },
+                () => execSuggestSlots(args) // read-only
+              )
+            }
+          ),
         queryBrain: (q) => {
           working('checking what I know…')
           closeStreamRow()
@@ -4851,11 +6399,11 @@ export const useMew = create<MewState>((set, get) => {
           snapshotForUndo()
           working('remembering that…')
           closeStreamRow()
-          return runToolWithCard('remember', { match: pref.match, value: pref.value }, () =>
+          return runChange('remember', { match: pref.match, value: pref.value }, () =>
             execRemember(pref)
           )
         },
-        offerChoices: (prompt, options) => {
+        offerChoices: (args) => {
           /* chat-only, but the ask is now on screen — a fallback replay would
              double it, so the turn counts as acted. Never a snapshot: there is
              nothing week-side to undo (#254 law: this tool mutates nothing).
@@ -4863,9 +6411,9 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           working('offering choices…')
           closeStreamRow()
-          return execOfferChoices(prompt, options)
+          return execOfferChoices(args)
         },
-        proposeScenarios: (prompt, tasks) => {
+        proposeScenarios: (args) => {
           /* the #254 discipline exactly (#293): chat-only, the picker message
              is the visible artifact (no card), never a snapshot — proposing
              mutates nothing; the PICK snapshots before it applies. acted stays
@@ -4875,7 +6423,7 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           working('shaping the week…')
           closeStreamRow()
-          return execProposeScenarios(prompt, tasks)
+          return execProposeScenarios(args)
         },
         undoLast: () => {
           /* the reversal itself isn't a fresh action: it consumes the snapshot
@@ -4885,39 +6433,68 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('undoLast', undefined, () => execUndo())
         },
-        resize: (q, resize, at, scope) => {
+        resize: (args) => {
           acted = true
           snapshotForUndo()
           working('resizing it…')
           closeStreamRow()
-          return runToolWithCard('resize', { query: q }, () => execResize(q, resize, at, scope))
+          return runChange('resize', { query: args.query }, () => execResize(args))
         },
-        duplicate: (q, opts, at) => {
+        duplicate: (args) => {
           acted = true
           snapshotForUndo()
           working('duplicating it…')
           closeStreamRow()
-          return runToolWithCard(
+          return runChange(
             'duplicate',
-            { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
-            () => execDuplicate(q, opts, at)
+            { query: args.query, toDayOffset: args.toDayOffset, toStartMin: args.toStartMin },
+            () => execDuplicate(args)
           )
         },
-        relativeMove: (q, direction, amountMin, at) => {
+        batch: (args) => {
+          acted = true
+          snapshotForUndo()
+          /* a retag moves nothing: its card and working line say so (#75 slice 2) */
+          const retag = args.op.kind === 'setTag'
+          working(retag ? 'tagging them…' : 'moving them…')
+          closeStreamRow()
+          return runChange(
+            retag ? 'retag' : 'batch',
+            { query: args.selector.titleQuery ?? args.selector.tag },
+            () => execBatch(args)
+          )
+        },
+        merge: (args) => {
+          acted = true
+          snapshotForUndo()
+          working('merging them…')
+          closeStreamRow()
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('merge', { query: args.query, dayOffset: args.dayOffset }, () =>
+            execMerge(args)
+          )
+        },
+        relativeMove: (args) => {
           acted = true
           snapshotForUndo()
           working('nudging it…')
           closeStreamRow()
-          return runToolWithCard('relativeMove', { query: q }, () =>
-            execRelativeMove(q, direction, amountMin, at)
-          )
+          return runChange('relativeMove', { query: args.query }, () => execRelativeMove(args))
+        },
+        split: (args) => {
+          acted = true
+          snapshotForUndo()
+          working('splitting it…')
+          closeStreamRow()
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('split', { query: args.query }, () => execSplit(args))
         },
         giveRoom: (focusClass) => {
           acted = true
           snapshotForUndo()
           working('giving them room…')
           closeStreamRow()
-          return runToolWithCard('giveRoom', { focusClass }, () => execGiveRoom(focusClass))
+          return runChange('giveRoom', { focusClass }, () => execGiveRoom(focusClass))
         },
       }
 
@@ -4943,7 +6520,9 @@ export const useMew = create<MewState>((set, get) => {
         }
         const ctx = weekContext(get(), recallLines, recallDegraded)
         const thread = buildThread(get().chat)
-        const adapters = selectAdapters(get().settings, () => new Date(nowFn()))
+        /* #96: the rules floor counts day words ("on thursday") from the SAME clock
+           every executor resolves them against — never the wall clock beside it */
+        const adapters = selectAdapters(get().settings, () => new Date(get().nowMs))
         const failed: string[] = []
         let lastModelErr: unknown = null // why a model adapter threw, for honest fallback copy
 
@@ -4980,8 +6559,10 @@ export const useMew = create<MewState>((set, get) => {
                 set((s) => ({ chat: s.chat.filter((m) => m.id !== live.msgId) }))
               /* #325: a repeated apology tail is dropped — one acknowledgment
                  stands for the turn (the catch path stays as-is: an error is not
-                 the flail, and a hiccuped turn keeps whatever streamed) */
-              else if (final && !coalesceApology(final)) {
+                 the flail, and a hiccuped turn keeps whatever streamed) */ else if (
+                final &&
+                !coalesceApology(final)
+              ) {
                 persistChat([final])
                 /* streamed replies bypass post() — feed the sense directly,
                    same brain-on gate as post() */
@@ -4998,7 +6579,8 @@ export const useMew = create<MewState>((set, get) => {
                  busy line claims a retry, because only the local adapter
                  retries (the SDK's backoff) — remote fails fast to this floor
                  by design (#156), so its copy never claims a retry that didn't
-                 happen. */
+                 happen. A dropped reply (2xx, then the connection broke) claims
+                 none on either side: the SDK never retries a started stream. */
               const local = failed.includes('ollama')
               const kind = classifyFailure(lastModelErr)
               post([
@@ -5013,7 +6595,9 @@ export const useMew = create<MewState>((set, get) => {
                           ? local
                             ? `(the local model was busy — I retried, then handled it myself.)`
                             : `(the model was busy — I handled this one myself.)`
-                          : `(I couldn't reach the model just now — I handled this myself.)`
+                          : kind === 'dropped'
+                            ? `(the connection to the model hiccuped — I handled this one myself.)`
+                            : `(I couldn't reach the model just now — I handled this myself.)`
                 ),
               ])
             }
@@ -5168,13 +6752,17 @@ export const useMew = create<MewState>((set, get) => {
     },
 
     async pickChoice(msgId: string, choiceId: string) {
-      const s = get()
       /* chips park while a turn is in flight — a pick mid-turn would start a
          concurrent speak racing the live stream. turnInFlight is the phase
          authority (same gate send() queues on, #280): `thinking` alone is too
          narrow — it flips off at the first streamed token while the turn
          keeps running. */
       if (turnInFlight) return
+      /* #96: a pick starts a turn, so its pick-time checks (#89) read the same
+         synced clock the spoken reply will — right after midnight, before a
+         tick, the check and the executor both say Wednesday */
+      syncTurnClock()
+      const s = get()
       const msg = s.chat.find((m) => m.id === msgId)
       const choice = msg?.choices?.find((c) => c.id === choiceId)
       if (!msg || !choice) return
@@ -5191,6 +6779,48 @@ export const useMew = create<MewState>((set, get) => {
       }))
       const updated = get().chat.find((m) => m.id === msgId)
       if (updated) persistChat([updated]) // delta putChat, same as resolveNudge
+      /* a drift drop chip (#12) re-runs its exactness guard with the pick's own
+         clock: "remove the Groceries today at 14:00", offered Tuesday and picked
+         after midnight, means Wednesday's Groceries now. It speaks only while it
+         still singles out the block it was offered for; otherwise the chip is
+         spent, MEW names that block, and everything stays as it is. */
+      if (choice.id.startsWith('drop-')) {
+        const id = choice.id.slice('drop-'.length)
+        const now = new Date(s.nowMs)
+        const todayKey = dayKey(now)
+        if (!dropReplySinglesOut(s.blocks, choice.reply, now, todayKey, id)) {
+          const b = s.blocks.find((x) => x.id === id)
+          const word = b ? dayWord(b.dayKey, todayKey) : null
+          const whose = !b
+            ? ''
+            : word === 'today' || word === 'tomorrow'
+              ? `${word}'s `
+              : `${fmtDowLong(b.dayKey)}'s `
+          const name = b
+            ? `${b.title.split('—')[0].trim()} at ${fmtTime(b.startMin)}`
+            : choice.label.replace(/^drop /, '')
+          post([mewMsg(`That choice was for ${whose}${name}, so everything stays as it is.`)])
+          return
+        }
+      }
+      /* #94: every chip's reply speaks in the pick's day words. Picked on a later
+         calendar day than it was offered, a chip acts only while its reply still
+         reaches the same blocks on the same absolute day and time ("to thursday"
+         still does; "to tomorrow" moved a day). Otherwise the chip is spent, MEW
+         says when it was offered, and everything stays as it is. */
+      const offeredAt = new Date(msg.ts)
+      const pickedAt = new Date(s.nowMs)
+      if (
+        dayKey(offeredAt) !== dayKey(pickedAt) &&
+        !chipStillMeans(s.blocks, choice.reply, offeredAt, pickedAt)
+      ) {
+        post([
+          mewMsg(
+            `That choice was offered on ${fmtDowLong(dayKey(offeredAt))} ("${choice.label}"), so everything stays as it is.`
+          ),
+        ])
+        return
+      }
       /* the pick IS the user's next message — the normal turn does the rest */
       await get().speak(choice.reply)
     },
@@ -5223,13 +6853,17 @@ export const useMew = create<MewState>((set, get) => {
            a fall-through line (one shape, nothing fits) posts as prose. */
         post([mewMsg('the week moved under this plan — want a fresh look?')])
         const offer = execProposeScenarios(
-          '',
-          scenario.places.map((p) => ({
-            title: p.title,
-            tag: p.tag,
-            durationMin: p.durationMin,
-            ...(p.due != null ? { due: p.due } : {}),
-          }))
+          {
+            prompt: '',
+            tasks: scenario.places.map((p) => ({
+              title: p.title,
+              tag: p.tag,
+              durationMin: p.durationMin,
+              ...(p.due != null ? { due: p.due } : {}),
+              ...(p.durationStated ? { durationStated: true } : {}), // #81
+            })),
+          },
+          true // #81: a re-quote of the stored lengths
         )
         if (!offer.startsWith(CHOICES_POSTED)) post([mewMsg(offer)])
         return
@@ -5255,10 +6889,9 @@ export const useMew = create<MewState>((set, get) => {
       const updated = get().chat.find((m) => m.id === msgId)
       if (updated) persistChat([updated]) // delta putChat, same as pickChoice
       snapshotForUndo() // "undo that" must reach the applied plan (#162)
-      pickSnapshotHolds = true // …across the next turn's fresh-exchange reset (#293)
       try {
-        const line = runToolWithCard('plan', { places: scenario.places, frees: [] }, () =>
-          execPlan(scenario.places, [])
+        const line = runChange('plan', { places: scenario.places, frees: [] }, () =>
+          execPlan({ places: scenario.places, frees: [] })
         )
         post([mewMsg(line)])
       } catch (err) {
@@ -5407,9 +7040,15 @@ export const useMew = create<MewState>((set, get) => {
              forever. Deterministic here, so keyless confirms identically. */
           const rule = parseLearnedRule(typeof payload.rule === 'string' ? payload.rule : '')
           if (rule) {
+            /* #182: the same tap from the chat rather than the console, so it
+               gets the same snapshot — a chip is an action too. The snapshot
+               sits inside the `if`, so a chip carrying an unparseable rule
+               changes nothing and spends no undo slot. */
+            snapshotForUndo()
             logMemory({ kind: 'learned_rule', dayKey: todayKey, rule })
             if (brainOn()) void brain.ingest(learnedRulePage(rule))
             post([mewMsg("Got it — I'll just do that from now on.")])
+            markUndoLeft()
           }
           resolveNudge(msgId, 'yes, always')
           break
@@ -5418,7 +7057,13 @@ export const useMew = create<MewState>((set, get) => {
           /* dismiss = "not a rule": a persisted dismissal so this pattern is
              never offered again (detectTaskRules skips it). No week change. */
           const match = typeof payload.match === 'string' ? payload.match : ''
-          if (match) logMemory({ kind: 'dismissed_rule', dayKey: todayKey, rule: { match } })
+          if (match) {
+            /* #182: as above — and an empty match writes nothing, so it must not
+               take a snapshot either. */
+            snapshotForUndo()
+            logMemory({ kind: 'dismissed_rule', dayKey: todayKey, rule: { match } })
+            markUndoLeft()
+          }
           resolveNudge(msgId, 'not a rule')
           break
         }
@@ -5456,15 +7101,23 @@ export const useMew = create<MewState>((set, get) => {
           const target = s.blocks.find((b) => b.id === id)
           if (target) {
             const without = s.blocks.filter((b) => b.id !== id)
+            const { endMin: planEnd } = plannableOf(s.settings) // #22
             const todaySlot = week.findFreeSlot(
               without,
               todayKey,
               week.duration(target),
-              minOfDay(now) + 15
+              minOfDay(now) + 15,
+              planEnd
             )
             const slot =
               todaySlot ??
-              week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
+              week.findFreeSlot(
+                without,
+                addDaysKey(todayKey, 1),
+                week.duration(target),
+                9 * 60,
+                planEnd
+              )
             if (slot) {
               const toKey = todaySlot ? todayKey : addDaysKey(todayKey, 1)
               setBlocks(week.move(s.blocks, id, toKey, slot.startMin))
@@ -5532,7 +7185,13 @@ export const useMew = create<MewState>((set, get) => {
             let moved = false
             for (let i = 1; i <= 6 && !moved; i++) {
               const toKey = addDaysKey(heavyKey, i)
-              const slot = week.findFreeSlot(s.blocks, toKey, week.duration(candidate), 9 * 60)
+              const slot = week.findFreeSlot(
+                s.blocks,
+                toKey,
+                week.duration(candidate),
+                9 * 60,
+                plannableOf(s.settings).endMin // #22
+              )
               if (slot) {
                 setBlocks(week.move(s.blocks, candidate.id, toKey, slot.startMin))
                 post([
@@ -5644,7 +7303,8 @@ export const useMew = create<MewState>((set, get) => {
               s.blocks.filter((b) => b.id !== restId),
               rest.dayKey,
               week.duration(rest),
-              rest.endMin
+              rest.endMin,
+              plannableOf(s.settings).endMin // #22
             )
             if (slot) {
               setBlocks(week.move(s.blocks, restId, rest.dayKey, slot.startMin))
@@ -5996,7 +7656,13 @@ export const useMew = create<MewState>((set, get) => {
       let toKey = todayKey
       for (let i = 0; i <= 3 && !slot; i++) {
         const key = addDaysKey(todayKey, i)
-        slot = week.findFreeSlot(without, key, remaining, i === 0 ? nowMin + 15 : 9 * 60)
+        slot = week.findFreeSlot(
+          without,
+          key,
+          remaining,
+          i === 0 ? nowMin + 15 : 9 * 60,
+          plannableOf(s.settings).endMin // #22
+        )
         if (slot) toKey = key
       }
       if (!slot) {
@@ -6040,15 +7706,17 @@ export const useMew = create<MewState>((set, get) => {
       const now = new Date(s.nowMs)
       const todayKey = dayKey(now)
       const without = s.blocks.filter((b) => b.id !== blockId)
+      const { endMin: planEnd } = plannableOf(s.settings) // #22
       const todaySlot = week.findFreeSlot(
         without,
         todayKey,
         week.duration(target),
-        minOfDay(now) + 15
+        minOfDay(now) + 15,
+        planEnd
       )
       const slot =
         todaySlot ??
-        week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60)
+        week.findFreeSlot(without, addDaysKey(todayKey, 1), week.duration(target), 9 * 60, planEnd)
       if (!slot) {
         post([mewMsg(`Nowhere kind to put it yet — want to look at the week together?`)])
         return
@@ -6114,7 +7782,7 @@ export const useMew = create<MewState>((set, get) => {
       } else {
         reply = moveResolved(target, toDayKey, toStartMin)
       }
-      pickSnapshotHolds = true
+      markUndoLeft()
       post([mewMsg(reply)])
       return resized ? 'resized' : 'moved'
     },
@@ -6163,13 +7831,40 @@ export const useMew = create<MewState>((set, get) => {
        memory the learn/remember paths already write, so keyless and keyed
        behave identically and the console stays tools-only. */
     confirmTaskRule(rule) {
+      /* #182: confirming a rule is something the OWNER did, so it snapshots and
+         marks like every other action. Before this it was invisible to undo in
+         both directions, and the second one was the damaging half: the next
+         unrelated "undo that" restored a memory snapshot taken BEFORE the
+         confirmation and threw it away without a word.
+         NO GUARD HERE, on purpose: memory is append-only, so a confirm always
+         changes something and there is no no-op to protect the undo slot from —
+         unlike the forget below, where there is. */
+      snapshotForUndo()
       logMemory({ kind: 'learned_rule', dayKey: dayKey(new Date(get().nowMs)), rule })
       if (brainOn()) void brain.ingest(learnedRulePage(rule))
+      markUndoLeft()
     },
     forgetRule(match) {
       const drop = get()
         .memory.filter((e) => e.kind === 'learned_rule' && e.rule?.match === match)
         .map((e) => e.id)
+      /* #182: the OTHER button labelled "forget", one screen from the one #158
+         fixed. It took no snapshot, and because weekMark() records blocks,
+         captures and completions but not memory it did not trip #130's guard
+         either — so "undo that" after it reverted an unrelated MOVE while the
+         rule stayed forgotten. Two identical-looking buttons, opposite
+         behaviour. See rule-taps-undoable.test.ts for both directions.
+         THE GUARD FIRST, then the snapshot, the same order forgetStandingPref
+         uses: a forget with nothing left to forget must not spend the undo slot,
+         or "undo that" would answer the no-op instead of whatever the owner
+         actually did last. Nothing left means no stored rule AND a dismissal
+         already on file — a first dismissal is a real change, which is what the
+         "not a rule" chip does. */
+      const dismissed = get().memory.some(
+        (e) => e.kind === 'dismissed_rule' && e.rule?.match === match
+      )
+      if (!drop.length && dismissed) return
+      snapshotForUndo()
       if (drop.length) {
         const gone = new Set(drop)
         set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
@@ -6180,15 +7875,27 @@ export const useMew = create<MewState>((set, get) => {
          remember); applying reads confirmedRulesFrom(local memory) only, so the
          rule truly stops applying regardless of the brain. */
       logMemory({ kind: 'dismissed_rule', dayKey: dayKey(new Date(get().nowMs)), rule: { match } })
+      markUndoLeft()
     },
     reEnableRule(match) {
       const drop = get()
         .memory.filter((e) => e.kind === 'dismissed_rule' && e.rule?.match === match)
         .map((e) => e.id)
       if (!drop.length) return
+      /* #182: same treatment, and the reason is the bug rather than symmetry —
+         without a snapshot of its own, re-enabling would let the next "undo
+         that" reach past it and revert unrelated work while the re-enable
+         stood.
+         WHAT RE-ENABLE MEANS IS UNCHANGED, and undo does not make it redundant:
+         a forget DELETES the stored rule and writes a dismissal, so undoing a
+         forget brings the rule itself back, while re-enabling only lifts the
+         dismissal so the pattern can be OFFERED again. One returns what MEW
+         knew; the other lets MEW ask again. They stay different acts. */
+      snapshotForUndo()
       const gone = new Set(drop)
       set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
       persistDeleteMemory(drop)
+      markUndoLeft()
     },
     saveStandingPref(pref) {
       /* the same remember path a typed rule takes (append + mirror to brain);
@@ -6196,30 +7903,47 @@ export const useMew = create<MewState>((set, get) => {
       execRemember(pref)
     },
     forgetStandingPref(pref) {
-      const key = `${pref.kind}:${pref.match.toLowerCase()}`
+      const key = prefKey(pref)
       const drop = get()
-        .memory.filter(
-          (e) =>
-            e.kind === 'preference' &&
-            e.pref &&
-            `${e.pref.kind}:${e.pref.match.toLowerCase()}` === key
-        )
+        .memory.filter((e) => e.kind === 'preference' && e.pref && prefKey(e.pref) === key)
         .map((e) => e.id)
-      if (!drop.length) return
-      const gone = new Set(drop)
-      set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
-      persistDeleteMemory(drop)
-      /* local removal is authoritative for what applies; mirror it into the
-         brain-backed pref cache too (the brain's copy is append-only, as undo). */
-      refreshBrainPrefs()
+      const brainHasIt = (brainPrefs ?? []).some((p) => prefKey(p) === key)
+      if (!drop.length && !brainHasIt) return
+      /* #158: forgetting a rule is undoable, like every other action that takes
+         something away. It reaches no tool, so it marks itself the way the other
+         tool-less taps do — snapshot before the change, mark the week after.
+         AFTER the guard above on purpose: a forget that finds nothing to forget
+         must not spend the undo slot, or "undo that" would answer the no-op
+         instead of whatever the owner actually did last.
+         The receipt already knows what to say — #176 wrote the restored-preference
+         clause and could not reach it, because nothing restored one. This is what
+         reaches it. */
+      snapshotForUndo()
+      if (drop.length) {
+        const gone = new Set(drop)
+        set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
+        persistDeleteMemory(drop)
+      }
+      /* #15: the forget is a TOMBSTONE, so it sticks with the brain on. The merge
+         rule lets it win over the brain's copy (listPrefs would otherwise bring
+         the rule straight back), and the brain's page is retired to match. A
+         later remember of the same rule is newer and simply wins again. */
+      logMemory({
+        kind: 'forgotten_pref',
+        dayKey: dayKey(new Date(get().nowMs)),
+        pref: { kind: pref.kind, match: pref.match, value: '', stated: '' },
+      })
+      markUndoLeft()
+      if (brainOn()) void brain.ingest(forgottenPrefPage(pref)).then(() => refreshBrainPrefs())
+      else refreshBrainPrefs()
     },
 
     /* ── weekly review (#346) ──────────────────────────────────────────
        A read-only presenter over the LOCAL week + memory (no key, no I/O), the
        memory-console discipline: openWeeklyReview computes and returns the shape
        AND flips the surface open; the UI re-derives it live so a roll re-renders.
-       rollForward is the ONLY write, and it never mutates directly — it re-places
-       the owner-selected blocks through the executor's plan path. */
+       rollForward is the ONLY write: the owner's pick, rolled through the same
+       week.roll primitive the evening wind-down and an interrupt use (#19). */
     openWeeklyReview() {
       const s = get()
       const prefs = activePrefsFrom(s.memory, brainOn() ? brainPrefs : null)
@@ -6244,35 +7968,165 @@ export const useMew = create<MewState>((set, get) => {
       const picked = s.blocks.filter((b) => want.has(b.id) && isRollCandidate(b, prefs))
       if (!picked.length) return
 
-      /* re-place each pick on its SAME weekday in the target week and let the
-         executor's scorer time it — meals re-anchor via the circadian oracle,
-         everything else lands rest-aware and conflict-free (no startMin means
-         "you pick the slot"). This goes through execPlan, the normal plan path:
-         tools are the only mutation door, so a tool card records the roll and
-         undo reaches it, exactly like a typed plan. */
-      const places: PlaceSpec[] = picked.map((b) => {
-        const weekdayIdx = (fromDayKey(b.dayKey).getDay() + 6) % 7 // Mon=0 … Sun=6
-        const targetDay = addDaysKey(targetWeekKey, weekdayIdx)
+      /* #19: a roll MOVES the work, the way the evening wind-down and an
+         interrupt already do. week.roll marks the original rolled and links it
+         (rolledToId) to a fresh copy, so it leaves this week's carried list for
+         good and can never roll twice. It deliberately skips execPlan: a plan
+         place is re-resolved through confirmed rules (one rolled Gym under a
+         recurring rule became a year of them) and de-duped by title (next week's
+         same-named block was re-slotted while nothing landed). The copy is the
+         block as it is (length, tag, protection, attention), timed on its SAME
+         weekday by the oracle a plan uses: the owner's rules, the circadian meal
+         seam, rest-aware and conflict-free. */
+      const learned = learnedRules(s)
+      const hours = plannableOf(s.settings) // #22: the owner's plannable day
+      const bufferMin = s.settings.meetingBufferMin ?? 0 // #302
+      let blocks = s.blocks
+      const places: PlaceSpec[] = [] // what landed, for the tool card
+      const landed: string[] = []
+      const withSeries: string[] = []
+      const rolledOriginals: Block[] = [] // every original this roll marks rolled
+      const noRoom: { name: string; toKey: string }[] = []
+      const workDays = new Set<string>()
+      for (const b of picked) {
+        const name = b.title.split('—')[0].trim()
+        const toKey = addDaysKey(targetWeekKey, (fromDayKey(b.dayKey).getDay() + 6) % 7) // Mon=0 … Sun=6
         const dayOffset = Math.round(
-          (fromDayKey(targetDay).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000
+          (fromDayKey(toKey).getTime() - fromDayKey(todayKey).getTime()) / 86_400_000
         )
-        return {
+        /* a series occurrence whose own series already comes back that day rides
+           with it: linked to that occurrence, never a twin beside it */
+        const next = b.recurringBlockId
+          ? blocks.find(
+              (x) =>
+                x.recurringBlockId === b.recurringBlockId &&
+                x.dayKey === toKey &&
+                x.status === 'open'
+            )
+          : undefined
+        if (next) {
+          blocks = blocks.map((x) =>
+            x.id === b.id ? { ...x, status: 'rolled' as const, rolledToId: next.id } : x
+          )
+          withSeries.push(name)
+          rolledOriginals.push(b)
+          continue
+        }
+        const durationMin = week.duration(b)
+        let startMin: number | undefined
+        if (week.isBackground(b)) {
+          startMin = b.startMin // holds the clock, not a slot: same time, that day
+        } else {
+          /* a confirmed rule's window stays firm (#328); none of its other fields
+             re-resolve a roll. No `due` in the query (the oracle confines a due
+             to today): a slot that still ends by the block's own due wins. */
+          const rule = learned.find((r) => matchesPref(b.title, r.match))
+          const q: SlotQuery = {
+            title: b.title,
+            tag: b.tag,
+            durationMin,
+            ...(rule?.window ? { window: rule.window, windowFirm: true } : {}),
+          }
+          const onDay = scoreSlots(
+            blocks,
+            q,
+            todayKey,
+            minOfDay(now),
+            prefs,
+            undefined, // weights: the default profile
+            dayOffset, // horizon: reach the target day
+            undefined, // mealBase: the circadian default (#298)
+            bufferMin,
+            hours
+          ).filter((c) => c.dayKey === toKey)
+          const due = b.due
+          const byDue = due != null ? onDay.find((c) => c.endMin <= due) : undefined
+          startMin = (byDue ?? onDay[0])?.startMin
+        }
+        if (startMin == null) {
+          noRoom.push({ name, toKey })
+          continue
+        }
+        const rolled = week.roll(blocks, b.id, toKey, startMin)
+        const copyId = rolled.rolled!.id
+        /* a fresh session of the same work: not a second member of a series,
+           and not already started */
+        blocks = rolled.blocks.map((x) => {
+          if (x.id !== copyId) return x
+          const { recurringBlockId: _series, rrule: _rrule, startedAt: _started, ...copy } = x
+          return copy
+        })
+        places.push({
           title: b.title,
           tag: b.tag,
           dayOffset,
-          durationMin: week.duration(b),
+          startMin,
+          durationMin,
           protected: b.protected,
           ...(b.attention ? { attention: b.attention } : {}),
-        }
-      })
-      runToolWithCard('plan', { places, frees: [] }, () => execPlan(places, []))
+        })
+        if (b.tag === 'work' && !week.isBackground(b)) workDays.add(toKey)
+        landed.push(name)
+        rolledOriginals.push(b)
+      }
 
-      const names = picked.map((b) => b.title.split('—')[0].trim())
-      post([
-        mewMsg(
-          `Rolled forward — ${joinHuman(names)} now ${picked.length === 1 ? 'lives' : 'live'} in next week. Nothing else moved.`
-        ),
-      ])
+      const parts: string[] = []
+      if (landed.length)
+        parts.push(
+          `${joinHuman(landed)} now ${landed.length === 1 ? 'lives' : 'live'} in next week`
+        )
+      if (withSeries.length)
+        parts.push(
+          `${joinHuman(withSeries)} already ${withSeries.length === 1 ? 'comes back with its' : 'come back with their'} series`
+        )
+      const lines: string[] = []
+      if (parts.length) lines.push(`Rolled forward — ${parts.join('; ')}. Nothing else moved.`)
+      if (noRoom.length) {
+        const days = [...new Set(noRoom.map((r) => fmtDowLong(r.toKey)))]
+        const names = noRoom.map((r) => r.name)
+        lines.push(
+          `${joinHuman(days)} next week ${days.length === 1 ? 'is' : 'are'} full, so ${joinHuman(names)} ${names.length === 1 ? 'stays' : 'stay'} carried for now.`
+        )
+      }
+      const reply = lines.join(' ')
+
+      if (blocks !== s.blocks) {
+        /* the roll lands outside any turn: snapshot so one "undo that" takes the
+           whole roll back (the copies AND the marks), held across the next
+           turn's fresh-exchange reset (#293, the scenario-pick pattern) */
+        snapshotForUndo()
+        const commit = () => {
+          setBlocks(blocks)
+          /* a review roll is a roll: logged and ingested exactly like the evening
+             wind-down roll and an interrupt, once per original it marks, so the
+             carry ratio, the energy profile and the roll insights all see it.
+             Inside the snapshot, so "undo that" drops these events too. */
+          for (const b of rolledOriginals) {
+            const evTs = nowFn() // one ts for the event and its brain offer
+            ingestBlockEvent(b, 'rolled', minOfDay(new Date(evTs)), evTs)
+            logMemory({
+              kind: 'rolled',
+              dayKey: b.dayKey,
+              tag: b.tag,
+              plannedMin: week.duration(b),
+              deep: week.isDeep(b),
+              title: b.title,
+              startMin: b.startMin,
+              endMin: b.endMin,
+              ts: evTs,
+            })
+          }
+          return reply
+        }
+        if (places.length) runChange('plan', { places, frees: [] }, commit)
+        else {
+          commit()
+          markUndoLeft()
+        }
+      }
+      post([mewMsg(reply)])
+      /* the day-load meter (#301) still looks at every day the roll filled */
+      if (workDays.size) offerDayLoadGuard(workDays, todayKey)
     },
 
     updateSettings(patch) {
@@ -6283,7 +8137,12 @@ export const useMew = create<MewState>((set, get) => {
          (opt-in on, or the sidecar it falls back to) gets its offer (#249).
          URL/token edits alone don't trigger — a half-typed endpoint must not
          be sprayed with a replay; the next launch converges it. */
-      if ('brainEnabled' in patch) maybeBackfillBrain()
+      if ('brainEnabled' in patch) {
+        maybeBackfillBrain()
+        /* #15: the connect re-reads the brain's rulebook, and that read replays
+           whatever the owner told MEW while it was away (once, idempotently) */
+        refreshBrainPrefs()
+      }
     },
 
     async applyCaptureHotkey(accel) {
@@ -6395,13 +8254,16 @@ export const useMew = create<MewState>((set, get) => {
       if (removedIds.length) storage.deleteBlocks(removedIds).catch(() => {})
 
       const optionalCount = events.filter((e) => e.optional).length
+      /* all-day entries arrive as day labels now (#27) — only monthly/yearly
+         rules still stay out */
+      const allDayCount = events.filter((e) => e.allDay).length
       const skipped =
-        result.skippedAllDay + result.skippedRules > 0
-          ? ` (skipped ${result.skippedAllDay} all-day and ${result.skippedRules} monthly/yearly-recurring — they don't sit on the day grid)`
+        result.skippedRules > 0
+          ? ` (skipped ${result.skippedRules} monthly/yearly-recurring — they don't sit on the day grid)`
           : ''
       post([
         mewMsg(
-          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
+          `Imported ${sourceName} — ${merged.added} event${merged.added === 1 ? '' : 's'} in this window landed in the week${merged.updated ? `, ${merged.updated} updated` : ''}${merged.removed ? `, ${merged.removed} gone since last import` : ''}${optionalCount ? `, ${optionalCount} tentative/free (thin tint — they don't hold time)` : ''}${allDayCount ? `, ${allDayCount} all-day (a label on the day — no time held)` : ''}${skipped}. They're calendar facts: I plan around them, never over them.`
         ),
       ])
     },
@@ -6637,7 +8499,13 @@ export const useMew = create<MewState>((set, get) => {
         const s = get()
         const now = new Date(s.nowMs)
         const todayKey = dayKey(now)
-        const slot = week.findFreeSlot(s.blocks, todayKey, 30, Math.max(minOfDay(now) + 15, 9 * 60))
+        const slot = week.findFreeSlot(
+          s.blocks,
+          todayKey,
+          30,
+          Math.max(minOfDay(now) + 15, 9 * 60),
+          plannableOf(s.settings).endMin // #22
+        )
         if (slot) {
           const placed = week.place(s.blocks, {
             title: clean,
@@ -6804,6 +8672,87 @@ function ordinal(n: number): string {
   return n + (s[(v - 20) % 10] ?? s[v] ?? s[0])
 }
 
+/** #90: "a, b, c" or "a, b and 2 more" — the offer's parenthetical of names */
+function listShort(parts: string[]): string {
+  return parts.length > 3
+    ? `${parts.slice(0, 2).join(', ')} and ${parts.length - 2} more`
+    : parts.join(', ')
+}
+
+/** #90: "a", "a and b", "a, b and c", "a, b and 2 more" — a short, human list */
+function andList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] ?? ''
+  if (parts.length > 3) return `${parts.slice(0, 2).join(', ')} and ${parts.length - 2} more`
+  return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+}
+
+/** #90: the spoken names of the blocks with `ids`, in id order, each title once */
+function namesOfBlocks(blocks: Block[], ids: string[]): string[] {
+  const names: string[] = []
+  for (const id of ids) {
+    const b = blocks.find((x) => x.id === id)
+    const name = b?.title.split('—')[0].trim()
+    if (name && !names.includes(name)) names.push(name)
+  }
+  return names
+}
+
+/** The pacing pass (#103) over the days a placement touched: a long unbroken
+    work run earns one unprotected micro-rest in a free seam, or an offer when
+    the run is wall to wall. Shared by execPlan and execSplit (#73), so part 2
+    of a split paces rest exactly as a planned block does. */
+function paceRest(
+  blocks: Block[],
+  days: Iterable<string>,
+  todayKey: string,
+  nowMin: number
+): { blocks: Block[]; notes: string[] } {
+  const notes: string[] = []
+  for (const key of days) {
+    if (key < todayKey) continue // #116: a day already lived gets no breather
+    // #22: the pacing pass keeps the classic day; #116: today's starts from now
+    const r = restInsertion(blocks, key, key === todayKey ? nowMin : 0)
+    if (!r) continue
+    const when = key === todayKey ? 'today' : fmtDowLong(key)
+    if (r.kind === 'place') {
+      const rest = week.place(blocks, {
+        title: 'Breather',
+        tag: 'rest',
+        dayKey: key,
+        startMin: r.startMin,
+        endMin: r.endMin,
+        protected: false,
+        placedBy: 'pacing', // #123: MEW's own pacing, never carried work
+      })
+      if (rest) {
+        blocks = [...blocks, rest]
+        notes.push(
+          `tucked a ${rest.endMin - rest.startMin}-min breather into ${when} at ${fmtTime(rest.startMin)}`
+        )
+      }
+    } else {
+      notes.push(
+        `${when} runs ${fmtTime(r.startMin)}–${fmtTime(r.endMin)} unbroken — want me to make room for a short breather?`
+      )
+    }
+  }
+  return { blocks, notes }
+}
+
+/** Asides as sentences (#126): the statements joined into one sentence with its
+    period, and a note that already ends a sentence ("want me to make room for a
+    short breather?") standing as its own, never given a second mark ("?.") */
+function asideSentences(notes: string[]): string {
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+  const ends = (s: string) => /[?!.]$/.test(s)
+  const statements = notes.filter((s) => !ends(s))
+  const parts = [
+    ...(statements.length ? [`${cap(joinHuman(statements))}.`] : []),
+    ...notes.filter(ends).map(cap),
+  ]
+  return parts.length ? ` ${parts.join(' ')}` : ''
+}
+
 function joinHuman(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? ''
   return parts.slice(0, -1).join(', ') + ', ' + parts[parts.length - 1]
@@ -6860,7 +8809,8 @@ declare global {
         through the REAL pull + rescue path (mergePull diff → rescue chips) —
         no OAuth, no network. dayKey defaults to today; calId to 'demo@sim'.
         One paste verifies the rescue loop end-to-end:
-        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }]) */
+        __mewSimulatePull([{ eventId:'e1', title:'Product sync', startMin:780, endMin:825 }])
+        An all-day entry (#27): { eventId:'h1', title:'Civic Holiday', startMin:0, endMin:0, allDay:true } */
     __mewSimulatePull?: (
       events: {
         eventId: string
@@ -6870,6 +8820,8 @@ declare global {
         dayKey?: string
         calId?: string
         optional?: boolean
+        allDay?: boolean
+        endDayKey?: string
       }[]
     ) => void
     /** Dev/scenario helper (#346): open the weekly-review surface directly, the

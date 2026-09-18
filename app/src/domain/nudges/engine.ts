@@ -18,6 +18,7 @@ import {
   dayEndMin,
   duration,
   findFreeSlot,
+  isAllDay,
   isBackground,
   isFixedTime,
   openItems,
@@ -88,7 +89,7 @@ export function findHeavyDay(
   let heaviest: { dayKey: string; plannedH: number } | null = null
   for (let i = 0; i <= 2; i++) {
     const key = addDaysKey(todayKey, i)
-    const open = blocksForDay(blocks, key).some((b) => b.status === 'open')
+    const open = blocksForDay(blocks, key).some((b) => b.status === 'open' && !isAllDay(b))
     if (!open) continue
     const plannedH = Math.round((plannedDeepMin(blocks, key) / 60) * 2) / 2
     if (plannedH > realisticBestH * 1.2 && (!heaviest || plannedH > heaviest.plannedH)) {
@@ -98,10 +99,38 @@ export function findHeavyDay(
   return heaviest
 }
 
-function findRestCollision(
-  blocks: Block[],
+/** The fired slot for one rest block on its day (#14): a rest is asked about
+    once, whichever protect-rest line asks. Both lines key their instance
+    `${rest.id}|${rest.dayKey}`, and the store records it here beside the type
+    slot, so rest A → rest B → rest A the same day asks about A once, and B still
+    gets its own ask. */
+export function restFiredKey(rest: Pick<Block, 'id' | 'dayKey'>): `rest:${string}` {
+  return `rest:${rest.id}|${rest.dayKey}`
+}
+
+/** Record a fired nudge in the dedupe map (pure): its type slot, as ever, plus
+    for protect-rest the rest block's own slot. Rest slots for days already lived
+    are swept, since that rest can't be asked about again. */
+export function recordFired(
+  lastFired: NudgeFiredMap,
+  n: NudgeInstance,
+  nowMs: number,
   todayKey: string
-): { rest: Block; intruder: Block } | null {
+): NudgeFiredMap {
+  const next: NudgeFiredMap = { ...lastFired, [n.type]: { ts: nowMs, key: n.key } }
+  if (n.type === 'protect-rest' && n.key) {
+    next[`rest:${n.key}`] = { ts: nowMs, key: n.key.slice(n.key.lastIndexOf('|') + 1) }
+  }
+  for (const k of Object.keys(next) as (keyof NudgeFiredMap)[]) {
+    if (k.startsWith('rest:') && k.slice(k.lastIndexOf('|') + 1) < todayKey) delete next[k]
+  }
+  return next
+}
+
+/** Every rest block (today and tomorrow) with work set to run over it, one
+    collision per rest, in day and time order. */
+function findRestCollisions(blocks: Block[], todayKey: string): { rest: Block; intruder: Block }[] {
+  const found: { rest: Block; intruder: Block }[] = []
   for (let i = 0; i <= 1; i++) {
     const key = addDaysKey(todayKey, i)
     const day = blocksForDay(blocks, key)
@@ -112,21 +141,24 @@ function findRestCollision(
         b.status === 'open' &&
         b.protected &&
         !b.optional &&
+        !isAllDay(b) &&
         (b.tag === 'rest' || (b.tag === 'private' && b.endMin - b.startMin >= 30))
     )
     for (const rest of rests) {
+      /* an all-day label never "runs over your lunch" — it holds no time (#27) */
       const intruder = day.find(
         (b) =>
           b.id !== rest.id &&
           b.status === 'open' &&
           b.tag === 'work' &&
           !b.optional &&
+          !isAllDay(b) &&
           overlaps(b.startMin, b.endMin, rest.startMin, rest.endMin)
       )
-      if (intruder) return { rest, intruder }
+      if (intruder) found.push({ rest, intruder })
     }
   }
-  return null
+  return found
 }
 
 /** A background block with a hard due and an unstarted engine, inside the
@@ -186,6 +218,9 @@ export function buildCtx(
      applies the per-key cooldown exactly as it does for start-by. */
   const drifts = prefContradictions(t.prefs ?? [], events, new Date(t.nowMs))
   const coolingPrefKey = engine.lastFired['pref-drift']?.key
+  const restAsked = (rest: Block) => engine.lastFired[restFiredKey(rest)] != null
+  const restTonight =
+    blocksForDay(t.blocks, t.todayKey).find((b) => b.tag === 'rest' && b.status === 'open') ?? null
   const prefDrift = drifts.find((d) => prefKey(d.pref) !== coolingPrefKey) ?? drifts[0] ?? null
 
   /* a chronic roller (≥3 rolls) that still has an open block → starter proposal */
@@ -252,7 +287,7 @@ export function buildCtx(
   /* a big fixed event that wrapped in the last 12 minutes, with the user not
      inside anything else and no review/rest cushion already following it —
      the moment a post-meeting buffer is worth offering */
-  const dayBlocks = blocksForDay(t.blocks, t.todayKey)
+  const dayBlocks = blocksForDay(t.blocks, t.todayKey).filter((b) => !isAllDay(b))
   const justEndedFixed =
     live.current == null
       ? (dayBlocks.find(
@@ -291,10 +326,11 @@ export function buildCtx(
     pastDayEnd,
     eodOpen,
     eodProposal,
-    restCollision: findRestCollision(t.blocks, t.todayKey),
-    restPlannedToday:
-      blocksForDay(t.blocks, t.todayKey).find((b) => b.tag === 'rest' && b.status === 'open') ??
-      null,
+    /* each rest block gets its one ask (#14): the first collision on a rest not
+       yet asked about, so a second rest still speaks while the first stays
+       quiet; the slipped-rest line asks about tonight's rest only if nothing has */
+    restCollision: findRestCollisions(t.blocks, t.todayKey).find((c) => !restAsked(c.rest)) ?? null,
+    restPlannedToday: restTonight && !restAsked(restTonight) ? restTonight : null,
     justEndedFixed,
     startBy: findStartBy(t.blocks, t.todayKey, t.nowMin),
     prefDrift,
@@ -356,7 +392,7 @@ function earlyFinish(
   if (!done || done.dayKey !== t.todayKey || t.nowMin < done.startMin || t.nowMin >= done.endMin) {
     return none
   }
-  const day = blocksForDay(t.blocks, t.todayKey)
+  const day = blocksForDay(t.blocks, t.todayKey).filter((b) => !isAllDay(b))
 
   /* the "reclaimed" window is only what's actually free. completing a meeting
      that never happened, mid-rest, with three other things booked over the

@@ -9,7 +9,8 @@
    execPlan/execMove rewire to consult it, and rest-block auto-insertion are
    slice 2 — see the ADR's impl plan. */
 import type { Block, PrefPayload, Tag, TimeWindow } from './types'
-import { addDaysKey } from './time'
+import { DEFAULT_PLANNABLE_HOURS, type PlannableHours } from './types'
+import { addDaysKey, roundness, snapStart, START_GRID_MIN } from './time'
 import { mealAdjacencyPenalty, mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
 import {
   blocksForDay,
@@ -18,6 +19,7 @@ import {
   DAY_START,
   duration,
   freeWindows,
+  isAllDay,
   isBackground,
   isFixedTime,
   move,
@@ -88,21 +90,27 @@ export function candidateSlots(
   todayKey: string,
   nowMin: number,
   horizonDays = 7,
-  /* #298: dinner's circadian window ends 20:30, past the working-day cap —
-     the meal seam widens the horizon; every other caller keeps DAY_END */
-  dayEndMin: number = DAY_END,
+  /* #22: the plannable day's end (the evening exists); the meal seam may
+     widen it for a dinner window that runs later */
+  dayEndMin: number = DEFAULT_PLANNABLE_HOURS.endMin,
   /* #302: forwarded to freeWindows so candidates keep MEW's meeting buffer;
      default 0 ⇒ unchanged (the seam lives in freeWindows) */
-  bufferMin = 0
+  bufferMin = 0,
+  /* #22: the plannable day's start — 08:00 by default, byte-identical */
+  dayStartMin: number = DEFAULT_PLANNABLE_HOURS.startMin
 ): { dayKey: string; startMin: number; endMin: number }[] {
   const out: { dayKey: string; startMin: number; endMin: number }[] = []
   const lastDay = q.due != null ? 0 : horizonDays // a same-day due confines to today
   for (let d = 0; d <= lastDay; d++) {
     const day = addDaysKey(todayKey, d)
-    const from = d === 0 ? Math.max(DAY_START, nowMin) : DAY_START
+    const from = d === 0 ? Math.max(dayStartMin, nowMin) : dayStartMin
     for (const w of freeWindows(blocks, day, from, dayEndMin, bufferMin)) {
       const starts = new Set<number>()
-      if (w.startMin + q.durationMin <= w.endMin) starts.add(w.startMin) // tight pack
+      /* tight pack, at a human start (#22): a quarter-hour stays put; a ragged
+         anchor (now, an odd block end) moves on to :00/:30, :15/:45, or the
+         5-minute grid — the first that still fits */
+      const tight = snapStart(w.startMin, w.endMin - q.durationMin)
+      if (tight != null) starts.add(tight)
       for (let s = Math.ceil(w.startMin / STEP) * STEP; s + q.durationMin <= w.endMin; s += STEP)
         starts.add(s)
       for (const startMin of [...starts].sort((a, b) => a - b)) {
@@ -123,7 +131,7 @@ function restScore(
   cand: { dayKey: string; startMin: number; endMin: number }
 ): number {
   const work = blocksForDay(blocks, cand.dayKey).filter(
-    (b) => b.status === 'open' && !isBackground(b) && b.tag !== 'rest'
+    (b) => b.status === 'open' && !isBackground(b) && b.tag !== 'rest' && !isAllDay(b)
   )
   const before = work
     .filter((b) => b.endMin <= cand.startMin)
@@ -174,6 +182,15 @@ function timeOfDayScore(q: SlotQuery, startMin: number): number {
    window keeps the plain `timeOfDayScore` term. */
 const OFF_WINDOW = 0.05
 
+/* #22: past the classic working day (DAY_END) a candidate EXISTS but ranks
+   low. Under the default weights an in-day candidate never scores below 0.265
+   (tod 0.4 · rest 0.3 · pref 0) and a damped late one never above 0.237
+   (0.675 × 0.35), so whenever the day still has room inside 08:00–18:30 the
+   pick stays byte-identical. The evening leads when the ask names it (window
+   'evening' — "tonight", "after dinner"), a remembered rule points there, or a
+   meal window anchors it (the meal seam scores on its own terms). */
+const LATE_DAMP = 0.35
+
 /** in-window = the whole meal fits inside one of its windows */
 function inMealWindow(
   wins: readonly MealWindow[],
@@ -210,7 +227,9 @@ export function scoreSlots(
   mealBase?: readonly MealWindow[],
   /* #302: forwarded through candidateSlots to freeWindows so ranked candidates
      keep MEW's meeting buffer; default 0 ⇒ unchanged */
-  bufferMin = 0
+  bufferMin = 0,
+  /* #22: the owner's plannable day — the candidate span, start to end */
+  hours: PlannableHours = DEFAULT_PLANNABLE_HOURS
 ): SlotCandidate[] {
   /* #298: meal anchoring engages only on a meal-classified title with the
      `when` left open — a stated q.window outranks the class default, and a
@@ -221,8 +240,8 @@ export function scoreSlots(
      never overlap — meal anchoring only engages when q.window is unset, and a
      firm window sets q.window — so at most one collapse applies to a candidate. */
   const firmWindow = q.window != null && q.windowFirm === true
-  const dayEnd = mealWins ? Math.max(DAY_END, ...mealWins.map((w) => w.endMin)) : DAY_END
-  return candidateSlots(blocks, q, todayKey, nowMin, horizonDays, dayEnd, bufferMin)
+  const dayEnd = mealWins ? Math.max(hours.endMin, ...mealWins.map((w) => w.endMin)) : hours.endMin
+  return candidateSlots(blocks, q, todayKey, nowMin, horizonDays, dayEnd, bufferMin, hours.startMin)
     .map((c) => {
       const inWin = mealWins ? inMealWindow(mealWins, c) : false
       const tod = mealWins
@@ -247,6 +266,8 @@ export function scoreSlots(
       } else if (tod >= 1) {
         reasons.push(`${preferredWindow(q)} fit`)
       }
+      if (!mealWins && c.endMin > DAY_END && q.window !== 'evening' && pref <= 0.5)
+        score *= LATE_DAMP
       if (pref >= 1) reasons.push('matches your rule')
       if (rest >= 1) reasons.push('breathing room')
       else if (rest < 0.6) reasons.push('back-to-back')
@@ -259,8 +280,21 @@ export function scoreSlots(
       }
     })
     .sort(
-      (a, b) => b.score - a.score || a.dayKey.localeCompare(b.dayKey) || a.startMin - b.startMin
+      (a, b) =>
+        b.score - a.score ||
+        a.dayKey.localeCompare(b.dayKey) ||
+        halfHourOf(a.startMin) - halfHourOf(b.startMin) ||
+        roundness(a.startMin) - roundness(b.startMin) ||
+        a.startMin - b.startMin
     )
+}
+
+/* #22 tie-break: among equal scores the earlier half-hour still wins, and
+   inside one half-hour the rounder start does — :15 shares a bucket with the
+   :30 after it and :45 with the :00 after it, so :00 beats :45, :30 beats :15,
+   and a quarter beats any other 5-minute mark. Earliest-wins is otherwise kept. */
+function halfHourOf(startMin: number): number {
+  return Math.floor((startMin + 15) / 30)
 }
 
 /* ── rest insertion (#103) — the #80 follow-up ────────────────────────
@@ -284,11 +318,12 @@ const PACING_REST_FLOOR = 10
 /** <15m of air doesn't break a run — same continuity notion as dayShape */
 const RUN_GAP = 15
 
-/** the committed work that forms a run: open, focus, non-rest, non-optional —
-    the same set the day's load and streak math already trust. */
+/** the committed work that forms a run: open, focus, non-rest, non-optional,
+    never an all-day label — the same set the day's load and streak math trust. */
 function committedWork(blocks: Block[], dayKey: string): Block[] {
   return blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest'
+    (b) =>
+      b.status === 'open' && !b.optional && !isBackground(b) && b.tag !== 'rest' && !isAllDay(b)
   )
 }
 
@@ -302,7 +337,7 @@ interface WorkRun {
     the run, so a day that's broken up yields only short runs and no insertion. */
 function workRuns(blocks: Block[], dayKey: string): WorkRun[] {
   const day = blocksForDay(blocks, dayKey).filter(
-    (b) => b.status === 'open' && !b.optional && !isBackground(b)
+    (b) => b.status === 'open' && !b.optional && !isBackground(b) && !isAllDay(b)
   )
   const runs: WorkRun[] = []
   let cur: WorkRun | null = null
@@ -327,6 +362,11 @@ export interface RestInsertion {
   why: string
 }
 
+/** the next 5-minute mark at or after `min` — on-grid minutes stay put */
+function gridUp(min: number): number {
+  return Math.ceil(min / START_GRID_MIN) * START_GRID_MIN
+}
+
 /** The pacing-rest pass over one already-placed day. Pure + idempotent: returns
     at most one rest for the LONGEST over-cap run that has no break, and nothing
     once a rest sits inside that run (re-running a reshape can't stack rests).
@@ -336,7 +376,13 @@ export interface RestInsertion {
     only way in is to displace a committed block, `suggest` instead: MEW offers
     it in chat rather than seizing time. `freeWindows` already excludes fixed,
     external, optional and background blocks, so a placed rest never overlaps. */
-export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | null {
+export function restInsertion(
+  blocks: Block[],
+  dayKey: string,
+  /** #116: the earliest a breather may start (today: now), so a pass never
+      tucks a rest into time already gone; 0 for a day still ahead */
+  fromMin = 0
+): RestInsertion | null {
   const work = committedWork(blocks, dayKey)
   if (!work.length) return null
   /* a run is the unbroken non-rest stretch (dayShape's notion: errands abutting
@@ -353,15 +399,20 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
   /* idempotent: any rest inside the run OR touching its edge (the breather we
      tuck right after a stretch sits at run.endMin) already paces it — re-running
      a reshape must never stack a second. Inclusive bounds make adjacency count. */
-  if (rests.some((r) => r.startMin <= run.endMin && r.endMin >= run.startMin)) return null
+  const runEnd = gridUp(run.endMin) // #22: a breather after a ragged run starts on the grid
+  if (rests.some((r) => r.startMin <= runEnd && r.endMin >= run.startMin)) return null
 
   /* candidate seams: free gaps from inside the run through the moment it ends —
      never before it (a breather ahead of the work breaks nothing). Leftmost
      first, so an internal split wins over the gap right after the stretch; a
      sliver only counts if it clears the floor. The run being continuous means
      internal gaps are <RUN_GAP, so the usual seam is the air just after it. */
+  /* #22: a MEW-initiated pass — it seeks seams in the classic day only, so a
+     wall-to-wall 8:00–18:30 stretch is still OFFERED a breather, never handed
+     one in the evening unasked (placement on request reads plannable hours) */
   const fits = freeWindows(blocks, dayKey, DAY_START, DAY_END)
-    .filter((w) => w.startMin >= run.startMin && w.startMin <= run.endMin)
+    .map((w) => ({ startMin: gridUp(w.startMin), endMin: w.endMin }))
+    .filter((w) => w.startMin >= run.startMin && w.startMin <= runEnd && w.startMin >= fromMin)
     .filter((w) => w.endMin - w.startMin >= PACING_REST_FLOOR)
     .sort((a, b) => a.startMin - b.startMin)
 
@@ -380,6 +431,8 @@ export function restInsertion(blocks: Block[], dayKey: string): RestInsertion | 
       why: 'a short breather inside a long stretch',
     }
   }
+  /* a stretch that's already over needs no break now (#116) */
+  if (run.endMin <= fromMin) return null
   // no seam — breaking the run means moving committed work, so only offer it
   return {
     dayKey,
@@ -427,6 +480,9 @@ export interface CollisionDrift {
   fixed: Block[]
   /** own-flexible blocks with no clean slot — the offer_choices fallback */
   stuck: Block[]
+  /** #122: protected rest the placement runs over — never moved here (the
+      protect-rest flow owns sacred rest), but named in the reply */
+  rests: Block[]
 }
 
 /** The nearest conflict-free home for one flexible block yielding to `placed`.
@@ -473,7 +529,8 @@ export function driftCollisions(
   const drifts: FlexDrift[] = []
   const fixed: Block[] = []
   const stuck: Block[] = []
-  if (isBackground(placed)) return { drifts, fixed, stuck }
+  const rests: Block[] = []
+  if (isBackground(placed)) return { drifts, fixed, stuck, rests }
   const clash = conflictsWith(
     blocks,
     placed.dayKey,
@@ -488,7 +545,10 @@ export function driftCollisions(
       fixed.push(c) // external/fixed: a fact to schedule around, never moved
       continue
     }
-    if (c.tag === 'rest' && c.protected) continue // sacred rest → protect-rest, not here
+    if (c.tag === 'rest' && c.protected) {
+      rests.push(c) // sacred rest → protect-rest's to move, never here; named (#122)
+      continue
+    }
     const slot = driftSlot(working, c, placed, todayKey, nowMin, prefs)
     if (!slot) {
       stuck.push(c)
@@ -503,7 +563,7 @@ export function driftCollisions(
     })
     working = move(working, c.id, slot.dayKey, slot.startMin)
   }
-  return { drifts, fixed, stuck }
+  return { drifts, fixed, stuck, rests }
 }
 
 /* ── direct-manipulation drop validity (#347) ──────────────────────────

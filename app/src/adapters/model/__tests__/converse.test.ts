@@ -23,45 +23,56 @@ function mockExec(): ToolExecutor & { calls: string[] } {
   const calls: string[] = []
   return {
     calls,
-    plan: vi.fn((places, frees) => {
+    plan: vi.fn((args: { places: unknown[]; frees: unknown[] }) => {
       calls.push('plan')
-      return `Done — placed ${places.length}, freed ${frees.length}.`
+      return `Done — placed ${args.places.length}, freed ${args.frees.length}.`
     }),
-    complete: vi.fn((q) => {
+    complete: vi.fn((args: { query: string }) => {
       calls.push('complete')
-      return `Marked ${q} done.`
+      return `Marked ${args.query} done.`
     }),
-    move: vi.fn((q) => {
+    /* move takes one named object since #165, so this stand-in reads the field
+       rather than the first position — the string it returns is unchanged */
+    move: vi.fn((args: { query: string }) => {
       calls.push('move')
-      return `Moved ${q}.`
+      return `Moved ${args.query}.`
     }),
     capture: vi.fn((t) => {
       calls.push('capture')
       return `Captured "${t}".`
     }),
-    edit: vi.fn((q) => {
+    edit: vi.fn((args: { query: string }) => {
       calls.push('edit')
-      return `Updated ${q}.`
+      return `Updated ${args.query}.`
     }),
-    remove: vi.fn((q) => {
+    remove: vi.fn((args: { query: string }) => {
       calls.push('remove')
-      return `Removed ${q}.`
+      return `Removed ${args.query}.`
     }),
     analyze: vi.fn((d) => {
       calls.push('analyze')
       return `Day shape (offset ${d}).`
     }),
-    listBlocks: vi.fn((day, tag) => {
+    listBlocks: vi.fn((args: { day: number | 'week'; tag?: string }) => {
       calls.push('listBlocks')
+      const { day, tag } = args
       return `here's ${day}${tag ? ` tagged ${tag}` : ''}: - 9:00–10:00 deep work [work]`
     }),
-    findSlot: vi.fn((dur, d, nb, na) => {
-      calls.push('findSlot')
-      return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
-    }),
-    suggestSlots: vi.fn((title, _tag, dur) => {
+    findSlot: vi.fn(
+      (args: {
+        durationMin: number
+        dayOffset: number
+        notBeforeMin?: number
+        notAfterMin?: number
+      }) => {
+        calls.push('findSlot')
+        const { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na } = args
+        return `Slot ${dur}m day ${d} [${nb ?? '-'},${na ?? '-'}].`
+      }
+    ),
+    suggestSlots: vi.fn((args: { title: string; durationMin: number }) => {
       calls.push('suggestSlots')
-      return `Best slots for "${title}" (${dur}m): today 09:00–10:00.`
+      return `Best slots for "${args.title}" (${args.durationMin}m): today 09:00–10:00.`
     }),
     remember: vi.fn((pref: { match: string; value: string }) => {
       calls.push('remember')
@@ -71,13 +82,14 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('queryBrain')
       return `Spicanova this week: 2.5h across 2 blocks. (asked: ${q})`
     }),
-    offerChoices: vi.fn((prompt: string, options: { label: string }[]) => {
+    offerChoices: vi.fn((args: { prompt: string; options: { label: string }[] }) => {
       calls.push('offerChoices')
+      const { prompt, options } = args
       return `${CHOICES_POSTED}: ${options.map((o) => `"${o.label}"`).join(' · ')}. (asked: ${prompt})`
     }),
-    proposeScenarios: vi.fn((_prompt: string, tasks: { title: string }[]) => {
+    proposeScenarios: vi.fn((args: { prompt: string; tasks: { title: string }[] }) => {
       calls.push('proposeScenarios')
-      return `${CHOICES_POSTED}: ${tasks.length} tasks laid out. Say nothing more and END your turn.`
+      return `${CHOICES_POSTED}: ${args.tasks.length} tasks laid out. Say nothing more and END your turn.`
     }),
     clear: vi.fn((scope) => {
       calls.push('clear')
@@ -95,6 +107,14 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('duplicate')
       return `Copied ${q}.`
     }),
+    merge: vi.fn((q) => {
+      calls.push('merge')
+      return `Merged ${q}.`
+    }),
+    batch: vi.fn(() => {
+      calls.push('batch')
+      return 'Moved.'
+    }),
     relativeMove: vi.fn((q) => {
       calls.push('relativeMove')
       return `Moved ${q}.`
@@ -102,6 +122,10 @@ function mockExec(): ToolExecutor & { calls: string[] } {
     giveRoom: vi.fn((fc) => {
       calls.push('giveRoom')
       return `Gave your ${fc} blocks room.`
+    }),
+    split: vi.fn((args: { query: string }) => {
+      calls.push('split')
+      return `Split ${args.query}.`
     }),
   }
 }
@@ -132,7 +156,7 @@ describe('rules adapter — converse', () => {
       )
     )
     expect(exec.plan).toHaveBeenCalledOnce()
-    const [places, frees] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places, frees }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0]).toMatchObject({ title: 'deck', tag: 'work', dayOffset: 2, startMin: 540 })
     expect(frees[0]).toMatchObject({ dayOffset: 3, startMin: 780 })
     expect(reply).toBe('Done — placed 1, freed 1.')
@@ -143,7 +167,7 @@ describe('rules adapter — converse', () => {
     const reply = await collect(
       createRulesAdapter(NOW).converse([{ role: 'user', text: 'done with the deck' }], ctx, exec)
     )
-    expect(exec.complete).toHaveBeenCalledWith('deck', undefined)
+    expect(exec.complete).toHaveBeenCalledWith({ query: 'deck', at: undefined })
     expect(reply).toBe('Marked deck done.')
   })
 
@@ -161,8 +185,8 @@ describe('rules adapter — converse', () => {
   })
 })
 
-describe('rules adapter — the rescue split ask (#286)', () => {
-  it('composes the two existing tools: shrink to the gap, place the kept tail', async () => {
+describe('rules adapter — the rescue split ask (#286), through the one split executor (#73)', () => {
+  it("runs exec.split once with the chip's exact gap and kept length — no second tool call", async () => {
     const exec = mockExec()
     const reply = await collect(
       createRulesAdapter(NOW).converse(
@@ -171,20 +195,18 @@ describe('rules adapter — the rescue split ask (#286)', () => {
         exec
       )
     )
-    expect(exec.calls).toEqual(['edit', 'plan'])
-    expect(exec.edit).toHaveBeenCalledWith('deck', { endMin: 13 * 60 })
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(places[0]).toMatchObject({
-      title: 'deck (part 2)',
-      tag: 'work',
+    expect(exec.calls).toEqual(['split'])
+    /* one named object since #165 — same block, same gap, same kept length */
+    expect(exec.split).toHaveBeenCalledWith({
+      query: 'deck',
+      around: { startMin: 13 * 60, endMin: 13 * 60 + 45 },
+      tailMin: 45,
       dayOffset: 0,
-      startMin: 13 * 60 + 45,
-      durationMin: 45,
     })
-    expect(reply).toBe('Updated deck. Done — placed 1, freed 0.')
+    expect(reply).toBe('Split deck.')
   })
 
-  it('a future-day split carries its day into the placement', async () => {
+  it('a future-day split carries its day', async () => {
     const exec = mockExec()
     await collect(
       createRulesAdapter(NOW).converse(
@@ -193,24 +215,27 @@ describe('rules adapter — the rescue split ask (#286)', () => {
         exec
       )
     )
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
-    expect(places[0]).toMatchObject({ dayOffset: 3, startMin: 825 }) // Tue → Friday
+    const [args] = (exec.split as ReturnType<typeof vi.fn>).mock.calls[0]
+    expect(args.around).toEqual({ startMin: 780, endMin: 825 })
+    expect(args).toMatchObject({ tailMin: 45, dayOffset: 3 }) // Tue → Friday
   })
 
-  it('a missed block stops the split — no stray tail is ever placed', async () => {
+  it("a which-block chip re-asks with the target's time, and it pins the target", async () => {
     const exec = mockExec()
-    ;(exec.edit as ReturnType<typeof vi.fn>).mockReturnValueOnce(
-      `I couldn't find "deck" to change — say it another way?`
-    )
-    const reply = await collect(
+    await collect(
       createRulesAdapter(NOW).converse(
-        [{ role: 'user', text: 'split the deck around 13:00-13:45, keep 45m after' }],
+        [{ role: 'user', text: 'split the deck at 12:00 around 13:00-13:45, keep 45m after' }],
         ctx,
         exec
       )
     )
-    expect(exec.plan).not.toHaveBeenCalled()
-    expect(reply).toMatch(/couldn't find/)
+    expect(exec.split).toHaveBeenCalledWith({
+      query: 'deck',
+      around: { startMin: 780, endMin: 825 },
+      tailMin: 45,
+      dayOffset: 0,
+      at: '12:00',
+    })
   })
 })
 
@@ -223,7 +248,7 @@ describe('rules adapter — plan mode route (#293)', () => {
       createRulesAdapter(NOW).converse([{ role: 'user', text: braindump }], ctx, exec)
     )
     expect(exec.calls).toEqual(['proposeScenarios'])
-    const [prompt, tasks] = (exec.proposeScenarios as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ prompt, tasks }] = (exec.proposeScenarios as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(prompt).toBe('')
     expect(tasks.map((t: { title: string }) => t.title)).toEqual([
       'deck',
@@ -335,7 +360,7 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
       },
       exec
     )
-    const [places, frees] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places, frees }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places).toHaveLength(1)
     expect(places[0]).toMatchObject({ title: 'deck', dayOffset: 13, startMin: 0, durationMin: 600 })
     expect(frees[0]).toMatchObject({ dayOffset: 3 })
@@ -351,30 +376,37 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
     expect(await runTool('edit_block', { query: 'prod release', durationMin: 45 }, exec)).toBe(
       'Updated prod release.'
     )
+    /* one named object since #165 — same four values */
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
-      'prod release',
-      { durationMin: 45 },
-      undefined,
-      undefined, // #343: no recurring scope on a plain edit
+      {
+        query: 'prod release',
+        patch: { durationMin: 45 },
+        at: undefined,
+        scope: undefined, // #343: no recurring scope on a plain edit
+      },
     ])
     /* #334: the name+time handle reaches the executor — edit/move/complete each
        carry `at` (the target block's start time) so a shared title pins one */
     await runTool('edit_block', { query: 'release', at: '19:45', title: 'v1.2-rc' }, exec)
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[1]).toEqual([
-      'release',
-      { title: 'v1.2-rc' },
-      '19:45',
-      undefined, // #343: scope absent unless the ask made it explicit
+      {
+        query: 'release',
+        patch: { title: 'v1.2-rc' },
+        at: '19:45',
+        scope: undefined, // #343: scope absent unless the ask made it explicit
+      },
     ])
     await runTool('complete_task', { query: 'standup', at: '9am' }, exec)
-    expect(exec.complete).toHaveBeenCalledWith('standup', '9am')
+    expect(exec.complete).toHaveBeenCalledWith({ query: 'standup', at: '9am' })
     await runTool('move_task', { query: 'release', at: '19:45', toDayOffset: 2 }, exec)
+    /* the same call, read as one named object since #165. Same values: the query,
+       the day offset, no new start, and `at` pinning which block moves. The only
+       difference is that relStartMin is now ABSENT rather than an explicit
+       undefined in the middle of the list — a keyed tool call always sends an
+       absolute target, and a field it never sets no longer has to be spelled out
+       to reach the ones after it. */
     expect((exec.move as ReturnType<typeof vi.fn>).mock.calls.at(-1)).toEqual([
-      'release',
-      2,
-      undefined,
-      undefined,
-      '19:45',
+      { query: 'release', toDayOffset: 2, toStartMin: undefined, at: '19:45' },
     ])
     expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe(
       'Removed prod release.'
@@ -383,9 +415,12 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
     await runTool('remove_blocks', { query: 'sleep', at: '22:30' }, exec)
     await runTool('remove_blocks', { query: 'prod release', all: true }, exec)
     const removeCalls = (exec.remove as ReturnType<typeof vi.fn>).mock.calls
-    expect(removeCalls[0]).toEqual(['prod release', { at: undefined, all: false }])
-    expect(removeCalls[1]).toEqual(['sleep', { at: '22:30', all: false }])
-    expect(removeCalls[2]).toEqual(['prod release', { at: undefined, all: true }])
+    /* query and its disambiguators now ride in ONE object (#165) rather than a
+       query plus an opts bag; the three rows assert the same values they always
+       did, and the pair that used to be able to drift apart cannot any more */
+    expect(removeCalls[0]).toEqual([{ query: 'prod release', at: undefined, all: false }])
+    expect(removeCalls[1]).toEqual([{ query: 'sleep', at: '22:30', all: false }])
+    expect(removeCalls[2]).toEqual([{ query: 'prod release', at: undefined, all: true }])
     expect(await runTool('analyze_day', {}, exec)).toBe('Day shape (offset 0).')
     expect(await runTool('find_slot', { durationMin: 45, notAfterMin: 1020 }, exec)).toBe(
       'Slot 45m day 0 [-,1020].'
@@ -445,7 +480,7 @@ describe('offer_choices rides the tool registry (#254)', () => {
       exec
     )
     expect(out).toContain(CHOICES_POSTED)
-    const [prompt, options] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ prompt, options }] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(prompt).toBe('which gym block?')
     expect(options).toEqual([
       { label: 'the 7:00', reply: 'remove gym 7:00' },
@@ -473,7 +508,7 @@ describe('offer_choices rides the tool registry (#254)', () => {
       },
       exec
     )
-    const [, options] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ options }] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(options).toHaveLength(5)
     expect(options[0]).toEqual({ label: '9:00', reply: '9:00' }) // trimmed
     expect(options.map((o: { label: string }) => o.label)).not.toContain('14:00')
@@ -532,7 +567,7 @@ describe('attention + due ride the tool registry', () => {
       },
       exec
     )
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0]).toMatchObject({ title: 'swap iphone', attention: 'background', due: 780 })
   })
 
@@ -543,14 +578,14 @@ describe('attention + due ride the tool registry', () => {
       { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] },
       exec
     )
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0].attention).toBeUndefined()
   })
 
   it('edit_block carries the demote-to-background and the due patch', async () => {
     const exec = mockExec()
     await runTool('edit_block', { query: 'restore', attention: 'background', dueMin: 780 }, exec)
-    const [q, patch] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ query: q, patch }] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(q).toBe('restore')
     expect(patch).toMatchObject({ attention: 'background', due: 780 })
   })
@@ -617,10 +652,10 @@ describe('unified adapter — abort (#117, on the SDK path)', () => {
 
     const exec = mockExec()
     const abort = new AbortController()
-    exec.complete = vi.fn((q: string) => {
+    exec.complete = vi.fn((args: { query: string }) => {
       exec.calls.push('complete')
       abort.abort() // the stop control fires the instant the action commits
-      return `Marked ${q} done.`
+      return `Marked ${args.query} done.`
     })
 
     const adapter = createAiAdapter({

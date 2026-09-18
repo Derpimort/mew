@@ -26,6 +26,11 @@ export interface Block {
   status: BlockStatus
   calendarRefs: string[]
   estimateSource: 'user' | 'mew' | 'history'
+  /** MEW placed this block itself as scaffolding (#123): a breather from the
+      pacing pass, or a meal from the sustenance scaffold. Not the owner's work,
+      so the weekly review never offers it to roll into next week. Unset for
+      every block the owner asked for, including meals and rest they named. */
+  placedBy?: 'pacing' | 'sustenance'
   rolledToId?: string
   completedAt?: number
   /** Set by "Start now" — a started block completes or gets interrupted; it
@@ -42,6 +47,21 @@ export interface Block {
       transparent to slot search — a different axis from optional, which
       holds no time at all. */
   attention?: 'focus' | 'background'
+  /** An all-day calendar entry — a holiday, OOO, a birthday (#27). A THIRD axis
+      beside optional (holds no time) and attention (holds the clock, not you):
+      all-day holds neither — it is a label on the day, never a claim on time.
+      Transparent to slot search, conflicts, load, live-now, rescue, nudges and
+      insights through the one predicate week.isAllDay. It only ever arrives by
+      calendar pull, and MEW never pushes one out. Stored with startMin =
+      endMin = 0, so a reader that forgets the predicate meets a zero-length
+      span that overlaps nothing. `false` is written only when a pull finds a
+      load-healed block is really timed, so the heal never re-applies to it
+      (undefined ⇒ never classified). */
+  allDay?: boolean
+  /** The inclusive LAST day of a multi-day all-day span: a Mon–Wed OOO is
+      dayKey Mon + endDayKey Wed, one block. Absent ⇒ the entry covers dayKey
+      alone. */
+  endDayKey?: string
   /** Optional hard deadline (minutes from midnight), independent of endMin.
       With duration it yields latest-start math for the start-by nudge. */
   due?: number
@@ -122,10 +142,17 @@ export type NudgeId =
     one slot per landing so several live conflicts dedupe independently, one
     day-load guard (#301) — `dayload:<dayKey>`, its `key` holding the todayKey
     it fired on, so the same over-line day speaks at most once per calendar day
-    — or a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
-    day so a re-pull of the same tight pair never re-observes it. */
+    — a back-to-back meeting observation (#302) — `buffer:<dayKey>`, one per
+    day so a re-pull of the same tight pair never re-observes it — or one rest
+    block asked about by protect-rest (#14) — `rest:<blockId>|<dayKey>`, so each
+    rest gets its one ask. */
 export type FiredKey =
-  NudgeId | 'sustenance' | `rescue:${string}` | `dayload:${string}` | `buffer:${string}`
+  | NudgeId
+  | 'sustenance'
+  | `rescue:${string}`
+  | `dayload:${string}`
+  | `buffer:${string}`
+  | `rest:${string}`
 
 /** Per-slot last-fired marker (ts + contextual key). The engine's dedupe
     state, persisted through `Settings.nudgeLastFired` so once-per-day rituals
@@ -230,6 +257,7 @@ export type MemoryKind =
   | 'preference' // a stated standing rule (the brain-off home for remember)
   | 'learned_rule' // gbrain Pillar 1 (#327): a rule confirmed from repetition — state, never ages out
   | 'dismissed_rule' // #327: a candidate the user rejected — never offered again
+  | 'forgotten_pref' // #15: a standing rule the owner forgot — a tombstone over the brain's copy
   | 'weekly_summary' // consolidation artifact — old raw events compacted per ISO week
 
 export interface MemoryEvent {
@@ -299,6 +327,17 @@ export const DEFAULT_SUSTENANCE_MEALS: Record<ScaffoldMealId, ScaffoldMealPlan> 
   dinner: { startMin: 18 * 60 + 30, endMin: 20 * 60 + 30, durationMin: 60 },
 }
 
+/** The plannable day (#22): the hours placement looks in, minutes from
+    midnight. A same-day span (no past-midnight bounds), and a separate fact
+    from quietHours — "don't notify me" is not "I never schedule anything". */
+export interface PlannableHours {
+  startMin: number
+  endMin: number
+}
+/** 08:00 keeps every placement inside the old working day byte-identical;
+    22:30 is the ceiling find_slot and nextSlotAfter already searched to. */
+export const DEFAULT_PLANNABLE_HOURS: PlannableHours = { startMin: 8 * 60, endMin: 22 * 60 + 30 }
+
 export type PetId = 'cat' | 'dog' | 'fox' | 'bunny' | 'bird'
 
 /** Plan mode's auto-offer gear (#293) — see Settings.planMode. */
@@ -319,6 +358,9 @@ export interface Settings {
   uiFont: 'hanken' | 'open-sans' | 'system'
   browserMirror: boolean
   quietHours: { startMin: number; endMin: number } // 18:30–08:30 default, wraps midnight
+  /** Where auto-placement, find_slot and suggest_slots look (#22). Independent
+      of quietHours: changing one never moves the other. */
+  plannableHours: PlannableHours
   /** Once-a-day ritual times, minutes from midnight (#285). The morning brief
       posts at briefMin (default 8:30 — exactly where default quiet hours end,
       so the boundary resolves to "posts at 8:30"); the evening wrap at wrapMin
@@ -449,12 +491,16 @@ export interface ScheduleIntent {
     | 'complete'
     | 'move'
     | 'capture'
+    | 'undo'
     | 'clear'
     | 'remove'
     | 'edit'
     | 'resize'
     | 'duplicate'
     | 'relmove'
+    | 'split'
+    | 'merge'
+    | 'batch'
     | 'remember'
     | 'chat'
     | 'insights'
@@ -492,6 +538,11 @@ export interface ScheduleIntent {
     /** A standing recurrence (DAILY/WEEKLY) — execPlan expands it into one
         block per occurrence, all linked by recurringBlockId (#159). */
     rrule?: Rrule
+    /** #117: "tonight" / "this evening" / "after dinner" with no clock time —
+        placed in the evening, from the classic day's end */
+    window?: 'evening'
+    /** #117: "after dinner" — the evening, and after that day's dinner too */
+    afterDinner?: boolean
   }[]
   frees?: { dayKey: string; startMin: number; endMin: number; label: string }[]
   /* complete / move / remove */
@@ -501,6 +552,14 @@ export interface ScheduleIntent {
       exactly one (#334). Distinct from toStartMin (a move's new start) and from
       edit.startMin (a retime); remove keeps its own `remove.at`. */
   at?: string
+  /** move: the TARGET block's own day, when the ask named one ("move the gym on
+      wednesday to 15:00"). #160: move now reads the same day phrases remove has
+      read since #72 — today/tomorrow, "on <weekday>", "<weekday>'s", "this
+      <weekday>" — through the same reader, so one vocabulary addresses a block
+      whichever verb is acting on it. Distinct from toDayKey, which is where the
+      block is going. A weekday at the FRONT of a title ("the friday demo") is
+      the title's and never a day, on both verbs: #72's decision, pinned. */
+  fromDayOffset?: number
   toDayKey?: string
   toStartMin?: number
   /** move: a relative start shift in minutes (#320): "30 min earlier" (−30),
@@ -509,10 +568,12 @@ export interface ScheduleIntent {
       today move needs an absolute target, so the relative math lives there. */
   relStartMin?: number
   /** remove: pin which of several same-named blocks ("22:30"), or drop all */
-  remove?: { at?: string; all?: boolean }
-  /** edit/remove: the recurring-edit scope a scope word named (#343) — 'this'
-      (just this one), 'following' (this & the ones after), 'series' (the whole
-      set). Absent on a series block ⇒ the executor asks with chips. */
+  remove?: { at?: string; all?: boolean; dayOffset?: number }
+  /** edit/remove/batch: the recurring-edit scope a scope word named (#343) —
+      'this' (just this one), 'following' (this & the ones after), 'series' (the
+      whole set). Absent on a series block ⇒ the executor asks with chips. A
+      batch reads it the same way (#75 slice 3), so one vocabulary answers a
+      single edit and a sweep alike. */
   seriesScope?: 'this' | 'following' | 'series'
   /* capture / chat */
   title?: string
@@ -537,6 +598,45 @@ export interface ScheduleIntent {
       one day on at the same clock, 'next_free' relocates to the soonest clear
       slot from now. The target is the `query` (+ `at`). */
   relmove?: { direction: 'earlier' | 'later' | 'next_day' | 'next_free'; amountMin?: number }
+  /** split (#73): split the `query` block (+ `at`/`seriesScope` like edit) into
+      two around a gap. The gap is a clock range (gapStartMin/gapEndMin) or
+      another block to split around (aroundQuery + aroundAt, e.g. "the 1pm
+      call"). dayOffset pins the day when the ask names one. The first piece
+      ends where the gap opens; the second picks up where it closes and keeps
+      the rest of the length. */
+  split?: {
+    gapStartMin?: number
+    gapEndMin?: number
+    aroundQuery?: string
+    aroundAt?: string
+    dayOffset?: number
+    /** the rescue chip's explicit length to keep after the gap ("keep 45m after"),
+        carried when a split chip re-asks; absent ⇒ the rest of the block's length */
+    tailMin?: number
+  }
+  /** merge (#74): join the matched same-tag blocks on one day into one block —
+      the first keeps its id and spans the run. The target is the `query`; `at`
+      pins the run's first block, `dayOffset` its day. */
+  merge?: { dayOffset?: number }
+  /** batch (#75): one op over the blocks a selector picks on one day — a shift
+      by minutes ("push everything after 3pm back an hour") or a move to another
+      day ("move all of today's work to tomorrow"). A wide batch is offered with
+      the exact list first; `confirmCount` and `confirmToken` are the count and
+      the list token the owner said yes to. */
+  batch?: {
+    dayOffset?: number
+    afterMin?: number
+    beforeMin?: number
+    tag?: Tag
+    titleQuery?: string
+    op: 'shift' | 'moveToDay' | 'setTag'
+    deltaMin?: number
+    toDayOffset?: number
+    /** setTag (#75 slice 2): the tag the selection takes */
+    toTag?: Tag
+    confirmCount?: number
+    confirmToken?: string
+  }
   /** giveRoom (#322): the "give them room" chip's ask — resize the just-placed
       blocks of this focus class up to how the kind really runs. The union is
       spelled inline (not imported from energy) to keep types.ts a leaf. */
@@ -551,6 +651,7 @@ export const DEFAULT_SETTINGS: Settings = {
   uiFont: 'hanken',
   browserMirror: true,
   quietHours: { startMin: 18 * 60 + 30, endMin: 8 * 60 + 30 },
+  plannableHours: DEFAULT_PLANNABLE_HOURS,
   briefMin: 8 * 60 + 30,
   wrapMin: 17 * 60 + 30,
   weeklyRitualMin: 17 * 60,

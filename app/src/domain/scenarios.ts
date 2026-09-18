@@ -11,6 +11,7 @@
 import type { Block, PrefPayload, Tag } from './types'
 import { addDaysKey } from './time'
 import { conflictsWith } from './week'
+import { CLASSIC_DAY } from './plannable'
 import type { ScoreWeights, SlotCandidate, TimeWindow } from './scheduler'
 import { scoreSlots, windowOf } from './scheduler'
 import { mealClassOf, mealWindowFor, type MealWindow } from './sustenance'
@@ -42,6 +43,11 @@ export interface ScenarioPlace {
   startMin: number
   durationMin: number
   due?: number
+  /** #81: the owner stated this length (the task's durationStated, carried into
+      the quote). Present only when true, so a plan with no stated lengths is
+      byte-identical; the apply hands it to execPlan, where the estimate guard
+      never offers on — and pad never touches — a stated length. */
+  durationStated?: boolean
 }
 
 export interface Scenario {
@@ -303,7 +309,8 @@ function buildDraft(
         profile.weights,
         opts.horizonDays,
         undefined, // mealBase: scenarios keep the circadian default (#298)
-        opts.bufferMin ?? 0 // #302: inherit the meeting buffer through the seam
+        opts.bufferMin ?? 0, // #302: inherit the meeting buffer through the seam
+        CLASSIC_DAY // #22: the weekly ritual shapes the classic working day
       ),
       t,
       profile.bias,
@@ -320,6 +327,7 @@ function buildDraft(
       startMin: pick.startMin,
       durationMin: t.durationMin,
       ...(t.due != null ? { due: t.due } : {}),
+      ...(t.durationStated ? { durationStated: true } : {}), // #81
     })
     whys.push(pick.why)
     phantoms.push(phantom(t, pick, phantoms.length))
@@ -414,7 +422,8 @@ function buildEnergyFit(
         ENERGY_FIT_WEIGHTS,
         opts.horizonDays,
         undefined,
-        opts.bufferMin ?? 0
+        opts.bufferMin ?? 0,
+        CLASSIC_DAY // #22
       ),
       win ? { ...t, window: win } : t,
       undefined,
@@ -431,6 +440,7 @@ function buildEnergyFit(
       startMin: pick.startMin,
       durationMin: t.durationMin,
       ...(t.due != null ? { due: t.due } : {}),
+      ...(t.durationStated ? { durationStated: true } : {}), // #81
     })
     phantoms.push(phantom(t, pick, phantoms.length))
   }
@@ -462,7 +472,8 @@ function buildEnergyFit(
       ENERGY_FIT_WEIGHTS,
       opts.horizonDays,
       undefined,
-      opts.bufferMin ?? 0
+      opts.bufferMin ?? 0,
+      CLASSIC_DAY // #22
     )
     const slot = run[0]
     if (slot) {
@@ -475,6 +486,7 @@ function buildEnergyFit(
           dayOffset,
           startMin: cursor,
           durationMin: at.durationMin,
+          ...(at.durationStated ? { durationStated: true } : {}), // #81
         })
         phantoms.push(
           phantom(

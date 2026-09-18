@@ -9,13 +9,14 @@ import type { Block } from '../../domain/types'
 import {
   dayKey,
   fmtDow,
+  fmtDowLong,
   fmtShortDate,
   fmtTime,
   minOfDay,
   weekKeys,
   addDaysKey,
 } from '../../domain/time'
-import { blocksForDay, duration } from '../../domain/week'
+import { blocksForDay, duration, isAllDay } from '../../domain/week'
 import { aggregates } from '../../domain/memory'
 import {
   dayLoadAria,
@@ -31,8 +32,17 @@ import { useGridDrag } from './useGridDrag'
 import { rovingFocusId } from './orbitGeometry'
 import { applyWeekKey, blockAriaLabel, weekFocusOrder, weekKeyIntent } from './weekKeys'
 import { BlockCard } from './BlockCard'
+import {
+  LANE_LINE_PX,
+  laneBoxPx,
+  laneSpacePx,
+  layoutAllDay,
+  viewAllDay,
+  type AllDayLaneView,
+} from './allDayLane'
 
-const H = 560
+/* the week body's height: the time-true grid, less whatever the all-day lane takes */
+const WEEK_H = 560
 
 /* Hover preview card box (must match .wk-preview in components.css so
    sidePlacement positions the real footprint). */
@@ -43,7 +53,10 @@ const PREVIEW_H = 92
 const MC = { size: 52, cx: 26, cy: 26, r: 19, band: 5 }
 
 export function WeekColumns() {
-  const blocks = useMew((s) => s.blocks)
+  const allBlocks = useMew((s) => s.blocks)
+  /* all-day entries are day labels, not time (#27): the timed grid — its
+     lanes, totals and tiles — never sees one; the all-day lane draws them */
+  const blocks = useMemo(() => allBlocks.filter((b) => !isAllDay(b)), [allBlocks])
   const memory = useMew((s) => s.memory)
   const noteReferent = useMew((s) => s.noteReferent)
   const nowMs = useMew((s) => s.nowMs)
@@ -91,6 +104,18 @@ export function WeekColumns() {
     }
     return out
   }, [blocks, memory, agg, todayKey, keys])
+
+  /* the all-day lane (#27): the week's day labels on a strip between the date
+     header and 0:00. The grid gives up exactly the height the strip takes, so a
+     week with holidays keeps the page's height. "Show all" is remembered per
+     week — paging away folds a crowded lane back. */
+  const [laneOpenWeek, setLaneOpenWeek] = useState<string | null>(null)
+  const laneOpen = laneOpenWeek === keys[0]
+  const lane = useMemo(
+    () => viewAllDay(layoutAllDay(allBlocks, keys), laneOpen),
+    [allBlocks, keys, laneOpen]
+  )
+  const H = WEEK_H - laneSpacePx(lane.lines)
 
   /* Clicking a block pins its interactive details in the footer dock — reserved
      space, so the pinned card never sits on top of other blocks. */
@@ -168,9 +193,17 @@ export function WeekColumns() {
   /* what the polite live region reads after an attempt — a moved block says
      where it landed; an immovable one says why it stays (never a silent no-op) */
   const [announce, setAnnounce] = useState('')
-  const focusOrder = useMemo(() => weekFocusOrder(blocks, keys), [blocks, keys])
+  /* what the keyboard walks is exactly what's drawn: the lane's visible chips,
+     then the timed tiles (a chip behind "+N more" is not a stop) */
+  const navBlocks = useMemo(() => [...lane.visible.map((c) => c.block), ...blocks], [lane, blocks])
+  const focusOrder = useMemo(() => weekFocusOrder(navBlocks, keys), [navBlocks, keys])
   const rovingId = rovingFocusId(focusOrder, kbFocus, live.current?.id ?? null)
   const blockRefs = useRef(new Map<string, HTMLDivElement>())
+  const refFor = (id: string) => (el: HTMLDivElement | null) => {
+    // never let a day-hop's unmount(null) erase the remounted tile
+    if (el) blockRefs.current.set(id, el)
+    else if (!blockRefs.current.get(id)?.isConnected) blockRefs.current.delete(id)
+  }
   const focusBlock = (id: string | null) => {
     if (!id) return
     setKbFocus(id)
@@ -185,13 +218,14 @@ export function WeekColumns() {
     if (!intent) return // unclaimed (Tab, characters, Alt+←/→…) — keep bubbling
     e.preventDefault()
     e.stopPropagation()
-    applyWeekKey(blocks, keys, b, intent, {
+    applyWeekKey(navBlocks, keys, b, intent, {
       dragMove, // the store's drag door — keyboard commits get no second path
       moveFocus: focusBlock,
       announce: setAnnounce,
     })
   }
 
+  /* the week's true hours: timed blocks only — an all-day label holds none */
   const plannedH = useMemo(() => {
     const total = keys.reduce(
       (sum, k) => sum + blocksForDay(blocks, k).reduce((s, b) => s + duration(b), 0),
@@ -224,6 +258,14 @@ export function WeekColumns() {
   )
 
   const cols = '34px ' + keys.map((k) => (k === selectedKey ? '2.3fr' : '1fr')).join(' ')
+
+  /* tile, chip and keyboard all open the same pinned card in the dock */
+  const openCard = (b: Block) => {
+    clearPreview()
+    setPinnedId(pinnedId === b.id ? null : b.id)
+    setCard(b)
+    noteReferent(b.id) // tapping a block makes it the conversational "it" (#320)
+  }
 
   const weekLabel =
     weekOffset === 0 ? 'this week' : `week of ${fmtShortDate(keys[0]).toLowerCase()}`
@@ -299,6 +341,30 @@ export function WeekColumns() {
           )
         })}
       </div>
+
+      {lane.lines > 0 && (
+        <AllDayLane
+          cols={cols}
+          weekDayKeys={keys}
+          todayKey={todayKey}
+          lane={lane}
+          open={laneOpen}
+          rovingId={rovingId}
+          chipRef={refFor}
+          onOpen={openCard}
+          onFocusChip={setKbFocus}
+          onChipKey={(b, e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              e.stopPropagation()
+              openCard(b)
+              return
+            }
+            onBlockKeyDown(b)(e)
+          }}
+          onToggle={(open) => setLaneOpenWeek(open ? keys[0] : null)}
+        />
+      )}
 
       <div
         ref={gridRef}
@@ -386,12 +452,7 @@ export function WeekColumns() {
                    ours to resize, and a resize past the keyboard floor is the
                    Alt+arrow alternative. */
                 const resizable = !b.external && !done && blkH >= 24
-                const openBlock = () => {
-                  clearPreview()
-                  setPinnedId(pinnedId === b.id ? null : b.id)
-                  setCard(b)
-                  noteReferent(b.id) // tapping a block makes it the conversational "it" (#320)
-                }
+                const openBlock = () => openCard(b)
                 return (
                   <div
                     key={b.id}
@@ -423,12 +484,7 @@ export function WeekColumns() {
                     role="button"
                     tabIndex={rovingId === b.id ? 0 : -1}
                     aria-label={blockAriaLabel(b)}
-                    ref={(el) => {
-                      // never let a day-hop's unmount(null) erase the remounted tile
-                      if (el) blockRefs.current.set(b.id, el)
-                      else if (!blockRefs.current.get(b.id)?.isConnected)
-                        blockRefs.current.delete(b.id)
-                    }}
+                    ref={refFor(b.id)}
                     onFocus={() => setKbFocus(b.id)}
                     onMouseDown={(e) => {
                       if (e.button !== 0) return // left button only
@@ -671,6 +727,119 @@ export function WeekColumns() {
           <> · the shape looks kind</>
         )}
       </div>
+    </div>
+  )
+}
+
+/** The all-day lane (#27): the week's day labels on a strip between the date
+    header and 0:00 — one chip per entry, spanning the days it covers, packed
+    into rows, and folded to "+N more" per column when crowded. Props in,
+    markup out: WeekColumns owns the state, the chips join its single roving
+    tab stop and open the same pinned card in the dock. */
+export function AllDayLane({
+  cols,
+  weekDayKeys,
+  todayKey,
+  lane,
+  open,
+  rovingId,
+  chipRef,
+  onOpen,
+  onFocusChip,
+  onChipKey,
+  onToggle,
+}: {
+  /** the week grid's column template, so every chip lines up with its days */
+  cols: string
+  weekDayKeys: readonly string[]
+  todayKey: string
+  lane: AllDayLaneView
+  /** "show all" is on for this week */
+  open: boolean
+  /** the grid's single tab stop — a chip holds it when it's the focus */
+  rovingId: string | null
+  chipRef?: (id: string) => (el: HTMLDivElement | null) => void
+  onOpen?: (b: Block) => void
+  onFocusChip?: (id: string) => void
+  onChipKey?: (b: Block, e: React.KeyboardEvent) => void
+  onToggle?: (open: boolean) => void
+}) {
+  return (
+    <div
+      className="wk-allday"
+      /* the grid's sibling application (#303 grammar): arrows walk chips and
+         tiles as one reading order; the same hint teaches it */
+      role="application"
+      aria-label="all-day: the week's day labels — holidays, time off, birthdays"
+      aria-describedby="wk-hint"
+      style={{
+        gridTemplateColumns: cols,
+        gridTemplateRows: `repeat(${lane.lines}, ${LANE_LINE_PX}px)`,
+        height: laneBoxPx(lane.lines),
+      }}
+    >
+      {lane.visible.map((c) => {
+        const b = c.block
+        const past = weekDayKeys[c.col + c.span - 1] < todayKey
+        return (
+          <div
+            key={b.id}
+            ref={chipRef?.(b.id)}
+            className={
+              'wk-allday-chip' +
+              (past ? ' past' : '') +
+              (b.status === 'done' ? ' done' : '') +
+              (c.clippedStart ? ' cont-l' : '') +
+              (c.clippedEnd ? ' cont-r' : '')
+            }
+            /* +2: the hour gutter is column 1 — one chip across its whole span */
+            style={{ gridColumn: `${c.col + 2} / span ${c.span}`, gridRow: c.row + 1 }}
+            role="button"
+            tabIndex={rovingId === b.id ? 0 : -1}
+            aria-label={blockAriaLabel(b)}
+            title={b.title}
+            onFocus={() => onFocusChip?.(b.id)}
+            onClick={(e) => {
+              e.stopPropagation()
+              onOpen?.(b)
+            }}
+            onKeyDown={(e) => onChipKey?.(b, e)}
+          >
+            <span className="t">{b.title}</span>
+          </div>
+        )
+      })}
+      {lane.more.map((m) => (
+        <button
+          type="button"
+          key={`more-${m.col}`}
+          className="wk-allday-more"
+          style={{ gridColumn: m.col + 2, gridRow: lane.lines }}
+          aria-expanded={false}
+          aria-label={`${m.count} more all-day on ${fmtDowLong(weekDayKeys[m.col]).toLowerCase()} — show them all`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggle?.(true)
+          }}
+        >
+          +{m.count} more
+        </button>
+      ))}
+      {open && lane.collapsible && (
+        <button
+          type="button"
+          className="wk-allday-less"
+          style={{ gridColumn: 1, gridRow: lane.lines }}
+          aria-expanded={true}
+          aria-label="show fewer all-day labels"
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggle?.(false)
+          }}
+        >
+          less
+        </button>
+      )}
     </div>
   )
 }

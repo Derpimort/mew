@@ -9,10 +9,11 @@
    every section. Positive voice by law: rules are what I've picked up, never
    failures.
 
-   The (band × task-type) energyProfile is #321 (not built yet); the rhythm
-   section renders what insights already computes today and is shaped so #321
-   plugs in as more rhythm rows without touching this contract. */
+   The rhythm section renders what insights computes (bestBand + weekday load)
+   plus the (band × task-type) energyProfile (#321, shipped in v0.6), one row
+   per task type with a demonstrated rhythm, all from local memory (#15). */
 
+import { prefKey } from './prefMerge'
 import { normTitle, type Insights } from './insights'
 import {
   candidateToRule,
@@ -24,6 +25,7 @@ import {
 } from './learn'
 import type { LearnedRule } from './prefs'
 import type { MemoryEvent, PrefPayload } from './types'
+import { ENERGY_BANDS, type EnergyProfile, type FocusClass } from './energy'
 
 export const MEMORY_CONSOLE_TITLE = "what i've picked up about you"
 
@@ -41,11 +43,12 @@ export interface TaskRuleView {
   rule: LearnedRule
 }
 
-/** One rhythm claim, each tracing to the Insights field it stands on. */
+/** One rhythm claim, each tracing to the source it stands on: an Insights
+    field, or the energyProfile (#321) for the band × task-type rows. */
 export interface RhythmRow {
   label: string
   value: string
-  claim: keyof Insights
+  claim: keyof Insights | 'energyProfile'
 }
 
 /** A stated standing rule, editable/removable in one place. */
@@ -54,6 +57,10 @@ export interface StandingRuleView {
   value: string
   stated: string
   pref: PrefPayload
+  /** #71: this rule applies from the brain alone (told on another device, or
+      seeded there) — shown with a quiet source mark, forgettable like any other.
+      Present only when true, so a local-only console is byte-identical. */
+  fromBrain?: true
 }
 
 /** A pattern MEW is about to ask about — the next learn-offer, shown before
@@ -80,10 +87,17 @@ export interface MemoryConsoleData {
 
 export interface ConsoleInputs {
   events: readonly MemoryEvent[]
-  /** the LOCAL standing rulebook (activePrefsFrom over local memory) — the
-      console renders from local memory alone, brain-off by law */
+  /** the APPLIED standing rulebook (#71): exactly what the planners read —
+      local memory merged with the brain's list when a brain answered. With the
+      brain off it is local memory alone, byte-identical to before. */
   prefs: readonly PrefPayload[]
+  /** prefKeys of the rules in `prefs` that come from the brain alone
+      (prefMerge.brainOnlyPrefKeys); absent/empty → no row is marked */
+  brainOnly?: ReadonlySet<string>
   insights: Insights
+  /** the (band × task-type) profile from local memory, or null under its data
+      floor. Optional: absent reads as no profile, so the rhythm keeps its two rows */
+  energy?: EnergyProfile | null
 }
 
 /** how many completions formed a rule — its match IS a normTitle key, so this
@@ -102,7 +116,7 @@ function ruleTitle(rule: LearnedRule): string {
 }
 
 export function memoryConsole(input: ConsoleInputs): MemoryConsoleData {
-  const { events, prefs, insights } = input
+  const { events, prefs, insights, energy, brainOnly } = input
 
   const rules = confirmedRulesFrom(events)
   const taskRules: TaskRuleView[] = rules.map((rule) => {
@@ -141,11 +155,38 @@ export function memoryConsole(input: ConsoleInputs): MemoryConsoleData {
     })
   }
 
+  /* #15: the energy profile's rows, one per task type with at least one band
+     past its per-cell floor, listing where that kind of work gets finished
+     (highest rate first, up to three bands). A band with too few outcomes to
+     claim stays out; nothing past the floor → no row. */
+  if (energy) {
+    const KIND: Record<FocusClass, string> = {
+      deep: 'your deep work',
+      admin: 'your admin',
+      health: 'your health blocks',
+    }
+    for (const cls of ['deep', 'admin', 'health'] as const) {
+      const seen = ENERGY_BANDS.map((b) => ({ label: b.label, cell: energy.cells[b.band][cls] }))
+        .filter((x) => x.cell.rate != null)
+        .sort((a, b) => b.cell.rate! - a.cell.rate! || b.cell.attempted - a.cell.attempted)
+        .slice(0, 3)
+      if (!seen.length) continue
+      rhythm.push({
+        label: KIND[cls],
+        value: seen
+          .map((x) => `${x.label} ${x.cell.completed}/${x.cell.attempted} finished`)
+          .join(' · '),
+        claim: 'energyProfile',
+      })
+    }
+  }
+
   const standingRules: StandingRuleView[] = prefs.map((p) => ({
     match: p.match,
     value: p.value,
     stated: p.stated,
     pref: p,
+    ...(brainOnly?.has(prefKey(p)) ? { fromBrain: true as const } : {}),
   }))
 
   /* pending — the next candidates the learn pass would offer (already covered
@@ -190,7 +231,8 @@ export function consoleSummary(data: MemoryConsoleData): string[] {
   const lines: string[] = [data.title]
   for (const r of data.taskRules) lines.push(`• ${r.title}: ${r.label} (${r.claim})`)
   for (const r of data.rhythm) lines.push(`• ${r.label}: ${r.value}`)
-  for (const r of data.standingRules) lines.push(`• you told me: ${r.match} → ${r.value}`)
+  for (const r of data.standingRules)
+    lines.push(`• ${r.fromBrain ? 'from your brain' : 'you told me'}: ${r.match} → ${r.value}`)
   if (data.pending.length)
     lines.push(`about to ask about: ${data.pending.map((p) => p.match).join(', ')}`)
   if (data.dismissed.length) lines.push(`not learning (your call): ${data.dismissed.join(', ')}`)

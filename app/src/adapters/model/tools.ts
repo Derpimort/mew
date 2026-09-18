@@ -174,6 +174,11 @@ export const MEW_TOOLS: NeutralTool[] = [
                 description:
                   'Hard deadline in minutes from midnight, independent of the end time ("due by 1pm" = 780). MEW watches the latest start.',
               },
+              allowOverlap: {
+                type: 'boolean',
+                description:
+                  "Set true ONLY when the user said in their own words this turn that this block may overlap ('it is fine to overlap gaming', 'let it run over lunch'). Their flexible blocks then stay put and the reply names the shared time; a fixed or [calendar] block still refuses. Never infer it, and never set it to get around a clash.",
+              },
               recurrence: {
                 type: 'object',
                 description:
@@ -265,6 +270,11 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'string',
           description:
             "The block's CURRENT start time ('19:45', '7am') — pins which of several same-named blocks to move. Distinct from toStartMin (its new start).",
+        },
+        allowOverlap: {
+          type: 'boolean',
+          description:
+            "Set true ONLY when the user said in their own words this turn that this block may overlap ('it is fine to overlap gaming', 'let it run over lunch'). Their flexible blocks then stay put and the reply names the shared time; a fixed or [calendar] block still refuses. Never infer it, and never set it to get around a clash.",
         },
       },
       required: ['query'],
@@ -361,7 +371,8 @@ export const MEW_TOOLS: NeutralTool[] = [
         window: {
           type: 'string',
           enum: ['morning', 'afternoon', 'evening'],
-          description: 'Optional preferred time of day',
+          description:
+            'Optional preferred time of day — "tonight", "this evening" and "after dinner" are evening',
         },
       },
       required: ['title', 'durationMin'],
@@ -398,6 +409,11 @@ export const MEW_TOOLS: NeutralTool[] = [
           type: 'boolean',
           description:
             'Remove every match, not just one. Default false; set true only on an explicit "both/all".',
+        },
+        dayOffset: {
+          type: 'integer',
+          description:
+            "Days from today of the one to remove (0 = today). Pass it with `at` when the same title sits at the same time on several days, so only that day's block goes",
         },
         scope: SCOPE_SCHEMA,
       },
@@ -453,14 +469,14 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'query_brain',
     description:
-      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'how were my gym sessions last week', 'when did I last meet Y', 'what happened with Z'. Time sums come from real blocks of the week the question names — 'last week' / 'N weeks ago' reach back through kept history, no time phrase means the current week; recall comes from the brain. NOT for the live moment — the week context already says what's now and next.",
+      "Answer a HISTORY or entity question from what MEW has seen: 'how much time has X taken this week', 'how were my gym sessions last week', 'how much gym since August 1', 'what did the deck cost over the last three weeks', 'when did I last meet Y', 'what happened with Z'. Time sums come from real blocks of the stretch the question names — 'last week' / 'N weeks ago', 'the last N days|weeks|months', 'this|last month', 'in August', 'since <date>', 'between <date> and <date>', 'yesterday' reach back through kept history (the most recent year at most), no time phrase means the current week; recall comes from the brain. NOT for the live moment — the week context already says what's now and next.",
     parameters: {
       type: 'object',
       properties: {
         question: {
           type: 'string',
           description:
-            "The question, naming the project/person/task it's about — keep the user's own time phrase ('last week', 'two weeks ago') in it",
+            "The question, naming the project/person/task it's about — keep the user's own time phrase ('last week', 'since August 1', 'the last three weeks') in it",
         },
       },
       required: ['question'],
@@ -507,7 +523,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'undo_last_action',
     description:
-      'Reverse YOUR most recent change this exchange — the graceful "undo that" when the user catches a misclick or a wrong placement ("no, put it back", "that was wrong"). It rolls the blocks just placed/moved/removed back to how they were before that one call and drops any note logged with it; the tool result names what it took back ("removed the 3 blocks you just placed"). It reaches only the last action, not the whole history, and changes nothing if you have not acted yet. Chat stays — your reply about the undone action remains as context.',
+      'Reverse the most recent change to the week — the graceful "undo that" when the user catches a misclick or a wrong placement ("no, put it back", "that was wrong"): your last change this turn, or, when the user asks in the message right after, the last change of the turn before (a picked chip or a tap counts too). It rolls the blocks just placed/moved/removed back to how they were before that one call and drops any note logged with it; the tool result names what it took back ("removed the 3 blocks you just placed"). It reaches only the last change, not the whole history, and changes nothing if there is none to take back. Chat stays — your reply about the undone action remains as context.',
     parameters: {
       type: 'object',
       properties: {},
@@ -610,6 +626,81 @@ export const MEW_TOOLS: NeutralTool[] = [
     },
   },
   {
+    name: 'batch_blocks',
+    description:
+      "ONE change over several blocks on one day (#75) — 'push everything after 3pm back an hour', 'move all of today's work to tomorrow'. Pick the blocks with a selector (dayOffset, afterMin/beforeMin on their START, tag, titleQuery — the same blocks list_blocks shows that day) and give ONE op: shift (deltaMin, + later / − earlier), move_to_day (toDayOffset, same clock) or set_tag (toTag, in place: 'tag all of tomorrow's calls as work'). Calendar events, fixed-time and done blocks never move, and a block whose new time would sit over a fixed or calendar block stays put; each is named. A repeating block waits for a scope: with no scope MEW asks which occurrences are meant and nothing moves until the user answers; pass scope to act on it. A wide batch (3+ blocks, or any move to another day) is OFFERED first as a confirm listing exactly what moves: nothing changes until the user says yes. Pass confirmCount and confirmToken ONLY when the user just said yes to MEW's batch offer: the yes ends '— yes, all N · TOKEN'; pass N and TOKEN verbatim. If the list changed meanwhile, the executor offers again. One undo reverses the whole batch. For a single block, use move_task or move_relative.",
+    parameters: {
+      type: 'object',
+      properties: {
+        dayOffset: {
+          type: 'integer',
+          description: 'The day to pick from, days from today (0 = today)',
+        },
+        afterMin: {
+          type: 'integer',
+          description: 'Pick blocks STARTING at or after this minute (15:00 = 900)',
+        },
+        beforeMin: { type: 'integer', description: 'Pick blocks starting before this minute' },
+        tag: { ...TAG_SCHEMA, description: 'Pick only blocks of this tag' },
+        titleQuery: {
+          type: 'string',
+          description: 'Pick only blocks whose title contains these words',
+        },
+        op: { type: 'string', enum: ['shift', 'move_to_day', 'set_tag'] },
+        toTag: { ...TAG_SCHEMA, description: 'For set_tag: the tag every picked block takes' },
+        deltaMin: {
+          type: 'integer',
+          description: 'For shift: minutes to move each block (+60 = an hour later, −30 = earlier)',
+        },
+        toDayOffset: {
+          type: 'integer',
+          description: 'For move_to_day: the target day, days from today',
+        },
+        confirmCount: {
+          type: 'integer',
+          description:
+            "ONLY after the user said yes to MEW's batch offer: the number of blocks that offer named",
+        },
+        confirmToken: {
+          type: 'string',
+          description:
+            "ONLY after the user said yes to MEW's batch offer: the token after the '·' in that yes, verbatim",
+        },
+        scope: {
+          type: 'string',
+          enum: ['this', 'following', 'series'],
+          description:
+            "Which occurrences of a repeating block the sweep means, when the user has said: 'this' just this one, 'following' this one and the ones after, 'series' the whole set. Leave it out and MEW asks with chips before it touches a series. A move_to_day only accepts 'this' — a series keeps its own days.",
+        },
+      },
+      required: ['op'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'merge_blocks',
+    description:
+      "Join the owner's same-tag blocks on ONE day into a single block (#74) — 'merge my two deck blocks', 'join the writing blocks tomorrow'. The earliest keeps its place and grows to span them all; the others go, and one undo brings them back. Name them by title (query); pass dayOffset for another day, or at (a block's CURRENT start) to merge that block with the next same-named one after it. Only open, one-off blocks the owner placed merge, and only across free air: a fixed call, a [calendar] event, a done block or any other block in between means nothing changes and the result says which. Never merges across days, and never merges blocks with different tags — ask which tag first.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: "A few words from the blocks' shared title" },
+        dayOffset: {
+          type: 'integer',
+          description:
+            'The day, in days from today (0 = today). Omit for the soonest day with two.',
+        },
+        at: {
+          type: 'string',
+          description:
+            "One block's CURRENT start time ('9:00', '2pm') — merges it with the next same-named block after it that day",
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'move_relative',
     description:
       "Nudge an existing block without naming an absolute time — 'a bit earlier', 'push it later', 'move it to the next day', 'find it the next free slot'. Set direction: 'earlier'/'later' shift the start on the SAME day by amountMin (default 30); 'next_day' moves it one day later at the same clock time; 'next_free' relocates it to the soonest genuinely clear slot from now. When the user DOES give an absolute target ('move it to 3pm', 'to friday'), use move_task instead. Fixed and calendar events are never moved, and the next free slot always lands clear of them. Target by a few words of the title, plus `at` (its current start) when several share the title.",
@@ -640,7 +731,7 @@ export const MEW_TOOLS: NeutralTool[] = [
   {
     name: 'give_room',
     description:
-      "Give the just-placed blocks of one kind ROOM — resize them longer, in place, by the factor the user's OWN completion history shows for that kind (deep work runs over; batched admin usually doesn't). Call this ONLY to answer MEW's own 'your deep-work blocks tend to run long — give them room?' offer (the user tapped 'give them room' or typed 'give my deep-work blocks room'), or when the user explicitly asks to size a kind to how it really runs. Do NOT volunteer it. Blocks whose length the user stated are never touched.",
+      "Give the just-placed blocks of one kind ROOM — resize them longer, in place, by the factor the user's OWN completion history shows for that kind (deep work runs over; batched admin usually doesn't). Call this ONLY to answer MEW's own 'your hour-plus work blocks tend to run long — want me to give <the named blocks> room?' offer (the user tapped 'give them room' or typed 'give my hour-plus work blocks room'; the older 'deep-work' wording means the same), or when the user explicitly asks to size a kind to how it really runs. Do NOT volunteer it. Blocks whose length the user stated are never touched.",
     parameters: {
       type: 'object',
       properties: {
@@ -652,6 +743,43 @@ export const MEW_TOOLS: NeutralTool[] = [
         },
       },
       required: ['focusClass'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'split_block',
+    description:
+      "Split ONE existing block into two around a gap, leaving the gap free between the pieces ('split the deck around the 1pm call', 'split my focus block around 13:00-13:30'). The first piece keeps the block's start and ends where the gap opens; part 2 picks up where the gap closes and keeps the rest of the block's length, so the total is kept. Give EITHER aroundStartMin + aroundEndMin (a clock gap) OR aroundQuery (+ aroundAt) naming the block to split around on the same day, often a meeting or calendar event. Events from a connected calendar are never split themselves (splitting AROUND one is fine). Part 2 lands only in free time; if something sits there, nothing changes and the result says what. For a REPEATING block, pass scope only when the user made the reach explicit; otherwise omit it and the executor asks this one / this & following / the whole series. Target by a few words of the title, plus `at` (its current start) when several share the title.",
+    parameters: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'A few words from the title of the block to split' },
+        at: {
+          type: 'string',
+          description:
+            "The TARGET block's CURRENT start time ('12:00', '9am'): pins which of several same-named blocks to split",
+        },
+        aroundStartMin: {
+          type: 'integer',
+          description: 'Gap start in minutes from midnight (13:00 = 780); pair with aroundEndMin',
+        },
+        aroundEndMin: {
+          type: 'integer',
+          description: 'Gap end in minutes from midnight (13:45 = 825)',
+        },
+        aroundQuery: {
+          type: 'string',
+          description:
+            "A few words from the title of the block to split around on the same day ('call', 'design sync'), instead of a clock gap",
+        },
+        aroundAt: {
+          type: 'string',
+          description:
+            "That block's start time ('13:00', '1pm'): pins which of several same-named blocks to split around",
+        },
+        scope: SCOPE_SCHEMA,
+      },
+      required: ['query'],
       additionalProperties: false,
     },
   },
@@ -689,6 +817,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           attention: p.attention === 'background' ? ('background' as const) : undefined,
           due: optInt(p.dueMin, 0, 1439),
           rrule: parseRecurrence(p.recurrence),
+          allowOverlap: p.allowOverlap === true ? true : undefined, // #49: only an explicit true
         }))
       const frees = (Array.isArray(o.frees) ? o.frees : [])
         .filter((f): f is Record<string, unknown> => !!f && typeof f === 'object')
@@ -698,22 +827,26 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           endMin: clampInt(f.endMin, 0, 1439, 17 * 60),
         }))
       if (!places.length && !frees.length) return 'nothing to place — the call was empty'
-      return exec.plan(places, frees)
+      return exec.plan({ places, frees })
     }
     case 'complete_task':
-      return exec.complete(String(o.query ?? ''), atArg(o.at))
+      return exec.complete({ query: String(o.query ?? ''), at: atArg(o.at) })
     case 'move_task':
-      return exec.move(
-        String(o.query ?? ''),
-        optInt(o.toDayOffset, 0, 13),
-        optInt(o.toStartMin, 0, 1439),
-        undefined, // relStartMin: a keyed tool call always sends an absolute target
-        atArg(o.at)
-      )
+      return exec.move({
+        query: String(o.query ?? ''),
+        toDayOffset: optInt(o.toDayOffset, 0, 13),
+        toStartMin: optInt(o.toStartMin, 0, 1439),
+        // relStartMin is omitted: a keyed tool call always sends an absolute target
+        at: atArg(o.at),
+        // #49: only an explicit true grants it; with none the field is absent and the
+        // executor's default stands — the same call as before, without the positional
+        // spread that used to be needed to leave one argument out of the middle
+        ...(o.allowOverlap === true ? { allowOverlap: true } : {}),
+      })
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))
     case 'edit_block': {
-      const patch: Parameters<ToolExecutor['edit']>[1] = {}
+      const patch: Parameters<ToolExecutor['edit']>[0]['patch'] = {}
       const sm = optInt(o.startMin, 0, 1439)
       const em = optInt(o.endMin, 1, 1440)
       const dm = optInt(o.durationMin, 5, 720)
@@ -726,15 +859,20 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (o.attention === 'background' || o.attention === 'focus') patch.attention = o.attention
       const due = optInt(o.dueMin, 0, 1439)
       if (due != null) patch.due = due
-      return exec.edit(String(o.query ?? ''), patch, atArg(o.at), recurScope(o.scope))
+      return exec.edit({
+        query: String(o.query ?? ''),
+        patch,
+        at: atArg(o.at),
+        scope: recurScope(o.scope),
+      })
     }
     case 'find_slot':
-      return exec.findSlot(
-        clampInt(o.durationMin, 5, 600, 30),
-        clampInt(o.dayOffset, 0, 13, 0),
-        optInt(o.notBeforeMin, 0, 1439),
-        optInt(o.notAfterMin, 1, 1440)
-      )
+      return exec.findSlot({
+        durationMin: clampInt(o.durationMin, 5, 600, 30),
+        dayOffset: clampInt(o.dayOffset, 0, 13, 0),
+        notBeforeMin: optInt(o.notBeforeMin, 0, 1439),
+        notAfterMin: optInt(o.notAfterMin, 1, 1440),
+      })
     case 'suggest_slots': {
       const win = (['morning', 'afternoon', 'evening'] as const).includes(o.window as never)
         ? (o.window as 'morning')
@@ -742,13 +880,13 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
         ? (o.tag as 'work')
         : 'work'
-      return exec.suggestSlots(
-        String(o.title ?? '').trim(),
+      return exec.suggestSlots({
+        title: String(o.title ?? '').trim(),
         tag,
-        clampInt(o.durationMin, 5, 600, 60),
-        optInt(o.dueMin, 0, 1439),
-        win
-      )
+        durationMin: clampInt(o.durationMin, 5, 600, 60),
+        dueMin: optInt(o.dueMin, 0, 1439),
+        window: win,
+      })
     }
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
@@ -756,7 +894,18 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const at = atArg(o.at)
       const all = o.all === true
       const scope = recurScope(o.scope)
-      return exec.remove(String(o.query ?? ''), { at, all, ...(scope ? { scope } : {}) })
+      /* #62: out of range is IGNORED, never clamped — a clamped 14 would pin day
+         13 and remove a block nobody named; unpinned, a repeated time asks */
+      const d = o.dayOffset
+      const dayOffset =
+        typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 13 ? d : undefined
+      return exec.remove({
+        query: String(o.query ?? ''),
+        at,
+        all,
+        ...(scope ? { scope } : {}),
+        ...(dayOffset != null ? { dayOffset } : {}),
+      })
     }
     case 'clear_blocks': {
       const scopes = ['today', 'tomorrow', 'week', 'upcoming'] as const
@@ -797,7 +946,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
             : undefined,
         }))
       if (!tasks.length) return 'nothing to propose — the call needs at least one task'
-      return exec.proposeScenarios(prompt, tasks)
+      return exec.proposeScenarios({ prompt, tasks })
     }
     case 'offer_choices': {
       const prompt = String(o.prompt ?? '').trim()
@@ -815,7 +964,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         })
       if (!prompt || !options.length)
         return 'nothing to offer — the call needs a prompt and at least one option'
-      return exec.offerChoices(prompt, options)
+      return exec.offerChoices({ prompt, options })
     }
     case 'undo_last_action':
       return exec.undoLast()
@@ -823,30 +972,91 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
         ? (o.tag as 'work')
         : undefined
-      return exec.listBlocks(parseListDay(o.day), tag)
+      return exec.listBlocks({ day: parseListDay(o.day), tag })
     }
     case 'resize_block': {
       const durationMin = optInt(o.durationMin, 5, 720)
       const relDurationMin = optInt(o.deltaMin, -600, 600)
       if (durationMin == null && relDurationMin == null)
         return 'nothing to resize — pass a durationMin or a deltaMin'
-      return exec.resize(
-        String(o.query ?? ''),
-        { durationMin, relDurationMin },
-        atArg(o.at),
-        recurScope(o.scope)
-      )
+      return exec.resize({
+        query: String(o.query ?? ''),
+        resize: { durationMin, relDurationMin },
+        at: atArg(o.at),
+        scope: recurScope(o.scope),
+      })
     }
     case 'duplicate_block':
-      return exec.duplicate(
-        String(o.query ?? ''),
-        {
-          toDayOffset: optInt(o.toDayOffset, 0, 13),
-          toStartMin: optInt(o.toStartMin, 0, 1439),
-          rrule: parseRecurrence(o.recurrence),
-        },
-        atArg(o.at)
-      )
+      return exec.duplicate({
+        query: String(o.query ?? ''),
+        toDayOffset: optInt(o.toDayOffset, 0, 13),
+        toStartMin: optInt(o.toStartMin, 0, 1439),
+        rrule: parseRecurrence(o.recurrence),
+        at: atArg(o.at),
+      })
+    case 'batch_blocks': {
+      const selector = {
+        dayOffset: optInt(o.dayOffset, 0, 13),
+        afterMin: optInt(o.afterMin, 0, 1439),
+        beforeMin: optInt(o.beforeMin, 1, 1440),
+        tag: (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
+          ? (o.tag as 'work')
+          : undefined,
+        titleQuery:
+          typeof o.titleQuery === 'string' && o.titleQuery.trim() ? o.titleQuery.trim() : undefined,
+      }
+      const confirmCount = optInt(o.confirmCount, 1, 500)
+      const confirmToken =
+        typeof o.confirmToken === 'string' && o.confirmToken.trim()
+          ? o.confirmToken.trim()
+          : undefined
+      /* #75 slice 3: which occurrences of a repeating block the sweep means */
+      const scope = (['this', 'following', 'series'] as const).includes(o.scope as never)
+        ? (o.scope as 'this' | 'following' | 'series')
+        : undefined
+      if (o.op === 'shift') {
+        const deltaMin = optInt(o.deltaMin, -720, 720)
+        if (!deltaMin) return 'nothing to shift — pass deltaMin (+ later, − earlier)'
+        return exec.batch({
+          selector,
+          op: { kind: 'shift', deltaMin },
+          confirmCount,
+          confirmToken,
+          scope,
+        })
+      }
+      if (o.op === 'move_to_day') {
+        const toDayOffset = optInt(o.toDayOffset, 0, 13)
+        if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
+        return exec.batch({
+          selector,
+          op: { kind: 'moveToDay', toDayOffset },
+          confirmCount,
+          confirmToken,
+          scope,
+        })
+      }
+      if (o.op === 'set_tag') {
+        const toTag = (['work', 'private', 'health', 'rest'] as const).includes(o.toTag as never)
+          ? (o.toTag as 'work')
+          : undefined
+        if (!toTag) return 'nothing to tag — pass toTag (work, private, health or rest)'
+        return exec.batch({
+          selector,
+          op: { kind: 'setTag', tag: toTag },
+          confirmCount,
+          confirmToken,
+          scope,
+        })
+      }
+      return 'nothing to batch — op must be shift, move_to_day or set_tag'
+    }
+    case 'merge_blocks':
+      return exec.merge({
+        query: String(o.query ?? ''),
+        dayOffset: optInt(o.dayOffset, 0, 13),
+        at: atArg(o.at),
+      })
     case 'move_relative': {
       const dirs = ['earlier', 'later', 'next_day', 'next_free'] as const
       const direction = dirs.includes(o.direction as never)
@@ -854,12 +1064,27 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         : null
       if (!direction)
         return 'nothing to move — pass a direction (earlier, later, next_day, next_free)'
-      return exec.relativeMove(
-        String(o.query ?? ''),
+      return exec.relativeMove({
+        query: String(o.query ?? ''),
         direction,
-        optInt(o.amountMin, 5, 600),
-        atArg(o.at)
-      )
+        amountMin: optInt(o.amountMin, 5, 600),
+        at: atArg(o.at),
+      })
+    }
+    case 'split_block': {
+      const query = String(o.query ?? '')
+      const startMin = optInt(o.aroundStartMin, 0, 1439)
+      const endMin = optInt(o.aroundEndMin, 1, 1440)
+      const aroundQuery = typeof o.aroundQuery === 'string' ? o.aroundQuery.trim() : ''
+      const opts = { at: atArg(o.at), scope: recurScope(o.scope) }
+      if (startMin != null && endMin != null) {
+        if (endMin <= startMin)
+          return 'nothing to split around — aroundEndMin must come after aroundStartMin'
+        return exec.split({ query, around: { startMin, endMin }, ...opts })
+      }
+      if (aroundQuery)
+        return exec.split({ query, around: { query: aroundQuery, at: atArg(o.aroundAt) }, ...opts })
+      return 'nothing to split around — pass aroundStartMin + aroundEndMin, or aroundQuery'
     }
     case 'give_room': {
       const classes = ['deep', 'admin', 'health'] as const

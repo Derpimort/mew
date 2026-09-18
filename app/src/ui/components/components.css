@@ -2460,3 +2460,528 @@
   gap: 8px;
   margin-left: auto;
 }
+
+/* ── the all-day lane (#27) — day labels between the date header and 0:00 ──
+   A strip, not a time slot: a hairline under it, chips that span their days
+   (ONE chip across a multi-day span) and a quiet tint in place of a block's
+   solid fill — a holiday is a fact about the day, never a claim on its hours.
+   The box metrics mirror allDayLane.ts (LANE_*_PX): the time grid gives up
+   exactly what the strip takes, so the page keeps its height. Tokens only. */
+.wk-allday {
+  display: grid;
+  column-gap: 10px;
+  row-gap: 3px; /* LANE_GAP_PX */
+  box-sizing: border-box;
+  padding: 4px 0 6px; /* LANE_PAD_TOP_PX · LANE_PAD_BOTTOM_PX */
+  border-bottom: 1px solid var(--line); /* LANE_RULE_PX */
+  margin-bottom: 6px; /* LANE_MARGIN_PX */
+}
+.wk-allday-chip {
+  min-width: 0;
+  margin: 0 4px;
+  padding: 0 8px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  background: var(--ice-soft);
+  box-shadow: inset 0 0 0 1px var(--ice-bd);
+  color: var(--ink);
+  cursor: pointer;
+}
+.wk-allday-chip .t {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wk-allday-chip:hover {
+  box-shadow: inset 0 0 0 1.4px var(--ice);
+}
+.wk-allday-chip:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+/* a span that runs past the visible week keeps a square, flush edge on that side */
+.wk-allday-chip.cont-l {
+  margin-left: 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.wk-allday-chip.cont-r {
+  margin-right: 0;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* lived days dim exactly like their columns */
+.wk-allday-chip.past {
+  opacity: 0.45;
+}
+.wk-allday-chip.done .t {
+  text-decoration: line-through;
+  font-weight: 600;
+}
+/* scoped under the lane: the app shell's `.stl button { font: inherit }` reset
+   outranks a lone class */
+.wk-allday .wk-allday-more,
+.wk-allday .wk-allday-less {
+  min-width: 0;
+  margin: 0 4px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--muted);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+/* "less" lives in the 34px hour gutter, right-aligned like the hour labels */
+.wk-allday .wk-allday-less {
+  margin: 0;
+  padding: 0 2px 0 0;
+  text-align: right;
+  color: var(--faint);
+}
+.wk-allday .wk-allday-more:hover,
+.wk-allday .wk-allday-less:hover {
+  color: var(--gold);
+}
+.wk-allday .wk-allday-more:focus-visible,
+.wk-allday .wk-allday-less:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: 6px;
+}
+
+/* ── all-day badges on the dial (#27) — labels on today, never ring wedges ──
+   A single line of pills anchored just above the centre stack (bottom: 100%,
+   out of its flow, so the countdown never reflows and a day without all-day
+   entries renders exactly as before). The 240px line sits inside the inner
+   ring: its outer corners stay ≈160px from centre with ri = 170 (see .clk-center
+   and OG.ri — change them together). Tokens only. */
+.dial-badges {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 10px;
+  width: 240px;
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: auto;
+  transition: opacity 0.18s ease;
+}
+.dial-badge {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  height: 20px;
+  padding: 0 10px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  background: var(--ice-soft);
+  box-shadow: inset 0 0 0 1px var(--ice-bd);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease;
+}
+.dial-badge .t {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dial-badge:hover,
+.dial-badge.on {
+  box-shadow:
+    inset 0 0 0 1.4px var(--ice),
+    0 0 12px var(--glowc);
+}
+.dial-badge:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.dial-badge.done .t {
+  text-decoration: line-through;
+  font-weight: 600;
+}
+/* "+N more" — scoped past the shell's `.stl button { font: inherit }` reset */
+.dial-badges .dial-badge.more {
+  flex: none;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dial-badges .dial-badge.more:hover {
+  color: var(--gold);
+}
+/* opened past BADGE_MAX, the line may wrap — rows grow upward from the anchor */
+.dial-badges:has(.dial-badge:nth-child(4)) {
+  flex-wrap: wrap;
+  width: 300px;
+}
+
+/* ── plannable hours (#22 slice B) ─────────────────────────────────────
+   Two .keyfield clock fields and a live hint that wraps under them, right-
+   aligned with the row's control column. Tokens only. */
+.plannable {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  column-gap: 6px;
+  max-width: 260px;
+}
+.plannable .keyfield input {
+  width: 5.5ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.plannable-sep {
+  color: var(--faint);
+  font-size: 11px;
+}
+.plannable-flag {
+  border-color: var(--gold);
+  background: var(--gold-soft);
+}
+.plannable-hint {
+  flex-basis: 100%;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gold);
+}
+.plannable-hint:not(:empty) {
+  margin-top: 5px;
+}
+
+/* ── the dial on any day (#23) — the date line's day steps ──────────────────
+   The date above the live clock is also the day header. Its ‹ › steps sit
+   OUTSIDE the date's flow (absolute), invisible at rest and shown on hover or
+   keyboard focus, so today's clock renders exactly as before; away from today
+   they stay shown and the live time gives way to "back to today". The topbar is
+   pointer-events:none, so the header opts back in. Scoped under .nx-clock past
+   the shell's `.stl button { font: inherit }` reset. Tokens only. */
+.nx-day {
+  position: relative;
+  display: inline-flex;
+  pointer-events: auto;
+}
+.nx-clock .nx-day-step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--gold);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    color 0.15s ease;
+}
+.nx-clock .nx-day-step.prev {
+  right: 100%;
+  margin-right: 6px;
+}
+.nx-clock .nx-day-step.next {
+  left: 100%;
+  margin-left: 6px;
+}
+.nx-day:hover .nx-day-step,
+.nx-day:focus-within .nx-day-step,
+.nx-day.away .nx-day-step {
+  opacity: 1;
+}
+.nx-clock .nx-day-step:hover {
+  color: var(--ink);
+}
+.nx-clock .nx-day-step:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+.nx-clock .nx-day-today {
+  pointer-events: auto;
+  margin-top: 4px;
+  padding: 3px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+.nx-clock .nx-day-today:hover {
+  color: var(--gold);
+  border-color: var(--ice-bd);
+}
+.nx-clock .nx-day-today:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* ── the dial on any day (#23 slice 2) — the date is the day picker's trigger ──
+   At rest on today the trigger is exactly the date text it wraps (a flex box
+   with no box of its own) and its calendar glyph sits invisible beside it, so
+   today's clock renders as before. The glyph shows with the steps (hover,
+   keyboard focus, off today, or while the picker holds focus) and a quiet pill
+   marks the button. The picker wears the command palette's popover dress at
+   date-picker size: the panel gradient, the ice-tinted hairline, mono type, the
+   palette tabs' "on" treatment for the shown day and gold for today. Scoped
+   under .nx-clock past the shell's `.stl button` reset. Tokens only. */
+.nx-clock .nx-day-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.nx-clock .nx-day-pick::before {
+  content: '';
+  position: absolute;
+  inset: -3px -7px -3px -25px;
+  border: 1px solid var(--ice-bd);
+  border-radius: 7px;
+  background: var(--ice-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.nx-clock .nx-day-pick .dt {
+  position: relative; /* paints over the pill */
+}
+.nx-clock .nx-day-pick:hover::before,
+.nx-clock .nx-day-pick:focus-visible::before,
+.nx-clock .nx-day-pick[aria-expanded='true']::before {
+  opacity: 1;
+}
+.nx-clock .nx-day-pick:focus-visible {
+  outline: none;
+}
+.nx-clock .nx-day-pick:focus-visible::before {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+.nx-clock .nx-day-glyph {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  margin-right: 6px;
+  transform: translateY(-50%);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  color: var(--gold);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.nx-day:hover .nx-day-glyph,
+.nx-day:focus-within .nx-day-glyph,
+.nx-day.away .nx-day-glyph {
+  opacity: 1;
+}
+/* the previous-day step clears the glyph */
+.nx-clock .nx-day-step.prev {
+  margin-right: 25px;
+}
+
+/* the picker drops from the date pill and stands in for the readout below it
+   while it's open (hidden, not removed: nothing moves) */
+.nx-clock.picking .nx-time,
+.nx-clock.picking .nx-day-today {
+  visibility: hidden;
+}
+.nx-clock .dp {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 2;
+  width: 258px;
+  margin-left: -129px;
+  overflow: hidden;
+  pointer-events: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--panel2), var(--panel));
+  border: 1px solid color-mix(in srgb, var(--ice) 24%, var(--line));
+  border-radius: 15px;
+  box-shadow:
+    0 30px 80px -28px rgba(0, 0, 0, 0.78),
+    0 0 0 1px rgba(0, 0, 0, 0.3);
+  cursor: default;
+  animation: cmdk-rise 0.2s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.nx-clock .dp:focus {
+  outline: none; /* the container only holds focus for a press on its text */
+}
+.sys--light .nx-clock .dp {
+  box-shadow: 0 30px 80px -32px rgba(60, 45, 15, 0.42);
+}
+.nx-clock .dp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.nx-clock .dp-month {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.nx-clock .dp .dp-nav {
+  width: 24px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.nx-clock .dp .dp-nav:hover {
+  color: var(--ink);
+  background: var(--ice-soft);
+  border-color: var(--ice-bd);
+}
+.nx-clock .dp-grid {
+  width: 100%;
+  padding: 6px 8px 4px;
+  border-collapse: separate;
+  border-spacing: 2px;
+}
+.nx-clock .dp-grid th {
+  padding: 3px 0;
+  font-size: 9.5px;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--muted);
+}
+.nx-clock .dp-grid td {
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 11.5px;
+  text-align: center;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.nx-clock .dp-grid td.out {
+  color: var(--faint);
+}
+.nx-clock .dp-grid td:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.nx-clock .dp-grid td[aria-current='date'] {
+  color: var(--gold);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.nx-clock .dp-grid td[aria-selected='true'] {
+  color: var(--ice);
+  background: var(--ice-soft);
+  border-color: var(--ice-bd);
+  font-weight: 700;
+}
+.nx-clock .dp-grid td:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+.nx-clock .dp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px 8px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--muted);
+}
+.nx-clock .dp .dp-today {
+  padding: 3px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
+}
+.nx-clock .dp .dp-today:hover {
+  color: var(--gold);
+  border-color: var(--ice-bd);
+}
+.nx-clock .dp .dp-nav:focus-visible,
+.nx-clock .dp .dp-today:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
