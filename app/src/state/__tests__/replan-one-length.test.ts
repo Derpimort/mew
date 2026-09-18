@@ -326,8 +326,8 @@ describe('#135 — a re-plan scores and moves with one length', () => {
     clock(8, 30)
     let reply = ''
     scriptedModel.midTurn = (exec) => {
-      reply = exec.plan(
-        [
+      reply = exec.plan({
+        places: [
           {
             title: 'walk',
             tag: 'health',
@@ -339,8 +339,8 @@ describe('#135 — a re-plan scores and moves with one length', () => {
             allowOverlap: true,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('move the walk to 2pm for half an hour, sharing time is fine')
     await settle()

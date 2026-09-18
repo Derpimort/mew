@@ -300,7 +300,7 @@ describe('#73 — split the deck around the 1pm call', () => {
     const before = snapshot()
     let undo = ''
     scriptedModel.midTurn = (exec) => {
-      exec.split('deck', { startMin: 13 * 60, endMin: 13 * 60 + 45 })
+      exec.split({ query: 'deck', around: { startMin: 13 * 60, endMin: 13 * 60 + 45 } })
       undo = exec.undoLast()
     }
     await say('split the deck around 13:00-13:45, then undo that')
@@ -443,9 +443,14 @@ describe('#73 — the split_block tool reads only a real gap or a real around', 
       { query: 'deck', aroundQuery: 'call', aroundAt: '1pm', scope: 'this' },
       exec
     )
+    /* one named object since #165: the same three things the tool passes — the
+       block, the gap, and the pins — now siblings rather than two positions and
+       a bag. Values unchanged, including `at: undefined` on the second row and
+       the scope that rides with it. */
     expect(calls).toEqual([
-      ['deck', { startMin: 780, endMin: 825 }, { at: '12:00', scope: undefined }],
-      ['deck', { query: 'call', at: '1pm' }, { at: undefined, scope: 'this' }], // the executor reads the time
+      [{ query: 'deck', around: { startMin: 780, endMin: 825 }, at: '12:00', scope: undefined }],
+      // the executor reads the time on the around block itself
+      [{ query: 'deck', around: { query: 'call', at: '1pm' }, at: undefined, scope: 'this' }],
     ])
     expect(await runTool('split_block', { query: 'deck' }, exec)).toMatch(
       /^nothing to split around/
@@ -461,5 +466,5 @@ import { runTool } from '../../adapters/model/tools'
 
 /** the keyed turn's tool call for "split the deck around the 1pm call" */
 function runToolResult(exec: import('../../adapters/model').ToolExecutor): string {
-  return exec.split('deck', { query: 'call', at: '13:00' })
+  return exec.split({ query: 'deck', around: { query: 'call', at: '13:00' } })
 }

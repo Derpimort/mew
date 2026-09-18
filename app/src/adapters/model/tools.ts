@@ -827,24 +827,26 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           endMin: clampInt(f.endMin, 0, 1439, 17 * 60),
         }))
       if (!places.length && !frees.length) return 'nothing to place — the call was empty'
-      return exec.plan(places, frees)
+      return exec.plan({ places, frees })
     }
     case 'complete_task':
-      return exec.complete(String(o.query ?? ''), atArg(o.at))
+      return exec.complete({ query: String(o.query ?? ''), at: atArg(o.at) })
     case 'move_task':
-      return exec.move(
-        String(o.query ?? ''),
-        optInt(o.toDayOffset, 0, 13),
-        optInt(o.toStartMin, 0, 1439),
-        undefined, // relStartMin: a keyed tool call always sends an absolute target
-        atArg(o.at),
-        // #49: only an explicit true grants it; with none the call is exactly as before
-        ...(o.allowOverlap === true ? ([true] as const) : [])
-      )
+      return exec.move({
+        query: String(o.query ?? ''),
+        toDayOffset: optInt(o.toDayOffset, 0, 13),
+        toStartMin: optInt(o.toStartMin, 0, 1439),
+        // relStartMin is omitted: a keyed tool call always sends an absolute target
+        at: atArg(o.at),
+        // #49: only an explicit true grants it; with none the field is absent and the
+        // executor's default stands — the same call as before, without the positional
+        // spread that used to be needed to leave one argument out of the middle
+        ...(o.allowOverlap === true ? { allowOverlap: true } : {}),
+      })
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))
     case 'edit_block': {
-      const patch: Parameters<ToolExecutor['edit']>[1] = {}
+      const patch: Parameters<ToolExecutor['edit']>[0]['patch'] = {}
       const sm = optInt(o.startMin, 0, 1439)
       const em = optInt(o.endMin, 1, 1440)
       const dm = optInt(o.durationMin, 5, 720)
@@ -857,15 +859,20 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (o.attention === 'background' || o.attention === 'focus') patch.attention = o.attention
       const due = optInt(o.dueMin, 0, 1439)
       if (due != null) patch.due = due
-      return exec.edit(String(o.query ?? ''), patch, atArg(o.at), recurScope(o.scope))
+      return exec.edit({
+        query: String(o.query ?? ''),
+        patch,
+        at: atArg(o.at),
+        scope: recurScope(o.scope),
+      })
     }
     case 'find_slot':
-      return exec.findSlot(
-        clampInt(o.durationMin, 5, 600, 30),
-        clampInt(o.dayOffset, 0, 13, 0),
-        optInt(o.notBeforeMin, 0, 1439),
-        optInt(o.notAfterMin, 1, 1440)
-      )
+      return exec.findSlot({
+        durationMin: clampInt(o.durationMin, 5, 600, 30),
+        dayOffset: clampInt(o.dayOffset, 0, 13, 0),
+        notBeforeMin: optInt(o.notBeforeMin, 0, 1439),
+        notAfterMin: optInt(o.notAfterMin, 1, 1440),
+      })
     case 'suggest_slots': {
       const win = (['morning', 'afternoon', 'evening'] as const).includes(o.window as never)
         ? (o.window as 'morning')
@@ -873,13 +880,13 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
         ? (o.tag as 'work')
         : 'work'
-      return exec.suggestSlots(
-        String(o.title ?? '').trim(),
+      return exec.suggestSlots({
+        title: String(o.title ?? '').trim(),
         tag,
-        clampInt(o.durationMin, 5, 600, 60),
-        optInt(o.dueMin, 0, 1439),
-        win
-      )
+        durationMin: clampInt(o.durationMin, 5, 600, 60),
+        dueMin: optInt(o.dueMin, 0, 1439),
+        window: win,
+      })
     }
     case 'analyze_day':
       return exec.analyze(clampInt(o.dayOffset, 0, 13, 0))
@@ -892,7 +899,8 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const d = o.dayOffset
       const dayOffset =
         typeof d === 'number' && Number.isInteger(d) && d >= 0 && d <= 13 ? d : undefined
-      return exec.remove(String(o.query ?? ''), {
+      return exec.remove({
+        query: String(o.query ?? ''),
         at,
         all,
         ...(scope ? { scope } : {}),
@@ -938,7 +946,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
             : undefined,
         }))
       if (!tasks.length) return 'nothing to propose — the call needs at least one task'
-      return exec.proposeScenarios(prompt, tasks)
+      return exec.proposeScenarios({ prompt, tasks })
     }
     case 'offer_choices': {
       const prompt = String(o.prompt ?? '').trim()
@@ -956,7 +964,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         })
       if (!prompt || !options.length)
         return 'nothing to offer — the call needs a prompt and at least one option'
-      return exec.offerChoices(prompt, options)
+      return exec.offerChoices({ prompt, options })
     }
     case 'undo_last_action':
       return exec.undoLast()
@@ -964,30 +972,28 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
         ? (o.tag as 'work')
         : undefined
-      return exec.listBlocks(parseListDay(o.day), tag)
+      return exec.listBlocks({ day: parseListDay(o.day), tag })
     }
     case 'resize_block': {
       const durationMin = optInt(o.durationMin, 5, 720)
       const relDurationMin = optInt(o.deltaMin, -600, 600)
       if (durationMin == null && relDurationMin == null)
         return 'nothing to resize — pass a durationMin or a deltaMin'
-      return exec.resize(
-        String(o.query ?? ''),
-        { durationMin, relDurationMin },
-        atArg(o.at),
-        recurScope(o.scope)
-      )
+      return exec.resize({
+        query: String(o.query ?? ''),
+        resize: { durationMin, relDurationMin },
+        at: atArg(o.at),
+        scope: recurScope(o.scope),
+      })
     }
     case 'duplicate_block':
-      return exec.duplicate(
-        String(o.query ?? ''),
-        {
-          toDayOffset: optInt(o.toDayOffset, 0, 13),
-          toStartMin: optInt(o.toStartMin, 0, 1439),
-          rrule: parseRecurrence(o.recurrence),
-        },
-        atArg(o.at)
-      )
+      return exec.duplicate({
+        query: String(o.query ?? ''),
+        toDayOffset: optInt(o.toDayOffset, 0, 13),
+        toStartMin: optInt(o.toStartMin, 0, 1439),
+        rrule: parseRecurrence(o.recurrence),
+        at: atArg(o.at),
+      })
     case 'batch_blocks': {
       const selector = {
         dayOffset: optInt(o.dayOffset, 0, 13),
@@ -1011,36 +1017,46 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (o.op === 'shift') {
         const deltaMin = optInt(o.deltaMin, -720, 720)
         if (!deltaMin) return 'nothing to shift — pass deltaMin (+ later, − earlier)'
-        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount, confirmToken, scope)
+        return exec.batch({
+          selector,
+          op: { kind: 'shift', deltaMin },
+          confirmCount,
+          confirmToken,
+          scope,
+        })
       }
       if (o.op === 'move_to_day') {
         const toDayOffset = optInt(o.toDayOffset, 0, 13)
         if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
-        return exec.batch(
+        return exec.batch({
           selector,
-          { kind: 'moveToDay', toDayOffset },
+          op: { kind: 'moveToDay', toDayOffset },
           confirmCount,
           confirmToken,
-          scope
-        )
+          scope,
+        })
       }
       if (o.op === 'set_tag') {
         const toTag = (['work', 'private', 'health', 'rest'] as const).includes(o.toTag as never)
           ? (o.toTag as 'work')
           : undefined
         if (!toTag) return 'nothing to tag — pass toTag (work, private, health or rest)'
-        return exec.batch(
+        return exec.batch({
           selector,
-          { kind: 'setTag', tag: toTag },
+          op: { kind: 'setTag', tag: toTag },
           confirmCount,
           confirmToken,
-          scope
-        )
+          scope,
+        })
       }
       return 'nothing to batch — op must be shift, move_to_day or set_tag'
     }
     case 'merge_blocks':
-      return exec.merge(String(o.query ?? ''), optInt(o.dayOffset, 0, 13), atArg(o.at))
+      return exec.merge({
+        query: String(o.query ?? ''),
+        dayOffset: optInt(o.dayOffset, 0, 13),
+        at: atArg(o.at),
+      })
     case 'move_relative': {
       const dirs = ['earlier', 'later', 'next_day', 'next_free'] as const
       const direction = dirs.includes(o.direction as never)
@@ -1048,12 +1064,12 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         : null
       if (!direction)
         return 'nothing to move — pass a direction (earlier, later, next_day, next_free)'
-      return exec.relativeMove(
-        String(o.query ?? ''),
+      return exec.relativeMove({
+        query: String(o.query ?? ''),
         direction,
-        optInt(o.amountMin, 5, 600),
-        atArg(o.at)
-      )
+        amountMin: optInt(o.amountMin, 5, 600),
+        at: atArg(o.at),
+      })
     }
     case 'split_block': {
       const query = String(o.query ?? '')
@@ -1064,9 +1080,10 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (startMin != null && endMin != null) {
         if (endMin <= startMin)
           return 'nothing to split around — aroundEndMin must come after aroundStartMin'
-        return exec.split(query, { startMin, endMin }, opts)
+        return exec.split({ query, around: { startMin, endMin }, ...opts })
       }
-      if (aroundQuery) return exec.split(query, { query: aroundQuery, at: atArg(o.aroundAt) }, opts)
+      if (aroundQuery)
+        return exec.split({ query, around: { query: aroundQuery, at: atArg(o.aroundAt) }, ...opts })
       return 'nothing to split around — pass aroundStartMin + aroundEndMin, or aroundQuery'
     }
     case 'give_room': {

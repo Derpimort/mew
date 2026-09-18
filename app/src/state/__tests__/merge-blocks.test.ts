@@ -235,7 +235,7 @@ describe('#74 — two same-tag blocks become one', () => {
     let afterMerge = ''
     scriptedModel.chunks = ['on it — ', 'and put back.']
     scriptedModel.midTurn = (exec) => {
-      merged = exec.merge('deck')
+      merged = exec.merge({ query: 'deck' })
       afterMerge = snapshot()
       undone = exec.undoLast()
     }
@@ -309,10 +309,14 @@ describe('#74 — two same-tag blocks become one', () => {
     await runTool('merge_blocks', { query: 'deck', dayOffset: 1, at: '9:00' }, exec)
     await runTool('merge_blocks', { query: 'deck' }, exec)
     await runTool('merge_blocks', { query: 'deck', dayOffset: 99 }, exec)
+    /* read as one named object since #165: the same three values the tool has
+       always passed, and the clamp still proves itself on the third row. Only
+       the shape moved — this test exists to watch the pass-through, and the
+       pass-through is what the refactor changed. */
     expect(calls).toEqual([
-      ['deck', 1, '9:00'],
-      ['deck', undefined, undefined],
-      ['deck', 13, undefined], // a day offset clamps to the two weeks the tools cover
+      [{ query: 'deck', dayOffset: 1, at: '9:00' }],
+      [{ query: 'deck', dayOffset: undefined, at: undefined }],
+      [{ query: 'deck', dayOffset: 13, at: undefined }], // a day offset clamps to the two weeks the tools cover
     ])
   })
 })

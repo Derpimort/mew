@@ -263,7 +263,7 @@ describe('#62 — keyed remove_blocks behaves the same', () => {
     await fresh(threeLunches(), 'local')
     let asked = ''
     scriptedModel.midTurn = (exec) => {
-      asked = exec.remove('lunch', { at: '12:00' })
+      asked = exec.remove({ query: 'lunch', at: '12:00' })
     }
     await say('drop the 12 o clock lunch')
     await settle()
@@ -272,7 +272,7 @@ describe('#62 — keyed remove_blocks behaves the same', () => {
 
     let removed = ''
     scriptedModel.midTurn = (exec) => {
-      removed = exec.remove('lunch', { at: '12:00', dayOffset: 1 })
+      removed = exec.remove({ query: 'lunch', at: '12:00', dayOffset: 1 })
     }
     await say('the one tomorrow')
     await settle()
@@ -319,7 +319,7 @@ describe('#62 review — a weekday-named title is still the title', () => {
   it('keyed: the "both" chip sweeps every match — the title never pins it to Friday', async () => {
     await fresh([named('wed', 'Friday demo', WED), named('thu', 'Friday demo', THU)], 'local')
     scriptedModel.midTurn = (exec) => {
-      exec.remove('Friday demo', { at: '15:00' })
+      exec.remove({ query: 'Friday demo', at: '15:00' })
     }
     await say('drop the 3pm friday demo')
     await settle()

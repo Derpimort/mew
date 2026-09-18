@@ -197,7 +197,10 @@ describe('#22 AC4 — MEW proposes human times', () => {
     const anchor = block({ id: 'a', title: 'Standup', startMin: 8 * 60, endMin: 8 * 60 + 15 })
     await fresh([anchor], TUE(10, 7))
     await viaTool((exec) =>
-      exec.plan([{ title: 'Email update', tag: 'work', dayOffset: 0, durationMin: 60 }], [])
+      exec.plan({
+        places: [{ title: 'Email update', tag: 'work', dayOffset: 0, durationMin: 60 }],
+        frees: [],
+      })
     )
     expect(byTitle('Email update')).toMatchObject({ dayKey: TODAY, startMin: 10 * 60 + 30 })
   })
@@ -205,7 +208,7 @@ describe('#22 AC4 — MEW proposes human times', () => {
   it('find_slot hands the model a round window, never the ragged now', async () => {
     const anchor = block({ id: 'a', title: 'Standup', startMin: 8 * 60, endMin: 8 * 60 + 15 })
     await fresh([anchor], TUE(10, 7))
-    const out = await viaTool((exec) => exec.findSlot(60, 0))
+    const out = await viaTool((exec) => exec.findSlot({ durationMin: 60, dayOffset: 0 }))
     expect(out).toMatch(/^Clear window today: 10:30–11:30 /)
   })
 
@@ -218,7 +221,7 @@ describe('#22 AC4 — MEW proposes human times', () => {
       external: { calId: 'c', eventId: 'call' },
     })
     await fresh([meeting], TUE(10, 7)) // floor 10:12; :30 would run past 11:20
-    const out = await viaTool((exec) => exec.findSlot(60, 0))
+    const out = await viaTool((exec) => exec.findSlot({ durationMin: 60, dayOffset: 0 }))
     expect(out).toMatch(/^Clear window today: 10:15–11:15 /)
   })
 })
@@ -274,19 +277,19 @@ describe('#22 AC5 — every executor placement starts on the 5-minute grid', () 
       await fresh(raggedWeek(), clock())
       const before = new Set(blocks().map((b) => b.id))
       await viaTool((exec) =>
-        exec.plan(
-          [
+        exec.plan({
+          places: [
             { title: 'Deep draft', tag: 'work', dayOffset: 0, durationMin: 45 + rand(4) * 15 },
             { title: 'Errand', tag: 'private', dayOffset: 0, durationMin: 20 + rand(3) * 5 },
           ],
-          []
-        )
+          frees: [],
+        })
       )
       for (const b of blocks().filter((x) => !before.has(x.id))) expectPlaced(b.id, undefined)
 
       // move with no time: scorer, then the first-fit fallback
       const flex0 = byTitle('Reading')
-      await viaTool((exec) => exec.move('Reading', rand(2)))
+      await viaTool((exec) => exec.move({ query: 'Reading', toDayOffset: rand(2) }))
       expectPlaced('flex', flex0)
 
       // moveToNextFree (now + 15, ragged)

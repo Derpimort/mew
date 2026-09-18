@@ -21,7 +21,13 @@ describe('suggest_slots tool', () => {
       { title: 'gym', tag: 'health', durationMin: 60, dueMin: 780, window: 'morning' },
       exec
     )
-    expect(suggestSlots).toHaveBeenCalledWith('gym', 'health', 60, 780, 'morning')
+    expect(suggestSlots).toHaveBeenCalledWith({
+      title: 'gym',
+      tag: 'health',
+      durationMin: 60,
+      dueMin: 780,
+      window: 'morning',
+    })
     expect(out).toContain('Best slots')
   })
 
@@ -33,7 +39,13 @@ describe('suggest_slots tool', () => {
       { title: 'deep work', durationMin: 99999, window: 'midnight' },
       exec
     )
-    expect(suggestSlots).toHaveBeenCalledWith('deep work', 'work', 600, undefined, undefined)
+    expect(suggestSlots).toHaveBeenCalledWith({
+      title: 'deep work',
+      tag: 'work',
+      durationMin: 600,
+      dueMin: undefined,
+      window: undefined,
+    })
   })
 })
 
@@ -75,7 +87,7 @@ describe('plan_blocks recurrence', () => {
       },
       exec
     )
-    const places = plan.mock.calls[0][0]
+    const places = plan.mock.calls[0][0].places
     expect(places[0].rrule).toEqual({ freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'], count: 24 })
   })
 
@@ -87,7 +99,7 @@ describe('plan_blocks recurrence', () => {
       { places: [{ title: 'rent', tag: 'work', dayOffset: 0, recurrence: { freq: 'MONTHLY' } }] },
       exec
     )
-    const places = plan.mock.calls[0][0]
+    const places = plan.mock.calls[0][0].places
     expect(places).toHaveLength(1)
     expect(places[0].rrule).toBeUndefined()
   })
@@ -153,9 +165,8 @@ describe('propose_scenarios tool (#293)', () => {
       },
       exec
     )
-    const [prompt, tasks] = proposeScenarios.mock.calls[0] as unknown as [
-      string,
-      { title: string }[],
+    const [{ prompt, tasks }] = proposeScenarios.mock.calls[0] as unknown as [
+      { prompt: string; tasks: { title: string }[] },
     ]
     expect(prompt).toBe('three ways')
     expect(tasks).toEqual([
@@ -203,25 +214,25 @@ describe('list_blocks tool', () => {
     const exec = { listBlocks } as unknown as ToolExecutor
 
     await runTool('list_blocks', { day: 'today' }, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith(0, undefined)
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 0, tag: undefined })
     await runTool('list_blocks', { day: 'tomorrow' }, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith(1, undefined)
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 1, tag: undefined })
     await runTool('list_blocks', { day: 'week' }, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith('week', undefined)
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 'week', tag: undefined })
     await runTool('list_blocks', { day: '2' }, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith(2, undefined)
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 2, tag: undefined })
     // an omitted day defaults to today
     await runTool('list_blocks', {}, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith(0, undefined)
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 0, tag: undefined })
   })
 
   it('passes a valid tag and drops an invalid one', async () => {
     const listBlocks = vi.fn(() => 'ok')
     const exec = { listBlocks } as unknown as ToolExecutor
     await runTool('list_blocks', { day: 'today', tag: 'health' }, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith(0, 'health')
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 0, tag: 'health' })
     await runTool('list_blocks', { day: 'today', tag: 'bogus' }, exec)
-    expect(listBlocks).toHaveBeenLastCalledWith(0, undefined)
+    expect(listBlocks).toHaveBeenLastCalledWith({ day: 0, tag: undefined })
   })
 })
 
@@ -243,24 +254,25 @@ describe('resize_block tool (#335)', () => {
     const resize = vi.fn(() => 'Updated — deck is now 9:00–10:30 (90 min).')
     const exec = { resize } as unknown as ToolExecutor
     await runTool('resize_block', { query: 'deck', durationMin: 90, at: '9:00' }, exec)
-    expect(resize).toHaveBeenCalledWith(
-      'deck',
-      { durationMin: 90, relDurationMin: undefined },
-      '9:00',
-      undefined
-    )
+    /* one named object since #165 — the same four values */
+    expect(resize).toHaveBeenCalledWith({
+      query: 'deck',
+      resize: { durationMin: 90, relDurationMin: undefined },
+      at: '9:00',
+      scope: undefined,
+    })
   })
 
   it('dispatches a signed delta as relDurationMin, and carries the recurring scope', async () => {
     const resize = vi.fn(() => 'ok')
     const exec = { resize } as unknown as ToolExecutor
     await runTool('resize_block', { query: 'gym', deltaMin: 30, scope: 'series' }, exec)
-    expect(resize).toHaveBeenCalledWith(
-      'gym',
-      { durationMin: undefined, relDurationMin: 30 },
-      undefined,
-      'series'
-    )
+    expect(resize).toHaveBeenCalledWith({
+      query: 'gym',
+      resize: { durationMin: undefined, relDurationMin: 30 },
+      at: undefined,
+      scope: 'series',
+    })
   })
 
   it('an empty call (no duration, no delta) never reaches the executor', async () => {
@@ -294,15 +306,14 @@ describe('duplicate_block tool (#335)', () => {
       { query: 'deck', at: '9:00', toDayOffset: 3, recurrence: { freq: 'WEEKLY', byday: 'MO,WE' } },
       exec
     )
-    expect(duplicate).toHaveBeenCalledWith(
-      'deck',
-      {
-        toDayOffset: 3,
-        toStartMin: undefined,
-        rrule: { freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'] },
-      },
-      '9:00'
-    )
+    /* one named object since #165, with the opts bag flattened in — same values */
+    expect(duplicate).toHaveBeenCalledWith({
+      query: 'deck',
+      toDayOffset: 3,
+      toStartMin: undefined,
+      rrule: { freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'] },
+      at: '9:00',
+    })
   })
 
   it('drops a monthly (unsupported) recurrence while still copying', async () => {
@@ -313,9 +324,11 @@ describe('duplicate_block tool (#335)', () => {
       { query: 'deck', toDayOffset: 1, recurrence: { freq: 'MONTHLY' } },
       exec
     )
-    const args = duplicate.mock.calls[0]
-    expect(args[1].rrule).toBeUndefined()
-    expect(args[1].toDayOffset).toBe(1)
+    /* the opts bag is flattened into duplicate's one named object (#165), so its
+       fields are read off that object rather than off a second position */
+    const [args] = duplicate.mock.calls[0]
+    expect(args.rrule).toBeUndefined()
+    expect(args.toDayOffset).toBe(1)
   })
 })
 
@@ -337,7 +350,12 @@ describe('move_relative tool (#335)', () => {
       { query: 'deck', direction: 'earlier', amountMin: 30, at: '9:00' },
       exec
     )
-    expect(relativeMove).toHaveBeenCalledWith('deck', 'earlier', 30, '9:00')
+    expect(relativeMove).toHaveBeenCalledWith({
+      query: 'deck',
+      direction: 'earlier',
+      amountMin: 30,
+      at: '9:00',
+    })
   })
 
   it('an invalid direction never reaches the executor', async () => {

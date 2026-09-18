@@ -269,8 +269,8 @@ describe('#126 — a question aside keeps its "?" and nothing after it', () => {
     )
     let reply = ''
     scriptedModel.midTurn = (exec) => {
-      reply = exec.plan(
-        [
+      reply = exec.plan({
+        places: [
           {
             title: 'report',
             tag: 'work',
@@ -290,8 +290,8 @@ describe('#126 — a question aside keeps its "?" and nothing after it', () => {
             durationStated: true,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('put the report at 5:30 today and the review at 11 tomorrow')
     await settle()

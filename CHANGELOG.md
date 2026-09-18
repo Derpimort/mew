@@ -304,6 +304,12 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   Their screenshots are current, and the Google sign-in proof runs fully offline.
 
 ### Under the hood
+- Every action MEW can take now carries the details of your ask in one piece. They used to travel
+  as a row of unlabelled values, and one at the end of the row could be dropped on the way without
+  anything noticing — the ask read correctly, the week saved correctly, and the thing you asked for
+  simply did not happen. That is the fault that made "move the gym on wednesday" ignore the day you
+  named, and it could have happened to any detail of any action. A test now reads the code itself to
+  keep it that way, so the next detail anyone adds arrives where it was sent.
 - Two more chip families are held by tests: typing "keep both" or "drop Groceries" when MEW offers
   those choices, and "give them room" or "leave as-is" when it offers to resize, each does exactly
   what tapping would — the acknowledgment changes nothing, the action changes only what the chip

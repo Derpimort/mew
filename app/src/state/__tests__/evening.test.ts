@@ -190,7 +190,9 @@ afterEach(() => {
 describe('#22 AC1 — asked at 20:46, tonight has room', () => {
   it('suggest_slots names a slot tonight, even when tomorrow morning ranks first', async () => {
     await fresh([homeCall()], TUE(20, 46))
-    const out = await viaTool((exec) => exec.suggestSlots('prod release', 'work', 60))
+    const out = await viaTool((exec) =>
+      exec.suggestSlots({ title: 'prod release', tag: 'work', durationMin: 60 })
+    )
     expect(out).toMatch(/^Best slots for "prod release", highest first: tomorrow 8:00–9:00/)
     expect(out).toContain('Tonight is open too: 21:00–22:00.') // slice C: a round start
     expect(out).not.toMatch(/held/)
@@ -199,7 +201,13 @@ describe('#22 AC1 — asked at 20:46, tonight has room', () => {
   it('"tonight" (window evening) ranks tonight first', async () => {
     await fresh([homeCall()], TUE(20, 46))
     const out = await viaTool((exec) =>
-      exec.suggestSlots('prod release', 'work', 60, undefined, 'evening')
+      exec.suggestSlots({
+        title: 'prod release',
+        tag: 'work',
+        durationMin: 60,
+        dueMin: undefined,
+        window: 'evening',
+      })
     )
     expect(out).toMatch(/^Best slots for "prod release", highest first: today 21:00–22:00/)
     expect(out).not.toContain('Tonight is open too') // already on the list
@@ -208,7 +216,10 @@ describe('#22 AC1 — asked at 20:46, tonight has room', () => {
   it('a time-less plan lands tonight in one sweep — no "the day is full"', async () => {
     await fresh([homeCall()], TUE(20, 46))
     const out = await viaTool((exec) =>
-      exec.plan([{ title: 'prod release', tag: 'work', dayOffset: 0, durationMin: 60 }], [])
+      exec.plan({
+        places: [{ title: 'prod release', tag: 'work', dayOffset: 0, durationMin: 60 }],
+        frees: [],
+      })
     )
     expect(out).not.toMatch(/couldn't hold|full/)
     const placed = blocks().find((b) => b.title === 'prod release')!
@@ -223,7 +234,7 @@ describe('#22 AC1 — asked at 20:46, tonight has room', () => {
 describe('#22 AC3 — the no-slot reason is true', () => {
   it('find_slot at 22:10 names the plannable hours and the real free air', async () => {
     await fresh([homeCall()], TUE(22, 10))
-    const out = await viaTool((exec) => exec.findSlot(60, 0))
+    const out = await viaTool((exec) => exec.findSlot({ durationMin: 60, dayOffset: 0 }))
     expect(out).toBe(
       "No 60-min window today fits inside the hours I plan in (8:00–22:30). Open air today: 22:15–23:15, running past the hours I plan in (8:00–22:30) — name a time there and I'll hold it. Nearest clear options: tomorrow 9:00–10:00."
     )
@@ -231,7 +242,14 @@ describe('#22 AC3 — the no-slot reason is true', () => {
 
   it('suggest_slots with a deadline past the plannable end says so, and names the air', async () => {
     await fresh([homeCall()], TUE(22, 10))
-    const out = await viaTool((exec) => exec.suggestSlots('prod release', 'work', 60, 23 * 60 + 15))
+    const out = await viaTool((exec) =>
+      exec.suggestSlots({
+        title: 'prod release',
+        tag: 'work',
+        durationMin: 60,
+        dueMin: 23 * 60 + 15,
+      })
+    )
     expect(out).toBe(
       `No 60-min slot for "prod release" fits inside the hours I plan in (8:00–22:30) before its deadline today. Open air today: 22:10–23:15, running past the hours I plan in (8:00–22:30) — name a time there and I'll hold it.`
     )
@@ -240,7 +258,7 @@ describe('#22 AC3 — the no-slot reason is true', () => {
   it('a day that really is held keeps the held wording — it is true there', async () => {
     const wall = block({ id: 'wall', title: 'Offsite', startMin: 8 * 60, endMin: 24 * 60 })
     await fresh([wall], TUE(10, 0))
-    const out = await viaTool((exec) => exec.findSlot(60, 0))
+    const out = await viaTool((exec) => exec.findSlot({ durationMin: 60, dayOffset: 0 }))
     expect(out).toMatch(/every gap is held by something fixed or committed/)
     expect(out).toContain('tomorrow 9:00–10:00')
   })
@@ -248,7 +266,14 @@ describe('#22 AC3 — the no-slot reason is true', () => {
   it("a stated ceiling is the user's own limit and keeps its wording", async () => {
     const afternoon = block({ id: 'pm', startMin: 12 * 60, endMin: 17 * 60 })
     await fresh([afternoon], TUE(12, 0))
-    const out = await viaTool((exec) => exec.findSlot(60, 0, undefined, 17 * 60))
+    const out = await viaTool((exec) =>
+      exec.findSlot({
+        durationMin: 60,
+        dayOffset: 0,
+        notBeforeMin: undefined,
+        notAfterMin: 17 * 60,
+      })
+    )
     expect(out).toMatch(/^No clear 60-min window today before 17:00 — every gap is held/)
     expect(out).toContain('later today 17:00–18:00')
   })
@@ -278,12 +303,14 @@ describe('#22 AC6 — plannable hours stand apart from quiet hours', () => {
   it("the owner's hours bound the tools: a 20:00 end keeps tonight out, a 7:00 start opens the morning", async () => {
     const hours = { startMin: 7 * 60, endMin: 20 * 60 }
     await fresh([homeCall()], TUE(19, 30), { plannableHours: hours })
-    const tonight = await viaTool((exec) => exec.suggestSlots('walk', 'private', 60))
+    const tonight = await viaTool((exec) =>
+      exec.suggestSlots({ title: 'walk', tag: 'private', durationMin: 60 })
+    )
     expect(tonight).not.toMatch(/today \d/)
     expect(tonight).toContain(
       "Open air today: 19:30–23:15, running past the hours I plan in (7:00–20:00) — name a time there and I'll hold it."
     )
-    const morning = await viaTool((exec) => exec.findSlot(60, 1))
+    const morning = await viaTool((exec) => exec.findSlot({ durationMin: 60, dayOffset: 1 }))
     expect(morning).toBe(
       'Clear window Wednesday: 7:00–8:00 (checked against every time-holding block).'
     )
@@ -292,10 +319,12 @@ describe('#22 AC6 — plannable hours stand apart from quiet hours', () => {
   it('the pacing pass stays MEW-initiated: a wall-to-wall classic day is offered a breather, none placed at 18:30', async () => {
     await fresh([homeCall()], TUE(7, 30)) // a seeded week, so the turn reaches the model
     const out = await viaTool((exec) =>
-      exec.plan(
-        [{ title: 'Build day', tag: 'work', dayOffset: 0, startMin: 8 * 60, durationMin: 630 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'Build day', tag: 'work', dayOffset: 0, startMin: 8 * 60, durationMin: 630 },
+        ],
+        frees: [],
+      })
     )
     expect(out).toContain('runs 8:00–18:30 unbroken — want me to make room for a short breather?')
     expect(blocks().some((b) => b.title === 'Breather')).toBe(false)
@@ -319,7 +348,7 @@ describe('#22 AC6 — plannable hours stand apart from quiet hours', () => {
 
   it('the model is told the bounds', async () => {
     await fresh([homeCall()], TUE(11, 0))
-    const out = await viaTool((exec) => exec.listBlocks(0))
+    const out = await viaTool((exec) => exec.listBlocks({ day: 0 }))
     expect(out).not.toBe('')
     expect(scriptedModel.lastCtx!.plannableHours).toBe('8:00–22:30')
     expect(contextBlock(scriptedModel.lastCtx!)).toContain('>8:00–22:30</plannable-hours>')

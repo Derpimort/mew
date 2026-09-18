@@ -428,7 +428,7 @@ describe('RC journey 2: a meeting lands on flexible work', () => {
     let moved = ''
     let undone = ''
     scriptedModel.midTurn = (exec) => {
-      moved = exec.move('deck polish (part 2)', 0, 14 * 60)
+      moved = exec.move({ query: 'deck polish (part 2)', toDayOffset: 0, toStartMin: 14 * 60 })
       undone = exec.undoLast()
     }
     await say('move the second deck polish piece to 2pm — no, put it back')

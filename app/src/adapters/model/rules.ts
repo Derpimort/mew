@@ -79,15 +79,15 @@ export function runIntent(
         p.window == null // #117: "tonight" is the owner's own word on when
       const floor = planMode === 'always' ? 2 : 3
       if (planMode !== 'off' && !frees.length && places.length >= floor && places.every(unpinned)) {
-        const out = exec.proposeScenarios(
-          '',
-          places.map((p) => ({
+        const out = exec.proposeScenarios({
+          prompt: '',
+          tasks: places.map((p) => ({
             title: p.title,
             tag: p.tag,
             durationMin: p.durationMin,
             due: p.due,
-          }))
-        )
+          })),
+        })
         /* the executor may have posted the picker (#254 pattern): its result
            then addresses a model — the floor stays quiet, the cards ARE the
            reply. A fall-through line (single shape, nothing fits) speaks. */
@@ -96,8 +96,8 @@ export function runIntent(
       /* #116: an ask that no longer fits today posts its tomorrow offer as chips;
          the floor stays quiet then, the chips ARE the reply */
       return quietIfChoices(
-        exec.plan(
-          places.map((p) => ({
+        exec.plan({
+          places: places.map((p) => ({
             title: p.title,
             tag: p.tag,
             dayOffset: p.dayOffset ?? 0,
@@ -116,31 +116,33 @@ export function runIntent(
             window: p.window,
             afterDinner: p.afterDinner,
           })),
-          frees.map((f) => ({
+          frees: frees.map((f) => ({
             dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
             startMin: f.startMin,
             endMin: f.endMin,
-          }))
-        )
+          })),
+        })
       )
     }
     case 'complete':
       /* an ambiguous name (#334) posts chips and returns CHOICES_POSTED — the
          floor then stays quiet, the chips ARE the reply (the remove precedent) */
-      return quietIfChoices(exec.complete(intent.query ?? '', intent.at))
+      return quietIfChoices(exec.complete({ query: intent.query ?? '', at: intent.at }))
     case 'move':
       return quietIfChoices(
-        exec.move(
-          intent.query ?? '',
-          intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
-            ? Number(intent.toDayKey)
-            : undefined,
-          intent.toStartMin,
-          intent.relStartMin, // #320: a relative shift ("30 min earlier") the executor applies
-          intent.at, // #334: the target block's current start, pinning which of several
-          undefined, // #49 allowOverlap is model-only — the keyless floor never grants one
-          intent.fromDayOffset // #160: a day the ask named pins WHICH block moves
-        )
+        exec.move({
+          query: intent.query ?? '',
+          toDayOffset:
+            intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
+              ? Number(intent.toDayKey)
+              : undefined,
+          toStartMin: intent.toStartMin,
+          relStartMin: intent.relStartMin, // #320: a relative shift ("30 min earlier")
+          at: intent.at, // #334: the target block's current start, pinning which of several
+          // #49 allowOverlap is model-only — the keyless floor never grants one, so it is
+          // absent rather than passed as undefined; the executor's default stands either way
+          fromDayOffset: intent.fromDayOffset, // #160: a day the ask named pins WHICH block moves
+        })
       )
     case 'capture':
       return exec.capture(intent.title ?? '')
@@ -153,19 +155,31 @@ export function runIntent(
       // #343: a scope word ("just this one", "from now on") the parser lifted off
       // rides through; absent on a series block, the executor asks with chips.
       return quietIfChoices(
-        exec.edit(intent.query ?? '', intent.edit ?? {}, intent.at, intent.seriesScope)
+        exec.edit({
+          query: intent.query ?? '',
+          patch: intent.edit ?? {},
+          at: intent.at,
+          scope: intent.seriesScope,
+        })
       )
     case 'resize':
       /* #335: a duration-only change keeping the start — routes through the same
          executor edit path, so an ambiguous name or a series block asks with
          chips (CHOICES_POSTED) exactly as edit does. */
       return quietIfChoices(
-        exec.resize(intent.query ?? '', intent.resize ?? {}, intent.at, intent.seriesScope)
+        exec.resize({
+          query: intent.query ?? '',
+          resize: intent.resize ?? {},
+          at: intent.at,
+          scope: intent.seriesScope,
+        })
       )
     case 'duplicate':
       /* #335: copy to another day/time — an ambiguous source name asks with
          chips; the keyless floor stays quiet and the chips ARE the reply. */
-      return quietIfChoices(exec.duplicate(intent.query ?? '', intent.duplicate ?? {}, intent.at))
+      return quietIfChoices(
+        exec.duplicate({ query: intent.query ?? '', ...(intent.duplicate ?? {}), at: intent.at })
+      )
     case 'split': {
       /* #73: split a block around a clock range or another block. The same
          executor the rescue chip's split runs, so an ambiguous name or a series
@@ -176,7 +190,9 @@ export function runIntent(
           ? { startMin: sp.gapStartMin, endMin: sp.gapEndMin }
           : { query: sp.aroundQuery ?? '', ...(sp.aroundAt ? { at: sp.aroundAt } : {}) }
       return quietIfChoices(
-        exec.split(intent.query ?? '', around, {
+        exec.split({
+          query: intent.query ?? '',
+          around,
           at: intent.at,
           tailMin: sp.tailMin,
           dayOffset: sp.dayOffset,
@@ -188,12 +204,12 @@ export function runIntent(
       /* #335: a relative nudge (earlier/later/next_day/next_free) — same chip
          behavior on an ambiguous name as a move. */
       return quietIfChoices(
-        exec.relativeMove(
-          intent.query ?? '',
-          intent.relmove?.direction ?? 'later',
-          intent.relmove?.amountMin,
-          intent.at
-        )
+        exec.relativeMove({
+          query: intent.query ?? '',
+          direction: intent.relmove?.direction ?? 'later',
+          amountMin: intent.relmove?.amountMin,
+          at: intent.at,
+        })
       )
     case 'batch': {
       /* #75: a wide batch posts its confirm as chips — the floor stays quiet,
@@ -209,8 +225,8 @@ export function runIntent(
             ? { kind: 'setTag' as const, tag: bt.toTag! } // #75 slice 2: a retag
             : { kind: 'moveToDay' as const, toDayOffset: bt.toDayOffset ?? 0 }
       return quietIfChoices(
-        exec.batch(
-          {
+        exec.batch({
+          selector: {
             dayOffset: bt.dayOffset,
             afterMin: bt.afterMin,
             beforeMin: bt.beforeMin,
@@ -218,17 +234,21 @@ export function runIntent(
             titleQuery: bt.titleQuery,
           },
           op,
-          bt.confirmCount,
-          bt.confirmToken,
+          confirmCount: bt.confirmCount,
+          confirmToken: bt.confirmToken,
           /* #75 slice 3: the scope word a chip re-issued ("just this one") */
-          intent.seriesScope
-        )
+          scope: intent.seriesScope,
+        })
       )
     }
     case 'merge':
       /* #74: join same-tag blocks on one day into one — the executor refuses (and
          says why) anything that isn't the owner's own open blocks across free air */
-      return exec.merge(intent.query ?? '', intent.merge?.dayOffset, intent.at)
+      return exec.merge({
+        query: intent.query ?? '',
+        dayOffset: intent.merge?.dayOffset,
+        at: intent.at,
+      })
     case 'giveRoom':
       /* #322: the "give them room" chip — resize the just-placed blocks of one
          focus class up to how the kind really runs. Same executor the keyed
@@ -244,7 +264,8 @@ export function runIntent(
          series block) the this/following/series scope chips (#343) — the floor
          stays quiet and the chips/confirm message IS the reply. */
       return quietIfChoices(
-        exec.remove(intent.query ?? '', {
+        exec.remove({
+          query: intent.query ?? '',
           ...(intent.remove ?? {}),
           ...(intent.seriesScope ? { scope: intent.seriesScope } : {}),
         })
@@ -270,7 +291,7 @@ export function runIntent(
          returns — one executor path, so keyless and keyed can't drift. The
          executor's listBlocks never mutates and never snapshots; the readout
          string is the reply the floor yields verbatim. */
-      return exec.listBlocks(intent.list?.day ?? 0, intent.list?.tag)
+      return exec.listBlocks({ day: intent.list?.day ?? 0, tag: intent.list?.tag })
   }
 }
 
@@ -291,11 +312,13 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
   /* a which-block chip re-asks with the target's time ("the Deck polish at 9:00") */
   const pinned = ask.query.match(/^(.+?)\s+at\s+(\d{1,2}:\d{2})$/)
   return quietIfChoices(
-    exec.split(
-      pinned ? pinned[1] : ask.query,
-      { startMin: ask.gapStartMin, endMin: ask.gapEndMin },
-      { tailMin: ask.tailMin, dayOffset, ...(pinned ? { at: pinned[2] } : {}) }
-    )
+    exec.split({
+      query: pinned ? pinned[1] : ask.query,
+      around: { startMin: ask.gapStartMin, endMin: ask.gapEndMin },
+      tailMin: ask.tailMin,
+      dayOffset,
+      ...(pinned ? { at: pinned[2] } : {}),
+    })
   )
 }
 
@@ -314,14 +337,14 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
     braindump auto-offer; an explicit "plan my week" is the user choosing the
     picker. */
 function runRitual(ctx: WeekContext, exec: ToolExecutor): string {
-  const out = exec.proposeScenarios(
-    '',
-    ritualTasks({
+  const out = exec.proposeScenarios({
+    prompt: '',
+    tasks: ritualTasks({
       realisticBestH: ctx.realisticBestH,
       captures: ctx.openCaptures ?? [],
       prefs: ctx.prefs ?? [],
-    })
-  )
+    }),
+  })
   /* the picker posted (#254 pattern): the cards ARE the reply — stay quiet.
      A fall-through line (one shape, nothing fits) speaks. */
   return out.startsWith(CHOICES_POSTED) ? '' : out

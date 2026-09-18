@@ -136,30 +136,265 @@ export { CHOICES_POSTED } from './choicesPosted'
 
 /** Executed against the live store; every method returns a short factual
     sentence describing what really happened (a tool_result, not a hope). */
+/** Everything `move` needs, by name (#165).
+
+    WHY AN OBJECT AND NOT SEVEN PARAMETERS: the executor is implemented once as
+    an object literal whose methods forward their arguments by hand, and
+    TypeScript accepts a function with FEWER parameters where one with more is
+    expected. So a wrapper that dropped the last argument satisfied this
+    interface and `tsc` stayed silent — #160 shipped a move that read the day
+    correctly and ignored it. Callers now write what they mean, and the wrapper
+    passes this object through untouched.
+
+    THE LIMIT, stated because it decides how the wrapper must be written: naming
+    the fields does NOT by itself make a dropped argument a compile error. A
+    missing REQUIRED field is (TS2345); a missing OPTIONAL one is not, and every
+    argument dropped in this codebase so far was optional. The guarantee comes
+    from forwarding the object wholesale, and #170's arity pin is what catches a
+    wrapper that destructures and rebuilds it instead. */
+export interface MoveArgs {
+  /** the block to move, as the owner named it */
+  query: string
+  /** days from today for its new day */
+  toDayOffset?: number
+  /** its new start, minutes from midnight */
+  toStartMin?: number
+  /** #320: a relative shift for a referent follow-up ("30 min earlier" = −30).
+      The executor computes the absolute start from the resolved block's CURRENT
+      start, because only the live block knows it and a today-move needs an
+      absolute target. */
+  relStartMin?: number
+  /** #334: the TARGET block's CURRENT start time, pinning which of several
+      same-named blocks to move — distinct from `toStartMin`, its new start. */
+  at?: string
+  /** #49: a granted overlap — see PlaceSpec.allowOverlap */
+  allowOverlap?: boolean
+  /** #160: the TARGET block's own day when the ask named one ("move the gym on
+      wednesday to 15:00"), pinning which of several same-titled blocks moves —
+      the same pin remove has read since #72. */
+  fromDayOffset?: number
+}
+
+/** Everything `merge` needs, by name (#165). Same rule as MoveArgs: the wrapper
+    forwards this object whole, because naming the fields alone would not stop a
+    rebuilt object dropping an optional one. */
+export interface MergeArgs {
+  /** the blocks to merge, as the owner named them */
+  query: string
+  /** days from today of the pair to merge, when the ask named a day */
+  dayOffset?: number
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+}
+
+/** Everything `split` needs, by name (#165). The opts bag is flattened in: one
+    object per call rather than two positions and a bag, and the wrapper forwards
+    it whole. */
+export interface SplitArgs {
+  /** the block to split, as the owner named it */
+  query: string
+  /** the gap to split around: a clock range, or another block (its title words
+      plus `at`, e.g. the 1pm call) */
+  around: { startMin: number; endMin: number } | { query: string; at?: string }
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+  /** how long the second piece runs — the rescue chip's "keep Nm after"; without
+      it part 2 keeps the rest of the block's length */
+  tailMin?: number
+  /** days from today of the one to split */
+  dayOffset?: number
+  /** how a RECURRING block's split lands; omit on a series block and the
+      executor asks with this/following/series chips */
+  scope?: 'this' | 'following' | 'series'
+}
+
+/** Everything `remove` needs, by name (#165). The opts bag is flattened in, so
+    there is one object to forward whole rather than a query and a bag that can
+    drift apart. */
+export interface RemoveArgs {
+  /** the blocks to remove, as the owner named them */
+  query: string
+  /** the start time pinning which of several same-named blocks to drop */
+  at?: string
+  /** drop every match rather than asking */
+  all?: boolean
+  /** #343: how a RECURRING block's delete lands — 'this' drops the next
+      occurrence alone, 'following' splits the series and drops from that day
+      forward, 'series' clears the whole linked set. Omit it on a series block
+      and the executor asks with this/following/series chips. */
+  scope?: 'this' | 'following' | 'series'
+  /** #62: days from today of the one to remove — with `at`, pins one occurrence */
+  dayOffset?: number
+}
+
+/** Everything `listBlocks` needs, by name (#165). */
+export interface ListBlocksArgs {
+  /** days from today, or 'week' for the whole week */
+  day: number | 'week'
+  /** only blocks with this tag */
+  tag?: import('../../domain/types').Tag
+}
+
+/** Everything `offerChoices` needs, by name (#165). */
+export interface OfferChoicesArgs {
+  /** the question MEW asks above the chips */
+  prompt: string
+  /** the chips, in the order they read */
+  options: ChoiceOption[]
+}
+
+/** Everything `proposeScenarios` needs, by name (#165). */
+export interface ProposeScenariosArgs {
+  /** the question MEW asks above the scenarios */
+  prompt: string
+  /** the tasks each scenario places */
+  tasks: ScenarioTaskSpec[]
+}
+
+/** Everything `resize` needs, by name (#165). */
+export interface ResizeArgs {
+  /** the block to resize, as the owner named it */
+  query: string
+  /** the new length, absolute or relative to its current one */
+  resize: { durationMin?: number; relDurationMin?: number }
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+  /** how a RECURRING block's resize lands */
+  scope?: 'this' | 'following' | 'series'
+}
+
+/** Everything `relativeMove` needs, by name (#165). */
+export interface RelativeMoveArgs {
+  /** the block to nudge, as the owner named it */
+  query: string
+  /** which way it moves */
+  direction: 'earlier' | 'later' | 'next_day' | 'next_free'
+  /** how far, in minutes, where the direction takes an amount */
+  amountMin?: number
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+}
+
+/** Everything `edit` needs, by name (#165). */
+export interface EditArgs {
+  /** the block to reshape, as the owner named it */
+  query: string
+  /** what to change about it */
+  patch: {
+    startMin?: number
+    endMin?: number
+    durationMin?: number
+    /** #320: a relative length delta ("give it another 30" = +30) applied to
+          the resolved block's CURRENT duration by the executor. */
+    relDurationMin?: number
+    title?: string
+    tag?: import('../../domain/types').Tag
+    attention?: 'focus' | 'background'
+    due?: number
+  }
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+  /** how a RECURRING block's edit lands */
+  scope?: 'this' | 'following' | 'series'
+}
+
+/** Everything `complete` needs, by name (#165). */
+export interface CompleteArgs {
+  /** the block to check off, as the owner named it */
+  query: string
+  /** #334: the TARGET block's start time — with it, name AND time must both
+      match, so a shared title resolves to exactly one block. Omit it and a bare
+      ambiguous name asks (offer_choices) rather than guessing. */
+  at?: string
+}
+
+/** Everything `findSlot` needs, by name (#165). */
+export interface FindSlotArgs {
+  /** how long the block needs to be */
+  durationMin: number
+  /** days from today to look on */
+  dayOffset: number
+  /** earliest acceptable start, minutes from midnight */
+  notBeforeMin?: number
+  /** latest acceptable end, minutes from midnight */
+  notAfterMin?: number
+}
+
+/** Everything `suggestSlots` needs, by name (#165). */
+export interface SuggestSlotsArgs {
+  /** what the block is for, as the owner named it */
+  title: string
+  /** which part of life it belongs to */
+  tag: import('../../domain/types').Tag
+  /** how long it needs to be */
+  durationMin: number
+  /** the time it has to be done by, minutes from midnight */
+  dueMin?: number
+  /** the part of day the owner asked for */
+  window?: 'morning' | 'afternoon' | 'evening'
+}
+
+/** Everything `plan` needs, by name (#165). */
+export interface PlanArgs {
+  /** the blocks to place */
+  places: PlaceSpec[]
+  /** the stretches to leave free */
+  frees: FreeSpec[]
+}
+
+/** Everything `duplicate` needs, by name (#165). The opts bag is flattened in,
+    so there is one object to forward rather than a query that can drift from
+    its options. */
+export interface DuplicateArgs {
+  /** the block to copy, as the owner named it */
+  query: string
+  /** days from today for the copy */
+  toDayOffset?: number
+  /** the copy's start, minutes from midnight */
+  toStartMin?: number
+  /** make the copy repeat on this rule */
+  rrule?: import('../../domain/recurrence').Rrule
+  /** the start time pinning which of several same-named blocks to copy */
+  at?: string
+}
+
+/** Everything `batch` needs, by name (#165). */
+export interface BatchArgs {
+  /** which blocks the sweep picks */
+  selector: {
+    dayOffset?: number
+    afterMin?: number
+    beforeMin?: number
+    tag?: import('../../domain/types').Tag
+    titleQuery?: string
+  }
+  /** the one operation applied to every block the selector picked */
+  op:
+    | { kind: 'shift'; deltaMin: number }
+    | { kind: 'moveToDay'; toDayOffset: number }
+    | { kind: 'setTag'; tag: import('../../domain/types').Tag }
+  /** the count MEW named in its confirm — a yes re-asks with it, and a week that
+      moved since means the confirm no longer describes what would happen */
+  confirmCount?: number
+  /** the list token MEW named in its confirm */
+  confirmToken?: string
+  /** #75 slice 3: which occurrences of a repeating block the sweep means —
+      leave it out and MEW asks with chips before it touches a series */
+  scope?: 'this' | 'following' | 'series'
+}
+
 export interface ToolExecutor {
-  plan(places: PlaceSpec[], frees: FreeSpec[]): string
+  plan(args: PlanArgs): string
   /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
       name AND time must both match, so a shared title resolves to exactly one
       block. Omit and a bare ambiguous name asks (offer_choices) rather than
       guessing. */
-  complete(query: string, at?: string): string
-  /** `relStartMin` (#320) is a relative shift for a referent follow-up ("30 min
-      earlier" = −30): the executor computes the absolute start from the
-      resolved block's CURRENT start (today move needs an absolute target). `at`
-      (#334) is the TARGET block's CURRENT start time, pinning which of several
-      same-named blocks to move — distinct from toStartMin (its new start). */
-  move(
-    query: string,
-    toDayOffset?: number,
-    toStartMin?: number,
-    relStartMin?: number,
-    at?: string,
-    /** #49: a granted overlap — see PlaceSpec.allowOverlap */
-    allowOverlap?: boolean,
-    /** #160: the TARGET block's own day when the ask named one, pinning which of
-        several same-titled blocks moves — the same pin remove has read since #72 */
-    fromDayOffset?: number
-  ): string
+  complete(args: CompleteArgs): string
+  /** Move one block. Named fields rather than seven positions (#165): the
+      wrapper in store.ts forwards this object WHOLE, so an argument cannot be
+      dropped on the way to the executor — which is exactly what happened in
+      #160, silently, with tsc green. */
+  move(args: MoveArgs): string
   capture(title: string): string
   /** Remove open MEW-placed blocks in scope. Done mews and external calendar
       events are never touched — positive-only, and not ours to delete. */
@@ -175,16 +410,7 @@ export interface ToolExecutor {
       next occurrence alone, 'following' splits the series and drops from that day
       forward, 'series' clears the whole linked set (as all:true does). Omit it on
       a series block and the executor asks with this/following/series chips. */
-  remove(
-    query: string,
-    opts?: {
-      at?: string
-      all?: boolean
-      scope?: 'this' | 'following' | 'series'
-      /** #62: days from today of the one to remove — with `at`, pins one occurrence */
-      dayOffset?: number
-    }
-  ): string
+  remove(args: RemoveArgs): string
   /** Read-only day x-ray: dead gaps, overlong streaks, missing buffers, load. */
   analyze(dayOffset: number): string
   /** Read-only itemized readout of the live week (#333) — each block's exact
@@ -192,27 +418,16 @@ export interface ToolExecutor {
       the edit/move/remove tools target by. `day` is a 0–13 offset (0 = today)
       or 'week' for the seven days ahead; `tag` filters to one tag. Never
       mutates, never snapshots — it is MEW's eyes, not a hand. */
-  listBlocks(day: number | 'week', tag?: import('../../domain/types').Tag): string
+  listBlocks(args: ListBlocksArgs): string
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
-  findSlot(
-    durationMin: number,
-    dayOffset: number,
-    notBeforeMin?: number,
-    notAfterMin?: number
-  ): string
+  findSlot(args: FindSlotArgs): string
   /** Read-only: the scoring oracle's ranked, conflict-free candidate slots for a
       flexible item — scored by time-of-day fit, rest spacing, and the user's
       rules (#80). The model consults this before placing/moving, then plans the
       slot it ranks first; the executor's auto-placement uses the same scorer, so
       the conflict-free, rest-aware floor holds even if the model skips it. */
-  suggestSlots(
-    title: string,
-    tag: import('../../domain/types').Tag,
-    durationMin: number,
-    dueMin?: number,
-    window?: 'morning' | 'afternoon' | 'evening'
-  ): string
+  suggestSlots(args: SuggestSlotsArgs): string
   /** Change an existing block in place: time, length, title, tag, attention, due.
       Surgical — only the named field(s) of the ONE target change; neighbors are
       untouched. `at` (#334) is the TARGET block's CURRENT start time, pinning
@@ -223,23 +438,7 @@ export interface ToolExecutor {
       one occurrence, 'following' splits the series and applies from that day
       forward, 'series' changes every occurrence. Omit it on a series block and
       the executor asks with this/following/series chips. */
-  edit(
-    query: string,
-    patch: {
-      startMin?: number
-      endMin?: number
-      durationMin?: number
-      /** #320: a relative length delta ("give it another 30" = +30) applied to
-          the resolved block's CURRENT duration by the executor. */
-      relDurationMin?: number
-      title?: string
-      tag?: import('../../domain/types').Tag
-      attention?: 'focus' | 'background'
-      due?: number
-    },
-    at?: string,
-    scope?: 'this' | 'following' | 'series'
-  ): string
+  edit(args: EditArgs): string
   /** Persist a standing rule the user stated. Brain-off it falls back to a
       local MemoryEvent — the feature works single-device; gbrain upgrades it. */
   remember(pref: import('../brain/types').PrefPayload): string
@@ -249,7 +448,7 @@ export interface ToolExecutor {
       ordinary user turn through the normal message path. The result string
       (CHOICES_POSTED…) tells the model the options are on screen and the
       turn should end. */
-  offerChoices(prompt: string, options: ChoiceOption[]): string
+  offerChoices(args: OfferChoicesArgs): string
   /** Chat-only plan mode (#293): run the scenario engine over the classified
       tasks and post ONE mew message carrying named week-placement cards — the
       human picks, and the pick (pickScenario, store-side) applies the stored
@@ -257,7 +456,7 @@ export interface ToolExecutor {
       (#254 precedent); the result string leads with CHOICES_POSTED so a model
       ends its turn and the keyless floor stays quiet. One scenario falls
       through to a plain suggestion line — no picker theater. */
-  proposeScenarios(prompt: string, tasks: ScenarioTaskSpec[]): string
+  proposeScenarios(args: ProposeScenariosArgs): string
   /** Persist a durable user-stated fact/preference/correction to the brain.
       Optional-path: confirms even when no brain is connected (the fact still
       lands in chat history; re-stating later costs nothing). */
@@ -278,12 +477,7 @@ export interface ToolExecutor {
       delta ("30 min longer" = +30). Only the end moves — the start never does.
       Shares edit's targeting (`at`), recurring `scope`, external-ownership, and
       clash note: a duration-only edit is exactly what this is. */
-  resize(
-    query: string,
-    resize: { durationMin?: number; relDurationMin?: number },
-    at?: string,
-    scope?: 'this' | 'following' | 'series'
-  ): string
+  resize(args: ResizeArgs): string
   /** Copy a block to another day/time (#335) — the original is untouched; the
       copy is a NEW independent block with the same title, tag, length, and
       attention. `toDayOffset`/`toStartMin` place it; absent time keeps the
@@ -291,15 +485,7 @@ export interface ToolExecutor {
       `rrule` makes the copy a repeating series, expanded and linked like a
       planned recurrence (#159). External events copy into an owned block; the
       calendar original stays. `at` pins which of several same-named sources. */
-  duplicate(
-    query: string,
-    opts: {
-      toDayOffset?: number
-      toStartMin?: number
-      rrule?: import('../../domain/recurrence').Rrule
-    },
-    at?: string
-  ): string
+  duplicate(args: DuplicateArgs): string
   /** Merge (#74): join same-tag blocks on one day into ONE block — the earliest
       keeps its id and grows to span the run; the others go, in one undo step.
       `query` names them by title; `at` pins the run's first block (the run is
@@ -307,7 +493,7 @@ export interface ToolExecutor {
       owner's own open, one-off blocks of one tag merge, and only across free
       air: a fixed call, a [calendar] event, a done block or another block in
       the span means nothing changes, and the reply says which. */
-  merge(query: string, dayOffset?: number, at?: string): string
+  merge(args: MergeArgs): string
   /** Batch (#75): ONE op over the blocks a selector picks on one day — shift by
       minutes, or move to another day. A wide batch (3+ blocks, or any move to
       another day) is OFFERED first as a confirm naming every block it moves and
@@ -315,36 +501,14 @@ export interface ToolExecutor {
       blocks never move); nothing changes until the owner says yes, and the yes
       re-asks with `confirmCount` and `confirmToken`, the count and the list token
       it named. One undo reverses the lot. */
-  batch(
-    selector: {
-      dayOffset?: number
-      afterMin?: number
-      beforeMin?: number
-      tag?: import('../../domain/types').Tag
-      titleQuery?: string
-    },
-    op:
-      | { kind: 'shift'; deltaMin: number }
-      | { kind: 'moveToDay'; toDayOffset: number }
-      | { kind: 'setTag'; tag: import('../../domain/types').Tag },
-    confirmCount?: number,
-    confirmToken?: string,
-    /** #75 slice 3: which occurrences of a repeating block the sweep means —
-        leave it out and MEW asks with chips before it touches a series */
-    scope?: 'this' | 'following' | 'series'
-  ): string
+  batch(args: BatchArgs): string
   /** Move a block relative to where it is now, with no absolute time (#335):
       'earlier'/'later' shift the start by `amountMin` (default 30) on the same
       day, 'next_day' moves one day on at the same clock, 'next_free' relocates
       to the soonest genuinely clear slot from now. Fixed/calendar blocks are
       never moved and the next free slot always lands clear of them. Shares the
       move path (drift, clash, ownership); `at` pins which of several. */
-  relativeMove(
-    query: string,
-    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
-    amountMin?: number,
-    at?: string
-  ): string
+  relativeMove(args: RelativeMoveArgs): string
   /** Split one block into two around a gap (#73): the first piece keeps the
       start and ends where the gap opens, the second picks up where it closes.
       `around` is a clock range, or another block to split around (its title
@@ -353,16 +517,7 @@ export interface ToolExecutor {
       after"). A calendar block is never split, a series occurrence asks this /
       following / series first (or takes `scope`), and part 2 lands only in free
       time. `at` pins which of several same-named blocks; `dayOffset` the day. */
-  split(
-    query: string,
-    around: { startMin: number; endMin: number } | { query: string; at?: string },
-    opts?: {
-      at?: string
-      tailMin?: number
-      dayOffset?: number
-      scope?: 'this' | 'following' | 'series'
-    }
-  ): string
+  split(args: SplitArgs): string
   /** Give the just-placed blocks of one focus class room (#322) — resize them
       LONGER, in place, by the factor the user's OWN completion history shows for
       that kind (deep work vs admin). This is what the "give them room?" chip

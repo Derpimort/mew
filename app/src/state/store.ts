@@ -183,8 +183,23 @@ import {
   selectAdapters,
   type ChatTurn,
   type ChoiceOption,
-  type FreeSpec,
+  type MergeArgs,
+  type BatchArgs,
+  type CompleteArgs,
+  type DuplicateArgs,
+  type EditArgs,
+  type FindSlotArgs,
+  type ListBlocksArgs,
+  type MoveArgs,
+  type OfferChoicesArgs,
+  type ProposeScenariosArgs,
+  type RelativeMoveArgs,
+  type ResizeArgs,
+  type SuggestSlotsArgs,
   type PlaceSpec,
+  type PlanArgs,
+  type RemoveArgs,
+  type SplitArgs,
   type ScenarioTaskSpec,
   type ToolExecutor,
   type WeekContext,
@@ -2301,7 +2316,9 @@ export const useMew = create<MewState>((set, get) => {
     burnSustenanceKey(todayKey, s.nowMs)
     if (!specs.length) return // fed (or wall-to-wall): nothing to add, nothing to say
     const before = new Set(get().blocks.map((b) => b.id))
-    runToolWithCard('plan', { places: specs, frees: [] }, () => execPlan(specs, []))
+    runToolWithCard('plan', { places: specs, frees: [] }, () =>
+      execPlan({ places: specs, frees: [] })
+    )
     /* #123: the meals (and any breather) this pass placed are MEW's scaffolding,
        never the owner's work to carry into next week */
     const placed = get().blocks.filter((b) => !before.has(b.id) && !b.placedBy)
@@ -2695,7 +2712,9 @@ export const useMew = create<MewState>((set, get) => {
     return confirmedRulesFrom(s.memory)
   }
 
-  function execPlan(places: PlaceSpec[], frees: FreeSpec[]): string {
+  /* one named object (#165) — see PlanArgs */
+  function execPlan(args: PlanArgs): string {
+    const { places, frees } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3078,7 +3097,7 @@ export const useMew = create<MewState>((set, get) => {
       /* #116: the only ask couldn't fit today — say so and offer the next open
          time; nothing lands until the owner picks it */
       if (noRoom.length === 1 && noRoom[0].offer)
-        return execOfferChoices(noRoom[0].note, [
+        return postChoices(noRoom[0].note, [
           noRoom[0].offer,
           { label: 'not now', reply: 'ok, not now' },
         ])
@@ -3402,7 +3421,7 @@ export const useMew = create<MewState>((set, get) => {
           ? `${times[0]} or ${times[1]}`
           : `${times.slice(0, -1).join(', ')}, or ${times[times.length - 1]}`
       return {
-        reply: execOfferChoices(
+        reply: postChoices(
           `${spell(r.candidates.length)} "${base}" blocks — ${tail}? Which one?`,
           r.candidates.slice(0, 5).map((b) => ({
             label: `the ${fmtTime(b.startMin)}${b.dayKey === todayKey ? '' : ` (${fmtDowLong(b.dayKey)})`}`,
@@ -3539,7 +3558,9 @@ export const useMew = create<MewState>((set, get) => {
     post([mewMsg(`Removed — ${names}. Its mew is off the count; say "undo that" and it's back.`)])
   }
 
-  function execComplete(query: string, at?: string): string {
+  /* one named object (#165) — see CompleteArgs */
+  function execComplete(args: CompleteArgs): string {
+    const { query, at } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const res = resolveTarget(query, 'complete')
@@ -3578,28 +3599,21 @@ export const useMew = create<MewState>((set, get) => {
     return `Marked ${base} done — that's a mew, ${spell(live.mewsToday)} today.${tail}`
   }
 
-  function execMove(
-    query: string,
-    toDayOffset?: number,
-    toStartMin?: number,
-    /* #320: a relative start shift ("30 min earlier" = −30) — the referent's
-       CURRENT start + delta, on the same day, clamped inside the day. Read here
-       (not in parse.ts, which is pure) because only the live block knows its
-       current start; today move needs an absolute target, so the math lives at
-       resolution. */
-    relStartMin?: number,
-    /* #334: the TARGET block's current start time, pinning which of several
-       same-named blocks to move — distinct from toStartMin (its new start). */
-    at?: string,
-    /* #49: a granted overlap (flexible blocks only) */
-    allowOverlap = false,
-    /* #160: the TARGET block's own day, when the ask named one ("move the gym on
-       wednesday to 15:00"). It pins which of several same-titled blocks to move,
-       exactly as remove's own day pin has since #72 — and it rides the `onDay`
-       parameter #73 already built into resolvePrecise for split, rather than a
-       second narrowing path that could disagree with it. */
-    fromDayOffset?: number
-  ): string {
+  /* One named object rather than seven positions (#165). Every field is
+     documented on MoveArgs in adapters/model/types.ts; the notes that used to
+     sit on these parameters live there now, beside the field each describes.
+     Destructured immediately so the body below is unchanged — this is a
+     signature refactor and nothing inside it moved. */
+  function execMove(args: MoveArgs): string {
+    const {
+      query,
+      toDayOffset,
+      toStartMin,
+      relStartMin,
+      at,
+      allowOverlap = false,
+      fromDayOffset,
+    } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3780,18 +3794,15 @@ export const useMew = create<MewState>((set, get) => {
       the start never moves (applyEditPatch/execEdit keep it when only the
       duration changes). durationMin sets an absolute length; relDurationMin a
       signed delta ("30 min longer"). */
-  function execResize(
-    query: string,
-    resize: { durationMin?: number; relDurationMin?: number },
-    at?: string,
-    scope?: RecurScope
-  ): string {
-    return execEdit(
+  /* one named object (#165) — see ResizeArgs */
+  function execResize(args: ResizeArgs): string {
+    const { query, resize, at, scope } = args
+    return execEdit({
       query,
-      { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
+      patch: { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
       at,
-      scope
-    )
+      scope,
+    })
   }
 
   /** Copy a block to another day/time (#335) — the original is untouched and the
@@ -3803,15 +3814,15 @@ export const useMew = create<MewState>((set, get) => {
       makes the copy a repeating series, expanded and linked like a planned
       recurrence (#159). An external source copies into an owned block; the
       calendar original is never moved or detached. */
-  function execDuplicate(
-    query: string,
-    opts: {
+  /* one named object (#165) — see DuplicateArgs. The opts bag is flattened into
+     it, so the body reads its three fields through the same `opts` name. */
+  function execDuplicate(args: DuplicateArgs): string {
+    const { query, at } = args
+    const opts: {
       toDayOffset?: number
       toStartMin?: number
       rrule?: import('../domain/recurrence').Rrule
-    },
-    at?: string
-  ): string {
+    } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3946,7 +3957,10 @@ export const useMew = create<MewState>((set, get) => {
       one-off blocks of one tag merge, and only across free air: anything else
       in the span, or a calendar / done / repeating / other-tag part, means
       nothing changes and the reply names it. */
-  function execMerge(query: string, dayOffset?: number, at?: string): string {
+  /* one named object (#165) — see MergeArgs; destructured here so the body below
+     is untouched */
+  function execMerge(args: MergeArgs): string {
+    const { query, dayOffset, at } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     /* "today" / "tomorrow" / "on Thursday" — reads right mid-sentence */
@@ -4034,24 +4048,12 @@ export const useMew = create<MewState>((set, get) => {
       named: if the plan no longer moves exactly that list, MEW offers again.
       One setBlocks under the wrapper's snapshot, so one undo reverses the lot;
       a collision the batch leaves speaks in the existing clash wording. */
-  function execBatch(
-    selIn: {
-      dayOffset?: number
-      afterMin?: number
-      beforeMin?: number
-      tag?: import('../domain/types').Tag
-      titleQuery?: string
-    },
-    opIn:
-      | { kind: 'shift'; deltaMin: number }
-      | { kind: 'moveToDay'; toDayOffset: number }
-      | { kind: 'setTag'; tag: import('../domain/types').Tag },
-    confirmCount?: number,
-    confirmToken?: string,
-    /** #75 slice 3: which occurrences of a repeating block the sweep means —
-        absent means MEW asks with chips before touching a series */
-    scope?: BatchScope
-  ): string {
+  /* one named object (#165) — see BatchArgs. Destructured here so the body
+     below is untouched: selIn and opIn keep their names, and scope still means
+     "absent asks with chips before touching a series" (#75 slice 3). */
+  function execBatch(args: BatchArgs): string {
+    const { selector: selIn, op: opIn, confirmCount, confirmToken } = args
+    const scope = args.scope as BatchScope | undefined
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const sel: BatchSelector = {
@@ -4209,14 +4211,11 @@ export const useMew = create<MewState>((set, get) => {
           )
     if (askable.length) {
       const names = andList([...new Set(askable.map((sk) => baseOf(sk.block.title)))])
-      return execOfferChoices(
-        `${names} repeat${askable.length === 1 ? 's' : ''} — which do you mean?`,
-        [
-          { label: 'just this one', reply: batchAsk(' just this one') },
-          { label: 'this & the ones after', reply: batchAsk(' this and following') },
-          { label: 'the whole series', reply: batchAsk(' across the whole series') },
-        ]
-      )
+      return postChoices(`${names} repeat${askable.length === 1 ? 's' : ''} — which do you mean?`, [
+        { label: 'just this one', reply: batchAsk(' just this one') },
+        { label: 'this & the ones after', reply: batchAsk(' this and following') },
+        { label: 'the whole series', reply: batchAsk(' across the whole series') },
+      ])
     }
 
     if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
@@ -4268,7 +4267,7 @@ export const useMew = create<MewState>((set, get) => {
         )
       const sharesLine = shares.length ? ` ${shares.join(' · ')}.` : ''
       const changed = confirmCount != null ? 'the week changed since then — ' : ''
-      return execOfferChoices(
+      return postChoices(
         `${changed}${retag ? 'tag' : 'move'} ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
         [
           { label: 'do it', reply },
@@ -4290,12 +4289,9 @@ export const useMew = create<MewState>((set, get) => {
       clear slot from now (week.nextFreeSlot, which lands clear of fixed/external
       by construction). One resolution (reusing #345 targeting), then the shared
       move tail — drift, clash, and ownership are never re-implemented. */
-  function execRelativeMove(
-    query: string,
-    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
-    amountMin?: number,
-    at?: string
-  ): string {
+  /* one named object (#165) — see RelativeMoveArgs */
+  function execRelativeMove(args: RelativeMoveArgs): string {
+    const { query, direction, amountMin, at } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -4366,11 +4362,12 @@ export const useMew = create<MewState>((set, get) => {
       history); part 2 is a new block with the same tag, attention and
       protection. One setBlocks under the wrapper's single snapshot, so one undo
       takes the whole split back, and a work split paces rest like a placement. */
-  function execSplit(
-    query: string,
-    around: { startMin: number; endMin: number } | { query: string; at?: string },
-    opts: { at?: string; tailMin?: number; dayOffset?: number; scope?: RecurScope } = {}
-  ): string {
+  /* one named object (#165) — see SplitArgs. `opts` used to arrive as a third
+     positional bag; its fields are now siblings of query and around, and the
+     body reads them through the same `opts` name so nothing below moved. */
+  function execSplit(args: SplitArgs): string {
+    const { query, around } = args
+    const opts: { at?: string; tailMin?: number; dayOffset?: number; scope?: RecurScope } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -4428,7 +4425,7 @@ export const useMew = create<MewState>((set, get) => {
       const atMin = around.at ? parseTimeValue(around.at) : null
       const r = week.findTarget(pool, around.query, todayKey, { at: atMin, includeDone: true })
       if (r.status === 'ambiguous') {
-        return execOfferChoices(
+        return postChoices(
           `which "${baseOf(around.query)}" should ${base} split around?`,
           r.candidates.slice(0, 5).map((c) => ({
             label: `around the ${fmtTime(c.startMin)}`,
@@ -4690,7 +4687,7 @@ export const useMew = create<MewState>((set, get) => {
       chat-only. `reissue(scope)` builds each chip's complete ask; the pick
       arrives as an ordinary user turn and routes through the executor. */
   function offerRecurringScope(base: string, reissue: (scope: RecurScope) => string): string {
-    return execOfferChoices(`"${base}" repeats — which do you mean?`, [
+    return postChoices(`"${base}" repeats — which do you mean?`, [
       { label: 'just this one', reply: reissue('this') },
       { label: 'this & the ones after', reply: reissue('following') },
       { label: 'the whole series', reply: reissue('series') },
@@ -4838,15 +4835,12 @@ export const useMew = create<MewState>((set, get) => {
     return `Removed — ${base} from ${when} on (${tail.length} block${tail.length === 1 ? '' : 's'}); the earlier ones stay.`
   }
 
-  function execEdit(
-    query: string,
-    patch: EditPatch,
-    /* #334: the TARGET block's current start time, pinning which of several
-       same-named blocks to change — distinct from patch.startMin (a retime). */
-    at?: string,
-    /* #343: the recurring-edit scope for a series block — absent asks (chips). */
-    scope?: RecurScope
-  ): string {
+  /* one named object (#165) — see EditArgs. `at` pins which of several
+     same-named blocks (#334, distinct from patch.startMin, a retime); `scope` is
+     the recurring-edit scope, and absent asks with chips (#343). */
+  function execEdit(args: EditArgs): string {
+    const { query, at, scope } = args
+    const patch: EditPatch = args.patch
     const s = get()
     const res = resolveTarget(query, 'edit')
     if ('reply' in res) return res.reply
@@ -5093,7 +5087,15 @@ export const useMew = create<MewState>((set, get) => {
       (pickChoice), so tools remain the only mutation path. The returned
       string leads with CHOICES_POSTED: the model reads it as "end your turn",
       the keyless floor reads it as "stay quiet — the chips ARE the reply". */
-  function execOfferChoices(prompt: string, options: ChoiceOption[]): string {
+  /* one named object (#165) — see OfferChoicesArgs. The tool-facing entry
+     delegates to postChoices, which keeps the two-argument shape the store's own
+     ask sites have always used: seven of them build a prompt and a list inline,
+     and wrapping each in an object would be churn with nothing to forget. The
+     WRAPPER is what must forward wholesale, and it does. */
+  function execOfferChoices(args: OfferChoicesArgs): string {
+    return postChoices(args.prompt, args.options)
+  }
+  function postChoices(prompt: string, options: ChoiceOption[]): string {
     post([
       choicesMsg(
         prompt,
@@ -5121,15 +5123,21 @@ export const useMew = create<MewState>((set, get) => {
       along), so a preview is sized and windowed the way the apply will be.
       Every scenario is validated against the live week at post time — the
       engine is conflict-free by construction, the gate keeps that checked. */
+  /* one named object (#165) — see ProposeScenariosArgs. `requote` stays a
+     SECOND parameter rather than a field: it is not part of the tool's contract,
+     it is an internal flag only the stale-plan re-offer below sets, and folding
+     it into the args object would let a model-facing call set it. The wrapper
+     still passes args alone, which is what the forwarding pin checks. */
   function execProposeScenarios(
-    prompt: string,
-    specs: (ScenarioTaskSpec & { durationStated?: boolean })[],
+    args: ProposeScenariosArgs,
     /* #81: a stale plan's re-offer re-quotes the STORED places — their lengths
        are already the honest quote (pre-sized under "always", as asked
        otherwise), so each carries its own stated flag and nothing is pre-sized
        a second time */
     requote = false
   ): string {
+    const { prompt } = args
+    const specs = args.tasks as (ScenarioTaskSpec & { durationStated?: boolean })[]
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -5220,10 +5228,11 @@ export const useMew = create<MewState>((set, get) => {
     return `${CHOICES_POSTED}: ${scenarios.map((sc) => `"${sc.name}"`).join(' · ')}. Say nothing more and END your turn — the pick (or the user's own typed words) arrives as the next user message.`
   }
 
-  function execRemove(
-    query: string,
-    opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = {}
-  ): string {
+  /* one named object (#165) — see RemoveArgs. The body reads its pins through
+     the same `opts` name, so nothing below this line moved. */
+  function execRemove(args: RemoveArgs): string {
+    const { query } = args
+    const opts: { at?: string; all?: boolean; scope?: RecurScope; dayOffset?: number } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     /* #62: a named day pins which occurrence; a time alone never reaches across days */
@@ -5354,7 +5363,7 @@ export const useMew = create<MewState>((set, get) => {
       /* #124: the line names the all-chip in its own words — "both" for two,
          "all of them" for three or more */
       const everyOne = candidates.length === 2 ? 'both' : 'all of them'
-      return execOfferChoices(
+      return postChoices(
         `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "${everyOne}" to drop them all.`,
         [...timeOptions, { label: everyOne, reply: `remove all ${base}` }]
       )
@@ -5494,7 +5503,9 @@ export const useMew = create<MewState>((set, get) => {
   /* list_blocks (#333): MEW's eyes on the calendar — the itemized, addressable
      readout analyze lacks. Read-only like execAnalyze: reads the live week and
      hands it to the pure formatter, mutating nothing and taking no snapshot. */
-  function execListBlocks(day: number | 'week', tag?: import('../domain/types').Tag): string {
+  /* one named object (#165) — see ListBlocksArgs */
+  function execListBlocks(args: ListBlocksArgs): string {
+    const { day, tag } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const dayKeys =
@@ -5504,12 +5515,9 @@ export const useMew = create<MewState>((set, get) => {
     return listReadout(s.blocks, { dayKeys, todayKey, tag })
   }
 
-  function execFindSlot(
-    durationMin: number,
-    dayOffset: number,
-    notBeforeMin?: number,
-    notAfterMin?: number
-  ): string {
+  /* one named object (#165) — see FindSlotArgs */
+  function execFindSlot(args: FindSlotArgs): string {
+    const { durationMin, dayOffset, notBeforeMin, notAfterMin } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const key = addDaysKey(todayKey, dayOffset)
@@ -5562,13 +5570,10 @@ export const useMew = create<MewState>((set, get) => {
   /* suggest_slots: hand the model the scoring oracle's ranked, conflict-free
      candidates (#80) so it places into vetted air. Read-only and keyless —
      scoreSlots scores deterministically; a brain only enriches later. */
-  function execSuggestSlots(
-    title: string,
-    tag: import('../domain/types').Tag,
-    durationMin: number,
-    dueMin?: number,
-    window?: TimeWindow
-  ): string {
+  /* one named object (#165) — see SuggestSlotsArgs */
+  function execSuggestSlots(args: SuggestSlotsArgs): string {
+    const { title, tag, durationMin, dueMin } = args
+    const window = args.window as TimeWindow | undefined
     const clean = title.trim()
     if (!clean) return 'name the task and I will rank where it fits best.'
     const s = get()
@@ -6251,27 +6256,35 @@ export const useMew = create<MewState>((set, get) => {
          undo_last_action can take back exactly that one change (#162). The
          read-only tools below never snapshot — there's nothing to reverse. */
       const exec: ToolExecutor = {
-        plan: (places, frees) => {
+        plan: (args) => {
           acted = true
           snapshotForUndo()
           working('placing blocks…')
           closeStreamRow()
-          return runChange('plan', { places, frees }, () => execPlan(places, frees))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('plan', { places: args.places, frees: args.frees }, () => execPlan(args))
         },
-        complete: (q, at) => {
+        complete: (args) => {
           acted = true
           snapshotForUndo()
           working('marking it done…')
           closeStreamRow()
-          return runChange('complete', { query: q }, () => execComplete(q, at))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('complete', { query: args.query }, () => execComplete(args))
         },
-        move: (q, d, t, rel, at, allowOverlap, fromDayOffset) => {
+        /* THE OBJECT IS FORWARDED WHOLE, and that is the fix rather than the
+           naming (#165): a wrapper that rebuilt it field by field could still
+           forget an optional one with tsc green, which is precisely how #160
+           shipped. Nothing here may destructure `args`. */
+        move: (args) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
-          return runChange('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
-            execMove(q, d, t, rel, at, allowOverlap, fromDayOffset)
+          return runChange(
+            'move',
+            { query: args.query, toDayOffset: args.toDayOffset, toStartMin: args.toStartMin },
+            () => execMove(args)
           )
         },
         capture: (t) => {
@@ -6288,55 +6301,73 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('clear', { scope }, () => execClear(scope))
         },
-        edit: (q, patch, at, scope) => {
+        edit: (args) => {
           acted = true
           snapshotForUndo()
           working('reshaping it…')
           closeStreamRow()
-          return runChange('edit', { query: q }, () => execEdit(q, patch, at, scope))
+          return runChange('edit', { query: args.query }, () => execEdit(args))
         },
-        remove: (q, opts) => {
+        remove: (args) => {
           acted = true
           snapshotForUndo()
           working('taking it off…')
           closeStreamRow()
-          return runChange('remove', { query: q }, () => execRemove(q, opts))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('remove', { query: args.query }, () => execRemove(args))
         },
         analyze: (d) => {
           working('reading your week…')
           closeStreamRow()
           return runToolWithCard('analyze', { dayOffset: d }, () => execAnalyze(d)) // read-only: not an action
         },
-        listBlocks: (day, tag) => {
+        listBlocks: (args) => {
           working('listing your blocks…')
           closeStreamRow()
           // read-only: not an action — no acted flag, no undo snapshot
-          return runToolWithCard('listBlocks', { day, tag }, () => execListBlocks(day, tag))
+          return runToolWithCard('listBlocks', { day: args.day, tag: args.tag }, () =>
+            execListBlocks(args)
+          )
         },
-        findSlot: (dur, d, nb, na) =>
+        findSlot: (args) =>
           /* #325: an identical slot query this turn returns the cached answer —
-             no second run, no duplicate card */
-          dedupReadOnly(`findSlot:${dur}:${d}:${nb ?? ''}:${na ?? ''}`, () => {
-            working('finding a slot…')
-            closeStreamRow()
-            return runToolWithCard(
-              'findSlot',
-              { durationMin: dur, dayOffset: d, notBeforeMin: nb, notAfterMin: na },
-              () => execFindSlot(dur, d, nb, na) // read-only
-            )
-          }),
-        suggestSlots: (t, tag, dur, due, win) =>
+             no second run, no duplicate card. The dedup key still names every
+             field it depends on: a key built from fewer fields than the call
+             carries would collapse two DIFFERENT questions into one answer. */
+          dedupReadOnly(
+            `findSlot:${args.durationMin}:${args.dayOffset}:${args.notBeforeMin ?? ''}:${args.notAfterMin ?? ''}`,
+            () => {
+              working('finding a slot…')
+              closeStreamRow()
+              return runToolWithCard(
+                'findSlot',
+                {
+                  durationMin: args.durationMin,
+                  dayOffset: args.dayOffset,
+                  notBeforeMin: args.notBeforeMin,
+                  notAfterMin: args.notAfterMin,
+                },
+                () => execFindSlot(args) // read-only
+              )
+            }
+          ),
+        suggestSlots: (args) =>
           /* #325: the same target twice this turn collapses — the ranking
-             already ran; the second call is the flail, not a new question */
-          dedupReadOnly(`suggestSlots:${t}:${tag}:${dur}:${due ?? ''}:${win ?? ''}`, () => {
-            working('finding a slot…')
-            closeStreamRow()
-            return runToolWithCard(
-              'suggestSlots',
-              { title: t, durationMin: dur },
-              () => execSuggestSlots(t, tag, dur, due, win) // read-only
-            )
-          }),
+             already ran; the second call is the flail, not a new question. The
+             key still names all five fields: one built from fewer than the call
+             carries would collapse two different questions into one answer. */
+          dedupReadOnly(
+            `suggestSlots:${args.title}:${args.tag}:${args.durationMin}:${args.dueMin ?? ''}:${args.window ?? ''}`,
+            () => {
+              working('finding a slot…')
+              closeStreamRow()
+              return runToolWithCard(
+                'suggestSlots',
+                { title: args.title, durationMin: args.durationMin },
+                () => execSuggestSlots(args) // read-only
+              )
+            }
+          ),
         queryBrain: (q) => {
           working('checking what I know…')
           closeStreamRow()
@@ -6351,7 +6382,7 @@ export const useMew = create<MewState>((set, get) => {
             execRemember(pref)
           )
         },
-        offerChoices: (prompt, options) => {
+        offerChoices: (args) => {
           /* chat-only, but the ask is now on screen — a fallback replay would
              double it, so the turn counts as acted. Never a snapshot: there is
              nothing week-side to undo (#254 law: this tool mutates nothing).
@@ -6359,9 +6390,9 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           working('offering choices…')
           closeStreamRow()
-          return execOfferChoices(prompt, options)
+          return execOfferChoices(args)
         },
-        proposeScenarios: (prompt, tasks) => {
+        proposeScenarios: (args) => {
           /* the #254 discipline exactly (#293): chat-only, the picker message
              is the visible artifact (no card), never a snapshot — proposing
              mutates nothing; the PICK snapshots before it applies. acted stays
@@ -6371,7 +6402,7 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           working('shaping the week…')
           closeStreamRow()
-          return execProposeScenarios(prompt, tasks)
+          return execProposeScenarios(args)
         },
         undoLast: () => {
           /* the reversal itself isn't a fresh action: it consumes the snapshot
@@ -6381,59 +6412,61 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('undoLast', undefined, () => execUndo())
         },
-        resize: (q, resize, at, scope) => {
+        resize: (args) => {
           acted = true
           snapshotForUndo()
           working('resizing it…')
           closeStreamRow()
-          return runChange('resize', { query: q }, () => execResize(q, resize, at, scope))
+          return runChange('resize', { query: args.query }, () => execResize(args))
         },
-        duplicate: (q, opts, at) => {
+        duplicate: (args) => {
           acted = true
           snapshotForUndo()
           working('duplicating it…')
           closeStreamRow()
           return runChange(
             'duplicate',
-            { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
-            () => execDuplicate(q, opts, at)
+            { query: args.query, toDayOffset: args.toDayOffset, toStartMin: args.toStartMin },
+            () => execDuplicate(args)
           )
         },
-        batch: (selector, op, confirmCount, confirmToken, scope) => {
+        batch: (args) => {
           acted = true
           snapshotForUndo()
           /* a retag moves nothing: its card and working line say so (#75 slice 2) */
-          const retag = op.kind === 'setTag'
+          const retag = args.op.kind === 'setTag'
           working(retag ? 'tagging them…' : 'moving them…')
           closeStreamRow()
           return runChange(
             retag ? 'retag' : 'batch',
-            { query: selector.titleQuery ?? selector.tag },
-            () => execBatch(selector, op, confirmCount, confirmToken, scope)
+            { query: args.selector.titleQuery ?? args.selector.tag },
+            () => execBatch(args)
           )
         },
-        merge: (q, dayOffset, at) => {
+        merge: (args) => {
           acted = true
           snapshotForUndo()
           working('merging them…')
           closeStreamRow()
-          return runChange('merge', { query: q, dayOffset }, () => execMerge(q, dayOffset, at))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('merge', { query: args.query, dayOffset: args.dayOffset }, () =>
+            execMerge(args)
+          )
         },
-        relativeMove: (q, direction, amountMin, at) => {
+        relativeMove: (args) => {
           acted = true
           snapshotForUndo()
           working('nudging it…')
           closeStreamRow()
-          return runChange('relativeMove', { query: q }, () =>
-            execRelativeMove(q, direction, amountMin, at)
-          )
+          return runChange('relativeMove', { query: args.query }, () => execRelativeMove(args))
         },
-        split: (q, around, opts) => {
+        split: (args) => {
           acted = true
           snapshotForUndo()
           working('splitting it…')
           closeStreamRow()
-          return runChange('split', { query: q }, () => execSplit(q, around, opts))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('split', { query: args.query }, () => execSplit(args))
         },
         giveRoom: (focusClass) => {
           acted = true
@@ -6799,14 +6832,16 @@ export const useMew = create<MewState>((set, get) => {
            a fall-through line (one shape, nothing fits) posts as prose. */
         post([mewMsg('the week moved under this plan — want a fresh look?')])
         const offer = execProposeScenarios(
-          '',
-          scenario.places.map((p) => ({
-            title: p.title,
-            tag: p.tag,
-            durationMin: p.durationMin,
-            ...(p.due != null ? { due: p.due } : {}),
-            ...(p.durationStated ? { durationStated: true } : {}), // #81
-          })),
+          {
+            prompt: '',
+            tasks: scenario.places.map((p) => ({
+              title: p.title,
+              tag: p.tag,
+              durationMin: p.durationMin,
+              ...(p.due != null ? { due: p.due } : {}),
+              ...(p.durationStated ? { durationStated: true } : {}), // #81
+            })),
+          },
           true // #81: a re-quote of the stored lengths
         )
         if (!offer.startsWith(CHOICES_POSTED)) post([mewMsg(offer)])
@@ -6835,7 +6870,7 @@ export const useMew = create<MewState>((set, get) => {
       snapshotForUndo() // "undo that" must reach the applied plan (#162)
       try {
         const line = runChange('plan', { places: scenario.places, frees: [] }, () =>
-          execPlan(scenario.places, [])
+          execPlan({ places: scenario.places, frees: [] })
         )
         post([mewMsg(line)])
       } catch (err) {

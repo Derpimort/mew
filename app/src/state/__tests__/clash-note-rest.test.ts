@@ -284,7 +284,10 @@ describe('a clash with a protected rest is named as rest, never "flexible"', () 
     let result = ''
     await fresh([deck(), walk()], { location: 'local' })
     scriptedModel.midTurn = (exec) => {
-      result = exec.batch({ afterMin: 17 * 60, tag: 'work' }, { kind: 'shift', deltaMin: 30 })
+      result = exec.batch({
+        selector: { afterMin: 17 * 60, tag: 'work' },
+        op: { kind: 'shift', deltaMin: 30 },
+      })
     }
     await say('push my work after 5 back half an hour')
     await settle()
@@ -293,7 +296,10 @@ describe('a clash with a protected rest is named as rest, never "flexible"', () 
 
     await fresh([deck(), gym()], { location: 'local' })
     scriptedModel.midTurn = (exec) => {
-      result = exec.batch({ afterMin: 17 * 60, tag: 'work' }, { kind: 'shift', deltaMin: 60 })
+      result = exec.batch({
+        selector: { afterMin: 17 * 60, tag: 'work' },
+        op: { kind: 'shift', deltaMin: 60 },
+      })
     }
     await say('push my work after 5 back an hour')
     await settle()
@@ -304,7 +310,7 @@ describe('a clash with a protected rest is named as rest, never "flexible"', () 
     let result = ''
     await fresh([deck(), walk()], { location: 'local' })
     scriptedModel.midTurn = (exec) => {
-      result = exec.edit('deck', { startMin: 18 * 60, endMin: 19 * 60 })
+      result = exec.edit({ query: 'deck', patch: { startMin: 18 * 60, endMin: 19 * 60 } })
     }
     await say('make the deck 6 to 7')
     await settle()

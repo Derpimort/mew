@@ -131,10 +131,12 @@ describe('#96 — a turn in the seconds after midnight reads one clock', () => {
   it('keyed: the model is told Wednesday, and a tool call for day +1 lands on Thursday', async () => {
     await atTheSeam([], 'local')
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'budget review', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'budget review', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 60 },
+        ],
+        frees: [],
+      })
     }
     await say('put the budget review tomorrow at 9')
     await settle()

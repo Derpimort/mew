@@ -294,10 +294,19 @@ describe('#75 — a wide batch is offered first, and the pick moves exactly what
     let undone = ''
     scriptedModel.chunks = ['on it — ', 'and back.']
     scriptedModel.midTurn = (exec) => {
-      offered = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 })
+      offered = exec.batch({ selector: { afterMin: 15 * 60 }, op: { kind: 'shift', deltaMin: 60 } })
       const token = tokenOf(chipMsgs().at(-1)!.choices![0].reply)
-      countOnly = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 }, 3)
-      moved = exec.batch({ afterMin: 15 * 60 }, { kind: 'shift', deltaMin: 60 }, 3, token)
+      countOnly = exec.batch({
+        selector: { afterMin: 15 * 60 },
+        op: { kind: 'shift', deltaMin: 60 },
+        confirmCount: 3,
+      })
+      moved = exec.batch({
+        selector: { afterMin: 15 * 60 },
+        op: { kind: 'shift', deltaMin: 60 },
+        confirmCount: 3,
+        confirmToken: token,
+      })
       undone = exec.undoLast()
     }
     await say('push everything after 3pm back an hour — yes, do it — actually, undo that')
@@ -428,11 +437,11 @@ describe('#75 review — a yes moves exactly the list it answered, on either flo
   const FRI = '2026-06-12'
   /** a keyed model offers the batch, then is unavailable when the owner taps */
   const offerKeyed = async (
-    sel: Parameters<import('../../adapters/model').ToolExecutor['batch']>[0],
-    op: Parameters<import('../../adapters/model').ToolExecutor['batch']>[1]
+    sel: Parameters<import('../../adapters/model').ToolExecutor['batch']>[0]['selector'],
+    op: Parameters<import('../../adapters/model').ToolExecutor['batch']>[0]['op']
   ) => {
     scriptedModel.midTurn = (exec) => {
-      exec.batch(sel, op)
+      exec.batch({ selector: sel, op: op })
     }
     await say('line those up for me')
     await settle()
@@ -662,32 +671,40 @@ describe('#75 — the batch_blocks tool', () => {
       exec
     )
     await runTool('batch_blocks', { tag: 'work', op: 'move_to_day', toDayOffset: 1 }, exec)
+    /* one named object since #165: the selector, the op and the two confirm
+       fields are siblings now rather than five positions. Every value is the
+       one this dispatch always passed, including the confirm pair that a yes
+       re-asks with and the absent scope word. */
     expect(calls).toEqual([
       [
         {
-          dayOffset: undefined,
-          afterMin: 900,
-          beforeMin: undefined,
-          tag: undefined,
-          titleQuery: undefined,
+          selector: {
+            dayOffset: undefined,
+            afterMin: 900,
+            beforeMin: undefined,
+            tag: undefined,
+            titleQuery: undefined,
+          },
+          op: { kind: 'shift', deltaMin: 60 },
+          confirmCount: 3,
+          confirmToken: 'k7f2',
+          scope: undefined, // #75 slice 3: no scope word in this ask
         },
-        { kind: 'shift', deltaMin: 60 },
-        3,
-        'k7f2',
-        undefined, // #75 slice 3: no scope word in this ask
       ],
       [
         {
-          dayOffset: undefined,
-          afterMin: undefined,
-          beforeMin: undefined,
-          tag: 'work',
-          titleQuery: undefined,
+          selector: {
+            dayOffset: undefined,
+            afterMin: undefined,
+            beforeMin: undefined,
+            tag: 'work',
+            titleQuery: undefined,
+          },
+          op: { kind: 'moveToDay', toDayOffset: 1 },
+          confirmCount: undefined,
+          confirmToken: undefined,
+          scope: undefined,
         },
-        { kind: 'moveToDay', toDayOffset: 1 },
-        undefined,
-        undefined,
-        undefined,
       ],
     ])
     expect(await runTool('batch_blocks', { op: 'shift' }, exec)).toMatch(/^nothing to shift/)

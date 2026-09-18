@@ -333,7 +333,7 @@ describe('done-block deletion = propose → confirm (#334 refinement, AC3)', () 
     await fresh([doneBlock()], [doneEvent()], 'local')
 
     // propose via a keyed turn, then tap the confirm
-    scriptedModel.midTurn = (exec) => exec.remove('prod release', {})
+    scriptedModel.midTurn = (exec) => exec.remove({ query: 'prod release' })
     await say('drop the prod release')
     await settle()
     const offer = nudge('remove-done')!

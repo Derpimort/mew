@@ -374,8 +374,8 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
       'local'
     )
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [
+      exec.plan({
+        places: [
           {
             title: 'release review',
             tag: 'work',
@@ -384,8 +384,8 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
             durationMin: 60,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('put the release review at 2pm today')
     await settle()
@@ -491,8 +491,8 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
     await fresh(week0(), 'local')
     let result = ''
     scriptedModel.midTurn = (exec) => {
-      result = exec.plan(
-        [
+      result = exec.plan({
+        places: [
           {
             title: 'release review',
             tag: 'work',
@@ -501,8 +501,8 @@ describe('#12 — never a chip that could touch a block it did not name', () => 
             durationMin: 60,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('put the release review at 2pm today')
     await settle()

@@ -248,7 +248,7 @@ describe('#121 — a split pair merges back into one block', () => {
     let merged = ''
     let undone = ''
     scriptedModel.midTurn = (exec) => {
-      merged = exec.merge('deck polish')
+      merged = exec.merge({ query: 'deck polish' })
       undone = exec.undoLast()
     }
     await say('merge the deck polish pieces — no, leave them')
