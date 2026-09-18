@@ -53,5 +53,6 @@ jobs:
           name: ui-shots
           path: |
             app/shots/overlap
+            app/shots/latest
             app/shots/*.png
           if-no-files-found: ignore
