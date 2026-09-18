@@ -184,6 +184,7 @@ import {
   type ChatTurn,
   type ChoiceOption,
   type FreeSpec,
+  type MoveArgs,
   type PlaceSpec,
   type ScenarioTaskSpec,
   type ToolExecutor,
@@ -3578,28 +3579,21 @@ export const useMew = create<MewState>((set, get) => {
     return `Marked ${base} done — that's a mew, ${spell(live.mewsToday)} today.${tail}`
   }
 
-  function execMove(
-    query: string,
-    toDayOffset?: number,
-    toStartMin?: number,
-    /* #320: a relative start shift ("30 min earlier" = −30) — the referent's
-       CURRENT start + delta, on the same day, clamped inside the day. Read here
-       (not in parse.ts, which is pure) because only the live block knows its
-       current start; today move needs an absolute target, so the math lives at
-       resolution. */
-    relStartMin?: number,
-    /* #334: the TARGET block's current start time, pinning which of several
-       same-named blocks to move — distinct from toStartMin (its new start). */
-    at?: string,
-    /* #49: a granted overlap (flexible blocks only) */
-    allowOverlap = false,
-    /* #160: the TARGET block's own day, when the ask named one ("move the gym on
-       wednesday to 15:00"). It pins which of several same-titled blocks to move,
-       exactly as remove's own day pin has since #72 — and it rides the `onDay`
-       parameter #73 already built into resolvePrecise for split, rather than a
-       second narrowing path that could disagree with it. */
-    fromDayOffset?: number
-  ): string {
+  /* One named object rather than seven positions (#165). Every field is
+     documented on MoveArgs in adapters/model/types.ts; the notes that used to
+     sit on these parameters live there now, beside the field each describes.
+     Destructured immediately so the body below is unchanged — this is a
+     signature refactor and nothing inside it moved. */
+  function execMove(args: MoveArgs): string {
+    const {
+      query,
+      toDayOffset,
+      toStartMin,
+      relStartMin,
+      at,
+      allowOverlap = false,
+      fromDayOffset,
+    } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -6231,13 +6225,19 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('complete', { query: q }, () => execComplete(q, at))
         },
-        move: (q, d, t, rel, at, allowOverlap, fromDayOffset) => {
+        /* THE OBJECT IS FORWARDED WHOLE, and that is the fix rather than the
+           naming (#165): a wrapper that rebuilt it field by field could still
+           forget an optional one with tsc green, which is precisely how #160
+           shipped. Nothing here may destructure `args`. */
+        move: (args) => {
           acted = true
           snapshotForUndo()
           working('moving it…')
           closeStreamRow()
-          return runChange('move', { query: q, toDayOffset: d, toStartMin: t }, () =>
-            execMove(q, d, t, rel, at, allowOverlap, fromDayOffset)
+          return runChange(
+            'move',
+            { query: args.query, toDayOffset: args.toDayOffset, toStartMin: args.toStartMin },
+            () => execMove(args)
           )
         },
         capture: (t) => {

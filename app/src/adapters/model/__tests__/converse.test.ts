@@ -31,9 +31,11 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('complete')
       return `Marked ${q} done.`
     }),
-    move: vi.fn((q) => {
+    /* move takes one named object since #165, so this stand-in reads the field
+       rather than the first position — the string it returns is unchanged */
+    move: vi.fn((args: { query: string }) => {
       calls.push('move')
-      return `Moved ${q}.`
+      return `Moved ${args.query}.`
     }),
     capture: vi.fn((t) => {
       calls.push('capture')
@@ -378,12 +380,14 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
     await runTool('complete_task', { query: 'standup', at: '9am' }, exec)
     expect(exec.complete).toHaveBeenCalledWith('standup', '9am')
     await runTool('move_task', { query: 'release', at: '19:45', toDayOffset: 2 }, exec)
+    /* the same call, read as one named object since #165. Same values: the query,
+       the day offset, no new start, and `at` pinning which block moves. The only
+       difference is that relStartMin is now ABSENT rather than an explicit
+       undefined in the middle of the list — a keyed tool call always sends an
+       absolute target, and a field it never sets no longer has to be spelled out
+       to reach the ones after it. */
     expect((exec.move as ReturnType<typeof vi.fn>).mock.calls.at(-1)).toEqual([
-      'release',
-      2,
-      undefined,
-      undefined,
-      '19:45',
+      { query: 'release', toDayOffset: 2, toStartMin: undefined, at: '19:45' },
     ])
     expect(await runTool('remove_blocks', { query: 'prod release' }, exec)).toBe(
       'Removed prod release.'

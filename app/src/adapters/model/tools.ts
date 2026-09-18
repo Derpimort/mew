@@ -832,15 +832,17 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
     case 'complete_task':
       return exec.complete(String(o.query ?? ''), atArg(o.at))
     case 'move_task':
-      return exec.move(
-        String(o.query ?? ''),
-        optInt(o.toDayOffset, 0, 13),
-        optInt(o.toStartMin, 0, 1439),
-        undefined, // relStartMin: a keyed tool call always sends an absolute target
-        atArg(o.at),
-        // #49: only an explicit true grants it; with none the call is exactly as before
-        ...(o.allowOverlap === true ? ([true] as const) : [])
-      )
+      return exec.move({
+        query: String(o.query ?? ''),
+        toDayOffset: optInt(o.toDayOffset, 0, 13),
+        toStartMin: optInt(o.toStartMin, 0, 1439),
+        // relStartMin is omitted: a keyed tool call always sends an absolute target
+        at: atArg(o.at),
+        // #49: only an explicit true grants it; with none the field is absent and the
+        // executor's default stands — the same call as before, without the positional
+        // spread that used to be needed to leave one argument out of the middle
+        ...(o.allowOverlap === true ? { allowOverlap: true } : {}),
+      })
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))
     case 'edit_block': {

@@ -4259,7 +4259,7 @@ describe('undo an AI action (#162)', () => {
     const { id, dayKey: origDay, startMin: origStart } = deck
     scriptedModel.chunks = ['moving it… ', 'put back.']
     scriptedModel.midTurn = (exec) => {
-      exec.move(deck.title, 3, 14 * 60) // push to +3 days at 14:00
+      exec.move({ query: deck.title, toDayOffset: 3, toStartMin: 14 * 60 }) // push to +3 days at 14:00
       undoSawMoved(id, origDay, origStart) // proves the move landed before undo
       exec.undoLast()
     }
@@ -4303,7 +4303,7 @@ describe('undo an AI action (#162)', () => {
         []
       )
       const placed = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!
-      exec.move(placed.title, 2, 16 * 60) // move it again — this is the LAST mutation
+      exec.move({ query: placed.title, toDayOffset: 2, toStartMin: 16 * 60 }) // move it again — this is the LAST mutation
       movedDay = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!.dayKey
       exec.undoLast() // reverses only the move, not the plan
     }
@@ -6302,7 +6302,7 @@ describe('reshape without flailing (#325)', () => {
       { text: "you're right again, " },
       { tool: (e) => e.suggestSlots('Dinner', 'private', 45) }, // dedup
       { text: 'good catch. ' },
-      { tool: (e) => e.move('Dinner', 0, 20 * 60) }, // the ONE reshape sweep
+      { tool: (e) => e.move({ query: 'Dinner', toDayOffset: 0, toStartMin: 20 * 60 }) }, // the ONE reshape sweep
       { text: 'all set.' },
     ]
     await say('align dinner better — it should be at 8')

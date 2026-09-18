@@ -130,17 +130,19 @@ export function runIntent(
       return quietIfChoices(exec.complete(intent.query ?? '', intent.at))
     case 'move':
       return quietIfChoices(
-        exec.move(
-          intent.query ?? '',
-          intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
-            ? Number(intent.toDayKey)
-            : undefined,
-          intent.toStartMin,
-          intent.relStartMin, // #320: a relative shift ("30 min earlier") the executor applies
-          intent.at, // #334: the target block's current start, pinning which of several
-          undefined, // #49 allowOverlap is model-only — the keyless floor never grants one
-          intent.fromDayOffset // #160: a day the ask named pins WHICH block moves
-        )
+        exec.move({
+          query: intent.query ?? '',
+          toDayOffset:
+            intent.toDayKey != null && /^\d+$/.test(intent.toDayKey)
+              ? Number(intent.toDayKey)
+              : undefined,
+          toStartMin: intent.toStartMin,
+          relStartMin: intent.relStartMin, // #320: a relative shift ("30 min earlier")
+          at: intent.at, // #334: the target block's current start, pinning which of several
+          // #49 allowOverlap is model-only — the keyless floor never grants one, so it is
+          // absent rather than passed as undefined; the executor's default stands either way
+          fromDayOffset: intent.fromDayOffset, // #160: a day the ask named pins WHICH block moves
+        })
       )
     case 'capture':
       return exec.capture(intent.title ?? '')

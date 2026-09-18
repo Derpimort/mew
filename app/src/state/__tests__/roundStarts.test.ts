@@ -286,7 +286,7 @@ describe('#22 AC5 — every executor placement starts on the 5-minute grid', () 
 
       // move with no time: scorer, then the first-fit fallback
       const flex0 = byTitle('Reading')
-      await viaTool((exec) => exec.move('Reading', rand(2)))
+      await viaTool((exec) => exec.move({ query: 'Reading', toDayOffset: rand(2) }))
       expectPlaced('flex', flex0)
 
       // moveToNextFree (now + 15, ragged)

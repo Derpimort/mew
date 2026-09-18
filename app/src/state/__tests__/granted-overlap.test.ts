@@ -339,7 +339,12 @@ describe('#49 — move_task carries the grant too', () => {
     await fresh([GAMING(), EMAIL_AT_10()], [], 'local')
     let result = ''
     scriptedModel.midTurn = (exec) => {
-      result = exec.move('email sweep', 0, 14 * 60, undefined, undefined, true)
+      result = exec.move({
+        query: 'email sweep',
+        toDayOffset: 0,
+        toStartMin: 14 * 60,
+        allowOverlap: true,
+      })
     }
     await say('move the email sweep to 2, fine to overlap gaming')
     await settle()
@@ -359,7 +364,12 @@ describe('#49 — move_task carries the grant too', () => {
     )
     let result = ''
     scriptedModel.midTurn = (exec) => {
-      result = exec.move('email sweep', 0, 14 * 60, undefined, undefined, true)
+      result = exec.move({
+        query: 'email sweep',
+        toDayOffset: 0,
+        toStartMin: 14 * 60,
+        allowOverlap: true,
+      })
     }
     await say('move the email sweep to 2')
     await settle()
@@ -389,7 +399,13 @@ describe('#49 — the tools grant only on an explicit true', () => {
       .filter((c) => c[0] === 'plan')
       .map((c) => (c[1] as { allowOverlap?: boolean }[])[0])
     expect(places.map((p) => p.allowOverlap)).toEqual([true, undefined])
-    const moves = calls.filter((c) => c[0] === 'move').map((c) => (c[1] as unknown[])[5])
-    expect(moves).toEqual([true, undefined]) // no grant → no sixth argument at all
+    /* reads the field off move's single named object (#165) where it used to read
+       the sixth positional argument. The VALUES asserted are unchanged — granted
+       on an explicit true, absent otherwise — only the way this spy reaches them
+       moved, because the shape it was reading is what that refactor replaced. */
+    const moves = calls
+      .filter((c) => c[0] === 'move')
+      .map((c) => (c[1] as [{ allowOverlap?: boolean }])[0].allowOverlap)
+    expect(moves).toEqual([true, undefined]) // no grant → no allowOverlap field at all
   })
 })

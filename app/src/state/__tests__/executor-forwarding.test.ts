@@ -47,24 +47,41 @@ const parse = (path: string) =>
 /** every `name(…): T` on the ToolExecutor interface, with how many parameters it
     declares. `members.length` comes back too so the caller can prove the reader
     understood the whole interface rather than the part it recognised. */
-function declaredArities(): { arities: Map<string, number>; members: number } {
+function declaredArities(): {
+  arities: Map<string, number>
+  members: number
+  objectArg: Set<string>
+} {
   const arities = new Map<string, number>()
+  /* methods converted to a single named options object (#165): exactly one
+     parameter whose type is a `…Args` reference. Read from the TYPE rather than
+     the parameter's name, so a method converts into this set the moment its
+     signature does, with nobody remembering to list it here. */
+  const objectArg = new Set<string>()
   let members = 0
   const walk = (n: ts.Node): void => {
     if (ts.isInterfaceDeclaration(n) && n.name.text === 'ToolExecutor') {
       members = n.members.length
       for (const m of n.members) {
-        if (ts.isMethodSignature(m) && m.name) arities.set(m.name.getText(), m.parameters.length)
+        if (ts.isMethodSignature(m) && m.name) {
+          const name = m.name.getText()
+          arities.set(name, m.parameters.length)
+          const only = m.parameters.length === 1 ? m.parameters[0] : undefined
+          if (only?.type && ts.isTypeReferenceNode(only.type) && /Args$/.test(only.type.getText()))
+            objectArg.add(name)
+        }
       }
     }
     n.forEachChild(walk)
   }
   walk(parse(TYPES))
-  return { arities, members }
+  return { arities, members, objectArg }
 }
 
 interface Wrapper {
   params: string[]
+  /** the arguments of every `exec*(…)` call in the body, as written */
+  execArgs: string[][]
   /** a `...rest` forwards whatever it is given, so arity stops being the question */
   rest: boolean
   /** identifiers REFERENCED in the body, collected from the AST */
@@ -118,10 +135,22 @@ function wrapperShapes(): { wrappers: Map<string, Wrapper>; properties: number }
           x.forEachChild(collect)
         }
         collect(fn.body)
+        const execArgs: string[][] = []
+        const calls = (x: ts.Node): void => {
+          if (
+            ts.isCallExpression(x) &&
+            ts.isIdentifier(x.expression) &&
+            /^exec[A-Z]/.test(x.expression.text)
+          )
+            execArgs.push(x.arguments.map((a) => a.getText()))
+          x.forEachChild(calls)
+        }
+        calls(fn.body)
         wrappers.set(p.name.getText(), {
           params: fn.parameters.map((x) => x.name.getText()),
           rest: fn.parameters.some((x) => !!x.dotDotDotToken),
           used,
+          execArgs,
         })
       }
     }
@@ -172,6 +201,41 @@ describe('#165 part 1 — every executor wrapper forwards every argument it decl
       }
     }
     expect(short).toEqual([])
+  })
+
+  it('a method taking a named options object forwards it WHOLE', () => {
+    /* #165, and this clause is why the refactor does not LOSE protection.
+       Converting a method to an options object removes the thing the arity check
+       above was watching: there are no longer seven positions to come up short
+       on, there is one. And a wrapper that destructures that object and rebuilds
+       it can silently drop an OPTIONAL field — measured, not assumed: with
+       `execMove({ query: args.query, … })` missing fromDayOffset, `tsc` exits 0
+       AND all three checks above pass. The type system does not help either,
+       because a missing optional field is not an error (a missing REQUIRED one
+       is, TS2345). Every argument this codebase has dropped so far was optional.
+       So the guarantee is the forwarding style, and this is what makes it
+       mechanical rather than a convention someone remembers: a wrapper whose
+       interface method takes a single `…Args` object must pass that identifier
+       straight through to the exec* call. Rebuild it and this fails by name. */
+    const { objectArg } = declaredArities()
+    const { wrappers } = wrapperShapes()
+
+    expect(objectArg.size).toBeGreaterThan(0) // the set is read from the interface; an empty one would pass vacuously
+
+    const rebuilt: string[] = []
+    for (const name of objectArg) {
+      const w = wrappers.get(name)
+      if (!w) {
+        rebuilt.push(`${name}: takes a named object but has no wrapper in the exec literal`)
+        continue
+      }
+      const [param] = w.params
+      for (const args of w.execArgs) {
+        if (args.length !== 1 || args[0] !== param)
+          rebuilt.push(`${name}: forwards (${args.join(', ')}) instead of passing ${param} whole`)
+      }
+    }
+    expect(rebuilt).toEqual([])
   })
 
   it('no wrapper accepts a parameter it then never uses', () => {

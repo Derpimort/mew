@@ -11,6 +11,7 @@ import type { ChatTurn, ModelPort, ToolExecutor, WeekContext } from './types'
 export type {
   ChatTurn,
   ModelPort,
+  MoveArgs,
   ToolExecutor,
   WeekContext,
   PlaceSpec,

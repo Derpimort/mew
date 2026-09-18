@@ -279,7 +279,7 @@ describe('#120 — the very next message reaches the last change', () => {
   it('a keyed typed move, undone the message after', async () => {
     await fresh([block({ id: 'deck', title: 'Deck' })], { location: 'local' })
     scriptedModel.midTurn = (exec) => {
-      exec.move('deck', 1)
+      exec.move({ query: 'deck', toDayOffset: 1 })
     }
     await say('move the deck to tomorrow')
     await settle()
@@ -363,12 +363,12 @@ describe('#120 — one message, and always the newest change', () => {
       { location: 'local' }
     )
     scriptedModel.midTurn = (exec) => {
-      exec.move('deck', 1)
+      exec.move({ query: 'deck', toDayOffset: 1 })
     }
     await say('move the deck to tomorrow')
     await settle()
     scriptedModel.midTurn = (exec) => {
-      exec.move('gym', 0, 19 * 60)
+      exec.move({ query: 'gym', toDayOffset: 0, toStartMin: 19 * 60 })
     }
     await say('and the gym to 7pm')
     await settle()

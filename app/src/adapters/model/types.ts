@@ -136,6 +136,45 @@ export { CHOICES_POSTED } from './choicesPosted'
 
 /** Executed against the live store; every method returns a short factual
     sentence describing what really happened (a tool_result, not a hope). */
+/** Everything `move` needs, by name (#165).
+
+    WHY AN OBJECT AND NOT SEVEN PARAMETERS: the executor is implemented once as
+    an object literal whose methods forward their arguments by hand, and
+    TypeScript accepts a function with FEWER parameters where one with more is
+    expected. So a wrapper that dropped the last argument satisfied this
+    interface and `tsc` stayed silent — #160 shipped a move that read the day
+    correctly and ignored it. Callers now write what they mean, and the wrapper
+    passes this object through untouched.
+
+    THE LIMIT, stated because it decides how the wrapper must be written: naming
+    the fields does NOT by itself make a dropped argument a compile error. A
+    missing REQUIRED field is (TS2345); a missing OPTIONAL one is not, and every
+    argument dropped in this codebase so far was optional. The guarantee comes
+    from forwarding the object wholesale, and #170's arity pin is what catches a
+    wrapper that destructures and rebuilds it instead. */
+export interface MoveArgs {
+  /** the block to move, as the owner named it */
+  query: string
+  /** days from today for its new day */
+  toDayOffset?: number
+  /** its new start, minutes from midnight */
+  toStartMin?: number
+  /** #320: a relative shift for a referent follow-up ("30 min earlier" = −30).
+      The executor computes the absolute start from the resolved block's CURRENT
+      start, because only the live block knows it and a today-move needs an
+      absolute target. */
+  relStartMin?: number
+  /** #334: the TARGET block's CURRENT start time, pinning which of several
+      same-named blocks to move — distinct from `toStartMin`, its new start. */
+  at?: string
+  /** #49: a granted overlap — see PlaceSpec.allowOverlap */
+  allowOverlap?: boolean
+  /** #160: the TARGET block's own day when the ask named one ("move the gym on
+      wednesday to 15:00"), pinning which of several same-titled blocks moves —
+      the same pin remove has read since #72. */
+  fromDayOffset?: number
+}
+
 export interface ToolExecutor {
   plan(places: PlaceSpec[], frees: FreeSpec[]): string
   /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
@@ -143,23 +182,11 @@ export interface ToolExecutor {
       block. Omit and a bare ambiguous name asks (offer_choices) rather than
       guessing. */
   complete(query: string, at?: string): string
-  /** `relStartMin` (#320) is a relative shift for a referent follow-up ("30 min
-      earlier" = −30): the executor computes the absolute start from the
-      resolved block's CURRENT start (today move needs an absolute target). `at`
-      (#334) is the TARGET block's CURRENT start time, pinning which of several
-      same-named blocks to move — distinct from toStartMin (its new start). */
-  move(
-    query: string,
-    toDayOffset?: number,
-    toStartMin?: number,
-    relStartMin?: number,
-    at?: string,
-    /** #49: a granted overlap — see PlaceSpec.allowOverlap */
-    allowOverlap?: boolean,
-    /** #160: the TARGET block's own day when the ask named one, pinning which of
-        several same-titled blocks moves — the same pin remove has read since #72 */
-    fromDayOffset?: number
-  ): string
+  /** Move one block. Named fields rather than seven positions (#165): the
+      wrapper in store.ts forwards this object WHOLE, so an argument cannot be
+      dropped on the way to the executor — which is exactly what happened in
+      #160, silently, with tsc green. */
+  move(args: MoveArgs): string
   capture(title: string): string
   /** Remove open MEW-placed blocks in scope. Done mews and external calendar
       events are never touched — positive-only, and not ours to delete. */
