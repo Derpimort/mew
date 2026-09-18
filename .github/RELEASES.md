@@ -110,12 +110,30 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
 0. **Paste every closing keyword into the promotion PR's squash body.** Not the PR description —
    the text that becomes the commit. List **every** issue the RC fixes, not only the ones missing a
    keyword today: both keywords that exist on this RC live inside individual commit messages, and a
-   **squashed** promotion carries none of those 78 messages to `main`, so they evaporate. Sixteen
+   **squashed** promotion carries none of those 78 messages to `main`, so they evaporate. Seventeen
    lines is the only form that is correct under a squash *and* a merge commit, and a redundant
    `Closes` is a no-op.
 
-   For 2026.9.0, the curated list (fix mapped to commit, verified complete — it deliberately
-   excludes slice-style issues with slices still open):
+   **Build the list by subtraction, not from memory.** The first pass at this block was assembled
+   by reading the merge log and it missed `#149` — a fix that shipped in `75501a2`, mentioned in
+   that commit's subject, and simply not noticed. Intersect instead:
+
+   ```sh
+   git log --format=%B origin/main..origin/<rc branch> | grep -oE '#[0-9]+' | tr -d '#' | sort -u > /tmp/ref
+   gh issue list --state open --limit 200 --json number --jq '.[].number' | sort -u > /tmp/open
+   comm -12 /tmp/ref /tmp/open      # every open issue this RC touched — the candidates
+   ```
+
+   (Both sides use plain `sort -u`: `comm` compares lexically, so a `sort -n` on one side makes it
+   report the files as unsorted and silently drop rows.)
+
+   Then justify each candidate OUT of the list, in writing. That direction cannot lose a fix by
+   inattention; reading the log for things to add can, and did. For 2026.9.0 the intersection is the
+   seventeen below plus six that stay open on purpose: **#22** (the evening epic — a live bug whose
+   slices, e.g. #50, are still open), **#23**, **#24** and **#27** (referenced by RC work, no fix
+   shipped), **#165** and **#166** (a first slice landed as a pinned test; the fix itself is open).
+
+   For 2026.9.0, the curated list (fix mapped to commit, built by the subtraction above):
 
    ```
    Closes #75
@@ -132,6 +150,7 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    Closes #131
    Closes #135
    Closes #139
+   Closes #149
    Closes #160
    Closes #161
    ```
@@ -142,7 +161,7 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    Then check it took, **on the commit that reached `main`**:
 
    ```sh
-   git log -1 --format=%B <the promotion commit on main> | grep -c "Closes #"   # expect 16
+   git log -1 --format=%B <the promotion commit on main> | grep -c "Closes #"   # expect 17
    ```
 
    If the count is short, nothing about the code is affected — the remaining issues just need
