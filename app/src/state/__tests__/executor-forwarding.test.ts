@@ -85,6 +85,27 @@ function declaredArities(): {
   return { arities, members, objectArg }
 }
 
+/* WHAT THIS FILE COVERS, AND WHERE IT STOPS (#183). Three seams exist between a
+   model's tool call and the store, and the clauses below hold two of them:
+
+     1. interface -> wrapper      the wrapper declares every parameter  (clause 2)
+     2. wrapper   -> exec*        it passes the options object WHOLE    (clause 3)
+     3. exec*     -> exec*        an adapter rebuilds a DIFFERENT shape (clause 5)
+
+   Seam 3 is the one #183 filed. `execResize` takes `ResizeArgs` and calls
+   `execEdit` with an `EditArgs` it builds by hand — a legitimate adapter, because
+   the two types are different shapes and "forward it whole" is not available to
+   it. But it is the #165 hazard one layer in: add an optional field to
+   `ResizeArgs`, forget it at that call, and `tsc` exits 0 while clause 3 never
+   looks inside an `exec*`. Clause 5 closes it by a weaker but available rule —
+   every field of the caller's own options type must be READ somewhere in its
+   body. Reading is not forwarding, and the gap between them is stated in the
+   clause itself.
+
+   STILL NOT COVERED, deliberately: whether a field that IS read reaches the right
+   place, whether the adapter's TARGET type is complete, and anything the model
+   passes that the interface never declared. The first two are what a reviewer
+   reads a diff for; the third is the parser's problem, not the executor's. */
 interface Wrapper {
   params: string[]
   /** the arguments of every `exec*(…)` call in the body, as written */
@@ -165,6 +186,152 @@ function wrapperShapes(): { wrappers: Map<string, Wrapper>; properties: number }
   }
   walk(parse(STORE))
   return { wrappers, properties }
+}
+
+/** every `…Args` type declared in types.ts, with the fields it declares. Read
+    from the TYPE, so a field added there is watched the moment it exists.
+    BOTH DECLARATION FORMS, and the second one is not hypothetical tidiness — it
+    is an escape this clause had and I found by trying it: with `ResizeArgs`
+    written as a type ALIAS instead of an interface, an interface-only reader
+    drops it from this map, `argsConsumers` then skips `execResize` because its
+    type is unknown, and a dropped `scope` read passes with `tsc` also at 0.
+    The membership assertion below could not see it either — both sides shrink
+    together, because they read the same map. Two readings under one predicate
+    are one reading, which is why the cross-check there reads store.ts instead. */
+function argsFields(): Map<string, string[]> {
+  const fields = new Map<string, string[]>()
+  const walk = (n: ts.Node): void => {
+    if (ts.isInterfaceDeclaration(n) && /Args$/.test(n.name.text))
+      fields.set(
+        n.name.text,
+        n.members.filter(ts.isPropertySignature).map((m) => m.name.getText())
+      )
+    if (ts.isTypeAliasDeclaration(n) && /Args$/.test(n.name.text) && ts.isTypeLiteralNode(n.type))
+      fields.set(
+        n.name.text,
+        n.type.members.filter(ts.isPropertySignature).map((m) => m.name.getText())
+      )
+    n.forEachChild(walk)
+  }
+  walk(parse(TYPES))
+  return fields
+}
+
+interface ArgsConsumer {
+  /** the `…Args` type this exec* takes as its single options object */
+  type: string
+  /** fields of that type the body reads, through the parameter or any alias */
+  read: Set<string>
+  /** the object left whole — spread, or handed to a callee — so nothing here can
+      drop a field and the field-by-field rule has no subject */
+  whole: boolean
+}
+
+/** every `function exec*(args: SomeArgs)` in store.ts, with the fields it reads.
+ *
+ *  FOLLOWING ALIASES IS WHAT MAKES THIS SOUND, and it is not a refinement — it is
+ *  the difference between a pin and a false alarm. Three functions here take the
+ *  object and immediately re-type it: `const opts: { at?: string; … } = args`,
+ *  then read `opts.at`. A reader that only watches the PARAMETER's name sees
+ *  `execRemove` read one field of five and reports four dropped. Measured on this
+ *  tree before the aliases were followed: execRemove, execSplit and execDuplicate
+ *  all read as defective and NONE of them is. So the alias set starts at the
+ *  parameter and grows to a fixpoint over `const x = <alias>`. */
+function argsConsumers(): Map<string, ArgsConsumer> {
+  const consumers = new Map<string, ArgsConsumer>()
+  const walk = (n: ts.Node): void => {
+    if (ts.isFunctionDeclaration(n) && n.name && /^exec[A-Z]/.test(n.name.text) && n.body) {
+      /* TRIGGERED FROM store.ts, NOT FROM THE TYPES MAP. Gating on
+         `fields.has(type)` would make an unparsed declaration invisible instead
+         of loud: the consumer would be skipped and the map would never miss it.
+         Any `…Args`-shaped annotation qualifies here, and the clause asserts the
+         types reader found every one of them. */
+      const type = n.parameters[0]?.type?.getText()
+      if (type && /Args$/.test(type)) {
+        const param = n.parameters[0].name.getText()
+        /* CARRIERS: every name that holds this object's fields — the parameter,
+           anything assigned from it, a copy `const c = { ...args }`, and the
+           remainder of a destructure `const { a, ...rest } = args`. Grown to a
+           FIXPOINT BEFORE the read pass, so a carrier declared after its first use
+           cannot be missed by walk order. */
+        const aliases = new Set([param])
+        for (let before = -1; before !== aliases.size;) {
+          before = aliases.size
+          const grow = (x: ts.Node): void => {
+            if (ts.isVariableDeclaration(x) && x.initializer) {
+              const from = x.initializer
+              const fromCarrier =
+                aliases.has(from.getText()) ||
+                (ts.isObjectLiteralExpression(from) &&
+                  from.properties.some(
+                    (pr) => ts.isSpreadAssignment(pr) && aliases.has(pr.expression.getText())
+                  ))
+              if (fromCarrier && ts.isIdentifier(x.name)) aliases.add(x.name.getText())
+              if (aliases.has(from.getText()) && ts.isObjectBindingPattern(x.name))
+                for (const el of x.name.elements)
+                  if (el.dotDotDotToken) aliases.add(el.name.getText())
+            }
+            x.forEachChild(grow)
+          }
+          grow(n.body)
+        }
+        const read = new Set<string>()
+        let whole = false
+        const collect = (x: ts.Node): void => {
+          /* `const { a, b } = <carrier>` reads a and b. The `...rest` element is a
+             CARRIER, registered above — it is neither a read nor a departure. */
+          if (
+            ts.isVariableDeclaration(x) &&
+            x.initializer &&
+            aliases.has(x.initializer.getText()) &&
+            ts.isObjectBindingPattern(x.name)
+          )
+            for (const el of x.name.elements)
+              if (!el.dotDotDotToken) read.add((el.propertyName ?? el.name).getText())
+          /* `args.at` / `opts.at` / `copy.at` */
+          if (ts.isPropertyAccessExpression(x) && aliases.has(x.expression.getText()))
+            read.add(x.name.getText())
+          /* `whole` MEANS THE OBJECT REACHES ANOTHER EXECUTOR ENTIRE, and nothing
+             weaker. It switches the field-by-field rule off for this function, so
+             every way of setting it is a way of turning the clause off.
+
+             coderpa found the first door in review: ANY CallExpression receiving the
+             object set it, and it does not have to be the forward. Measured on
+             `execResize` — dropping the `scope` read fails naming `ResizeArgs.scope`;
+             dropping it AND adding `console.debug('resize', args)` passes 5/5. A
+             debug line put the clause to sleep with no signal that it had.
+             TESTING THAT FIX FOUND TWO MORE DOORS OF THE SAME SHAPE, both measured:
+             `const copy = { ...args }` and `const { query: _q, ...rest } = args` each
+             still escaped, because a copy and a remainder were being treated as
+             departures. They are not — a copy nobody forwards drops exactly as much
+             as the original.
+
+             So a copy or a remainder is a CARRIER, and only an `exec*` call receiving
+             a carrier — bare, or spread into the object literal it is called with —
+             counts as the object leaving. That keeps the idiom #183 recommends
+             (`execEdit({ query, ...rest })`) and closes all three doors. Measured on
+             this tree: NONE of the sixteen consumers sets `whole` today, so the
+             narrowing costs no false positive, and the hatch exists for the
+             forward-whole shape rather than as a general escape. */
+          if (ts.isCallExpression(x) && /^exec[A-Z]/.test(x.expression.getText())) {
+            const carries = (a: ts.Node): boolean =>
+              aliases.has(a.getText()) ||
+              (ts.isObjectLiteralExpression(a) &&
+                a.properties.some(
+                  (pr) => ts.isSpreadAssignment(pr) && aliases.has(pr.expression.getText())
+                ))
+            if (x.arguments.some(carries)) whole = true
+          }
+          x.forEachChild(collect)
+        }
+        collect(n.body)
+        consumers.set(n.name.text, { type, read, whole })
+      }
+    }
+    n.forEachChild(walk)
+  }
+  walk(parse(STORE))
+  return consumers
 }
 
 describe('#165 part 1 — every executor wrapper forwards every argument it declares', () => {
@@ -275,5 +442,61 @@ describe('#165 part 1 — every executor wrapper forwards every argument it decl
       }
     }
     expect(dropped).toEqual([])
+  })
+
+  it('an exec* that takes an options object reads every field of it (#183)', () => {
+    /* THE SEAM CLAUSE 3 CANNOT REACH. Clause 3 proves the wrapper hands the object
+       to its exec* whole; it says nothing about what happens next. One exec* takes
+       an options object and builds a DIFFERENT one for another exec*:
+       `execResize(args: ResizeArgs)` -> `execEdit({ query, patch, at, scope })`.
+       Forwarding whole is not available there — the shapes differ on purpose — so
+       the available guarantee is weaker and stated as such: EVERY FIELD OF THE
+       CALLER'S OWN TYPE MUST BE READ SOMEWHERE IN ITS BODY. Measured: add
+       `note?: string` to `ResizeArgs` and leave `execResize` alone and `tsc -b`
+       exits 0 while this clause exits 1 naming `ResizeArgs.note`.
+       READING IS NOT FORWARDING and the gap is real: a body could read a field and
+       then drop it on the floor. What this removes is the silent case — a field
+       that arrives, is declared, and is never looked at once. That is the shape
+       every argument this codebase has lost so far had. */
+    const fields = argsFields()
+    const consumers = argsConsumers()
+
+    /* ANTI-VACUOUS, in the shape the rest of this file uses: the sets are read
+       from source, so a rename that makes either reader find nothing would turn
+       the loop below into a pass. Assert the discovery before asserting anything
+       about it — and assert MEMBERSHIP rather than a count, because one declared
+       type nobody consumes plus one consumer of a type nobody declares still
+       reads equal on both sides. */
+    expect(fields.size).toBeGreaterThan(0)
+    expect(consumers.size).toBeGreaterThan(0)
+
+    /* THE CROSS-CHECK, AND IT DELIBERATELY READS THE OTHER FILE. store.ts names
+       the type each exec* takes; types.ts is where this reader looks it up. If
+       the lookup comes back empty the DECLARATION is in a form the reader does
+       not parse — which is how the interface-only version of `argsFields` let a
+       type alias through — so fail here, naming the type, rather than quietly
+       watching one fewer function. A membership check against `fields` alone
+       cannot do this: it shares the predicate with the thing it is checking. */
+    const unknown = [...consumers]
+      .filter(([, c]) => !fields.has(c.type))
+      .map(([n, c]) => `${n}: ${c.type} is annotated in store.ts but not found in types.ts`)
+    expect(unknown).toEqual([])
+
+    const consumed = new Set([...consumers.values()].map((c) => c.type))
+    const unconsumed = [...fields.keys()].filter((t) => !consumed.has(t))
+    expect(unconsumed).toEqual([])
+    expect(consumed.size).toBe(fields.size)
+
+    /* and a type with no fields would make its own row vacuous */
+    const empty = [...consumers].filter(([, c]) => (fields.get(c.type) ?? []).length === 0)
+    expect(empty.map(([n]) => n)).toEqual([])
+
+    const unread: string[] = []
+    for (const [name, c] of consumers) {
+      if (c.whole) continue // the object left entire; nothing can be dropped here
+      for (const f of fields.get(c.type) ?? [])
+        if (!c.read.has(f)) unread.push(`${name}: ${c.type}.${f} is never read in the body`)
+    }
+    expect(unread).toEqual([])
   })
 })

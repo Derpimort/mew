@@ -315,6 +315,33 @@ describe('week model', () => {
     it('a time that matches the name but not the clock surfaces the real times', () => {
       const r = findTarget([early, late], 'release', D, { at: 18 * 60 })
       expect(r.status).toBe('ambiguous') // not "none" — the name IS there, just not at 18:00
+      /* #194: the test's own name promises the TIMES, so look at them. This is
+         also the law's other half — two namesakes on the SAME day are a real
+         ambiguity and BOTH must survive, so the soonest-day narrowing pinned
+         below cannot be "fixed" by collapsing everything to one block (#60's
+         masking precedent: pin both directions or the pin is one-sided). */
+      if (r.status === 'ambiguous')
+        expect(r.candidates.map((b) => b.id).sort()).toEqual([early.id, late.id].sort())
+    })
+
+    /* #194: `at` given with nothing matching it is the one soonestDay call site
+       no test held — dropping the narrowing there left all 2965 green. It is not
+       cosmetic: store's ambiguity sentence is built from TIMES alone (the day
+       reaches only the chips), so an unnarrowed pair of namesakes at the same
+       clock asks "19:45 or 19:45? Which one?" — a question whose whole job is to
+       be answerable. Cross-day proximity is a fair disambiguator, same-day is
+       not; that is the law stated above soonestDay in week.ts. */
+    it('a missed time narrows its candidates to the soonest day, never "19:45 or 19:45?"', () => {
+      const todayAt = mk({ title: 'Release', dayKey: D, startMin: 19 * 60 + 45 })
+      const wedAt = mk({ title: 'Release', dayKey: '2026-06-10', startMin: 19 * 60 + 45 })
+      const r = findTarget([wedAt, todayAt], 'release', D, { at: 18 * 60 })
+      expect(r.status).toBe('ambiguous')
+      if (r.status === 'ambiguous') {
+        expect(r.candidates.map((b) => b.id)).toEqual([todayAt.id])
+        // the part the reader would notice: no clock time offered twice
+        const times = r.candidates.map((b) => b.startMin)
+        expect(new Set(times).size).toBe(times.length)
+      }
     })
 
     it('a single match resolves cleanly', () => {
