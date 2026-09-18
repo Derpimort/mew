@@ -7,12 +7,18 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
 import { PROBING, SHOOT_DATE, clockUrl, shootDay } from './lib/shootClock.mjs'
+import { shotsRelDir } from './lib/shotsPath.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 /* unpinned chromium (shared resolver, PW_CHROMIUM seam) — this script gates
    CI (ui-overlap.yml), so a hard build-number path is the first thing to break */
 const exe = findChromium()
-const outDir = path.resolve('shots')
+/* `shots/latest/` by default, the tracked canon names only under PIN_CANON=1 —
+   the same rule lib/harness.mjs applies for the four scenario proofs, and the
+   reasoning lives on `shotsDir()` there. This file owns 1-focus-rest …
+   8-sync-paused, two of which README embeds, so an ordinary run used to rewrite
+   the project's front page images in place. */
+const outDir = path.resolve(shotsRelDir())
 mkdirSync(outDir, { recursive: true })
 
 /* Build-identity guard: shoot must test THIS worktree's dist, never whatever
