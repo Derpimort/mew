@@ -12,6 +12,14 @@ Versions track the desktop shell (`desktop/src-tauri/tauri.conf.json`); the web 
 same tree (`app/dist`, dockerized) and rides the same notes. How releases are cut lives in
 [`.github/RELEASES.md`](.github/RELEASES.md).
 
+> **Issue numbers in sections below `[2026.9.0]` point at a different repository.** MEW was
+> migrated from `Derpimort/mew-archive` (a private, maintainer-only repo) and these notes
+> kept the predecessor's numbering, so a `#NNN` in any section below `[2026.9.0]` means
+> `mew-archive#NNN` — not this repo's issue of that number. This repo's own counter has since
+> passed most of them, so those citations resolve to unrelated live issues and pull requests here
+> rather than to nothing. `[2026.9.0]` and later are this repo's own numbers and are correct as
+> written. Released sections are left exactly as they were published; see #195.
+
 ## [Unreleased]
 
 ## [2026.9.0] — 2026-09-18
