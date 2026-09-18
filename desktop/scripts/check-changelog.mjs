@@ -35,6 +35,11 @@
 //   - no version label is defined twice — a keep-both re-sync duplicates the link
 //     block as readily as it duplicates a section, and a Map lookup would silently
 //     take the last line, making the verdict depend on the order of the merge.
+//   - a "## [X]" heading whose label this reader cannot classify is NAMED rather
+//     than skipped (#202). Widening the accepted shape would only move the blind
+//     spot to the next one; naming has no next shape. An unrecognised REFERENCE
+//     line stays ignored, because "[semver]: …" in the preamble is prose — the
+//     asymmetry is deliberate.
 // Every rule here reads the file with FENCED CODE BLOCKS REMOVED, because a renderer
 // ignores them: a link block inside a fence must not satisfy the existence check, and an
 // example heading inside a fence must not be mistaken for a release. See withoutFences.
@@ -128,6 +133,16 @@ const isVersionLabel = (label) => label === 'Unreleased' || /^\d+\.\d+\.\d+$/.te
 export function versionLinks(text) {
   const headings = []
   const refs = new Map()
+  /* HEADINGS THIS READER CANNOT CLASSIFY, kept so they can be NAMED rather than
+     dropped (#202). A "## [X]" in a CHANGELOG is a version by Keep a Changelog
+     convention, so one whose label is not recognised is not none of our business —
+     it is a version the reader is silently failing to watch. Widening
+     isVersionLabel would only move the blind spot to the next unrecognised shape;
+     naming it has no next shape. Note the ASYMMETRY with reference lines below: a
+     "[x]: url" line may legitimately be prose (`[semver]: …` sits in the preamble),
+     so an unrecognised REFERENCE stays ignored while an unrecognised HEADING is
+     loud. The two are different kinds of thing that happen to share a bracket. */
+  const unknown = []
   /* EVERY reference line in order, duplicates kept. `refs` is a Map, so a second
      "[Unreleased]:" overwrites the first and the verdict would depend on which
      order a keep-both merge happened to leave them in — the same two lines
@@ -136,14 +151,14 @@ export function versionLinks(text) {
   const labels = []
   for (const line of withoutFences(text).split('\n')) {
     const h = /^## \[([^\]]+)\]/.exec(line)
-    if (h && isVersionLabel(h[1])) headings.push(h[1])
+    if (h) (isVersionLabel(h[1]) ? headings : unknown).push(h[1])
     const r = /^\[([^\]]+)\]:\s*(\S+)/.exec(line)
     if (r && isVersionLabel(r[1])) {
       labels.push(r[1])
       refs.set(r[1], r[2])
     }
   }
-  return { headings, refs, labels }
+  return { headings, refs, labels, unknown }
 }
 
 /** Pure: the compare range of a GitHub compare URL ("v0.7.0...HEAD"), or null. */
@@ -156,8 +171,17 @@ export function compareRange(target) {
  *  Newest = the first version heading in the file, which is the Keep a Changelog order
  *  the whole file (and desktop.yml's release-notes awk) already relies on. */
 export function checkLinks(text) {
-  const { headings, refs, labels } = versionLinks(text)
+  const { headings, refs, labels, unknown } = versionLinks(text)
   const released = headings.filter((h) => h !== 'Unreleased')
+  /* Named FIRST, and before the anti-vacuous return below, so a file whose ONLY
+     version heading is one this reader cannot parse fails by NAMING it rather than
+     with the generic "found no version heading". The label is the thing the next
+     person needs; "something is wrong" is what they get without this. */
+  const unknownProblems = unknown.map(
+    (l) =>
+      `"## [${l}]" is a version heading this guard does not recognise, so every rule below skipped it — ` +
+      `labels must be "Unreleased" or a bare X.Y.Z (see .github/RELEASES.md).`
+  )
   // Anti-vacuous: no version headings means the parser stopped matching, not that the
   // file is clean. Every other rule here is "for each heading …" and would pass on an
   // empty set, so the whole check has to fail loudly instead.
@@ -167,6 +191,7 @@ export function checkLinks(text) {
       linked: 0,
       newest: null,
       problems: [
+        ...unknownProblems,
         'found no "## [X.Y.Z]" version heading — with none to check, every link rule below would pass on an empty set.',
       ],
     }
@@ -176,7 +201,7 @@ export function checkLinks(text) {
      down: a keep-both re-sync duplicates the link block too, and that is the very
      defect this script was written for — but the duplicate rules above run only
      INSIDE [Unreleased], so the block was the one part not covered by them. */
-  const problems = duplicates(labels).map((l) => `duplicate link reference: "[${l}]:"`)
+  const problems = [...unknownProblems, ...duplicates(labels).map((l) => `duplicate link reference: "[${l}]:"`)]
   problems.push(
     ...missing.map(
       (v) => `version [${v}] has a section heading but no link reference — add a "[${v}]: …/compare/…" line at the bottom.`

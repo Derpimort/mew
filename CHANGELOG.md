@@ -24,10 +24,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ### Under the hood
 - The release notes now hold their own links together: every version in this file has to carry its
-  compare link at the bottom, the Unreleased link has to point at the newest release, and no version
-  may be listed twice. Publishing a version is a three-part hand edit and only two parts were ever
-  checked, so the third could be missed and the new version would read as plain text among links
-  while every gate stayed green.
+  compare link at the bottom, the Unreleased link has to point at the newest release, no version may
+  be listed twice, and a version heading the check cannot read is named rather than quietly skipped.
+  Publishing a version is a three-part hand edit and only two parts were ever checked, so the third
+  could be missed and the new version would read as plain text among links while every gate stayed
+  green.
 - The release procedure now checks the one step that closes the issues. The promotion's description
   carries the list un-fenced, which is what GitHub actually reads, and a guard reads the link set
   back from GitHub while the pull request is still open — so a fenced or short block is caught
