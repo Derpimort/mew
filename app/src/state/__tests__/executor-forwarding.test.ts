@@ -188,8 +188,16 @@ function wrapperShapes(): { wrappers: Map<string, Wrapper>; properties: number }
   return { wrappers, properties }
 }
 
-/** every `…Args` interface declared in types.ts, with the fields it declares.
-    Read from the TYPE, so a field added there is watched the moment it exists. */
+/** every `…Args` type declared in types.ts, with the fields it declares. Read
+    from the TYPE, so a field added there is watched the moment it exists.
+    BOTH DECLARATION FORMS, and the second one is not hypothetical tidiness — it
+    is an escape this clause had and I found by trying it: with `ResizeArgs`
+    written as a type ALIAS instead of an interface, an interface-only reader
+    drops it from this map, `argsConsumers` then skips `execResize` because its
+    type is unknown, and a dropped `scope` read passes with `tsc` also at 0.
+    The membership assertion below could not see it either — both sides shrink
+    together, because they read the same map. Two readings under one predicate
+    are one reading, which is why the cross-check there reads store.ts instead. */
 function argsFields(): Map<string, string[]> {
   const fields = new Map<string, string[]>()
   const walk = (n: ts.Node): void => {
@@ -197,6 +205,11 @@ function argsFields(): Map<string, string[]> {
       fields.set(
         n.name.text,
         n.members.filter(ts.isPropertySignature).map((m) => m.name.getText())
+      )
+    if (ts.isTypeAliasDeclaration(n) && /Args$/.test(n.name.text) && ts.isTypeLiteralNode(n.type))
+      fields.set(
+        n.name.text,
+        n.type.members.filter(ts.isPropertySignature).map((m) => m.name.getText())
       )
     n.forEachChild(walk)
   }
@@ -224,12 +237,17 @@ interface ArgsConsumer {
  *  tree before the aliases were followed: execRemove, execSplit and execDuplicate
  *  all read as defective and NONE of them is. So the alias set starts at the
  *  parameter and grows to a fixpoint over `const x = <alias>`. */
-function argsConsumers(fields: Map<string, string[]>): Map<string, ArgsConsumer> {
+function argsConsumers(): Map<string, ArgsConsumer> {
   const consumers = new Map<string, ArgsConsumer>()
   const walk = (n: ts.Node): void => {
     if (ts.isFunctionDeclaration(n) && n.name && /^exec[A-Z]/.test(n.name.text) && n.body) {
+      /* TRIGGERED FROM store.ts, NOT FROM THE TYPES MAP. Gating on
+         `fields.has(type)` would make an unparsed declaration invisible instead
+         of loud: the consumer would be skipped and the map would never miss it.
+         Any `…Args`-shaped annotation qualifies here, and the clause asserts the
+         types reader found every one of them. */
       const type = n.parameters[0]?.type?.getText()
-      if (type && fields.has(type)) {
+      if (type && /Args$/.test(type)) {
         const param = n.parameters[0].name.getText()
         const aliases = new Set([param])
         for (let before = -1; before !== aliases.size;) {
@@ -406,7 +424,7 @@ describe('#165 part 1 — every executor wrapper forwards every argument it decl
        that arrives, is declared, and is never looked at once. That is the shape
        every argument this codebase has lost so far had. */
     const fields = argsFields()
-    const consumers = argsConsumers(fields)
+    const consumers = argsConsumers()
 
     /* ANTI-VACUOUS, in the shape the rest of this file uses: the sets are read
        from source, so a rename that makes either reader find nothing would turn
@@ -416,6 +434,19 @@ describe('#165 part 1 — every executor wrapper forwards every argument it decl
        reads equal on both sides. */
     expect(fields.size).toBeGreaterThan(0)
     expect(consumers.size).toBeGreaterThan(0)
+
+    /* THE CROSS-CHECK, AND IT DELIBERATELY READS THE OTHER FILE. store.ts names
+       the type each exec* takes; types.ts is where this reader looks it up. If
+       the lookup comes back empty the DECLARATION is in a form the reader does
+       not parse — which is how the interface-only version of `argsFields` let a
+       type alias through — so fail here, naming the type, rather than quietly
+       watching one fewer function. A membership check against `fields` alone
+       cannot do this: it shares the predicate with the thing it is checking. */
+    const unknown = [...consumers]
+      .filter(([, c]) => !fields.has(c.type))
+      .map(([n, c]) => `${n}: ${c.type} is annotated in store.ts but not found in types.ts`)
+    expect(unknown).toEqual([])
+
     const consumed = new Set([...consumers.values()].map((c) => c.type))
     const unconsumed = [...fields.keys()].filter((t) => !consumed.has(t))
     expect(unconsumed).toEqual([])
