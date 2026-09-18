@@ -88,7 +88,27 @@ Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and cha
 
 ## Closing keywords: put them where the COMMIT can see them
 
-`Closes #N` in a **pull request body does nothing here.** `gh pr merge --squash` builds the squash
+`Closes #N` in a pull request body does nothing on a PR **into the RC**, and is the whole mechanism
+on the **promotion** PR. The difference is the base branch, and conflating the two is what made this
+section wrong until #192:
+
+| PR base | does the description link issues? |
+|---|---|
+| `v*-rc*` — every feature PR | **No.** GitHub links closing keywords only for the default branch, so the body is inert and the keyword has to reach the commit. Everything below applies. |
+| `main` — the promotion | **Yes, and it is the mechanism.** GitHub links them when the body is *saved*, before any merge and with nothing to remember at the click. |
+
+Measured on the v2026.9.0 promotion (#185): twenty-five issues were listed to close, the squash box
+was **not** cleared — its body is 3,915 lines of un-replaced commit messages carrying exactly four
+closing keywords — and all twenty-five closed anyway, **twenty-one of them on the description
+alone**. So on the promotion the description is the mechanism and the squash box is the redundancy,
+not the other way round.
+
+It only works **un-fenced**. GitHub does not read closing keywords inside a code fence: `totalCount`
+was 0 while the block was fenced and 25 after un-fencing, with promotion #32 (one bare `Closes`, one
+linked issue) as the control. A fenced block and an un-fenced one are byte-identical to every other
+gate we run, which is why `desktop/scripts/check-promotion-closes.mjs` exists (#192).
+
+For a PR into the RC, the rest of this section stands. `gh pr merge --squash` builds the squash
 message from GitHub's default — the PR title plus a bullet per commit carrying that commit's **whole
 message, body and all** — or from exactly the text you pass with `--body`. The PR body never reaches
 it. Three merges on the 2026.9.0 RC proved it the hard way: one kept its keyword only because the
@@ -121,9 +141,11 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
 
 ## Cutting a release (maintainer)
 
-0. **Paste every closing keyword into the promotion PR's squash body.** Not the PR description —
-   the text that becomes the commit. List **every** issue the RC fixes, not only the ones missing a
-   keyword today: the keywords an RC already has live inside individual commit messages, and a
+0. **Put every closing keyword in the promotion PR's DESCRIPTION, un-fenced.** A plain list, not a
+   code fence — that is what actually closes the issues, and it needs nothing of you at the click.
+   Pasting the same block into the squash body as well is *also fine and not required*: it buys a
+   readable commit message on `main`, not the closes. List **every** issue the RC fixes, not only
+   the ones missing a keyword today: the keywords an RC already has live inside individual commit messages, and a
    **squashed** promotion carries none of those messages to `main` (78 of them on 2026.9.0), so they
    evaporate. The whole list is the only form that is correct under a squash *and* a merge commit,
    and a redundant `Closes` is a no-op.
@@ -171,20 +193,50 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    things to add can, and did. The written exclusions are the half that makes the list checkable —
    a number nobody can audit is just a claim, while a named exclusion can be disagreed with.
 
-   **One `Closes` per line.** The check below counts LINES, so laying the block out in columns to
-   save space makes it report 4 and read as a failure — a block formatted so its own check lies
-   about it, in the file documenting that class. (Caught here by running the check against the
-   block rather than trusting the layout.)
+   **One `Closes` per line, and this is the one thing no check can do for you.** Laying the block
+   out in columns to save space — `Closes #139, #161, #176, #182` — closes exactly **one** issue.
+   GitHub links only the first number on such a line, and the guard below parses it the same way,
+   so the tool and the platform agree with each other while four issues silently stay open. Both
+   halves of the check say yes. No check can tell "meant one" from "meant four", which is why the
+   rule lives here in prose rather than in the script: it is addressed to the human, and it is the
+   only part of this step a green ✓ cannot cover for you.
 
-   Then check it took, **on the commit that reached `main`**:
+   **Check it BEFORE the click — that is the advantage of this path.** The link set is readable on
+   the still-open PR, so a fenced or short block is fixable while it costs nothing:
 
    ```sh
-   git log -1 --format=%B <the promotion commit on main> | grep -c "Closes #"
-   # expect the number of lines in the checklist issue's block — read it there, do not remember it
+   gh api repos/Derpimort/mew/pulls/<n> --jq .body > /tmp/body.md
+   gh api graphql -f query='query{repository(owner:"Derpimort",name:"mew"){
+     pullRequest(number:<n>){closingIssuesReferences(first:100){nodes{number}}}}}' \
+     --jq '[.data.repository.pullRequest.closingIssuesReferences.nodes[].number]|join(",")'
+   node desktop/scripts/check-promotion-closes.mjs /tmp/body.md --linked <that list>
    ```
 
-   If the count is short, nothing about the code is affected — the remaining issues just need
-   closing by hand. See *Closing keywords* above for why the PR body is not enough.
+   It fails on the **difference**, not on zero: a keyword hidden in a fence or an HTML comment, an
+   issue GitHub has not linked, and one linked that the body never claimed each name themselves. A
+   promotion whose description closes **nothing** fails too, rather than passing on an empty set.
+   Read the exit code from the command — through a pipe you get the pipe's.
+
+   **Pass `--linked` even when the list comes back empty.** An empty result is not a missing
+   argument, it is GitHub telling you it linked nothing — the exact state this step exists to catch
+   — and the guard now treats it that way and fails. (It did not always: `--linked ""` used to read
+   as "not supplied" and exit 0, so the recipe above handed the guard the one input that switched it
+   off, precisely when it mattered.) With no `--linked` at all the guard checks only what is visible
+   in the body and says `LIVE LINK SET NOT CHECKED` — a ✓ there is half an answer, not a clearance.
+
+   **Do not count lines.** `grep -c "Closes #"` read 3 on the v2026.9.0 promotion commit, `grep -c
+   "^Closes #"` read 2, and the truth was 4: keywords appear at line start, mid-prose (*"… Closes
+   #139 — the second of …"*) and lowercase (*"fixes #161"*). Compare the **set** against the
+   checklist issue's block, never a count:
+
+   ```sh
+   git log -1 --format=%B <the promotion commit on main> \
+     | grep -oiE '\b(clos(e|es|ed)|fix(es|ed)?|resolve[sd]?) #[0-9]+' \
+     | grep -oE '[0-9]+' | sort -un
+   ```
+
+   If something is short, nothing about the code is affected — the remaining issues just need
+   closing by hand.
 1. **Move `[Unreleased]` into a version.** In `CHANGELOG.md`, rename the `[Unreleased]` heading
    to the new version with today's date (`## [2026.9.0] — 2026-09-18`), then open a fresh empty
    `[Unreleased]` above it. Update the link-reference block at the bottom: add the new version's

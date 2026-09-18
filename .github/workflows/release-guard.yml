@@ -37,3 +37,8 @@ jobs:
       - run: node --test desktop/scripts/__tests__/check-release-version.test.mjs
       - run: node desktop/scripts/check-changelog.mjs CHANGELOG.md
       - run: node --test desktop/scripts/__tests__/check-changelog.test.mjs
+      # the promotion closing-block guard (#192). The SCRIPT has a subject only on a
+      # promotion PR — closingIssuesReferences is empty for any base but the default
+      # branch — so it runs from the runbook at promotion time; its cases are pure and
+      # run here, which is what keeps the fenced-block negative control honest.
+      - run: node --test desktop/scripts/__tests__/check-promotion-closes.test.mjs

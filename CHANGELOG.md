@@ -28,6 +28,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
   may be listed twice. Publishing a version is a three-part hand edit and only two parts were ever
   checked, so the third could be missed and the new version would read as plain text among links
   while every gate stayed green.
+- The release procedure now checks the one step that closes the issues. The promotion's description
+  carries the list un-fenced, which is what GitHub actually reads, and a guard reads the link set
+  back from GitHub while the pull request is still open — so a fenced or short block is caught
+  before the merge instead of leaving shipped work looking unfinished. Clearing the pre-filled
+  squash box is still welcome and no longer the thing the release depends on.
 
 ## [2026.9.0] — 2026-09-18
 
