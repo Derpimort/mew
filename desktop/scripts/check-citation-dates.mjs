@@ -97,6 +97,32 @@ import { withoutFences } from './check-changelog.mjs'
     fires on correct content, which is the failure that gets a guard removed. */
 export const ORDINAL_WORDS = new Set(['acceptance', 'criterion', 'nudge', 'image'])
 
+/* A SPACE-FORM PROJECT QUALIFIER — `gbrain #1340` — IS DELIBERATELY NOT HANDLED BY A
+   PREFIX WORD LIST, AND THIS IS THE MEASUREMENT THAT DECIDED IT RATHER THAN AN OPINION.
+
+   The reader captures the word before the hash, so adding a PROJECT_WORDS set alongside
+   ORDINAL_WORDS is a two-line change and it was written and tested. It cost a real
+   finding:
+
+     desktop/scripts/build-sidecar.mjs:61   "gbrain #1340"   a REPO QUALIFIER — the
+                                            gbrain tracker's issue 1340, a PGLite/bun bug
+     HANDOFF.md:30                          "GBrain #39"     a SUBJECT NOUN — and #39 is
+                                            mew-archive#39, "brain: BrainPort + gbrain
+                                            adapter", matching that line's own gloss
+                                            "(BrainPort + senses + recall)"
+
+   Same token, two meanings, one line apart in the same repository. No list of words can
+   tell "issue 1340 of the gbrain project" from "the GBrain work, issue 39", and the
+   version that tried dropped HANDOFF.md:30 from the proven set — trading fifteen false
+   positives for one real citation silently lost, which is the worse trade.
+
+   THE RANGE RULE BELOW ALREADY GETS BOTH RIGHT, for the right reason rather than by
+   luck: 1340 is not a number mew-archive has, so it cannot be an archive citation; 39 is,
+   so it stays. The residual gap is honest and stated: a cross-project citation with a
+   number BOTH repos could have — `gbrain #42` — still reads as ours. That is one
+   unreported site of a kind this repo has zero of today, against one real finding lost
+   per list entry that guesses wrong. */
+
 /** A document that declares its own bare `#N` to be an index opts out wholesale.
     ARCHITECTURE.md:5 carries exactly this sentence. */
 export const ORDINAL_DECLARATION = /bare `#N`[^\n]*internal index, not an issue/i
@@ -104,7 +130,34 @@ export const ORDINAL_DECLARATION = /bare `#N`[^\n]*internal index, not an issue/
 /** Pure. Every `#N` in the text that is a citation candidate: fenced blocks removed, and
     ordinals skipped BEFORE any date is consulted. Returns the 1-based line number of the
     ORIGINAL text, and the full original line, which is the needle `git log -S` needs. */
-export function citationsIn(text) {
+/** The highest number Derpimort/mew-archive ever allocated. THIS IS A FIXED FACT, NOT A
+    DRIFTING ONE: that repository is `archived: true` — frozen, last pushed 2026-08-11 —
+    so it can never allocate another. Measured from the API on 2026-09-18. A number above
+    this cannot be an archive issue, and a guard whose whole output is the sentence
+    "PROVEN to mean Derpimort/mew-archive" must not say it about a number that repository
+    does not have. */
+export const ARCHIVE_HIGHEST = 384
+
+/** Pure. The highest number EITHER repository has, given the --issues map: the archive's
+    frozen 384, or this repo's own highest ALLOCATED number once it passes that. Taking
+    the max rather than welding in 384 means the rule cannot start rejecting real local
+    citations the day this counter outgrows the archive.
+
+    ALLOCATED, not merely present. The map's keys are every number CITED, including ones
+    this repo has never had — those carry a null. Taking the max over all keys would
+    raise the ceiling to whatever impossible number happens to appear and disable the
+    rule completely: `#876652` alone would do it. I wrote that version first and caught
+    it before it ran, which is why this is a function with its own cases rather than four
+    lines inside the CLI where nothing could test it. */
+export function ceilingFrom(issues) {
+  const allocated = Object.entries(issues)
+    .filter(([, created]) => created != null)
+    .map(([n]) => Number(n))
+    .filter(Number.isFinite)
+  return Math.max(ARCHIVE_HIGHEST, ...allocated)
+}
+
+export function citationsIn(text, { highest = ARCHIVE_HIGHEST } = {}) {
   if (ORDINAL_DECLARATION.test(text)) return []
   // withoutFences drops fenced lines entirely, so blank them in place instead to keep
   // line numbers aligned with the file on disk. Same decision, line numbers preserved.
@@ -122,7 +175,32 @@ export function citationsIn(text) {
       if (at > 0 && /[A-Za-z0-9_/]/.test(line[at - 1])) continue
       const before = (m[1] || '').toLowerCase()
       if (ORDINAL_WORDS.has(before)) continue
-      out.push({ number: Number(m[3]), lineNo: i + 1, line })
+      const n = Number(m[3])
+      // NOT A CITATION THIS GUARD MAY JUDGE. A citation can only mean mew#N or
+      // mew-archive#N, so a number neither repository has is not a provenance claim at
+      // all — and saying "PROVEN to mean mew-archive" about it is a claim about a repo
+      // that does not have it. Measured: 15 sites in this repo, every one landing in the
+      // `dead` branch and every one wrong. Twelve are CSS hex colours made only of
+      // digits — `#000000`, `#060708`, `#876652`, `#777777` — which the `#(\d+)` pattern
+      // cannot tell from an issue. `#ffffff` was only ever safe because `f` is not a
+      // digit. One is a synthetic `#999` inside a test fixture's assertion, and one is
+      // `gbrain #1340`, a real citation to another project entirely.
+      //
+      // WHY THIS IS THE RULE AND NOT "DETECT HEX COLOURS": the ceiling is derived from
+      // the guard's own logic rather than from guessing what a colour looks like, and it
+      // needs no pattern that a new colour format could slip past. The cost of getting it
+      // wrong is the worst kind — following this guard's own instruction on
+      // `glitch-text.tsx:153` would rewrite a colour literal and break the file. A proven
+      // list containing code it would corrupt if obeyed is the fires-on-correct-content
+      // failure, inside the guard written to avoid it.
+      //
+      // ITS LIMIT, at full strength: this catches `gbrain #1340` only because 1340 is
+      // large. A cross-project citation with a PLAUSIBLE number — `gbrain #42` — still
+      // reads as ours. The already-qualified skip above handles `gbrain#42` written
+      // closed-up; the space form would need a list of project names, and one instance is
+      // not a list. Named here rather than guessed at.
+      if (n < 1 || n > highest) continue
+      out.push({ number: n, lineNo: i + 1, line })
     }
   })
   return out
@@ -234,6 +312,13 @@ if (isMain) {
     console.error(`cannot read --issues: ${e.message}`)
     process.exit(2)
   }
+  // The ceiling is the highest number EITHER repository has: the archive's frozen 384,
+  // or this repo's own highest allocated number if it ever passes that. Taking the max
+  // rather than hard-coding 384 means the rule cannot start rejecting real local
+  // citations the day this counter outgrows the archive — measured from the map it was
+  // handed rather than assumed.
+  const highest = ceilingFrom(issues)
+
   if (files.length === 0) {
     console.error('no files given')
     process.exit(2)
@@ -249,7 +334,7 @@ if (isMain) {
       console.error(`cannot read ${file}: ${e.message}`)
       process.exit(2)
     }
-    for (const c of citationsIn(text)) {
+    for (const c of citationsIn(text, { highest })) {
       const localCreatedAt = Object.prototype.hasOwnProperty.call(issues, String(c.number))
         ? issues[String(c.number)]
         : undefined

@@ -6,6 +6,8 @@ import {
   classify,
   ORDINAL_WORDS,
   ORDINAL_DECLARATION,
+  ARCHIVE_HIGHEST,
+  ceilingFrom,
 } from '../check-citation-dates.mjs'
 
 /* THE THREE FIXTURES THIS GUARD MUST NOT FLAG COME FIRST, because that direction is the
@@ -246,4 +248,90 @@ test('an unreadable date is its own verdict, not a comparison against NaN', () =
   // NaN comparisons are false in BOTH directions, so without this branch the case would
   // fall through to 'silent' and claim it had been judged
   assert.equal(classify({ number: 7, introducedAt: ['2026-01-01T00:00:00Z'], localCreatedAt: 'nope' }).verdict, 'undatable')
+})
+
+/* A NUMBER NEITHER REPOSITORY HAS IS NOT A CITATION. Found by runner2 verifying the
+   #195 re-derivation: 15 sites in this repo were being reported as "PROVEN to mean
+   Derpimort/mew-archive" when they are CSS hex colours, a test fixture and another
+   project's issue. Every one landed in `dead`, so no published live figure moved — but
+   the guard's own instruction, followed on `glitch-text.tsx`, would have rewritten a
+   colour literal and broken the file. */
+
+test('hex colours made only of digits are not citations', () => {
+  for (const line of [
+    "expect(relativeLuminance('#000000')).toBeCloseTo(0, 6)",
+    "fox: { pal: '#b0522a', pbl: '#876652' },",
+    "bg: '#060708',",
+    "expect(ratioToFixed(contrastRatio('#777777', '#ffffff'))).toBe('4.48')",
+    "expect(() => parseHex('#12345')).toThrow()",
+  ]) {
+    assert.deepEqual(citationsIn(line), [], `should see no citation in: ${line}`)
+  }
+  // `#ffffff` was never at risk — `f` is not a digit — and that is luck, not design,
+  // which is why the rule is about the NUMBER and not about spotting colours.
+  assert.deepEqual(citationsIn("const c = '#ffffff'"), [])
+})
+
+test('a synthetic number in a fixture, and another project\'s issue, are not ours', () => {
+  assert.deepEqual(citationsIn('assert.match(p[0], /links issues the body does not: #999/)'), [])
+  // desktop/scripts/build-sidecar.mjs:61 — a real citation, to a different project
+  assert.deepEqual(citationsIn('// pinned to the gbrain #1340 protocol revision'), [])
+})
+
+test('the ceiling is the archive\'s frozen highest, and it is tested from BOTH sides', () => {
+  // mew-archive is `archived: true`, so 384 can never move. The boundary must admit the
+  // last real number and reject the first impossible one — a ceiling only ever tested
+  // from the rejecting side would pass with an off-by-one that silently drops #384.
+  assert.deepEqual(citationsIn('see #384 for the dial').map((c) => c.number), [384])
+  assert.deepEqual(citationsIn('see #385 for the dial'), [])
+  assert.equal(ARCHIVE_HIGHEST, 384)
+
+  // and it is a PARAMETER, not a constant welded in: raise it and the same token is seen
+  assert.deepEqual(citationsIn('see #777 here', { highest: 1000 }).map((c) => c.number), [777])
+  assert.deepEqual(citationsIn('see #777 here'), [])
+})
+
+test('zero and negative-shaped numbers are rejected, and a real citation survives', () => {
+  assert.deepEqual(citationsIn("contrastRatio('#000000', '#ffffff')"), [])
+  // the control: the SAME file that carries those colours also carries a real citation,
+  // and it must still be found — app/src/ui/colorContrast.ts:12
+  assert.deepEqual(
+    citationsIn(' * Carbon (dark) tokens are not enumerated here: this issue (#174) is the Pet').map((c) => c.number),
+    [174]
+  )
+})
+
+test('ceilingFrom counts ALLOCATED numbers, not every key in the map', () => {
+  // the bug I wrote first and caught before it ran: the map's keys include numbers this
+  // repo has never had. One impossible number would have raised the ceiling past every
+  // colour and silently disabled the rule.
+  const map = { '12': '2026-08-11T00:00:00Z', '876652': null, '999': null }
+  assert.equal(ceilingFrom(map), 384, 'a null entry must not raise the ceiling')
+
+  // and it DOES rise for a real local number past the archive's frozen highest
+  assert.equal(ceilingFrom({ '400': '2026-09-01T00:00:00Z' }), 400)
+  assert.equal(ceilingFrom({}), 384, 'an empty map falls back to the archive bound')
+})
+
+/* THE CASE A PREFIX WORD LIST WOULD HAVE BROKEN. Measured, not imagined: a PROJECT_WORDS
+   set was written, tested and reverted because it dropped HANDOFF.md:30 from the proven
+   set. These two pin both halves so the idea cannot be re-introduced without failing. */
+
+test('a project name before a hash can be a QUALIFIER or a SUBJECT — only the number tells them apart', () => {
+  // build-sidecar.mjs:61 — a qualifier. Rejected because 1340 is a number neither repo
+  // has, which is the right reason rather than because "gbrain" is in a list.
+  assert.deepEqual(citationsIn("   compiled binary's vfs (gbrain #1340: every PGLite command ENOENTs on"), [])
+
+  // HANDOFF.md:30 — the SAME token as a subject noun, and #39 IS mew-archive#39
+  // ("brain: BrainPort + gbrain adapter"). It must stay a citation.
+  assert.deepEqual(
+    citationsIn('· #30 (loose-threads rail). GBrain #39 (BrainPort + senses + recall)').map((c) => c.number),
+    [30, 39]
+  )
+})
+
+test('the stated residual gap is real, and pinned so nobody thinks it is covered', () => {
+  // a cross-project citation with a number both repos could have reads as ours. This repo
+  // has zero of these today; the assertion exists so the limit is not rediscovered.
+  assert.deepEqual(citationsIn('see gbrain #42 for the handshake').map((c) => c.number), [42])
 })
