@@ -75,10 +75,18 @@ Releases before 2026.9.0 (`v0.1.1` … `v0.7.0`) were SemVer; their tags and cha
 ## Closing keywords: put them where the COMMIT can see them
 
 `Closes #N` in a **pull request body does nothing here.** `gh pr merge --squash` builds the squash
-message from GitHub's default (the PR title plus a bullet list of the branch's commit subjects) or
-from exactly the text you pass with `--body` — the PR body never reaches it. Three merges on the
-2026.9.0 RC proved it the hard way: one kept its keyword only because the merger happened to retype
-it into `--body`, and two lost theirs, so two shipped fixes were left looking unfinished.
+message from GitHub's default — the PR title plus a bullet per commit carrying that commit's **whole
+message, body and all** — or from exactly the text you pass with `--body`. The PR body never reaches
+it. Three merges on the 2026.9.0 RC proved it the hard way: one kept its keyword only because the
+merger happened to retype it into `--body`, and two lost theirs, so shipped fixes were left looking
+unfinished.
+
+**And it fires in the other direction too.** GitHub reads no context, so a keyword anywhere in a
+commit message closes that issue — including inside ordinary prose. This RC closes one issue purely
+by accident, from the sentence *"the comment says whoever **fixes #161** deletes the skip"* buried in
+a commit body. On a crew that writes thorough commit messages that is a live foot-gun both ways: we
+nearly lost a close we wanted and got one we never asked for. Write `issue #161` or `for #161` when
+you mean to reference rather than close.
 
 So, per merge:
 
@@ -99,11 +107,46 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
 
 ## Cutting a release (maintainer)
 
-0. **Carry any lost closing keywords.** Check the RC's merge commits for the issues it fixes
-   (`git log --format=%B origin/main..HEAD | grep -c Closes` against the list of issues the RC
-   closes) and add a `Closes #N` line to the promotion PR's squash body for every one that is
-   missing. For 2026.9.0 that is **#160 and #161** — both fixed and shipped, both merged without
-   the keyword reaching the commit. See *Closing keywords* above for why.
+0. **Paste every closing keyword into the promotion PR's squash body.** Not the PR description —
+   the text that becomes the commit. List **every** issue the RC fixes, not only the ones missing a
+   keyword today: both keywords that exist on this RC live inside individual commit messages, and a
+   **squashed** promotion carries none of those 78 messages to `main`, so they evaporate. Sixteen
+   lines is the only form that is correct under a squash *and* a merge commit, and a redundant
+   `Closes` is a no-op.
+
+   For 2026.9.0, the curated list (fix mapped to commit, verified complete — it deliberately
+   excludes slice-style issues with slices still open):
+
+   ```
+   Closes #75
+   Closes #116
+   Closes #117
+   Closes #118
+   Closes #119
+   Closes #120
+   Closes #121
+   Closes #122
+   Closes #123
+   Closes #124
+   Closes #126
+   Closes #131
+   Closes #135
+   Closes #139
+   Closes #160
+   Closes #161
+   ```
+
+   One per line, deliberately: the check below counts LINES, so a column layout
+   would report 4 and read as a failure.
+
+   Then check it took, **on the commit that reached `main`**:
+
+   ```sh
+   git log -1 --format=%B <the promotion commit on main> | grep -c "Closes #"   # expect 16
+   ```
+
+   If the count is short, nothing about the code is affected — the remaining issues just need
+   closing by hand. See *Closing keywords* above for why the PR body is not enough.
 1. **Move `[Unreleased]` into a version.** In `CHANGELOG.md`, rename the `[Unreleased]` heading
    to the new version with today's date (`## [2026.9.0] — 2026-09-18`), then open a fresh empty
    `[Unreleased]` above it. Update the link-reference block at the bottom: add the new version's
