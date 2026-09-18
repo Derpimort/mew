@@ -60,7 +60,7 @@ page.on('console', (m) => {
 page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message))
 
 /* a fresh playwright context has an empty IndexedDB, so the seed runs and the
-   first-run concept tour (#160) opens over the dial — dismiss it the way a
+   first-run concept tour (mew-archive#160) opens over the dial — dismiss it the way a
    returning user already has, so these canonical shots capture the app itself */
 const skipOnboarding = async () => {
   await page.waitForSelector('.nx-stage', { timeout: 10000 })
