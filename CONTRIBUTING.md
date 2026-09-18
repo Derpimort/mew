@@ -72,8 +72,22 @@ you run them. `SHOOT_DATE=YYYY-MM-DD pnpm -C app shoot` probes another day (the
 gate is proven for a Monday and mid-week); the pin, not the override, is the gate.
 Probe caveats: a malformed `SHOOT_DATE` stops the run (it never falls back silently); only
 a probe may self-seed the done block, so on the pin a week with no seeded done block fails;
-a Sunday probe fails day-load (a Sunday week has no days ahead to tint); and a probe
-**overwrites the tracked canon PNGs**, so run `git checkout -- app/shots` after probing.
+a Sunday probe fails day-load (a Sunday week has no days ahead to tint).
+
+**A run writes to `app/shots/latest/` and leaves the tracked canon alone.** That directory sits
+inside the gitignored `app/shots/`, so an ordinary run — gate, probe or scenario proof — leaves
+`git status` clean. Re-pinning canon is deliberate:
+
+```sh
+PIN_CANON=1 pnpm -C app shoot        # writes 1-focus-rest … 8-sync-paused in place
+git add -f app/shots/<file>          # review the image diff, then commit it
+```
+
+It used to be the other way round: every run rewrote the committed PNGs and the remedy was
+remembering `git checkout -- app/shots` afterwards. Two runs in one night rewrote seven and then
+sixteen of them, each caught only because someone looked. A proof that silently rewrites the
+evidence it is judged against can be made to agree with whatever the code now does, so the
+overwrite now costs a keystroke and the restore costs nothing.
 
 **Who owns which canon** (`app/shots/`, re-pin with `git add -f <file>`): `shoot.mjs` owns
 `1-focus-rest` … `8-sync-paused`. The scenario proofs run keyless against the same preview

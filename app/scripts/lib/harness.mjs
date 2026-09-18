@@ -14,11 +14,32 @@ import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './chromium.mjs'
 import { clockUrl } from './shootClock.mjs'
+import { shotsRelDir } from './shotsPath.mjs'
 
 export const baseUrl = () => process.argv[2] ?? 'http://localhost:5199'
 
+/** Where a proof writes its PNGs.
+
+    A RUN NO LONGER OVERWRITES COMMITTED CANON. Nineteen files in `app/shots/`
+    are tracked — README embeds two of them and CONTRIBUTING names an owner for
+    each — while the directory itself is gitignored as a build artifact. Five
+    proofs write exactly those nineteen names, so any run rewrote committed
+    evidence in place and left it to a human to notice: CONTRIBUTING's remedy
+    was literally "run `git checkout -- app/shots` after probing". Tonight one
+    gate run rewrote seven and another rewrote sixteen; both were caught by
+    someone remembering to look, which is not a mechanism.
+
+    So the default is `shots/latest/` (inside the ignored directory, invisible to
+    git), and re-pinning canon is a deliberate act:
+
+      PIN_CANON=1 pnpm shoot           # writes the tracked names in place
+      git add -f app/shots/<file>      # then review the image diff and commit
+
+    A proof that silently rewrites the evidence it is judged against can be made
+    to agree with whatever the code now does. Re-pinning is a decision, so it
+    needs a keystroke. */
 export function shotsDir() {
-  const dir = path.resolve('shots')
+  const dir = path.resolve(shotsRelDir())
   mkdirSync(dir, { recursive: true })
   return dir
 }
