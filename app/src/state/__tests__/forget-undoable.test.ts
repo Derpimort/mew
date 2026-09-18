@@ -130,10 +130,18 @@ describe('#158 — forgetting a standing rule is undoable', () => {
     await boot()
     /* hydrate SEEDS ITS OWN SETTINGS on a first run, so a brain opt-in passed to
        freshStore is overwritten — the same trap turn-clock.test.ts documents for
-       modelLocation. Turn it on afterwards, then settle until listPrefs's promise
-       chain has actually delivered the brain's copy rather than guessing a tick. */
+       modelLocation. Turn it on afterwards. */
     useMew.getState().updateSettings({ brainEnabled: true })
-    for (let i = 0; i < 6; i++) await tick()
+    /* …then settle on the CONDITION rather than on a tick count: listPrefs
+       resolves through a promise chain, and `brainPrefs` on the store is the
+       observable that says the brain's copy actually landed. One tick is enough
+       today; the cap only stops a hang, and the assertion below is what makes a
+       give-up loud instead of turning this into a test that passes by not
+       looking. (An earlier draft counted six ticks while its comment claimed to
+       watch a condition — a comment and its code disagreeing, which is the thing
+       this file exists to keep out.) */
+    for (let i = 0; i < 20 && !useMew.getState().brainPrefs?.length; i++) await tick()
+    expect(useMew.getState().brainPrefs?.map((p) => p.match)).toEqual(['stretching'])
     expect(rules()).toHaveLength(0) // never stored on this device
 
     useMew.getState().forgetStandingPref(brainRules[0])
