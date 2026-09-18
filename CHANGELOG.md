@@ -14,6 +14,8 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 
 ## [Unreleased]
 
+## [2026.9.0] — 2026-09-18
+
 ### The dial on any day
 - The Focus dial shows any day, not just today: step through the days from the date line above the
   clock and see that day's blocks on the same calm face — a lived day wears its full wash, a day
@@ -720,7 +722,8 @@ intelligence layer that earns its keep every morning.
   release build (#144).
 - "Update later" no longer silently restores a backup; the retime `startMin` is now `const` (#138).
 
-[Unreleased]: https://github.com/Derpimort/mew/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Derpimort/mew/compare/v2026.9.0...HEAD
+[2026.9.0]: https://github.com/Derpimort/mew/compare/v0.7.0...v2026.9.0
 [0.7.0]: https://github.com/Derpimort/mew/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/Derpimort/mew/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Derpimort/mew/compare/v0.4.0...v0.5.0
