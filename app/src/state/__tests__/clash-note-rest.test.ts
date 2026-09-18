@@ -304,7 +304,7 @@ describe('a clash with a protected rest is named as rest, never "flexible"', () 
     let result = ''
     await fresh([deck(), walk()], { location: 'local' })
     scriptedModel.midTurn = (exec) => {
-      result = exec.edit('deck', { startMin: 18 * 60, endMin: 19 * 60 })
+      result = exec.edit({ query: 'deck', patch: { startMin: 18 * 60, endMin: 19 * 60 } })
     }
     await say('make the deck 6 to 7')
     await settle()

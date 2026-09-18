@@ -319,7 +319,7 @@ describe('#22 AC6 — plannable hours stand apart from quiet hours', () => {
 
   it('the model is told the bounds', async () => {
     await fresh([homeCall()], TUE(11, 0))
-    const out = await viaTool((exec) => exec.listBlocks(0))
+    const out = await viaTool((exec) => exec.listBlocks({ day: 0 }))
     expect(out).not.toBe('')
     expect(scriptedModel.lastCtx!.plannableHours).toBe('8:00–22:30')
     expect(contextBlock(scriptedModel.lastCtx!)).toContain('>8:00–22:30</plannable-hours>')

@@ -227,6 +227,77 @@ export interface RemoveArgs {
   dayOffset?: number
 }
 
+/** Everything `listBlocks` needs, by name (#165). */
+export interface ListBlocksArgs {
+  /** days from today, or 'week' for the whole week */
+  day: number | 'week'
+  /** only blocks with this tag */
+  tag?: import('../../domain/types').Tag
+}
+
+/** Everything `offerChoices` needs, by name (#165). */
+export interface OfferChoicesArgs {
+  /** the question MEW asks above the chips */
+  prompt: string
+  /** the chips, in the order they read */
+  options: ChoiceOption[]
+}
+
+/** Everything `proposeScenarios` needs, by name (#165). */
+export interface ProposeScenariosArgs {
+  /** the question MEW asks above the scenarios */
+  prompt: string
+  /** the tasks each scenario places */
+  tasks: ScenarioTaskSpec[]
+}
+
+/** Everything `resize` needs, by name (#165). */
+export interface ResizeArgs {
+  /** the block to resize, as the owner named it */
+  query: string
+  /** the new length, absolute or relative to its current one */
+  resize: { durationMin?: number; relDurationMin?: number }
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+  /** how a RECURRING block's resize lands */
+  scope?: 'this' | 'following' | 'series'
+}
+
+/** Everything `relativeMove` needs, by name (#165). */
+export interface RelativeMoveArgs {
+  /** the block to nudge, as the owner named it */
+  query: string
+  /** which way it moves */
+  direction: 'earlier' | 'later' | 'next_day' | 'next_free'
+  /** how far, in minutes, where the direction takes an amount */
+  amountMin?: number
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+}
+
+/** Everything `edit` needs, by name (#165). */
+export interface EditArgs {
+  /** the block to reshape, as the owner named it */
+  query: string
+  /** what to change about it */
+  patch: {
+    startMin?: number
+    endMin?: number
+    durationMin?: number
+    /** #320: a relative length delta ("give it another 30" = +30) applied to
+          the resolved block's CURRENT duration by the executor. */
+    relDurationMin?: number
+    title?: string
+    tag?: import('../../domain/types').Tag
+    attention?: 'focus' | 'background'
+    due?: number
+  }
+  /** the start time pinning which of several same-named blocks */
+  at?: string
+  /** how a RECURRING block's edit lands */
+  scope?: 'this' | 'following' | 'series'
+}
+
 export interface ToolExecutor {
   plan(places: PlaceSpec[], frees: FreeSpec[]): string
   /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
@@ -262,7 +333,7 @@ export interface ToolExecutor {
       the edit/move/remove tools target by. `day` is a 0–13 offset (0 = today)
       or 'week' for the seven days ahead; `tag` filters to one tag. Never
       mutates, never snapshots — it is MEW's eyes, not a hand. */
-  listBlocks(day: number | 'week', tag?: import('../../domain/types').Tag): string
+  listBlocks(args: ListBlocksArgs): string
   /** Read-only slot query: the first clear window of durationMin within the
       constraints, or honest alternatives when none exists. */
   findSlot(
@@ -293,23 +364,7 @@ export interface ToolExecutor {
       one occurrence, 'following' splits the series and applies from that day
       forward, 'series' changes every occurrence. Omit it on a series block and
       the executor asks with this/following/series chips. */
-  edit(
-    query: string,
-    patch: {
-      startMin?: number
-      endMin?: number
-      durationMin?: number
-      /** #320: a relative length delta ("give it another 30" = +30) applied to
-          the resolved block's CURRENT duration by the executor. */
-      relDurationMin?: number
-      title?: string
-      tag?: import('../../domain/types').Tag
-      attention?: 'focus' | 'background'
-      due?: number
-    },
-    at?: string,
-    scope?: 'this' | 'following' | 'series'
-  ): string
+  edit(args: EditArgs): string
   /** Persist a standing rule the user stated. Brain-off it falls back to a
       local MemoryEvent — the feature works single-device; gbrain upgrades it. */
   remember(pref: import('../brain/types').PrefPayload): string
@@ -319,7 +374,7 @@ export interface ToolExecutor {
       ordinary user turn through the normal message path. The result string
       (CHOICES_POSTED…) tells the model the options are on screen and the
       turn should end. */
-  offerChoices(prompt: string, options: ChoiceOption[]): string
+  offerChoices(args: OfferChoicesArgs): string
   /** Chat-only plan mode (#293): run the scenario engine over the classified
       tasks and post ONE mew message carrying named week-placement cards — the
       human picks, and the pick (pickScenario, store-side) applies the stored
@@ -327,7 +382,7 @@ export interface ToolExecutor {
       (#254 precedent); the result string leads with CHOICES_POSTED so a model
       ends its turn and the keyless floor stays quiet. One scenario falls
       through to a plain suggestion line — no picker theater. */
-  proposeScenarios(prompt: string, tasks: ScenarioTaskSpec[]): string
+  proposeScenarios(args: ProposeScenariosArgs): string
   /** Persist a durable user-stated fact/preference/correction to the brain.
       Optional-path: confirms even when no brain is connected (the fact still
       lands in chat history; re-stating later costs nothing). */
@@ -348,12 +403,7 @@ export interface ToolExecutor {
       delta ("30 min longer" = +30). Only the end moves — the start never does.
       Shares edit's targeting (`at`), recurring `scope`, external-ownership, and
       clash note: a duration-only edit is exactly what this is. */
-  resize(
-    query: string,
-    resize: { durationMin?: number; relDurationMin?: number },
-    at?: string,
-    scope?: 'this' | 'following' | 'series'
-  ): string
+  resize(args: ResizeArgs): string
   /** Copy a block to another day/time (#335) — the original is untouched; the
       copy is a NEW independent block with the same title, tag, length, and
       attention. `toDayOffset`/`toStartMin` place it; absent time keeps the
@@ -409,12 +459,7 @@ export interface ToolExecutor {
       to the soonest genuinely clear slot from now. Fixed/calendar blocks are
       never moved and the next free slot always lands clear of them. Shares the
       move path (drift, clash, ownership); `at` pins which of several. */
-  relativeMove(
-    query: string,
-    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
-    amountMin?: number,
-    at?: string
-  ): string
+  relativeMove(args: RelativeMoveArgs): string
   /** Split one block into two around a gap (#73): the first piece keeps the
       start and ends where the gap opens, the second picks up where it closes.
       `around` is a clock range, or another block to split around (its title

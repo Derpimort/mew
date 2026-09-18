@@ -244,7 +244,10 @@ describe('an ambiguous edit/delete on a series block offers three chips once (AC
     let toolResult = ''
     scriptedModel.chunks = ['One sec…']
     scriptedModel.midTurn = (exec) => {
-      toolResult = exec.edit('standup', { startMin: 10 * 60, endMin: 10 * 60 + 30 }, undefined)
+      toolResult = exec.edit({
+        query: 'standup',
+        patch: { startMin: 10 * 60, endMin: 10 * 60 + 30 },
+      })
     }
     await say('shift my standup to 10')
     await settle()

@@ -79,15 +79,15 @@ export function runIntent(
         p.window == null // #117: "tonight" is the owner's own word on when
       const floor = planMode === 'always' ? 2 : 3
       if (planMode !== 'off' && !frees.length && places.length >= floor && places.every(unpinned)) {
-        const out = exec.proposeScenarios(
-          '',
-          places.map((p) => ({
+        const out = exec.proposeScenarios({
+          prompt: '',
+          tasks: places.map((p) => ({
             title: p.title,
             tag: p.tag,
             durationMin: p.durationMin,
             due: p.due,
-          }))
-        )
+          })),
+        })
         /* the executor may have posted the picker (#254 pattern): its result
            then addresses a model — the floor stays quiet, the cards ARE the
            reply. A fall-through line (single shape, nothing fits) speaks. */
@@ -155,14 +155,24 @@ export function runIntent(
       // #343: a scope word ("just this one", "from now on") the parser lifted off
       // rides through; absent on a series block, the executor asks with chips.
       return quietIfChoices(
-        exec.edit(intent.query ?? '', intent.edit ?? {}, intent.at, intent.seriesScope)
+        exec.edit({
+          query: intent.query ?? '',
+          patch: intent.edit ?? {},
+          at: intent.at,
+          scope: intent.seriesScope,
+        })
       )
     case 'resize':
       /* #335: a duration-only change keeping the start — routes through the same
          executor edit path, so an ambiguous name or a series block asks with
          chips (CHOICES_POSTED) exactly as edit does. */
       return quietIfChoices(
-        exec.resize(intent.query ?? '', intent.resize ?? {}, intent.at, intent.seriesScope)
+        exec.resize({
+          query: intent.query ?? '',
+          resize: intent.resize ?? {},
+          at: intent.at,
+          scope: intent.seriesScope,
+        })
       )
     case 'duplicate':
       /* #335: copy to another day/time — an ambiguous source name asks with
@@ -192,12 +202,12 @@ export function runIntent(
       /* #335: a relative nudge (earlier/later/next_day/next_free) — same chip
          behavior on an ambiguous name as a move. */
       return quietIfChoices(
-        exec.relativeMove(
-          intent.query ?? '',
-          intent.relmove?.direction ?? 'later',
-          intent.relmove?.amountMin,
-          intent.at
-        )
+        exec.relativeMove({
+          query: intent.query ?? '',
+          direction: intent.relmove?.direction ?? 'later',
+          amountMin: intent.relmove?.amountMin,
+          at: intent.at,
+        })
       )
     case 'batch': {
       /* #75: a wide batch posts its confirm as chips — the floor stays quiet,
@@ -279,7 +289,7 @@ export function runIntent(
          returns — one executor path, so keyless and keyed can't drift. The
          executor's listBlocks never mutates and never snapshots; the readout
          string is the reply the floor yields verbatim. */
-      return exec.listBlocks(intent.list?.day ?? 0, intent.list?.tag)
+      return exec.listBlocks({ day: intent.list?.day ?? 0, tag: intent.list?.tag })
   }
 }
 
@@ -325,14 +335,14 @@ export function runSplit(ask: SplitAsk, exec: ToolExecutor, now: Date): string {
     braindump auto-offer; an explicit "plan my week" is the user choosing the
     picker. */
 function runRitual(ctx: WeekContext, exec: ToolExecutor): string {
-  const out = exec.proposeScenarios(
-    '',
-    ritualTasks({
+  const out = exec.proposeScenarios({
+    prompt: '',
+    tasks: ritualTasks({
       realisticBestH: ctx.realisticBestH,
       captures: ctx.openCaptures ?? [],
       prefs: ctx.prefs ?? [],
-    })
-  )
+    }),
+  })
   /* the picker posted (#254 pattern): the cards ARE the reply — stay quiet.
      A fall-through line (one shape, nothing fits) speaks. */
   return out.startsWith(CHOICES_POSTED) ? '' : out

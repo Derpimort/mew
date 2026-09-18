@@ -665,11 +665,14 @@ describe('a seeded Tuesday morning', () => {
       let result = ''
       scriptedModel.chunks = ['on it.']
       scriptedModel.midTurn = (exec) => {
-        result = exec.offerChoices('where should the deck live?', [
-          { label: '15:00', reply: 'place the deck at 15:00' },
-          { label: '16:30', reply: 'place the deck at 16:30' },
-          { label: 'pick for me', reply: 'pick a slot for the deck yourself' },
-        ])
+        result = exec.offerChoices({
+          prompt: 'where should the deck live?',
+          options: [
+            { label: '15:00', reply: 'place the deck at 15:00' },
+            { label: '16:30', reply: 'place the deck at 16:30' },
+            { label: 'pick for me', reply: 'pick a slot for the deck yourself' },
+          ],
+        })
       }
       await say('find a slot for the deck')
 
@@ -3880,9 +3883,10 @@ describe('a message typed while MEW works queues, then sends exactly once', () =
       /* the chips land mid-turn (fresh, unsuperseded — only the phase gate
          can park them), and the pick fires while the SAME turn still runs:
          `thinking` is already false (a token streamed) but turnInFlight holds */
-      exec.offerChoices('where should the deck live?', [
-        { label: '15:00', reply: 'place the deck at 15:00' },
-      ])
+      exec.offerChoices({
+        prompt: 'where should the deck live?',
+        options: [{ label: '15:00', reply: 'place the deck at 15:00' }],
+      })
       const offer = chat().find((m) => m.choices?.length === 1)!
       thinkingAtPick = useMew.getState().thinking
       void useMew.getState().pickChoice(offer.id, offer.choices![0].id)
@@ -4937,10 +4941,13 @@ describe('tool-call activity cards (#282)', () => {
         [{ title: 'deep work', tag: 'work', dayOffset: 1, startMin: 540, durationMin: 60 }],
         []
       )
-      exec.offerChoices('keep it?', [
-        { label: 'yes', reply: 'keep it' },
-        { label: 'no', reply: 'undo that' },
-      ])
+      exec.offerChoices({
+        prompt: 'keep it?',
+        options: [
+          { label: 'yes', reply: 'keep it' },
+          { label: 'no', reply: 'undo that' },
+        ],
+      })
       exec.undoLast()
     }
     await say('plan tomorrow morning')
@@ -5357,11 +5364,14 @@ describe('#293 — plan mode scenario picker', () => {
     scriptedModel.midTurn = (exec) => {
       /* the model posts the picker mid-turn, then a click lands while the
          turn is still mewing — the phase gate must swallow it */
-      exec.proposeScenarios('', [
-        { title: 'deck', tag: 'work' },
-        { title: 'budget review', tag: 'work' },
-        { title: 'inbox sweep', tag: 'work' },
-      ])
+      exec.proposeScenarios({
+        prompt: '',
+        tasks: [
+          { title: 'deck', tag: 'work' },
+          { title: 'budget review', tag: 'work' },
+          { title: 'inbox sweep', tag: 'work' },
+        ],
+      })
       const m = chat().find((x) => (x.scenarios?.length ?? 0) > 0)!
       useMew.getState().pickScenario(m.id, m.scenarios![0].id)
     }
@@ -5507,7 +5517,10 @@ describe('#293 — plan mode scenario picker', () => {
       /* one huge task on an empty week: every profile collapses to the same
          earliest fit, the engine dedupes to ONE scenario, and the executor
          suggests it in prose instead of a one-card picker */
-      result = exec.proposeScenarios('', [{ title: 'mega build', tag: 'work', durationMin: 600 }])
+      result = exec.proposeScenarios({
+        prompt: '',
+        tasks: [{ title: 'mega build', tag: 'work', durationMin: 600 }],
+      })
     }
     await say('plan the mega build')
     expect(result).toMatch(/^One shape fits — /)
@@ -5834,10 +5847,13 @@ describe('#304 — the weekly planning ritual', () => {
     let asked = ''
     scriptedModel.chunks = ['reading the week.']
     scriptedModel.midTurn = (exec) => {
-      asked = exec.offerChoices('what matters most this week?', [
-        { label: 'the deck', reply: 'the deck matters most — plan the week around it' },
-        { label: 'the roadmap', reply: 'the roadmap matters most — plan the week around it' },
-      ])
+      asked = exec.offerChoices({
+        prompt: 'what matters most this week?',
+        options: [
+          { label: 'the deck', reply: 'the deck matters most — plan the week around it' },
+          { label: 'the roadmap', reply: 'the roadmap matters most — plan the week around it' },
+        ],
+      })
     }
     await say('plan my week')
     expect(asked).toMatch(/^The options are on screen as clickable chips/)
@@ -5847,11 +5863,14 @@ describe('#304 — the weekly planning ritual', () => {
     /* the answer arrives as the next user turn; the model closes with ONE propose */
     scriptedModel.chunks = ['here are the shapes.']
     scriptedModel.midTurn = (exec) => {
-      exec.proposeScenarios('', [
-        { title: 'The deck', tag: 'work', durationMin: 120 },
-        { title: 'Deep work I', tag: 'work', durationMin: 90 },
-        { title: 'Deep work II', tag: 'work', durationMin: 90 },
-      ])
+      exec.proposeScenarios({
+        prompt: '',
+        tasks: [
+          { title: 'The deck', tag: 'work', durationMin: 120 },
+          { title: 'Deep work I', tag: 'work', durationMin: 90 },
+          { title: 'Deep work II', tag: 'work', durationMin: 90 },
+        ],
+      })
     }
     await useMew.getState().pickChoice(question.id, question.choices![0].id)
     scriptedModel.midTurn = null

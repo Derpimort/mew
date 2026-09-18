@@ -66,9 +66,16 @@ function declaredArities(): {
         if (ts.isMethodSignature(m) && m.name) {
           const name = m.name.getText()
           arities.set(name, m.parameters.length)
-          const only = m.parameters.length === 1 ? m.parameters[0] : undefined
-          if (only?.type && ts.isTypeReferenceNode(only.type) && /Args$/.test(only.type.getText()))
-            objectArg.add(name)
+          /* SHAPE, NOT NAME (coderpa's finding on the first pass). This used to
+             require the type to be called `…Args`, so a method converted under
+             any other name escaped the check silently — and the anti-vacuous
+             guard could not see it, because the other converted methods kept
+             the set non-empty. With 23 conversions coming, a naming convention
+             is the wrong thing to hang the set on. Any method taking exactly
+             ONE parameter qualifies: the single-primitive ones (capture, clear,
+             analyze) already forward their argument straight through, so the
+             rule costs them nothing and cannot be escaped by a rename. */
+          if (m.parameters.length === 1) objectArg.add(name)
         }
       }
     }

@@ -84,14 +84,14 @@ describe('runIntent — list routes through the read-only executor readout', () 
   it('calls exec.listBlocks with the parsed day + tag and yields its readout verbatim', () => {
     const { exec, listBlocks } = listOnly()
     const out = runIntent({ kind: 'list', list: { day: 'week', tag: 'health' } }, exec, ctx(), '')
-    expect(listBlocks).toHaveBeenCalledWith('week', 'health')
+    expect(listBlocks).toHaveBeenCalledWith({ day: 'week', tag: 'health' })
     expect(out).toBe(READOUT)
   })
 
   it('defaults an absent payload to today, no tag', () => {
     const { exec, listBlocks } = listOnly()
     runIntent({ kind: 'list' }, exec, ctx(), '')
-    expect(listBlocks).toHaveBeenCalledWith(0, undefined)
+    expect(listBlocks).toHaveBeenCalledWith({ day: 0, tag: undefined })
   })
 
   it('touches no mutating method (the proxy would throw)', () => {
@@ -108,7 +108,7 @@ describe('the keyless floor end-to-end', () => {
     const reply = await collect(
       createRulesAdapter(NOW).converse([{ role: 'user', text: 'show me today' }], ctx(), exec)
     )
-    expect(listBlocks).toHaveBeenCalledWith(0, undefined)
+    expect(listBlocks).toHaveBeenCalledWith({ day: 0, tag: undefined })
     expect(reply).toBe(READOUT)
     expect(reply).toContain('✓') // the done block is visible, not hidden
   })

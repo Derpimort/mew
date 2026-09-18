@@ -41,9 +41,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('capture')
       return `Captured "${t}".`
     }),
-    edit: vi.fn((q) => {
+    edit: vi.fn((args: { query: string }) => {
       calls.push('edit')
-      return `Updated ${q}.`
+      return `Updated ${args.query}.`
     }),
     remove: vi.fn((args: { query: string }) => {
       calls.push('remove')
@@ -53,8 +53,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('analyze')
       return `Day shape (offset ${d}).`
     }),
-    listBlocks: vi.fn((day, tag) => {
+    listBlocks: vi.fn((args: { day: number | 'week'; tag?: string }) => {
       calls.push('listBlocks')
+      const { day, tag } = args
       return `here's ${day}${tag ? ` tagged ${tag}` : ''}: - 9:00–10:00 deep work [work]`
     }),
     findSlot: vi.fn((dur, d, nb, na) => {
@@ -73,13 +74,14 @@ function mockExec(): ToolExecutor & { calls: string[] } {
       calls.push('queryBrain')
       return `Spicanova this week: 2.5h across 2 blocks. (asked: ${q})`
     }),
-    offerChoices: vi.fn((prompt: string, options: { label: string }[]) => {
+    offerChoices: vi.fn((args: { prompt: string; options: { label: string }[] }) => {
       calls.push('offerChoices')
+      const { prompt, options } = args
       return `${CHOICES_POSTED}: ${options.map((o) => `"${o.label}"`).join(' · ')}. (asked: ${prompt})`
     }),
-    proposeScenarios: vi.fn((_prompt: string, tasks: { title: string }[]) => {
+    proposeScenarios: vi.fn((args: { prompt: string; tasks: { title: string }[] }) => {
       calls.push('proposeScenarios')
-      return `${CHOICES_POSTED}: ${tasks.length} tasks laid out. Say nothing more and END your turn.`
+      return `${CHOICES_POSTED}: ${args.tasks.length} tasks laid out. Say nothing more and END your turn.`
     }),
     clear: vi.fn((scope) => {
       calls.push('clear')
@@ -238,7 +240,7 @@ describe('rules adapter — plan mode route (#293)', () => {
       createRulesAdapter(NOW).converse([{ role: 'user', text: braindump }], ctx, exec)
     )
     expect(exec.calls).toEqual(['proposeScenarios'])
-    const [prompt, tasks] = (exec.proposeScenarios as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ prompt, tasks }] = (exec.proposeScenarios as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(prompt).toBe('')
     expect(tasks.map((t: { title: string }) => t.title)).toEqual([
       'deck',
@@ -366,20 +368,25 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
     expect(await runTool('edit_block', { query: 'prod release', durationMin: 45 }, exec)).toBe(
       'Updated prod release.'
     )
+    /* one named object since #165 — same four values */
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([
-      'prod release',
-      { durationMin: 45 },
-      undefined,
-      undefined, // #343: no recurring scope on a plain edit
+      {
+        query: 'prod release',
+        patch: { durationMin: 45 },
+        at: undefined,
+        scope: undefined, // #343: no recurring scope on a plain edit
+      },
     ])
     /* #334: the name+time handle reaches the executor — edit/move/complete each
        carry `at` (the target block's start time) so a shared title pins one */
     await runTool('edit_block', { query: 'release', at: '19:45', title: 'v1.2-rc' }, exec)
     expect((exec.edit as ReturnType<typeof vi.fn>).mock.calls[1]).toEqual([
-      'release',
-      { title: 'v1.2-rc' },
-      '19:45',
-      undefined, // #343: scope absent unless the ask made it explicit
+      {
+        query: 'release',
+        patch: { title: 'v1.2-rc' },
+        at: '19:45',
+        scope: undefined, // #343: scope absent unless the ask made it explicit
+      },
     ])
     await runTool('complete_task', { query: 'standup', at: '9am' }, exec)
     expect(exec.complete).toHaveBeenCalledWith('standup', '9am')
@@ -465,7 +472,7 @@ describe('offer_choices rides the tool registry (#254)', () => {
       exec
     )
     expect(out).toContain(CHOICES_POSTED)
-    const [prompt, options] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ prompt, options }] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(prompt).toBe('which gym block?')
     expect(options).toEqual([
       { label: 'the 7:00', reply: 'remove gym 7:00' },
@@ -493,7 +500,7 @@ describe('offer_choices rides the tool registry (#254)', () => {
       },
       exec
     )
-    const [, options] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ options }] = (exec.offerChoices as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(options).toHaveLength(5)
     expect(options[0]).toEqual({ label: '9:00', reply: '9:00' }) // trimmed
     expect(options.map((o: { label: string }) => o.label)).not.toContain('14:00')
@@ -570,7 +577,7 @@ describe('attention + due ride the tool registry', () => {
   it('edit_block carries the demote-to-background and the due patch', async () => {
     const exec = mockExec()
     await runTool('edit_block', { query: 'restore', attention: 'background', dueMin: 780 }, exec)
-    const [q, patch] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ query: q, patch }] = (exec.edit as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(q).toBe('restore')
     expect(patch).toMatchObject({ attention: 'background', due: 780 })
   })

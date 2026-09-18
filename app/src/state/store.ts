@@ -185,7 +185,13 @@ import {
   type ChoiceOption,
   type FreeSpec,
   type MergeArgs,
+  type EditArgs,
+  type ListBlocksArgs,
   type MoveArgs,
+  type OfferChoicesArgs,
+  type ProposeScenariosArgs,
+  type RelativeMoveArgs,
+  type ResizeArgs,
   type PlaceSpec,
   type RemoveArgs,
   type SplitArgs,
@@ -3082,7 +3088,7 @@ export const useMew = create<MewState>((set, get) => {
       /* #116: the only ask couldn't fit today — say so and offer the next open
          time; nothing lands until the owner picks it */
       if (noRoom.length === 1 && noRoom[0].offer)
-        return execOfferChoices(noRoom[0].note, [
+        return postChoices(noRoom[0].note, [
           noRoom[0].offer,
           { label: 'not now', reply: 'ok, not now' },
         ])
@@ -3406,7 +3412,7 @@ export const useMew = create<MewState>((set, get) => {
           ? `${times[0]} or ${times[1]}`
           : `${times.slice(0, -1).join(', ')}, or ${times[times.length - 1]}`
       return {
-        reply: execOfferChoices(
+        reply: postChoices(
           `${spell(r.candidates.length)} "${base}" blocks — ${tail}? Which one?`,
           r.candidates.slice(0, 5).map((b) => ({
             label: `the ${fmtTime(b.startMin)}${b.dayKey === todayKey ? '' : ` (${fmtDowLong(b.dayKey)})`}`,
@@ -3777,18 +3783,15 @@ export const useMew = create<MewState>((set, get) => {
       the start never moves (applyEditPatch/execEdit keep it when only the
       duration changes). durationMin sets an absolute length; relDurationMin a
       signed delta ("30 min longer"). */
-  function execResize(
-    query: string,
-    resize: { durationMin?: number; relDurationMin?: number },
-    at?: string,
-    scope?: RecurScope
-  ): string {
-    return execEdit(
+  /* one named object (#165) — see ResizeArgs */
+  function execResize(args: ResizeArgs): string {
+    const { query, resize, at, scope } = args
+    return execEdit({
       query,
-      { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
+      patch: { durationMin: resize.durationMin, relDurationMin: resize.relDurationMin },
       at,
-      scope
-    )
+      scope,
+    })
   }
 
   /** Copy a block to another day/time (#335) — the original is untouched and the
@@ -4209,14 +4212,11 @@ export const useMew = create<MewState>((set, get) => {
           )
     if (askable.length) {
       const names = andList([...new Set(askable.map((sk) => baseOf(sk.block.title)))])
-      return execOfferChoices(
-        `${names} repeat${askable.length === 1 ? 's' : ''} — which do you mean?`,
-        [
-          { label: 'just this one', reply: batchAsk(' just this one') },
-          { label: 'this & the ones after', reply: batchAsk(' this and following') },
-          { label: 'the whole series', reply: batchAsk(' across the whole series') },
-        ]
-      )
+      return postChoices(`${names} repeat${askable.length === 1 ? 's' : ''} — which do you mean?`, [
+        { label: 'just this one', reply: batchAsk(' just this one') },
+        { label: 'this & the ones after', reply: batchAsk(' this and following') },
+        { label: 'the whole series', reply: batchAsk(' across the whole series') },
+      ])
     }
 
     if (!plan.selected.length) return `nothing matches ${what}, so everything stays as it is.`
@@ -4268,7 +4268,7 @@ export const useMew = create<MewState>((set, get) => {
         )
       const sharesLine = shares.length ? ` ${shares.join(' · ')}.` : ''
       const changed = confirmCount != null ? 'the week changed since then — ' : ''
-      return execOfferChoices(
+      return postChoices(
         `${changed}${retag ? 'tag' : 'move'} ${n} block${n === 1 ? '' : 's'} ${change}? ${plan.moves.map(line).join(' · ')}.${staysLine}${sharesLine}`,
         [
           { label: 'do it', reply },
@@ -4290,12 +4290,9 @@ export const useMew = create<MewState>((set, get) => {
       clear slot from now (week.nextFreeSlot, which lands clear of fixed/external
       by construction). One resolution (reusing #345 targeting), then the shared
       move tail — drift, clash, and ownership are never re-implemented. */
-  function execRelativeMove(
-    query: string,
-    direction: 'earlier' | 'later' | 'next_day' | 'next_free',
-    amountMin?: number,
-    at?: string
-  ): string {
+  /* one named object (#165) — see RelativeMoveArgs */
+  function execRelativeMove(args: RelativeMoveArgs): string {
+    const { query, direction, amountMin, at } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -4429,7 +4426,7 @@ export const useMew = create<MewState>((set, get) => {
       const atMin = around.at ? parseTimeValue(around.at) : null
       const r = week.findTarget(pool, around.query, todayKey, { at: atMin, includeDone: true })
       if (r.status === 'ambiguous') {
-        return execOfferChoices(
+        return postChoices(
           `which "${baseOf(around.query)}" should ${base} split around?`,
           r.candidates.slice(0, 5).map((c) => ({
             label: `around the ${fmtTime(c.startMin)}`,
@@ -4691,7 +4688,7 @@ export const useMew = create<MewState>((set, get) => {
       chat-only. `reissue(scope)` builds each chip's complete ask; the pick
       arrives as an ordinary user turn and routes through the executor. */
   function offerRecurringScope(base: string, reissue: (scope: RecurScope) => string): string {
-    return execOfferChoices(`"${base}" repeats — which do you mean?`, [
+    return postChoices(`"${base}" repeats — which do you mean?`, [
       { label: 'just this one', reply: reissue('this') },
       { label: 'this & the ones after', reply: reissue('following') },
       { label: 'the whole series', reply: reissue('series') },
@@ -4839,15 +4836,12 @@ export const useMew = create<MewState>((set, get) => {
     return `Removed — ${base} from ${when} on (${tail.length} block${tail.length === 1 ? '' : 's'}); the earlier ones stay.`
   }
 
-  function execEdit(
-    query: string,
-    patch: EditPatch,
-    /* #334: the TARGET block's current start time, pinning which of several
-       same-named blocks to change — distinct from patch.startMin (a retime). */
-    at?: string,
-    /* #343: the recurring-edit scope for a series block — absent asks (chips). */
-    scope?: RecurScope
-  ): string {
+  /* one named object (#165) — see EditArgs. `at` pins which of several
+     same-named blocks (#334, distinct from patch.startMin, a retime); `scope` is
+     the recurring-edit scope, and absent asks with chips (#343). */
+  function execEdit(args: EditArgs): string {
+    const { query, at, scope } = args
+    const patch: EditPatch = args.patch
     const s = get()
     const res = resolveTarget(query, 'edit')
     if ('reply' in res) return res.reply
@@ -5094,7 +5088,15 @@ export const useMew = create<MewState>((set, get) => {
       (pickChoice), so tools remain the only mutation path. The returned
       string leads with CHOICES_POSTED: the model reads it as "end your turn",
       the keyless floor reads it as "stay quiet — the chips ARE the reply". */
-  function execOfferChoices(prompt: string, options: ChoiceOption[]): string {
+  /* one named object (#165) — see OfferChoicesArgs. The tool-facing entry
+     delegates to postChoices, which keeps the two-argument shape the store's own
+     ask sites have always used: seven of them build a prompt and a list inline,
+     and wrapping each in an object would be churn with nothing to forget. The
+     WRAPPER is what must forward wholesale, and it does. */
+  function execOfferChoices(args: OfferChoicesArgs): string {
+    return postChoices(args.prompt, args.options)
+  }
+  function postChoices(prompt: string, options: ChoiceOption[]): string {
     post([
       choicesMsg(
         prompt,
@@ -5122,15 +5124,21 @@ export const useMew = create<MewState>((set, get) => {
       along), so a preview is sized and windowed the way the apply will be.
       Every scenario is validated against the live week at post time — the
       engine is conflict-free by construction, the gate keeps that checked. */
+  /* one named object (#165) — see ProposeScenariosArgs. `requote` stays a
+     SECOND parameter rather than a field: it is not part of the tool's contract,
+     it is an internal flag only the stale-plan re-offer below sets, and folding
+     it into the args object would let a model-facing call set it. The wrapper
+     still passes args alone, which is what the forwarding pin checks. */
   function execProposeScenarios(
-    prompt: string,
-    specs: (ScenarioTaskSpec & { durationStated?: boolean })[],
+    args: ProposeScenariosArgs,
     /* #81: a stale plan's re-offer re-quotes the STORED places — their lengths
        are already the honest quote (pre-sized under "always", as asked
        otherwise), so each carries its own stated flag and nothing is pre-sized
        a second time */
     requote = false
   ): string {
+    const { prompt } = args
+    const specs = args.tasks as (ScenarioTaskSpec & { durationStated?: boolean })[]
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -5356,7 +5364,7 @@ export const useMew = create<MewState>((set, get) => {
       /* #124: the line names the all-chip in its own words — "both" for two,
          "all of them" for three or more */
       const everyOne = candidates.length === 2 ? 'both' : 'all of them'
-      return execOfferChoices(
+      return postChoices(
         `${candidates.length} "${base}" blocks ahead — ${tail}? Tell me which, or say "${everyOne}" to drop them all.`,
         [...timeOptions, { label: everyOne, reply: `remove all ${base}` }]
       )
@@ -5496,7 +5504,9 @@ export const useMew = create<MewState>((set, get) => {
   /* list_blocks (#333): MEW's eyes on the calendar — the itemized, addressable
      readout analyze lacks. Read-only like execAnalyze: reads the live week and
      hands it to the pure formatter, mutating nothing and taking no snapshot. */
-  function execListBlocks(day: number | 'week', tag?: import('../domain/types').Tag): string {
+  /* one named object (#165) — see ListBlocksArgs */
+  function execListBlocks(args: ListBlocksArgs): string {
+    const { day, tag } = args
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const dayKeys =
@@ -6262,12 +6272,12 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('clear', { scope }, () => execClear(scope))
         },
-        edit: (q, patch, at, scope) => {
+        edit: (args) => {
           acted = true
           snapshotForUndo()
           working('reshaping it…')
           closeStreamRow()
-          return runChange('edit', { query: q }, () => execEdit(q, patch, at, scope))
+          return runChange('edit', { query: args.query }, () => execEdit(args))
         },
         remove: (args) => {
           acted = true
@@ -6282,11 +6292,13 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('analyze', { dayOffset: d }, () => execAnalyze(d)) // read-only: not an action
         },
-        listBlocks: (day, tag) => {
+        listBlocks: (args) => {
           working('listing your blocks…')
           closeStreamRow()
           // read-only: not an action — no acted flag, no undo snapshot
-          return runToolWithCard('listBlocks', { day, tag }, () => execListBlocks(day, tag))
+          return runToolWithCard('listBlocks', { day: args.day, tag: args.tag }, () =>
+            execListBlocks(args)
+          )
         },
         findSlot: (dur, d, nb, na) =>
           /* #325: an identical slot query this turn returns the cached answer —
@@ -6326,7 +6338,7 @@ export const useMew = create<MewState>((set, get) => {
             execRemember(pref)
           )
         },
-        offerChoices: (prompt, options) => {
+        offerChoices: (args) => {
           /* chat-only, but the ask is now on screen — a fallback replay would
              double it, so the turn counts as acted. Never a snapshot: there is
              nothing week-side to undo (#254 law: this tool mutates nothing).
@@ -6334,9 +6346,9 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           working('offering choices…')
           closeStreamRow()
-          return execOfferChoices(prompt, options)
+          return execOfferChoices(args)
         },
-        proposeScenarios: (prompt, tasks) => {
+        proposeScenarios: (args) => {
           /* the #254 discipline exactly (#293): chat-only, the picker message
              is the visible artifact (no card), never a snapshot — proposing
              mutates nothing; the PICK snapshots before it applies. acted stays
@@ -6346,7 +6358,7 @@ export const useMew = create<MewState>((set, get) => {
           acted = true
           working('shaping the week…')
           closeStreamRow()
-          return execProposeScenarios(prompt, tasks)
+          return execProposeScenarios(args)
         },
         undoLast: () => {
           /* the reversal itself isn't a fresh action: it consumes the snapshot
@@ -6356,12 +6368,12 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runToolWithCard('undoLast', undefined, () => execUndo())
         },
-        resize: (q, resize, at, scope) => {
+        resize: (args) => {
           acted = true
           snapshotForUndo()
           working('resizing it…')
           closeStreamRow()
-          return runChange('resize', { query: q }, () => execResize(q, resize, at, scope))
+          return runChange('resize', { query: args.query }, () => execResize(args))
         },
         duplicate: (q, opts, at) => {
           acted = true
@@ -6397,14 +6409,12 @@ export const useMew = create<MewState>((set, get) => {
             execMerge(args)
           )
         },
-        relativeMove: (q, direction, amountMin, at) => {
+        relativeMove: (args) => {
           acted = true
           snapshotForUndo()
           working('nudging it…')
           closeStreamRow()
-          return runChange('relativeMove', { query: q }, () =>
-            execRelativeMove(q, direction, amountMin, at)
-          )
+          return runChange('relativeMove', { query: args.query }, () => execRelativeMove(args))
         },
         split: (args) => {
           acted = true
@@ -6778,14 +6788,16 @@ export const useMew = create<MewState>((set, get) => {
            a fall-through line (one shape, nothing fits) posts as prose. */
         post([mewMsg('the week moved under this plan — want a fresh look?')])
         const offer = execProposeScenarios(
-          '',
-          scenario.places.map((p) => ({
-            title: p.title,
-            tag: p.tag,
-            durationMin: p.durationMin,
-            ...(p.due != null ? { due: p.due } : {}),
-            ...(p.durationStated ? { durationStated: true } : {}), // #81
-          })),
+          {
+            prompt: '',
+            tasks: scenario.places.map((p) => ({
+              title: p.title,
+              tag: p.tag,
+              durationMin: p.durationMin,
+              ...(p.due != null ? { due: p.due } : {}),
+              ...(p.durationStated ? { durationStated: true } : {}), // #81
+            })),
+          },
           true // #81: a re-quote of the stored lengths
         )
         if (!offer.startsWith(CHOICES_POSTED)) post([mewMsg(offer)])

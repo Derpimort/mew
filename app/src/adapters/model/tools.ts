@@ -846,7 +846,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
     case 'capture_intention':
       return exec.capture(String(o.title ?? ''))
     case 'edit_block': {
-      const patch: Parameters<ToolExecutor['edit']>[1] = {}
+      const patch: Parameters<ToolExecutor['edit']>[0]['patch'] = {}
       const sm = optInt(o.startMin, 0, 1439)
       const em = optInt(o.endMin, 1, 1440)
       const dm = optInt(o.durationMin, 5, 720)
@@ -859,7 +859,12 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (o.attention === 'background' || o.attention === 'focus') patch.attention = o.attention
       const due = optInt(o.dueMin, 0, 1439)
       if (due != null) patch.due = due
-      return exec.edit(String(o.query ?? ''), patch, atArg(o.at), recurScope(o.scope))
+      return exec.edit({
+        query: String(o.query ?? ''),
+        patch,
+        at: atArg(o.at),
+        scope: recurScope(o.scope),
+      })
     }
     case 'find_slot':
       return exec.findSlot(
@@ -941,7 +946,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
             : undefined,
         }))
       if (!tasks.length) return 'nothing to propose — the call needs at least one task'
-      return exec.proposeScenarios(prompt, tasks)
+      return exec.proposeScenarios({ prompt, tasks })
     }
     case 'offer_choices': {
       const prompt = String(o.prompt ?? '').trim()
@@ -959,7 +964,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         })
       if (!prompt || !options.length)
         return 'nothing to offer — the call needs a prompt and at least one option'
-      return exec.offerChoices(prompt, options)
+      return exec.offerChoices({ prompt, options })
     }
     case 'undo_last_action':
       return exec.undoLast()
@@ -967,19 +972,19 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       const tag = (['work', 'private', 'health', 'rest'] as const).includes(o.tag as never)
         ? (o.tag as 'work')
         : undefined
-      return exec.listBlocks(parseListDay(o.day), tag)
+      return exec.listBlocks({ day: parseListDay(o.day), tag })
     }
     case 'resize_block': {
       const durationMin = optInt(o.durationMin, 5, 720)
       const relDurationMin = optInt(o.deltaMin, -600, 600)
       if (durationMin == null && relDurationMin == null)
         return 'nothing to resize — pass a durationMin or a deltaMin'
-      return exec.resize(
-        String(o.query ?? ''),
-        { durationMin, relDurationMin },
-        atArg(o.at),
-        recurScope(o.scope)
-      )
+      return exec.resize({
+        query: String(o.query ?? ''),
+        resize: { durationMin, relDurationMin },
+        at: atArg(o.at),
+        scope: recurScope(o.scope),
+      })
     }
     case 'duplicate_block':
       return exec.duplicate(
@@ -1055,12 +1060,12 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
         : null
       if (!direction)
         return 'nothing to move — pass a direction (earlier, later, next_day, next_free)'
-      return exec.relativeMove(
-        String(o.query ?? ''),
+      return exec.relativeMove({
+        query: String(o.query ?? ''),
         direction,
-        optInt(o.amountMin, 5, 600),
-        atArg(o.at)
-      )
+        amountMin: optInt(o.amountMin, 5, 600),
+        at: atArg(o.at),
+      })
     }
     case 'split_block': {
       const query = String(o.query ?? '')
