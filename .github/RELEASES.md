@@ -115,6 +115,28 @@ it. Three merges on the 2026.9.0 RC proved it the hard way: one kept its keyword
 merger happened to retype it into `--body`, and two lost theirs, so shipped fixes were left looking
 unfinished.
 
+**A keyword aimed at a PULL REQUEST closes nothing.** GitHub links closing keywords to
+**issues only**, so `Closes #172` — where 172 is a PR — is inert. It is the same class as a
+keyword in an RC body: it reads as working and does nothing. This RC carries one, in
+`9bdaafd`'s message; the effect is nil because that PR was already closed, but a number in
+the promotion block that turns out to be a PR leaves the issue you meant still open.
+
+Check a number you are unsure of before the click:
+
+```sh
+gh api repos/Derpimort/mew/issues/<n> --jq 'if .pull_request then "PR" else "issue" end'
+```
+
+Two places this bites, and they differ:
+
+- **in the promotion description** — `check-promotion-closes.mjs --linked` catches it, because
+  GitHub will not link it and the guard fails on the difference. Its message now names this as
+  a cause; before, it offered "re-save the body and re-read", which for a PR number can never
+  work. **Without `--linked` the body-only check passes it**, since the body is well-formed.
+- **in a commit message on the RC** — nothing checks it at all. The set you extract with the
+  `git log … | grep -oiE` recipe below is the set of keywords *written*, not the set that will
+  *close*; resolve each number to an issue before trusting the list.
+
 **And it fires in the other direction too.** GitHub reads no context, so a keyword anywhere in a
 commit message closes that issue — including inside ordinary prose. This RC closes one issue purely
 by accident, from the sentence *"the comment says whoever **fixes #161** deletes the skip"* buried in
