@@ -158,7 +158,28 @@ export function classify({ number, introducedAt, localCreatedAt }) {
       why: `the line moved — ${introducedAt.length} commits changed it, so the date it was written is not knowable from git alone`,
     }
   const written = introducedAt[0]
-  if (localCreatedAt > written)
+  // COMPARE INSTANTS, NOT STRINGS. The two sides arrive in different ISO spellings:
+  // `git log %cI` emits a LOCAL OFFSET (…T15:48:14-04:00) and the GitHub API emits UTC
+  // (…T17:48:25Z). Lexicographically "17:48:25Z" > "15:48:14-04:00", so a string compare
+  // called the issue LATER when it was in fact two hours EARLIER — and fired.
+  //
+  // It only bites when the two are on the SAME DAY, because otherwise the date prefix
+  // decides before the clock is reached. That is why it survived review: every earlier
+  // finding was months apart. MEASURED on this repo: 33 of 454 "live" findings were this
+  // bug, every one a same-day comparison against #176, #182, #202, #203, #204 or #205 —
+  // correct citations to THIS repo's own numbers, written tonight. A guard whose false
+  // alarms land on the newest work is the one that gets deleted first.
+  const createdMs = Date.parse(localCreatedAt)
+  const writtenMs = Date.parse(written)
+  // An unparseable date is not a verdict. Its own branch rather than a comparison against
+  // NaN, which is false either way and would silently read as "silent".
+  if (Number.isNaN(createdMs) || Number.isNaN(writtenMs))
+    return {
+      verdict: 'undatable',
+      fires: false,
+      why: `could not read a date: issue ${JSON.stringify(localCreatedAt)}, line ${JSON.stringify(written)}`,
+    }
+  if (createdMs > writtenMs)
     return {
       verdict: 'archive',
       fires: true,
