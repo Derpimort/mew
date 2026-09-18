@@ -193,6 +193,14 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    things to add can, and did. The written exclusions are the half that makes the list checkable —
    a number nobody can audit is just a claim, while a named exclusion can be disagreed with.
 
+   **One `Closes` per line, and this is the one thing no check can do for you.** Laying the block
+   out in columns to save space — `Closes #139, #161, #176, #182` — closes exactly **one** issue.
+   GitHub links only the first number on such a line, and the guard below parses it the same way,
+   so the tool and the platform agree with each other while four issues silently stay open. Both
+   halves of the check say yes. No check can tell "meant one" from "meant four", which is why the
+   rule lives here in prose rather than in the script: it is addressed to the human, and it is the
+   only part of this step a green ✓ cannot cover for you.
+
    **Check it BEFORE the click — that is the advantage of this path.** The link set is readable on
    the still-open PR, so a fenced or short block is fixable while it costs nothing:
 
@@ -204,10 +212,17 @@ the missing `Closes #N` lines in the **promotion PR's** own squash body instead;
    node desktop/scripts/check-promotion-closes.mjs /tmp/body.md --linked <that list>
    ```
 
-   It fails on the **difference**, not on zero: a fenced block, an issue GitHub has not linked, and
-   one linked that the body never claimed each name themselves. A promotion whose description closes
-   **nothing** fails too, rather than passing on an empty set. Read the exit code from the command —
-   through a pipe you get the pipe's.
+   It fails on the **difference**, not on zero: a keyword hidden in a fence or an HTML comment, an
+   issue GitHub has not linked, and one linked that the body never claimed each name themselves. A
+   promotion whose description closes **nothing** fails too, rather than passing on an empty set.
+   Read the exit code from the command — through a pipe you get the pipe's.
+
+   **Pass `--linked` even when the list comes back empty.** An empty result is not a missing
+   argument, it is GitHub telling you it linked nothing — the exact state this step exists to catch
+   — and the guard now treats it that way and fails. (It did not always: `--linked ""` used to read
+   as "not supplied" and exit 0, so the recipe above handed the guard the one input that switched it
+   off, precisely when it mattered.) With no `--linked` at all the guard checks only what is visible
+   in the body and says `LIVE LINK SET NOT CHECKED` — a ✓ there is half an answer, not a clearance.
 
    **Do not count lines.** `grep -c "Closes #"` read 3 on the v2026.9.0 promotion commit, `grep -c
    "^Closes #"` read 2, and the truth was 4: keywords appear at line start, mid-prose (*"… Closes

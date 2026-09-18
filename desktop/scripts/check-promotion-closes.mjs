@@ -26,6 +26,20 @@
 //     closingIssuesReferences on the OPEN pr), it must equal EFFECTIVE — which is the
 //     whole advantage of this path: the result is readable BEFORE the merge.
 //
+// WHAT IT STILL CANNOT SEE, named rather than left to be discovered:
+//   - a FOUR-SPACE INDENTED block renders byte-identical to a fenced one through GFM,
+//     and GitHub links nothing in either. This reader strips fences and HTML comments
+//     but NOT indented blocks, because indentation is ambiguous — four spaces under a
+//     list item is continuation, not code — and a stripper that guessed would fail a
+//     correct description, which is the failure mode that gets a gate deleted. The
+//     LIVE comparison catches it: those keywords are `effective` here and absent from
+//     closingIssuesReferences, so --linked reports them as unlinked. That is why the
+//     empty-string bug above mattered so much: it was the layer covering this one.
+//   - "Closes #139, #161, #176, #182" on ONE line claims exactly one issue, and the
+//     live set AGREES because GitHub links only the first too. Both halves say yes
+//     while four issues strand. No check can tell "meant one" from "meant four", so
+//     RELEASES.md carries the one-per-line rule and says why.
+//
 // Scope, said rather than implied: this has a subject ONLY on a promotion PR. GitHub
 // links closing keywords for the default branch alone, so `closingIssuesReferences` is
 // empty on any PR into a v*-rc* branch — four such zeros were nearly published as proof
@@ -63,6 +77,15 @@ export function withoutFences(text) {
   return out.join('\n')
 }
 
+/** Pure: the text with HTML comments removed. GitHub does not link a keyword inside
+    one, and unlike a four-space indented block the delimiters are unambiguous, so
+    this can be stripped without guessing. Kept SEPARATE from withoutFences, which is
+    byte-identical to check-changelog.mjs's exported copy — the de-duplication of that
+    one is a routed task and layering this on top must not complicate it. */
+export function withoutComments(text) {
+  return text.replace(/<!--[\s\S]*?-->/g, '')
+}
+
 /** Pure: the issue numbers a closing keyword names, in first-seen order, de-duplicated. */
 export function closingIssues(text) {
   const seen = []
@@ -77,7 +100,7 @@ export function closingIssues(text) {
     `linked` is the live closingIssuesReferences set, or null when not supplied. */
 export function checkPromotionCloses(body, linked = null) {
   const intended = closingIssues(body)
-  const effective = closingIssues(withoutFences(body))
+  const effective = closingIssues(withoutComments(withoutFences(body)))
   const problems = []
   // ANTI-VACUOUS, and it is the first check on purpose: every rule below is a set
   // comparison, and two empty sets are equal. A promotion linking nothing must fail.
@@ -89,21 +112,24 @@ export function checkPromotionCloses(body, linked = null) {
   const stranded = intended.filter((n) => !effective.includes(n))
   if (stranded.length > 0) {
     problems.push(
-      `${stranded.length} closing keyword(s) sit inside a fenced code block, where GitHub does not read them: ` +
-        `${stranded.map((n) => `#${n}`).join(' ')} — un-fence the block (a list, not a code fence) or they stay open.`
+      `${stranded.length} closing keyword(s) are hidden from GitHub — inside a fenced code block or an HTML comment: ` +
+        `${stranded.map((n) => `#${n}`).join(' ')} — put them in the description as a plain list or they stay open.`
     )
   }
   if (linked !== null) {
     const missing = effective.filter((n) => !linked.includes(n))
     const extra = linked.filter((n) => !effective.includes(n))
     if (missing.length > 0)
-      problems.push(`GitHub has not linked: ${missing.map((n) => `#${n}`).join(' ')} — re-save the body and re-read.`)
+      problems.push(
+        `GitHub has not linked: ${missing.map((n) => `#${n}`).join(' ')} — if a keyword is fenced, inside an HTML ` +
+          `comment, or in a four-space indented block, re-saving can never link it; otherwise re-save the body and re-read.`
+      )
     if (extra.length > 0)
       problems.push(`GitHub links issues the body does not claim: ${extra.map((n) => `#${n}`).join(' ')}.`)
   }
   const summary =
     `description claims ${intended.length} issue(s), ${effective.length} outside fences` +
-    (linked === null ? ' (live link set not supplied)' : `, ${linked.length} linked by GitHub`)
+    (linked === null ? ' · LIVE LINK SET NOT CHECKED (pass --linked)' : `, ${linked.length} linked by GitHub`)
   return { ok: problems.length === 0, summary, problems }
 }
 
@@ -112,13 +138,24 @@ if (isMain) {
   const args = process.argv.slice(2)
   const path = args.find((a) => !a.startsWith('--'))
   const i = args.indexOf('--linked')
+  /* PRESENT-BUT-EMPTY IS NOT ABSENT, and conflating them made this guard fail open in
+     the one case it exists for. RELEASES.md's own recipe pipes the GraphQL result
+     straight into --linked, and that prints an EMPTY LINE precisely when GitHub has
+     linked NOTHING — so `args[i + 1]` was falsy, the ternary took the absent branch,
+     the live comparison never ran, and it exited 0 saying the set was not supplied.
+     The documented happy path handed the guard the one input that switched it off.
+     `--linked` present now always means "this is what GitHub linked", empty included. */
+  const next = i >= 0 ? args[i + 1] : undefined
+  const value = i < 0 ? null : next === undefined || next.startsWith('--') ? '' : next
   const linked =
-    i >= 0 && args[i + 1]
-      ? args[i + 1]
+    value === null
+      ? null
+      : value
           .split(',')
-          .map((s) => Number(s.trim().replace(/^#/, '')))
+          .map((s) => s.trim().replace(/^#/, ''))
+          .filter((s) => s !== '')
+          .map(Number)
           .filter((n) => Number.isFinite(n))
-      : null
   let body
   try {
     body = readFileSync(path ?? '', 'utf8')

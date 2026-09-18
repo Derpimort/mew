@@ -8,7 +8,12 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkPromotionCloses, closingIssues, withoutFences } from '../check-promotion-closes.mjs'
+import {
+  checkPromotionCloses,
+  closingIssues,
+  withoutComments,
+  withoutFences,
+} from '../check-promotion-closes.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(HERE, '..', 'check-promotion-closes.mjs')
@@ -44,10 +49,10 @@ test('THE NEGATIVE CONTROL: a fenced block fails, naming every issue it would st
   assert.equal(r.ok, false)
   assert.equal(r.problems.length, 1)
   assert.match(r.problems[0], /#139 #161 #176 #182/)
-  assert.match(r.problems[0], /fenced code block/)
+  assert.match(r.problems[0], /hidden from GitHub/)
   const cli = run(file(FENCED))
   assert.equal(cli.code, 1, cli.out)
-  assert.match(cli.out, /un-fence the block/)
+  assert.match(cli.out, /plain list/)
 })
 
 test('ANTI-VACUOUS: a body that closes nothing fails rather than passing on an empty set', () => {
@@ -63,7 +68,8 @@ test('a mismatch fails on the DIFFERENCE, not only on zero', () => {
   // twenty-four listed, twenty-five intended — the case a zero-check cannot see.
   const r = checkPromotionCloses(UNFENCED, [139, 161, 176])
   assert.equal(r.ok, false)
-  assert.deepEqual(r.problems, ['GitHub has not linked: #182 — re-save the body and re-read.'])
+  assert.equal(r.problems.length, 1)
+  assert.match(r.problems[0], /^GitHub has not linked: #182 —/)
   const extra = checkPromotionCloses(UNFENCED, [139, 161, 176, 182, 999])
   assert.equal(extra.ok, false)
   assert.match(extra.problems[0], /links issues the body does not claim: #999/)
@@ -75,6 +81,60 @@ test('the live linked set agreeing is a pass, and it is readable before the clic
   assert.match(r.summary, /4 linked by GitHub/)
   const cli = run(file(UNFENCED), '--linked', '139,161,176,182')
   assert.equal(cli.code, 0, cli.out)
+})
+
+// ── coderpb + coderpa, on this PR: the guard failed open in the one case it exists for.
+
+test('BLOCKER: --linked with an EMPTY list means GitHub linked nothing, and must FAIL', () => {
+  /* RELEASES.md's recipe pipes the GraphQL result into --linked, and it prints an
+     EMPTY LINE precisely when GitHub has linked NOTHING. That used to read as "flag
+     absent", skip the live comparison and exit 0 — the documented happy path handed
+     the guard the one input that switched it off. Present-but-empty is not absent. */
+  const r = checkPromotionCloses(UNFENCED, [])
+  assert.equal(r.ok, false)
+  assert.match(r.problems[0], /^GitHub has not linked: #139 #161 #176 #182 —/)
+  assert.match(r.summary, /0 linked by GitHub/)
+  const cli = run(file(UNFENCED), '--linked', '')
+  assert.equal(cli.code, 1, cli.out)
+  // and the same when the flag is last with nothing after it at all
+  assert.equal(run(file(UNFENCED), '--linked').code, 1)
+})
+
+test('no --linked at all still passes, but says so rather than reading as a clearance', () => {
+  const cli = run(file(UNFENCED))
+  assert.equal(cli.code, 0, cli.out)
+  assert.match(cli.out, /LIVE LINK SET NOT CHECKED/)
+  assert.equal(checkPromotionCloses(UNFENCED, null).ok, true)
+})
+
+test('a keyword inside an HTML comment is hidden from GitHub too', () => {
+  const hidden = `## What ships\n\n<!-- Closes #139 -->\nCloses #161\n`
+  const r = checkPromotionCloses(hidden)
+  assert.equal(r.ok, false)
+  assert.match(r.problems[0], /#139/)
+  assert.match(r.problems[0], /hidden from GitHub/)
+  assert.deepEqual(closingIssues(withoutComments(hidden)), [161])
+})
+
+test('THE LIMIT, pinned so it is not mistaken for coverage: one line claims ONE issue', () => {
+  /* `Closes #139, #161, #176, #182` links exactly one issue on GitHub, and this reader
+     agrees — so BOTH halves say yes while four issues strand. No check can tell "meant
+     one" from "meant four"; RELEASES.md carries the one-per-line rule for the human.
+     Pinned here so a later reader sees the gap is known rather than missed. */
+  const oneLine = '## What ships\n\nCloses #139, #161, #176, #182\n'
+  assert.deepEqual(closingIssues(oneLine), [139])
+  assert.equal(checkPromotionCloses(oneLine, [139]).ok, true)
+})
+
+test('the other limit: a four-space indented block is caught by the LIVE half, not the reader', () => {
+  /* GFM renders a four-space indented block byte-identical to a fenced one, but
+     indentation is ambiguous — four spaces under a list item is continuation — so this
+     reader does not strip it and a stripper that guessed would fail a correct
+     description. The live comparison is the layer that covers it, which is exactly why
+     the empty-string bug above mattered. */
+  const indented = '## What ships\n\n    Closes #139\n    Closes #161\n\nend.\n'
+  assert.deepEqual(closingIssues(withoutFences(indented)), [139, 161]) // the reader still sees them
+  assert.equal(checkPromotionCloses(indented, []).ok, false) // GitHub linked nothing -> caught
 })
 
 test('the spellings GitHub actually honours, including the ones that bit this repo', () => {
