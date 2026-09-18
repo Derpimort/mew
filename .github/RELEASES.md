@@ -56,11 +56,25 @@ equal to the config, and on a mismatch names both fixes: re-tag from the config,
 config to the tag). Its cases live in `desktop/scripts/__tests__/check-release-version.test.mjs`
 (`pnpm --dir desktop test`).
 
-`desktop/scripts/check-changelog.mjs` guards the release notes in the same workflow: `[Unreleased]`
-must never repeat a section heading or a bullet (every PR adds its own line and squash merges make
-the others re-sync with a keep-both, which once re-introduced seven whole sections). It runs on every
-PR that touches `CHANGELOG.md`; a duplicate fails the PR before promotion turns `[Unreleased]` into the
-release body. Its cases live beside the version guard's (`pnpm --dir desktop test`).
+`desktop/scripts/check-changelog.mjs` guards the release notes in the same workflow. It runs on every
+PR that touches `CHANGELOG.md`, and it checks two families:
+
+- **No repeats inside `[Unreleased]`** — never the same section heading or bullet twice. Every PR adds
+  its own line and squash merges make the others re-sync with a keep-both, which once re-introduced
+  seven whole sections; that body becomes the release body at promotion, so a duplicate is a release
+  defect rather than a nit.
+- **The link-reference block stays in step with the headings** (#186) — every `## [X.Y.Z]` has a
+  matching `[X.Y.Z]:` line, every version reference has a heading above it, `[Unreleased]:` compares
+  `v<newest released version>...HEAD`, and no version label is defined twice. This is step 1's third
+  part, the one that used to be guarded by nothing: skip it and the new version renders as plain text
+  where every other version is a link while every gate passes. Only each version link's *existence* is
+  checked, not its range — the ranges are history and do not all read `v<prev>...v<this>` (`[0.3.0]`
+  ends at a bare sha), so a stricter rule would fail on the committed file.
+
+Both families read the file with **fenced code blocks removed**, the way a renderer does: a link block
+inside a fence must not satisfy the existence check, and an example `## [X.Y.Z]` shown in a fence — as
+this document does — must not be counted as a release. Its cases live beside the version guard's
+(`pnpm --dir desktop test`).
 
 That file is **hand-edited, never formatted.** `pnpm format:check` is `prettier . --check` run from
 `app/`, so the root `CHANGELOG.md` sits outside the format gate on purpose. Running prettier over it

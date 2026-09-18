@@ -7,7 +7,15 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { checkChangelog, checkLinks, compareRange, duplicates, unreleasedEntries, versionLinks } from '../check-changelog.mjs'
+import {
+  checkChangelog,
+  checkLinks,
+  compareRange,
+  duplicates,
+  unreleasedEntries,
+  versionLinks,
+  withoutFences,
+} from '../check-changelog.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SCRIPT = join(HERE, '..', 'check-changelog.mjs')
@@ -218,6 +226,65 @@ test('the pure link helpers: labels, file order, and the compare range', () => {
     refs: new Map(),
     labels: [],
   })
+})
+
+// ── Fenced code blocks. A renderer ignores them, so every reader here must too — and it
+// is two defects in opposite directions, both measured on the head before this landed.
+
+test('a link block inside a fence does NOT satisfy the existence check', () => {
+  /* Commenting the block out used to pass IDENTICALLY to having it: links 1/1, exit 0.
+     This repo lost closingIssuesReferences to a fence during 2026.9.0 — a 25-line block
+     read zero — so a guard satisfied by content a renderer ignores is that defect one
+     layer out. */
+  const fenced = PROMO('\n```\n' + HEALTHY.trim() + '\n```\n')
+  const r = checkChangelog(fenced)
+  assert.equal(r.ok, false)
+  assert.match(r.summary, /links: 0\/2 versions linked/)
+  assert.ok(
+    r.problems.some((p) => /^version \[2026\.9\.0\] has a section heading but no link reference/.test(p)),
+    r.problems.join('; ')
+  )
+  assert.equal(run(file(fenced)).code, 1)
+})
+
+test('a version heading inside a fence is not mistaken for a release', () => {
+  /* THE MIRROR, AND THE WORSE ONE: an EXAMPLE heading shown in a fence — which is exactly
+     how RELEASES.md documents this format — used to be counted as a real release and
+     demanded a link, failing a correct file. A guard that fires on correct content is one
+     the next person deletes in a hurry. */
+  const withExample =
+    PREAMBLE +
+    '## [Unreleased]\n\nRename it like this:\n\n```\n## [9.9.9] — 2026-12-01\n```\n' +
+    '\n## [2026.9.0] — 2026-09-18\n\n### A\n- one.\n' +
+    RELEASED +
+    HEALTHY
+  const r = checkChangelog(withExample)
+  assert.equal(r.ok, true, r.problems.join('; '))
+  assert.match(r.summary, /links: 2\/2 versions linked/)
+  assert.equal(run(file(withExample)).code, 0)
+})
+
+test('a fenced example does not trip the duplicate-bullet rule either', () => {
+  /* The same blindness in the other reader: quoting a real bullet as an example inside a
+     fence would read as the file repeating itself. */
+  const text =
+    PREAMBLE +
+    '## [Unreleased]\n\n### A\n- The dial shows any day.\n\nFor example:\n\n```\n- The dial shows any day.\n```\n' +
+    RELEASED +
+    LINKS
+  assert.equal(checkChangelog(text).ok, true, checkChangelog(text).problems.join('; '))
+})
+
+test('withoutFences: both fence kinds, the other kind nested, and an unterminated one', () => {
+  const j = (s) => withoutFences(s).split('\n').filter(Boolean).join(',')
+  assert.equal(j('a\n```\nb\n```\nc\n'), 'a,c')
+  assert.equal(j('a\n~~~\nb\n~~~\nc\n'), 'a,c')
+  // a ``` inside a ~~~ block does not close it — the fence kind must match
+  assert.equal(j('a\n~~~\n```\nb\n```\n~~~\nc\n'), 'a,c')
+  // an unterminated fence swallows the rest, which is what a renderer does too
+  assert.equal(j('a\n```\nb\nc\n'), 'a')
+  // an indented fence still opens one
+  assert.equal(j('a\n  ```\n  b\n  ```\nc\n'), 'a,c')
 })
 
 test('the committed CHANGELOG.md passes the guard', () => {

@@ -35,6 +35,9 @@
 //   - no version label is defined twice — a keep-both re-sync duplicates the link
 //     block as readily as it duplicates a section, and a Map lookup would silently
 //     take the last line, making the verdict depend on the order of the merge.
+// Every rule here reads the file with FENCED CODE BLOCKS REMOVED, because a renderer
+// ignores them: a link block inside a fence must not satisfy the existence check, and an
+// example heading inside a fence must not be mistaken for a release. See withoutFences.
 // Only the *existence* of each version's link is checked, not its range: the range is
 // history and does not always read v<prev>...v<this> (e.g. [0.3.0] ends at a bare sha,
 // 26024e7, from before the tag existed). [Unreleased] is the one that must track the
@@ -47,12 +50,45 @@ import { readFileSync } from 'node:fs'
 
 const norm = (t) => t.replace(/\s+/g, ' ').trim()
 
+/** Pure: the text with every fenced code block removed, fences included. A fence opens
+    on ``` or ~~~ and closes on the next one of the SAME kind; an unterminated fence runs
+    to the end, which is what a renderer does with it too.
+
+    WHY EVERY READER BELOW GOES THROUGH THIS, and it is two defects rather than one — both
+    measured on the head before this landed:
+      - a link-reference block inside a fence still SATISFIED the per-version existence
+        check, so commenting the block out passed identically to having it. This repo lost
+        `closingIssuesReferences` to a fence during 2026.9.0 — a 25-line block read ZERO —
+        so a guard satisfied by content a renderer ignores is that same defect one layer out;
+      - and the mirror, which is the worse one: a `## [9.9.9]` heading shown as an EXAMPLE
+        inside a fence was counted as a real release and demanded a link, failing a correct
+        file. RELEASES.md documents this format with exactly such a fenced example. A guard
+        that fires on correct content is one the next person deletes in a hurry. */
+export function withoutFences(text) {
+  const out = []
+  let fence = null
+  for (const line of text.split('\n')) {
+    const m = /^\s*(`{3,}|~{3,})/.exec(line)
+    if (fence) {
+      if (m && m[1][0] === fence) fence = null
+      continue
+    }
+    if (m) {
+      fence = m[1][0]
+      continue
+    }
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
 /** Pure: the [Unreleased] headings and bullets of a CHANGELOG text, normalized. */
 export function unreleasedEntries(text) {
-  const start = text.indexOf('## [Unreleased]')
+  const md = withoutFences(text)
+  const start = md.indexOf('## [Unreleased]')
   if (start < 0) return null
-  const next = text.indexOf('\n## [', start + 5)
-  const body = text.slice(start, next < 0 ? text.length : next)
+  const next = md.indexOf('\n## [', start + 5)
+  const body = md.slice(start, next < 0 ? md.length : next)
   const headings = []
   const bullets = []
   let current = null
@@ -98,7 +134,7 @@ export function versionLinks(text) {
      passing for one developer and failing for another. The list is what makes
      that visible; the Map stays for lookup. */
   const labels = []
-  for (const line of text.split('\n')) {
+  for (const line of withoutFences(text).split('\n')) {
     const h = /^## \[([^\]]+)\]/.exec(line)
     if (h && isVersionLabel(h[1])) headings.push(h[1])
     const r = /^\[([^\]]+)\]:\s*(\S+)/.exec(line)
