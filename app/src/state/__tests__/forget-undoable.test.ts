@@ -21,7 +21,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PrefPayload } from '../../adapters/brain/types'
 import {
   aiAdapterMock,
-  brainMock,
   desktopMock,
   freshStore,
   notifyMock,
@@ -36,7 +35,19 @@ import {
 vi.mock('../../adapters/storage', () => storageMock())
 vi.mock('../../adapters/desktop', () => desktopMock())
 vi.mock('../../adapters/notify', () => notifyMock())
-vi.mock('../../adapters/brain/gbrainHttp', () => brainMock())
+/* #158 probe/pin: this file needs ONE case with the brain ON and a rule that
+   lives only THERE, so the shared brainMock (health false, listPrefs []) is
+   replaced by a seedable one. Everything else about the seam is identical. */
+const brainRules: PrefPayload[] = []
+vi.mock('../../adapters/brain/gbrainHttp', () => ({
+  createGbrainHttp: () => ({
+    ingest: async () => {},
+    recall: async () => [],
+    health: async () => true,
+    listPrefs: async () => brainRules,
+    links: async () => [],
+  }),
+}))
 vi.mock('../../adapters/model/aiAdapter', () => aiAdapterMock())
 
 import { useMew } from '../store'
@@ -47,9 +58,14 @@ const WED = new Date(2026, 5, 10, 9, 40)
 /* freshStore seeds the store's own clock but cannot touch the system clock — it
    has no `vi`. #96 brings nowMs to the wall clock at the start of every turn, so
    both have to be set or the fixture's day is months in the past. */
-const boot = async () => {
+const boot = async (settings: Record<string, unknown> = {}) => {
   vi.setSystemTime(WED)
-  await freshStore(useMew, { at: WED, blocks: [], settings: { sustenance: 'off' }, pristine })
+  await freshStore(useMew, {
+    at: WED,
+    blocks: [],
+    settings: { sustenance: 'off', ...settings } as never,
+    pristine,
+  })
 }
 const say = (t: string) => useMew.getState().speak(t)
 const tick = () => settle((ms) => vi.advanceTimersByTime(ms))
@@ -92,6 +108,53 @@ describe('#158 — forgetting a standing rule is undoable', () => {
     expect(reply).toContain('gym')
     expect(reply).toMatch(/brought back the rule about/i)
     expect(reply).not.toMatch(/—\s*\.$/)
+  })
+
+  it('a rule that lives only in the brain: undo takes the forget back, and the receipt is terse but whole', async () => {
+    /* THE CASE THE MANAGER ASKED ABOUT, and the answer changes a label on #176.
+       With the brain on, forgetting a rule THIS DEVICE NEVER STORED takes the
+       guard's other branch: nothing local to delete, so the undo restores no
+       preference and the only thing it drops is the tombstone — which earns no
+       clause, correctly, because a tombstone is machinery rather than a thing
+       the owner did.
+       So `parts` comes out EMPTY and #176's fallback fires. That line was
+       labelled INSURANCE on the grounds that no product path reached it. THIS
+       SLICE MAKES ONE, so the label is wrong from here and this is its pin. */
+    brainRules.length = 0
+    brainRules.push({
+      kind: 'time-default',
+      match: 'stretching',
+      value: 'starts 06:30',
+      stated: 'stretching starts at 6:30',
+    })
+    await boot()
+    /* hydrate SEEDS ITS OWN SETTINGS on a first run, so a brain opt-in passed to
+       freshStore is overwritten — the same trap turn-clock.test.ts documents for
+       modelLocation. Turn it on afterwards. */
+    useMew.getState().updateSettings({ brainEnabled: true })
+    /* …then settle on the CONDITION rather than on a tick count: listPrefs
+       resolves through a promise chain, and `brainPrefs` on the store is the
+       observable that says the brain's copy actually landed. One tick is enough
+       today; the cap only stops a hang, and the assertion below is what makes a
+       give-up loud instead of turning this into a test that passes by not
+       looking. (An earlier draft counted six ticks while its comment claimed to
+       watch a condition — a comment and its code disagreeing, which is the thing
+       this file exists to keep out.) */
+    for (let i = 0; i < 20 && !useMew.getState().brainPrefs?.length; i++) await tick()
+    expect(useMew.getState().brainPrefs?.map((p) => p.match)).toEqual(['stretching'])
+    expect(rules()).toHaveLength(0) // never stored on this device
+
+    useMew.getState().forgetStandingPref(brainRules[0])
+    await tick()
+
+    await say('undo that')
+    await tick()
+
+    const reply = lastMewBody()
+    /* a whole sentence, not the dangling clause #176 removed */
+    expect(reply).toBe('Undone.')
+    expect(reply).not.toMatch(/—\s*\.$/)
+    expect(reply).not.toMatch(/nothing to undo/i)
   })
 
   it('a forget with nothing to forget spends no undo slot', async () => {
