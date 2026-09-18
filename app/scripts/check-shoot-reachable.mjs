@@ -32,7 +32,7 @@
 
    Rule 3 is the one that keeps this honest. An exemption with no expiry is how
    a known-broken proof becomes a permanently ignored one: the moment someone
-   repairs `shoot-dial.mjs` and wires it in, this guard FAILS and tells them to
+   repairs a rotted proof and wires it in, this guard FAILS and tells them to
    delete the excuse. An exemption that outlives its reason is the same defect
    this file exists to catch, so it cannot be allowed to hide here either.
 
@@ -67,10 +67,11 @@ import { join } from 'node:path'
     beside it as a claim someone can check.
 
     DELIBERATELY EMPTY ON ARRIVAL — read the emptiness as a measurement, not an
-    oversight. The two proofs this list was written for (`shoot-dial.mjs`, whose
-    hover timed out on #160's concept tour, and `shoot-rescue.mjs`, which
-    asserted a sentence MEW had stopped saying) were repaired in #173 and are
-    wired up below with the other ten. All seventeen are reachable.
+    oversight. The two proofs this list was written for (the dial capture, whose
+    hover timed out on mew-archive#160's concept tour, and `shoot-rescue.mjs`,
+    which asserted a sentence MEW had stopped saying) were repaired in #173. The
+    dial one was never a proof and left the `shoot*` namespace in #204, so it is
+    `capture-dial.mjs` now and is not counted here. ALL SIXTEEN are reachable.
 
     The machinery stays because the next rotted proof will want it, and because
     of what happened when it nearly shipped populated: an exemption whose reason

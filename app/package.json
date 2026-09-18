@@ -25,7 +25,7 @@
     "shoot:allday": "node scripts/shoot-allday.mjs",
     "shoot:console-brain": "node scripts/shoot-console-brain.mjs",
     "shoot:daypicker": "node scripts/shoot-daypicker.mjs",
-    "shoot:dial": "node scripts/shoot-dial.mjs",
+    "capture:dial": "node scripts/capture-dial.mjs",
     "shoot:dayview": "node scripts/shoot-dayview.mjs",
     "shoot:desktop": "node scripts/shoot-desktop.mjs",
     "shoot:oauth": "node scripts/shoot-oauth.mjs",
