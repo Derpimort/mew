@@ -266,6 +266,11 @@ MEW runs a lightweight dev loop on top of GitHub Issues:
 - **`/dev-review`** is the audit gate: it reviews a PR against the code review
   framework and the product laws before merge.
 
+A `#NNN` in this repo's older prose (CHANGELOG sections below `[2026.9.0]`, ARCHITECTURE, some
+code comments) is a [`mew-archive`](https://github.com/Derpimort/mew-archive) number from before the
+migration — resolve it there before concluding a link is broken or, worse, that it points at what
+it names here.
+
 Picking up your first change? Start from a `dev:queued` issue (look for
 `good first issue` too), or run `/dev-plan` to propose something new.
 
