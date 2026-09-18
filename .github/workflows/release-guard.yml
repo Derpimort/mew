@@ -3,7 +3,9 @@ name: release-guard
 # Release-version guard (CalVer, see .github/RELEASES.md): the config shape, the MSI
 # version mapping and the guard's own cases, on every PR that touches them — and the
 # release-notes guard: [Unreleased] must never repeat a section or a bullet (a keep-both
-# CHANGELOG re-sync did exactly that on the v2026.09 RC; it is the release body).
+# CHANGELOG re-sync did exactly that on the v2026.09 RC; it is the release body) — and
+# the cases behind the promotion closing-block and citation-date guards, neither of
+# which can run as a gate here for reasons stated at each step rather than assumed.
 # desktop.yml's `check` job only fires on PRs into main, so without this a PR into
 # the RC could break tauri.conf.json or the guard unnoticed until promotion. ~20s.
 #
@@ -42,3 +44,81 @@ jobs:
       # branch — so it runs from the runbook at promotion time; its cases are pure and
       # run here, which is what keeps the fenced-block negative control honest.
       - run: node --test desktop/scripts/__tests__/check-promotion-closes.test.mjs
+
+      # the citation-date guard (#195/#214). SAME SHAPE AS THE ONE ABOVE, and for the
+      # same reason: the CASES are pure and run here, the SCRIPT does not run as a gate.
+      #
+      # Why the script is a deliberate NON-gate rather than an oversight, measured on
+      # this repo: run repo-wide it reports ~1,469 citations proven to mean the archive,
+      # so a blocking gate would be RED ON EVERY BUILD. Scoped to a PR's changed FILES it
+      # is still red on any CHANGELOG edit — #206 added six citation-free lines and would
+      # have answered for 57 citations it did not write, which is the "fires on correct
+      # content" failure a guard gets deleted for. The scope that works is changed LINES
+      # (#206 goes 57 -> 0), and that is a design decision with an owner, not a wiring
+      # detail. Until it is taken, the script is run by hand and its cases are gated here.
+      #
+      # The cases are also the only thing that COULD run unattended: the script needs an
+      # --issues map of issue creation dates, which means network and a token; the tests
+      # are pure and need neither.
+      - run: node --test desktop/scripts/__tests__/check-citation-dates.test.mjs
+
+      # AND THE REASON THIS STEP EXISTS IS THAT THE ONE ABOVE WAS MISSING FOR A DAY.
+      # check-citation-dates.test.mjs shipped in #214 and ran in no gate at all, because
+      # the steps here are named one by one and nobody added the fifth. That is the same
+      # class as a shoot proof reachable by nothing, which check-shoot-reachable.mjs
+      # already exists to stop — membership, not cardinality.
+      #
+      # THE EMPTY-SET CHECK COMES FIRST, AND IT IS NOT DECORATION. Everything below is a
+      # filter over the file list; if the list comes back empty the loop has nothing to
+      # reject and this step reports a green it never computed. check-shoot-reachable.mjs
+      # puts exactly this first for exactly this reason — "an empty set would report a
+      # green that means nothing" — and the first version of this step carried over the
+      # membership half and left that one out. Measured: with the four files moved aside
+      # it printed "all guard test files are named" and exited 0, over nothing.
+      # It is worse than a plain vacuous pass, because bash leaves an unmatched glob
+      # LITERAL: basename yields `*.test.mjs`, and in a basic regex the leading `*` is
+      # literal while `.` matches anything, so the pattern matches the for-loop line of
+      # this very step. The check answered itself.
+      # That is why the count printed at the end is the array's length, measured by the
+      # run that just used it, and not a number written in prose — this file ships no
+      # written counts on purpose, after #209 shipped sixteen steps under a comment
+      # saying twelve.
+      #
+      # AND IT MATCHES A RUN LINE, NOT A MENTION. The first version grepped for the bare
+      # basename, so a name appearing ANYWHERE in this file satisfied it — in a comment,
+      # or in this step's own body, which is how the empty-set case answered itself. The
+      # pattern is now anchored to `run: node --test …`, and the basename's dots are
+      # escaped so it is compared literally instead of as a pattern where every `.`
+      # matches any character. A file named only in prose now FAILS, by name.
+      #
+      # WHAT IT STILL CANNOT SEE, at full strength rather than at the flattering end: it
+      # reads this file as text, not as YAML, so a `run:` line that is commented out
+      # would satisfy it. Parsing the steps would close that; it has not been needed, and
+      # an honest limit stated small is how the last one got through — an earlier version
+      # of this comment said "only in a comment" when the real limit was "anywhere in the
+      # file", and the understatement was exactly where the failure landed.
+      #
+      # Scoping the grep to THIS file is deliberate, not a shortcut: a case named in
+      # desktop.yml would not gate a PR into an RC at all, which is the reason this
+      # workflow exists.
+      - name: every guard test file is named above
+        run: |
+          shopt -s nullglob
+          files=(desktop/scripts/__tests__/*.test.mjs)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "::error::found NO guard test files in desktop/scripts/__tests__/ — that is not a pass. The directory moved, or the *.test.mjs convention did, and every check below filters the set it just failed to build."
+            exit 1
+          fi
+          missing=""
+          for f in "${files[@]}"; do
+            b=$(basename "$f")
+            # match a RUN LINE, not a mention. `.` is escaped so the basename is compared
+            # literally rather than as a pattern where every dot matches any character.
+            grep -qE "run: node --test .*${b//./\\.}" .github/workflows/release-guard.yml \
+              || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::guard cases running in no gate:$missing"
+            exit 1
+          fi
+          echo "all ${#files[@]} guard test files are named in this workflow"
