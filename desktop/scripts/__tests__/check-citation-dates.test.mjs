@@ -215,3 +215,35 @@ test('a later edit makes a line look young, and that only ever makes the guard q
   })
   assert.equal(truthful.fires, true)
 })
+
+/* THE BUG MY OWN FIXTURES COULD NOT SEE, because every one of them wrote both sides in
+   the same spelling. The real inputs do not: `git log %cI` emits a local offset and the
+   GitHub API emits UTC. Fixtures prove the logic; they do not prove the instrument. */
+
+test('MIXED OFFSETS — the same instant compared across spellings, not as strings', () => {
+  // the real pair: ui-proofs.yml's "#202" line, and mew#202. String-compared, "17:48:25Z"
+  // reads as LATER than "15:48:14-04:00" and fires. As instants, 15:48-04:00 is 19:48Z,
+  // so the issue is two hours EARLIER and there is nothing to report.
+  const written = '2026-09-18T15:48:14-04:00' // = 19:48:14Z
+  const r = classify({ number: 202, introducedAt: [written], localCreatedAt: '2026-09-18T17:48:25Z' })
+  assert.equal(r.fires, false, 'the issue predates the line; the offsets only make it look otherwise')
+  assert.equal(r.verdict, 'silent')
+
+  // the control that makes it non-vacuous: an issue genuinely later, same mixed spellings
+  const later = classify({ number: 202, introducedAt: [written], localCreatedAt: '2026-09-18T21:00:00Z' })
+  assert.equal(later.fires, true, 'a real "created after" must still fire across offsets')
+
+  // and a string compare would get BOTH of these wrong in the same direction
+  assert.ok('2026-09-18T17:48:25Z' > written, 'this is what the old code compared, and why it fired')
+})
+
+test('an unreadable date is its own verdict, not a comparison against NaN', () => {
+  const r = classify({ number: 7, introducedAt: ['not-a-date'], localCreatedAt: '2026-09-18T00:00:00Z' })
+  assert.equal(r.fires, false)
+  assert.equal(r.verdict, 'undatable')
+  assert.match(r.why, /could not read a date/)
+
+  // NaN comparisons are false in BOTH directions, so without this branch the case would
+  // fall through to 'silent' and claim it had been judged
+  assert.equal(classify({ number: 7, introducedAt: ['2026-01-01T00:00:00Z'], localCreatedAt: 'nope' }).verdict, 'undatable')
+})
