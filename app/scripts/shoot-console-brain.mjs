@@ -15,6 +15,7 @@ import { chromium } from 'playwright-core'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { clockUrl } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const outDir = path.resolve('shots')
@@ -113,7 +114,7 @@ await page.route('**/brainstub/**', async (route) => {
 const brainRows = () => page.locator('[data-card="memory"] [data-claim="brain"]')
 const statedRows = () => page.locator('[data-card="memory"] [data-claim="stated"]')
 
-await page.goto(`${base}/?t=9:40`)
+await page.goto(clockUrl(base, '9:40'))
 await page.waitForSelector('.nx-count', { timeout: 15000 })
 await page.evaluate(() => window.__mewConfigure?.({ hasSeenOnboarding: true }))
 /* one rule of the device's own, told the keyless way, so the console has a local

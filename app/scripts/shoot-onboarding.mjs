@@ -9,6 +9,7 @@
 
 import { chromium } from 'playwright-core'
 import { findChromium } from './lib/chromium.mjs'
+import { clockUrl } from './lib/shootClock.mjs'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 
@@ -29,7 +30,7 @@ const fail = (msg) => {
 
 /* fresh context = empty IndexedDB = first run. Start clean to be certain, then
    reload into the genuine first-run state. */
-await page.goto(`${base}/?t=9:40`)
+await page.goto(clockUrl(base, '9:40'))
 await page.waitForSelector('.nx-stage', { timeout: 15000 })
 await page.evaluate(() => window.__mewReset?.())
 await page.waitForSelector('.nx-stage', { timeout: 15000 })
