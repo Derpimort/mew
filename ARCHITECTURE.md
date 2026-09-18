@@ -2,6 +2,15 @@
 
 *Companion to `design_handoff_mew_mvp/PRD.md` and the vision doc. This document chooses the technical shape of MEW: three platform alternatives, one recommendation, and the internal architecture that stays the same regardless of which platform wins.*
 
+> **A bare `#N` in this document is an internal index, not an issue.** "Acceptance criterion #2",
+> "acceptance #7", "nudge #4" and the like number items *within this document*. Following one to an
+> issue tracker is a mistake: `#2`, `#4`, `#5`, `#6`, `#7`, `#8` and `#9` are all live issues in this
+> repo, about something else entirely.
+> Where this document cites a real issue from before the migration from `Derpimort/mew-archive`, the
+> citation is qualified inline as `mew-archive#N` — that repo is private, so the link answers 404
+> unless you are a maintainer, and the 404 is the expected answer rather than a broken link.
+> See [#195](https://github.com/Derpimort/mew/issues/195).
+
 ---
 
 ## 1. What the architecture must optimize for
@@ -265,4 +274,4 @@ Note: locked principles (positive-only, chat-first, care-not-blame, condition-mi
 | D8 | Memory = append-only events, aggregates derived | Accepted |
 | D9 | One neutral tool registry (`adapters/model/tools.ts`) + executor; Anthropic/OpenAI/Ollama/rules are four `ModelPort.converse` impls of the same contract | Accepted |
 | D10 | Nudge research footnotes are audited claims, not vibes — corrections (no "23 minutes"; Aflac ≠ turnover) applied 2026-06-10; new entries require a validated citation | Accepted |
-| D11 | **No Subresource Integrity (SRI).** Self-hosted bundle is same-origin + Vite content-hashed (integrity-by-name already); the lone cross-origin script (Google Identity Services) rotates with no stable hash and is runtime-injected, so it cannot be pinned. CSP allowlist + `object-src 'none'` are the real control; `csp.test.ts` guards no foreign script/style origin appears and built tags stay same-origin. Revisit only if MEW adds a *static, immutable, cross-origin* asset. (Spike follow-up to the CSP tightening in #198; see the §8 Risks row.) | Accepted |
+| D11 | **No Subresource Integrity (SRI).** Self-hosted bundle is same-origin + Vite content-hashed (integrity-by-name already); the lone cross-origin script (Google Identity Services) rotates with no stable hash and is runtime-injected, so it cannot be pinned. CSP allowlist + `object-src 'none'` are the real control; `csp.test.ts` guards no foreign script/style origin appears and built tags stay same-origin. Revisit only if MEW adds a *static, immutable, cross-origin* asset. (Spike follow-up to the CSP tightening in [`mew-archive#198`](https://github.com/Derpimort/mew-archive/issues/198); see the §8 Risks row.) | Accepted |

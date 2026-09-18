@@ -12,9 +12,22 @@ Versions track the desktop shell (`desktop/src-tauri/tauri.conf.json`); the web 
 same tree (`app/dist`, dockerized) and rides the same notes. How releases are cut lives in
 [`.github/RELEASES.md`](.github/RELEASES.md).
 
+> **Issue numbers in sections below `[2026.9.0]` point at a different repository.** MEW was
+> migrated from `Derpimort/mew-archive` (a private, maintainer-only repo) and these notes
+> kept the predecessor's numbering, so a `#NNN` in any section below `[2026.9.0]` means
+> `mew-archive#NNN` — not this repo's issue of that number. This repo's own counter has since
+> passed most of them, so those citations resolve to unrelated live issues and pull requests here
+> rather than to nothing. `[2026.9.0]` and later are this repo's own numbers and are correct as
+> written. Released sections are left exactly as they were published; see #195.
+
 ## [Unreleased]
 
 ### Under the hood
+- The release notes now hold their own links together: every version in this file has to carry its
+  compare link at the bottom, the Unreleased link has to point at the newest release, and no version
+  may be listed twice. Publishing a version is a three-part hand edit and only two parts were ever
+  checked, so the third could be missed and the new version would read as plain text among links
+  while every gate stayed green.
 - The release procedure now checks the one step that closes the issues. The promotion's description
   carries the list un-fenced, which is what GitHub actually reads, and a guard reads the link set
   back from GitHub while the pull request is still open — so a fenced or short block is caught
