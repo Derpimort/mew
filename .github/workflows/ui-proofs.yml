@@ -1,0 +1,158 @@
+name: ui-proofs
+
+# The twelve gate-ready shoot proofs, on the PRs where the code actually changes.
+#
+# WHY THIS FILE EXISTS RATHER THAN A WIDER ui-overlap.yml (#171 step 2). Seventeen
+# Playwright proofs live in app/scripts. Until #173 twelve of them ran only if a
+# human remembered them, so acceptance criteria were satisfied by evidence nobody
+# consulted. Reachability was fixed there; this is the other half — WHICH of them
+# a gate runs, decided from what each proof needs rather than from its name.
+#
+# ui-overlap.yml is deliberately NOT touched. Its trigger is
+# `pull_request: branches: ['main']`, which is workflow-level and not per-job, so
+# widening it to the RC would change when every gate inside it runs. That is the
+# owner's call; this file adds a second opinion beside it instead of editing it.
+# The cost of that choice, stated rather than discovered: on a promotion PR
+# (base=main) shoot-overlap.mjs and shoot.mjs run in BOTH workflows — about 58s
+# of duplicate browser time, once per release. If the owner ever widens
+# ui-overlap.yml's trigger, drop those two names from the list below.
+#
+# WHAT IS NOT HERE, and why, so the omissions are decisions rather than oversights:
+#   · shoot-console-brain, shoot-onboarding, shoot-rescue, shoot-sustenance
+#     pass a TIME and no DATE (`?t=` with no `?d=`), so in CI they would run on
+#     whatever weekday the runner woke up on. Gating them before they are pinned
+#     manufactures the exact "green on a Thursday" #171 step 3 is about — the pin
+#     is a PREREQUISITE for gating them, not something gating would validate.
+#   · shoot-dial asserts nothing at all: no assert/throw/exit(1), no harness
+#     checks(), and both risky steps swallowed by `.catch(() => {})`. It is a
+#     screenshot tool. Gating it would add a step that cannot fail.
+on:
+  pull_request:
+    # The PRs where app code changes: feature PRs into an RC, and the promotion.
+    # Both RC spellings, matching ci.yml, because `v*-rc` does NOT match
+    # `v2026.10-rc1` — only `v*-rc*` does, and a future `v2026.11-rc` would be the
+    # other way round. `develop` is ci.yml's fourth entry and is deliberately NOT
+    # here: this repo promotes v*-rc* -> main, and ui-overlap.yml's own
+    # "develop -> main" comment is already known-stale and in the handoff. If a
+    # develop branch is ever revived, this list is where it goes.
+    branches: ['main', 'v*-rc*', 'v*-rc']
+    paths: ['app/**', '.github/workflows/ui-proofs.yml']
+  workflow_dispatch:
+
+jobs:
+  proofs:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with: { version: 9 }
+      - uses: actions/setup-node@v7
+        with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
+      - run: pnpm install --frozen-lockfile
+      # version-matched chromium for playwright-core (ephemeral npx — no dep added;
+      # keep this pin in lockstep with app/package.json's playwright-core)
+      - run: npx -y playwright@1.62.1 install --with-deps chromium
+
+      # CANON IS NEVER REWRITTEN IN CI (#171). app/shots/ is gitignored (.gitignore:13)
+      # yet nineteen PNGs are force-tracked under it. A proof writes to shots/latest/
+      # by default and only overwrites those tracked baselines when PIN_CANON=1.
+      #
+      # TWO GUARDS, AND THEY ARE NOT PEERS — the reach of this one is narrower than
+      # it looks, which coderpa measured in review rather than reading. A step's
+      # `run:` is its own shell, so this check sees only what the JOB environment
+      # already holds: a repo/org variable, or a workflow- or job-level `env:`.
+      # It is BLIND to `PIN_CANON=1 node scripts/…` prefixed on a proof step, and
+      # to a step-level `env:` on one — measured: step A reads <unset>, the
+      # inline-prefixed step reads 1, the next step reads <unset> again.
+      # That blind route is the LIKELIER future edit: someone regenerating a
+      # baseline on one step and forgetting to take the prefix off again.
+      # So the porcelain check at the end is the load-bearing one; this step is a
+      # fast, precisely-named failure on the config-level routes it does cover,
+      # saving a build and two minutes of browser time when it fires.
+      # AND IT TESTS FOR THE LITERAL "1", NOT FOR NON-EMPTY — runner2's review
+      # finding. shotsPath.mjs pins on `env.PIN_CANON === '1'` and nothing else,
+      # and app/scripts/__tests__/shots-path.test.ts pins that deliberately:
+      # '0', 'true', 'yes', '' and ' 1' all resolve to shots/latest. A `-n` test
+      # would kill the build on PIN_CANON=0 — the intuitive way to DISABLE
+      # pinning — while saying it was about to overwrite canon, which is false.
+      # A gate that fires on content that cannot cause the harm is one the next
+      # person deletes in a hurry. This now agrees with the module it guards.
+      - name: PIN_CANON must not be set
+        run: |
+          if [ "${PIN_CANON:-}" = "1" ]; then
+            echo "::error::PIN_CANON=1 — this job would overwrite tracked canon PNGs in place"
+            exit 1
+          fi
+
+      - run: pnpm build
+
+      # One build, one preview server, twelve proofs against the same bytes.
+      # Each proof is its own step so a failure names itself in the job summary
+      # instead of hiding inside a loop's exit code.
+      - name: serve
+        run: |
+          pnpm exec vite preview --port 5198 --strictPort &
+          for i in $(seq 1 30); do curl -sf http://localhost:5198/ >/dev/null && break || sleep 1; done
+          curl -sf http://localhost:5198/ >/dev/null
+
+      - name: text-overlap net
+        run: node scripts/shoot-overlap.mjs http://localhost:5198
+      - name: dial a11y contract + canonical shots
+        run: node scripts/shoot.mjs http://localhost:5198
+      - name: all-day lane geometry
+        run: node scripts/shoot-allday.mjs http://localhost:5198
+      - name: past/future day view
+        run: node scripts/shoot-dayview.mjs http://localhost:5198
+      - name: day picker
+        run: node scripts/shoot-daypicker.mjs http://localhost:5198
+      - name: desktop shell (stubbed)
+        run: node scripts/shoot-desktop.mjs http://localhost:5198
+      - name: calendar OAuth flow (stubbed)
+        run: node scripts/shoot-oauth.mjs http://localhost:5198
+      - name: loose-thread rail
+        run: node scripts/shoot-threads.mjs http://localhost:5198
+      - name: staged update nudge
+        run: node scripts/shoot-update.mjs http://localhost:5198
+      - name: week scaffold
+        run: node scripts/shoot-scaffold.mjs http://localhost:5198
+      - name: weekly review ritual
+        run: node scripts/shoot-review.mjs http://localhost:5198
+      - name: weekly planning ritual
+        run: node scripts/shoot-ritual.mjs http://localhost:5198
+
+      # THE PROOFS MUST NOT DIRTY THE TREE, AND THIS IS THE GUARD THAT COVERS EVERY
+      # ROUTE. Measured on 9fe1a88: all twelve run back to back leave
+      # `git status --porcelain` empty, because every write lands under the
+      # gitignored shots/ paths. With PIN_CANON=1 on a SINGLE proof, seven tracked
+      # canon PNGs are modified WHILE THAT PROOF EXITS 0 — a green proof rewriting
+      # the evidence it is judged against, which is how canon rots.
+      # Unlike the env check above, this one does not care HOW PIN_CANON arrived:
+      # it reads the result. A future edit that starts writing tracked canon fails
+      # here instead of quietly shipping new baselines.
+      - name: the proofs must not have written tracked files
+        if: always()
+        working-directory: .
+        run: |
+          dirty="$(git status --porcelain)"
+          if [ -n "$dirty" ]; then
+            echo "::error::a proof wrote into the working tree — canon must not be rewritten in CI"
+            echo "$dirty"
+            exit 1
+          fi
+          echo "tree clean after all twelve proofs"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ui-proof-shots
+          # only what the twelve actually write. shots/onboarding belongs to
+          # shoot-onboarding, one of the four DELIBERATELY excluded proofs, so
+          # listing it here would read as though that proof still runs.
+          path: |
+            app/shots/latest
+            app/shots/overlap
+            app/shots/*.png
+          if-no-files-found: ignore
