@@ -28,8 +28,14 @@ name: ui-proofs
 #     screenshot tool. Gating it would add a step that cannot fail.
 on:
   pull_request:
-    # the PRs where app code changes — feature PRs into the RC, and the promotion
-    branches: ['main', 'v*-rc*']
+    # The PRs where app code changes: feature PRs into an RC, and the promotion.
+    # Both RC spellings, matching ci.yml, because `v*-rc` does NOT match
+    # `v2026.10-rc1` — only `v*-rc*` does, and a future `v2026.11-rc` would be the
+    # other way round. `develop` is ci.yml's fourth entry and is deliberately NOT
+    # here: this repo promotes v*-rc* -> main, and ui-overlap.yml's own
+    # "develop -> main" comment is already known-stale and in the handoff. If a
+    # develop branch is ever revived, this list is where it goes.
+    branches: ['main', 'v*-rc*', 'v*-rc']
     paths: ['app/**', '.github/workflows/ui-proofs.yml']
   workflow_dispatch:
 
@@ -66,10 +72,18 @@ jobs:
       # So the porcelain check at the end is the load-bearing one; this step is a
       # fast, precisely-named failure on the config-level routes it does cover,
       # saving a build and two minutes of browser time when it fires.
+      # AND IT TESTS FOR THE LITERAL "1", NOT FOR NON-EMPTY — runner2's review
+      # finding. shotsPath.mjs pins on `env.PIN_CANON === '1'` and nothing else,
+      # and app/scripts/__tests__/shots-path.test.ts pins that deliberately:
+      # '0', 'true', 'yes', '' and ' 1' all resolve to shots/latest. A `-n` test
+      # would kill the build on PIN_CANON=0 — the intuitive way to DISABLE
+      # pinning — while saying it was about to overwrite canon, which is false.
+      # A gate that fires on content that cannot cause the harm is one the next
+      # person deletes in a hurry. This now agrees with the module it guards.
       - name: PIN_CANON must not be set
         run: |
-          if [ -n "${PIN_CANON:-}" ]; then
-            echo "::error::PIN_CANON is set — this job would overwrite tracked canon PNGs in place"
+          if [ "${PIN_CANON:-}" = "1" ]; then
+            echo "::error::PIN_CANON=1 — this job would overwrite tracked canon PNGs in place"
             exit 1
           fi
 
@@ -134,9 +148,11 @@ jobs:
         if: always()
         with:
           name: ui-proof-shots
+          # only what the twelve actually write. shots/onboarding belongs to
+          # shoot-onboarding, one of the four DELIBERATELY excluded proofs, so
+          # listing it here would read as though that proof still runs.
           path: |
             app/shots/latest
             app/shots/overlap
-            app/shots/onboarding
             app/shots/*.png
           if-no-files-found: ignore
