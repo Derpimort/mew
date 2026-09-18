@@ -87,7 +87,7 @@ describe('plan_blocks recurrence', () => {
       },
       exec
     )
-    const places = plan.mock.calls[0][0]
+    const places = plan.mock.calls[0][0].places
     expect(places[0].rrule).toEqual({ freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'], count: 24 })
   })
 
@@ -99,7 +99,7 @@ describe('plan_blocks recurrence', () => {
       { places: [{ title: 'rent', tag: 'work', dayOffset: 0, recurrence: { freq: 'MONTHLY' } }] },
       exec
     )
-    const places = plan.mock.calls[0][0]
+    const places = plan.mock.calls[0][0].places
     expect(places).toHaveLength(1)
     expect(places[0].rrule).toBeUndefined()
   })
@@ -306,15 +306,14 @@ describe('duplicate_block tool (#335)', () => {
       { query: 'deck', at: '9:00', toDayOffset: 3, recurrence: { freq: 'WEEKLY', byday: 'MO,WE' } },
       exec
     )
-    expect(duplicate).toHaveBeenCalledWith(
-      'deck',
-      {
-        toDayOffset: 3,
-        toStartMin: undefined,
-        rrule: { freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'] },
-      },
-      '9:00'
-    )
+    /* one named object since #165, with the opts bag flattened in — same values */
+    expect(duplicate).toHaveBeenCalledWith({
+      query: 'deck',
+      toDayOffset: 3,
+      toStartMin: undefined,
+      rrule: { freq: 'WEEKLY', interval: 1, byday: ['MO', 'WE'] },
+      at: '9:00',
+    })
   })
 
   it('drops a monthly (unsupported) recurrence while still copying', async () => {
@@ -325,9 +324,11 @@ describe('duplicate_block tool (#335)', () => {
       { query: 'deck', toDayOffset: 1, recurrence: { freq: 'MONTHLY' } },
       exec
     )
-    const args = duplicate.mock.calls[0]
-    expect(args[1].rrule).toBeUndefined()
-    expect(args[1].toDayOffset).toBe(1)
+    /* the opts bag is flattened into duplicate's one named object (#165), so its
+       fields are read off that object rather than off a second position */
+    const [args] = duplicate.mock.calls[0]
+    expect(args.rrule).toBeUndefined()
+    expect(args.toDayOffset).toBe(1)
   })
 })
 

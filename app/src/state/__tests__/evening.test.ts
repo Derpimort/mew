@@ -216,7 +216,10 @@ describe('#22 AC1 — asked at 20:46, tonight has room', () => {
   it('a time-less plan lands tonight in one sweep — no "the day is full"', async () => {
     await fresh([homeCall()], TUE(20, 46))
     const out = await viaTool((exec) =>
-      exec.plan([{ title: 'prod release', tag: 'work', dayOffset: 0, durationMin: 60 }], [])
+      exec.plan({
+        places: [{ title: 'prod release', tag: 'work', dayOffset: 0, durationMin: 60 }],
+        frees: [],
+      })
     )
     expect(out).not.toMatch(/couldn't hold|full/)
     const placed = blocks().find((b) => b.title === 'prod release')!
@@ -316,10 +319,12 @@ describe('#22 AC6 — plannable hours stand apart from quiet hours', () => {
   it('the pacing pass stays MEW-initiated: a wall-to-wall classic day is offered a breather, none placed at 18:30', async () => {
     await fresh([homeCall()], TUE(7, 30)) // a seeded week, so the turn reaches the model
     const out = await viaTool((exec) =>
-      exec.plan(
-        [{ title: 'Build day', tag: 'work', dayOffset: 0, startMin: 8 * 60, durationMin: 630 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'Build day', tag: 'work', dayOffset: 0, startMin: 8 * 60, durationMin: 630 },
+        ],
+        frees: [],
+      })
     )
     expect(out).toContain('runs 8:00–18:30 unbroken — want me to make room for a short breather?')
     expect(blocks().some((b) => b.title === 'Breather')).toBe(false)

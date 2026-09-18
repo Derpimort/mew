@@ -1577,8 +1577,8 @@ describe('#323 — meals stay sane under packing/reshape', () => {
     scriptedModel.midTurn = (exec) => {
       // the transcript itself: MEW squeezed lunch to 15:19 and placed dinner
       // 18:15 — both derived by the model, neither startStated
-      result = exec.plan(
-        [
+      result = exec.plan({
+        places: [
           { title: 'Lunch', tag: 'private', dayOffset: 0, startMin: 15 * 60 + 19, durationMin: 45 },
           {
             title: 'Dinner',
@@ -1588,8 +1588,8 @@ describe('#323 — meals stay sane under packing/reshape', () => {
             durationMin: 60,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('pack my afternoon')
 
@@ -4084,8 +4084,8 @@ describe('recurring blocks (#159)', () => {
     toolResult = ''
     scriptedModel.chunks = ['On it — ', 'placed.']
     scriptedModel.midTurn = (exec) => {
-      toolResult = exec.plan(
-        [
+      toolResult = exec.plan({
+        places: [
           {
             title: 'Pilates',
             tag: 'health',
@@ -4095,8 +4095,8 @@ describe('recurring blocks (#159)', () => {
             rrule: weeklyRule,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     }
     await say('pilates every monday and wednesday at 7 for 12 weeks')
   }
@@ -4171,8 +4171,8 @@ describe('recurring blocks (#159)', () => {
     useMew.getState().updateSettings({ modelLocation: 'local' })
     scriptedModel.chunks = ['On it.']
     scriptedModel.midTurn = (exec) =>
-      exec.plan(
-        [
+      exec.plan({
+        places: [
           {
             title: 'Journal',
             tag: 'private',
@@ -4182,8 +4182,8 @@ describe('recurring blocks (#159)', () => {
             rrule: { freq: 'DAILY', interval: 1 },
           },
         ],
-        []
-      )
+        frees: [],
+      })
     await say('journal every day')
     // open-ended daily → today + 52 weeks (≈365 days), bounded well under 800
     const journals = useMew.getState().blocks.filter((b) => b.title === 'Journal')
@@ -4214,14 +4214,14 @@ describe('undo an AI action (#162)', () => {
     let placedCount = 0
     scriptedModel.chunks = ['On it — ', 'and undone.']
     scriptedModel.midTurn = (exec) => {
-      placedReply = exec.plan(
-        [
+      placedReply = exec.plan({
+        places: [
           { title: 'audit prep', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 },
           { title: 'budget pass', tag: 'work', dayOffset: 1, startMin: 11 * 60, durationMin: 60 },
           { title: 'vendor sync', tag: 'work', dayOffset: 1, startMin: 13 * 60, durationMin: 30 },
         ],
-        []
-      )
+        frees: [],
+      })
       placedCount = useMew.getState().blocks.length - before
       undoReply = exec.undoLast()
     }
@@ -4244,10 +4244,12 @@ describe('undo an AI action (#162)', () => {
     const tomorrow = addDaysKey(dayKey(TUE(0)), 1)
     scriptedModel.chunks = ['placed it — ', 'and rolled it back.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'dentist', tag: 'health', dayOffset: 1, startMin: 15 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'dentist', tag: 'health', dayOffset: 1, startMin: 15 * 60, durationMin: 60 },
+        ],
+        frees: [],
+      })
       exec.undoLast()
     }
     await say('book the dentist tomorrow at 3 — no wait, undo')
@@ -4302,10 +4304,12 @@ describe('undo an AI action (#162)', () => {
     let movedDay = ''
     scriptedModel.chunks = ['working… ', 'last bit undone.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'briefing', tag: 'work', dayOffset: 1, startMin: 10 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'briefing', tag: 'work', dayOffset: 1, startMin: 10 * 60, durationMin: 60 },
+        ],
+        frees: [],
+      })
       const placed = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!
       exec.move({ query: placed.title, toDayOffset: 2, toStartMin: 16 * 60 }) // move it again — this is the LAST mutation
       movedDay = useMew.getState().blocks.find((b) => /briefing/.test(b.title))!.dayKey
@@ -4358,10 +4362,12 @@ describe('undo an AI action (#162)', () => {
     const userTurns = () => chat().filter((m) => m.role === 'user').length
     scriptedModel.chunks = ['placed — ', 'and undone, all good.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'errand', tag: 'work', dayOffset: 1, startMin: 12 * 60, durationMin: 30 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'errand', tag: 'work', dayOffset: 1, startMin: 12 * 60, durationMin: 30 },
+        ],
+        frees: [],
+      })
       exec.undoLast()
     }
     const before = userTurns()
@@ -4379,10 +4385,10 @@ describe('undo an AI action (#162)', () => {
     // turn 1: place then undo — the snapshot is consumed
     scriptedModel.chunks = ['done — ', 'undone.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'sync', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 }],
-        []
-      )
+      exec.plan({
+        places: [{ title: 'sync', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 30 }],
+        frees: [],
+      })
       exec.undoLast()
     }
     await say('add a sync tomorrow then undo')
@@ -4937,10 +4943,10 @@ describe('tool-call activity cards (#282)', () => {
     useMew.getState().updateSettings({ modelLocation: 'local' })
     scriptedModel.chunks = ['on it.']
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'deep work', tag: 'work', dayOffset: 1, startMin: 540, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [{ title: 'deep work', tag: 'work', dayOffset: 1, startMin: 540, durationMin: 60 }],
+        frees: [],
+      })
       exec.offerChoices({
         prompt: 'keep it?',
         options: [
@@ -6293,8 +6299,8 @@ describe('reshape without flailing (#325)', () => {
     // so meal-sanity keeps it — #323)
     scriptedModel.chunks = ['ok.']
     scriptedModel.midTurn = (exec) =>
-      exec.plan(
-        [
+      exec.plan({
+        places: [
           {
             title: 'Dinner',
             tag: 'private',
@@ -6304,8 +6310,8 @@ describe('reshape without flailing (#325)', () => {
             durationMin: 45,
           },
         ],
-        []
-      )
+        frees: [],
+      })
     await say('dinner at 7')
     scriptedModel.reset()
 

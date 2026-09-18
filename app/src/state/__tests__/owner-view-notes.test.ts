@@ -280,7 +280,10 @@ describe("#119 — the keyless floor speaks only the owner's line; the keyed mod
     await fresh(deckAndGym(), { location: 'local' })
     let result = ''
     scriptedModel.midTurn = (exec) => {
-      result = exec.batch({ afterMin: 17 * 60, tag: 'work' }, { kind: 'shift', deltaMin: 60 })
+      result = exec.batch({
+        selector: { afterMin: 17 * 60, tag: 'work' },
+        op: { kind: 'shift', deltaMin: 60 },
+      })
     }
     await say('push my work after 5 back an hour')
     await settle()

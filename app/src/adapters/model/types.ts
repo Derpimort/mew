@@ -334,8 +334,57 @@ export interface SuggestSlotsArgs {
   window?: 'morning' | 'afternoon' | 'evening'
 }
 
+/** Everything `plan` needs, by name (#165). */
+export interface PlanArgs {
+  /** the blocks to place */
+  places: PlaceSpec[]
+  /** the stretches to leave free */
+  frees: FreeSpec[]
+}
+
+/** Everything `duplicate` needs, by name (#165). The opts bag is flattened in,
+    so there is one object to forward rather than a query that can drift from
+    its options. */
+export interface DuplicateArgs {
+  /** the block to copy, as the owner named it */
+  query: string
+  /** days from today for the copy */
+  toDayOffset?: number
+  /** the copy's start, minutes from midnight */
+  toStartMin?: number
+  /** make the copy repeat on this rule */
+  rrule?: import('../../domain/recurrence').Rrule
+  /** the start time pinning which of several same-named blocks to copy */
+  at?: string
+}
+
+/** Everything `batch` needs, by name (#165). */
+export interface BatchArgs {
+  /** which blocks the sweep picks */
+  selector: {
+    dayOffset?: number
+    afterMin?: number
+    beforeMin?: number
+    tag?: import('../../domain/types').Tag
+    titleQuery?: string
+  }
+  /** the one operation applied to every block the selector picked */
+  op:
+    | { kind: 'shift'; deltaMin: number }
+    | { kind: 'moveToDay'; toDayOffset: number }
+    | { kind: 'setTag'; tag: import('../../domain/types').Tag }
+  /** the count MEW named in its confirm — a yes re-asks with it, and a week that
+      moved since means the confirm no longer describes what would happen */
+  confirmCount?: number
+  /** the list token MEW named in its confirm */
+  confirmToken?: string
+  /** #75 slice 3: which occurrences of a repeating block the sweep means —
+      leave it out and MEW asks with chips before it touches a series */
+  scope?: 'this' | 'following' | 'series'
+}
+
 export interface ToolExecutor {
-  plan(places: PlaceSpec[], frees: FreeSpec[]): string
+  plan(args: PlanArgs): string
   /** `at` (#334) is the TARGET block's start time ("19:45", "9am") — with it,
       name AND time must both match, so a shared title resolves to exactly one
       block. Omit and a bare ambiguous name asks (offer_choices) rather than
@@ -436,15 +485,7 @@ export interface ToolExecutor {
       `rrule` makes the copy a repeating series, expanded and linked like a
       planned recurrence (#159). External events copy into an owned block; the
       calendar original stays. `at` pins which of several same-named sources. */
-  duplicate(
-    query: string,
-    opts: {
-      toDayOffset?: number
-      toStartMin?: number
-      rrule?: import('../../domain/recurrence').Rrule
-    },
-    at?: string
-  ): string
+  duplicate(args: DuplicateArgs): string
   /** Merge (#74): join same-tag blocks on one day into ONE block — the earliest
       keeps its id and grows to span the run; the others go, in one undo step.
       `query` names them by title; `at` pins the run's first block (the run is
@@ -460,24 +501,7 @@ export interface ToolExecutor {
       blocks never move); nothing changes until the owner says yes, and the yes
       re-asks with `confirmCount` and `confirmToken`, the count and the list token
       it named. One undo reverses the lot. */
-  batch(
-    selector: {
-      dayOffset?: number
-      afterMin?: number
-      beforeMin?: number
-      tag?: import('../../domain/types').Tag
-      titleQuery?: string
-    },
-    op:
-      | { kind: 'shift'; deltaMin: number }
-      | { kind: 'moveToDay'; toDayOffset: number }
-      | { kind: 'setTag'; tag: import('../../domain/types').Tag },
-    confirmCount?: number,
-    confirmToken?: string,
-    /** #75 slice 3: which occurrences of a repeating block the sweep means —
-        leave it out and MEW asks with chips before it touches a series */
-    scope?: 'this' | 'following' | 'series'
-  ): string
+  batch(args: BatchArgs): string
   /** Move a block relative to where it is now, with no absolute time (#335):
       'earlier'/'later' shift the start by `amountMin` (default 30) on the same
       day, 'next_day' moves one day on at the same clock, 'next_free' relocates

@@ -335,7 +335,10 @@ describe('#75 slice 2 — a retag, offered first and applied in place', () => {
   it('keyed: an offer tapped on the keyless floor retags exactly what it listed, and one undo in a keyed turn puts every tag back', async () => {
     await fresh(calls(), [], 'local')
     scriptedModel.midTurn = (exec) => {
-      exec.batch({ dayOffset: 1, titleQuery: 'call' }, { kind: 'setTag', tag: 'work' })
+      exec.batch({
+        selector: { dayOffset: 1, titleQuery: 'call' },
+        op: { kind: 'setTag', tag: 'work' },
+      })
     }
     await say('tag the calls tomorrow as work')
     await settle()
@@ -357,11 +360,19 @@ describe('#75 slice 2 — a retag, offered first and applied in place', () => {
     await fresh(calls(), [], 'local')
     let undone = ''
     scriptedModel.midTurn = (exec) => {
-      exec.batch({ dayOffset: 1, titleQuery: 'call' }, { kind: 'setTag', tag: 'work' })
+      exec.batch({
+        selector: { dayOffset: 1, titleQuery: 'call' },
+        op: { kind: 'setTag', tag: 'work' },
+      })
       const token = chipMsgs()
         .at(-1)!
         .choices![0].reply.match(/· ([a-z0-9]+)$/)![1]
-      exec.batch({ dayOffset: 1, titleQuery: 'call' }, { kind: 'setTag', tag: 'work' }, 3, token)
+      exec.batch({
+        selector: { dayOffset: 1, titleQuery: 'call' },
+        op: { kind: 'setTag', tag: 'work' },
+        confirmCount: 3,
+        confirmToken: token,
+      })
       undone = exec.undoLast()
     }
     await say('tag the calls tomorrow as work — yes — no, undo that')

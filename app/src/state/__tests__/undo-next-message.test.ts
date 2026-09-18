@@ -516,10 +516,10 @@ describe('#130 — a held undo acts only while the week is what the change left'
     await fresh([standup()], { location: 'local' })
     let undone = ''
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'deck', tag: 'work', dayOffset: 0, startMin: 15 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [{ title: 'deck', tag: 'work', dayOffset: 0, startMin: 15 * 60, durationMin: 60 }],
+        frees: [],
+      })
       undone = exec.undoLast()
     }
     await say('block an hour for the deck at 3 — no, put it back')

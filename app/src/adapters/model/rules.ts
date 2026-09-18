@@ -96,8 +96,8 @@ export function runIntent(
       /* #116: an ask that no longer fits today posts its tomorrow offer as chips;
          the floor stays quiet then, the chips ARE the reply */
       return quietIfChoices(
-        exec.plan(
-          places.map((p) => ({
+        exec.plan({
+          places: places.map((p) => ({
             title: p.title,
             tag: p.tag,
             dayOffset: p.dayOffset ?? 0,
@@ -116,12 +116,12 @@ export function runIntent(
             window: p.window,
             afterDinner: p.afterDinner,
           })),
-          frees.map((f) => ({
+          frees: frees.map((f) => ({
             dayOffset: /^\d+$/.test(f.dayKey) ? Number(f.dayKey) : 0,
             startMin: f.startMin,
             endMin: f.endMin,
-          }))
-        )
+          })),
+        })
       )
     }
     case 'complete':
@@ -177,7 +177,9 @@ export function runIntent(
     case 'duplicate':
       /* #335: copy to another day/time — an ambiguous source name asks with
          chips; the keyless floor stays quiet and the chips ARE the reply. */
-      return quietIfChoices(exec.duplicate(intent.query ?? '', intent.duplicate ?? {}, intent.at))
+      return quietIfChoices(
+        exec.duplicate({ query: intent.query ?? '', ...(intent.duplicate ?? {}), at: intent.at })
+      )
     case 'split': {
       /* #73: split a block around a clock range or another block. The same
          executor the rescue chip's split runs, so an ambiguous name or a series
@@ -223,8 +225,8 @@ export function runIntent(
             ? { kind: 'setTag' as const, tag: bt.toTag! } // #75 slice 2: a retag
             : { kind: 'moveToDay' as const, toDayOffset: bt.toDayOffset ?? 0 }
       return quietIfChoices(
-        exec.batch(
-          {
+        exec.batch({
+          selector: {
             dayOffset: bt.dayOffset,
             afterMin: bt.afterMin,
             beforeMin: bt.beforeMin,
@@ -232,11 +234,11 @@ export function runIntent(
             titleQuery: bt.titleQuery,
           },
           op,
-          bt.confirmCount,
-          bt.confirmToken,
+          confirmCount: bt.confirmCount,
+          confirmToken: bt.confirmToken,
           /* #75 slice 3: the scope word a chip re-issued ("just this one") */
-          intent.seriesScope
-        )
+          scope: intent.seriesScope,
+        })
       )
     }
     case 'merge':

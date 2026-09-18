@@ -23,9 +23,9 @@ function mockExec(): ToolExecutor & { calls: string[] } {
   const calls: string[] = []
   return {
     calls,
-    plan: vi.fn((places, frees) => {
+    plan: vi.fn((args: { places: unknown[]; frees: unknown[] }) => {
       calls.push('plan')
-      return `Done — placed ${places.length}, freed ${frees.length}.`
+      return `Done — placed ${args.places.length}, freed ${args.frees.length}.`
     }),
     complete: vi.fn((args: { query: string }) => {
       calls.push('complete')
@@ -156,7 +156,7 @@ describe('rules adapter — converse', () => {
       )
     )
     expect(exec.plan).toHaveBeenCalledOnce()
-    const [places, frees] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places, frees }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0]).toMatchObject({ title: 'deck', tag: 'work', dayOffset: 2, startMin: 540 })
     expect(frees[0]).toMatchObject({ dayOffset: 3, startMin: 780 })
     expect(reply).toBe('Done — placed 1, freed 1.')
@@ -360,7 +360,7 @@ describe('tool dispatch — runTool (every provider rides this)', () => {
       },
       exec
     )
-    const [places, frees] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places, frees }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places).toHaveLength(1)
     expect(places[0]).toMatchObject({ title: 'deck', dayOffset: 13, startMin: 0, durationMin: 600 })
     expect(frees[0]).toMatchObject({ dayOffset: 3 })
@@ -567,7 +567,7 @@ describe('attention + due ride the tool registry', () => {
       },
       exec
     )
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0]).toMatchObject({ title: 'swap iphone', attention: 'background', due: 780 })
   })
 
@@ -578,7 +578,7 @@ describe('attention + due ride the tool registry', () => {
       { places: [{ title: 'x', tag: 'work', dayOffset: 0, attention: 'sneaky' }] },
       exec
     )
-    const [places] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
+    const [{ places }] = (exec.plan as ReturnType<typeof vi.fn>).mock.calls[0]
     expect(places[0].attention).toBeUndefined()
   })
 

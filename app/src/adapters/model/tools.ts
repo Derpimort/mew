@@ -827,7 +827,7 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
           endMin: clampInt(f.endMin, 0, 1439, 17 * 60),
         }))
       if (!places.length && !frees.length) return 'nothing to place — the call was empty'
-      return exec.plan(places, frees)
+      return exec.plan({ places, frees })
     }
     case 'complete_task':
       return exec.complete({ query: String(o.query ?? ''), at: atArg(o.at) })
@@ -987,15 +987,13 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       })
     }
     case 'duplicate_block':
-      return exec.duplicate(
-        String(o.query ?? ''),
-        {
-          toDayOffset: optInt(o.toDayOffset, 0, 13),
-          toStartMin: optInt(o.toStartMin, 0, 1439),
-          rrule: parseRecurrence(o.recurrence),
-        },
-        atArg(o.at)
-      )
+      return exec.duplicate({
+        query: String(o.query ?? ''),
+        toDayOffset: optInt(o.toDayOffset, 0, 13),
+        toStartMin: optInt(o.toStartMin, 0, 1439),
+        rrule: parseRecurrence(o.recurrence),
+        at: atArg(o.at),
+      })
     case 'batch_blocks': {
       const selector = {
         dayOffset: optInt(o.dayOffset, 0, 13),
@@ -1019,31 +1017,37 @@ export async function runTool(name: string, input: unknown, exec: ToolExecutor):
       if (o.op === 'shift') {
         const deltaMin = optInt(o.deltaMin, -720, 720)
         if (!deltaMin) return 'nothing to shift — pass deltaMin (+ later, − earlier)'
-        return exec.batch(selector, { kind: 'shift', deltaMin }, confirmCount, confirmToken, scope)
+        return exec.batch({
+          selector,
+          op: { kind: 'shift', deltaMin },
+          confirmCount,
+          confirmToken,
+          scope,
+        })
       }
       if (o.op === 'move_to_day') {
         const toDayOffset = optInt(o.toDayOffset, 0, 13)
         if (toDayOffset == null) return 'nothing to move to — pass toDayOffset'
-        return exec.batch(
+        return exec.batch({
           selector,
-          { kind: 'moveToDay', toDayOffset },
+          op: { kind: 'moveToDay', toDayOffset },
           confirmCount,
           confirmToken,
-          scope
-        )
+          scope,
+        })
       }
       if (o.op === 'set_tag') {
         const toTag = (['work', 'private', 'health', 'rest'] as const).includes(o.toTag as never)
           ? (o.toTag as 'work')
           : undefined
         if (!toTag) return 'nothing to tag — pass toTag (work, private, health or rest)'
-        return exec.batch(
+        return exec.batch({
           selector,
-          { kind: 'setTag', tag: toTag },
+          op: { kind: 'setTag', tag: toTag },
           confirmCount,
           confirmToken,
-          scope
-        )
+          scope,
+        })
       }
       return 'nothing to batch — op must be shift, move_to_day or set_tag'
     }

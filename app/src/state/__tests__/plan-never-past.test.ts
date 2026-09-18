@@ -310,10 +310,12 @@ describe('#116 — a placement MEW times never starts in the past', () => {
     )
     clock(14, 0)
     scriptedModel.midTurn = (exec) => {
-      exec.plan(
-        [{ title: 'notes', tag: 'work', dayOffset: -1, startMin: 12 * 60, durationMin: 60 }],
-        []
-      )
+      exec.plan({
+        places: [
+          { title: 'notes', tag: 'work', dayOffset: -1, startMin: 12 * 60, durationMin: 60 },
+        ],
+        frees: [],
+      })
     }
     await say('I also did an hour of notes yesterday at noon')
     await settle()
@@ -340,7 +342,10 @@ describe('#116 — a placement MEW times never starts in the past', () => {
     clock(14, 0)
     let reply = ''
     scriptedModel.midTurn = (exec) => {
-      reply = exec.plan([{ title: 'notes', tag: 'work', dayOffset: -1, durationMin: 60 }], [])
+      reply = exec.plan({
+        places: [{ title: 'notes', tag: 'work', dayOffset: -1, durationMin: 60 }],
+        frees: [],
+      })
     }
     await say('block an hour for notes yesterday')
     await settle()

@@ -214,7 +214,7 @@ async function planKeyed(blocksIn: Block[], place: Record<string, unknown>) {
   await fresh(blocksIn, [], 'local')
   let result = ''
   scriptedModel.midTurn = (exec) => {
-    result = exec.plan([place as never], [])
+    result = exec.plan({ places: [place as never], frees: [] })
   }
   await say('put the email sweep at 2')
   await settle()
@@ -382,8 +382,8 @@ describe('#49 — the tools grant only on an explicit true', () => {
   it('plan_blocks and move_task pass allowOverlap:true through, and nothing else counts', async () => {
     const calls: unknown[][] = []
     const exec = {
-      plan: (places: unknown[]) => {
-        calls.push(['plan', places])
+      plan: (args: { places: unknown[] }) => {
+        calls.push(['plan', args.places])
         return 'ok'
       },
       move: (...args: unknown[]) => {

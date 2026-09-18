@@ -183,9 +183,10 @@ import {
   selectAdapters,
   type ChatTurn,
   type ChoiceOption,
-  type FreeSpec,
   type MergeArgs,
+  type BatchArgs,
   type CompleteArgs,
+  type DuplicateArgs,
   type EditArgs,
   type FindSlotArgs,
   type ListBlocksArgs,
@@ -196,6 +197,7 @@ import {
   type ResizeArgs,
   type SuggestSlotsArgs,
   type PlaceSpec,
+  type PlanArgs,
   type RemoveArgs,
   type SplitArgs,
   type ScenarioTaskSpec,
@@ -2314,7 +2316,9 @@ export const useMew = create<MewState>((set, get) => {
     burnSustenanceKey(todayKey, s.nowMs)
     if (!specs.length) return // fed (or wall-to-wall): nothing to add, nothing to say
     const before = new Set(get().blocks.map((b) => b.id))
-    runToolWithCard('plan', { places: specs, frees: [] }, () => execPlan(specs, []))
+    runToolWithCard('plan', { places: specs, frees: [] }, () =>
+      execPlan({ places: specs, frees: [] })
+    )
     /* #123: the meals (and any breather) this pass placed are MEW's scaffolding,
        never the owner's work to carry into next week */
     const placed = get().blocks.filter((b) => !before.has(b.id) && !b.placedBy)
@@ -2708,7 +2712,9 @@ export const useMew = create<MewState>((set, get) => {
     return confirmedRulesFrom(s.memory)
   }
 
-  function execPlan(places: PlaceSpec[], frees: FreeSpec[]): string {
+  /* one named object (#165) — see PlanArgs */
+  function execPlan(args: PlanArgs): string {
+    const { places, frees } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -3808,15 +3814,15 @@ export const useMew = create<MewState>((set, get) => {
       makes the copy a repeating series, expanded and linked like a planned
       recurrence (#159). An external source copies into an owned block; the
       calendar original is never moved or detached. */
-  function execDuplicate(
-    query: string,
-    opts: {
+  /* one named object (#165) — see DuplicateArgs. The opts bag is flattened into
+     it, so the body reads its three fields through the same `opts` name. */
+  function execDuplicate(args: DuplicateArgs): string {
+    const { query, at } = args
+    const opts: {
       toDayOffset?: number
       toStartMin?: number
       rrule?: import('../domain/recurrence').Rrule
-    },
-    at?: string
-  ): string {
+    } = args
     const s = get()
     const now = new Date(s.nowMs)
     const todayKey = dayKey(now)
@@ -4042,24 +4048,12 @@ export const useMew = create<MewState>((set, get) => {
       named: if the plan no longer moves exactly that list, MEW offers again.
       One setBlocks under the wrapper's snapshot, so one undo reverses the lot;
       a collision the batch leaves speaks in the existing clash wording. */
-  function execBatch(
-    selIn: {
-      dayOffset?: number
-      afterMin?: number
-      beforeMin?: number
-      tag?: import('../domain/types').Tag
-      titleQuery?: string
-    },
-    opIn:
-      | { kind: 'shift'; deltaMin: number }
-      | { kind: 'moveToDay'; toDayOffset: number }
-      | { kind: 'setTag'; tag: import('../domain/types').Tag },
-    confirmCount?: number,
-    confirmToken?: string,
-    /** #75 slice 3: which occurrences of a repeating block the sweep means —
-        absent means MEW asks with chips before touching a series */
-    scope?: BatchScope
-  ): string {
+  /* one named object (#165) — see BatchArgs. Destructured here so the body
+     below is untouched: selIn and opIn keep their names, and scope still means
+     "absent asks with chips before touching a series" (#75 slice 3). */
+  function execBatch(args: BatchArgs): string {
+    const { selector: selIn, op: opIn, confirmCount, confirmToken } = args
+    const scope = args.scope as BatchScope | undefined
     const s = get()
     const todayKey = dayKey(new Date(s.nowMs))
     const sel: BatchSelector = {
@@ -6262,12 +6256,13 @@ export const useMew = create<MewState>((set, get) => {
          undo_last_action can take back exactly that one change (#162). The
          read-only tools below never snapshot — there's nothing to reverse. */
       const exec: ToolExecutor = {
-        plan: (places, frees) => {
+        plan: (args) => {
           acted = true
           snapshotForUndo()
           working('placing blocks…')
           closeStreamRow()
-          return runChange('plan', { places, frees }, () => execPlan(places, frees))
+          /* forwarded whole — never rebuilt (#165) */
+          return runChange('plan', { places: args.places, frees: args.frees }, () => execPlan(args))
         },
         complete: (args) => {
           acted = true
@@ -6424,28 +6419,28 @@ export const useMew = create<MewState>((set, get) => {
           closeStreamRow()
           return runChange('resize', { query: args.query }, () => execResize(args))
         },
-        duplicate: (q, opts, at) => {
+        duplicate: (args) => {
           acted = true
           snapshotForUndo()
           working('duplicating it…')
           closeStreamRow()
           return runChange(
             'duplicate',
-            { query: q, toDayOffset: opts.toDayOffset, toStartMin: opts.toStartMin },
-            () => execDuplicate(q, opts, at)
+            { query: args.query, toDayOffset: args.toDayOffset, toStartMin: args.toStartMin },
+            () => execDuplicate(args)
           )
         },
-        batch: (selector, op, confirmCount, confirmToken, scope) => {
+        batch: (args) => {
           acted = true
           snapshotForUndo()
           /* a retag moves nothing: its card and working line say so (#75 slice 2) */
-          const retag = op.kind === 'setTag'
+          const retag = args.op.kind === 'setTag'
           working(retag ? 'tagging them…' : 'moving them…')
           closeStreamRow()
           return runChange(
             retag ? 'retag' : 'batch',
-            { query: selector.titleQuery ?? selector.tag },
-            () => execBatch(selector, op, confirmCount, confirmToken, scope)
+            { query: args.selector.titleQuery ?? args.selector.tag },
+            () => execBatch(args)
           )
         },
         merge: (args) => {
@@ -6875,7 +6870,7 @@ export const useMew = create<MewState>((set, get) => {
       snapshotForUndo() // "undo that" must reach the applied plan (#162)
       try {
         const line = runChange('plan', { places: scenario.places, frees: [] }, () =>
-          execPlan(scenario.places, [])
+          execPlan({ places: scenario.places, frees: [] })
         )
         post([mewMsg(line)])
       } catch (err) {
