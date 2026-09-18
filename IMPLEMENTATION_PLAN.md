@@ -4,6 +4,15 @@
 
 App lives in `app/`. Design handoff stays untouched in `design_handoff_mew_mvp/` as reference.
 
+> **`#NNN` here is a `mew-archive` number.** MEW was migrated from
+> `Derpimort/mew-archive` and this document kept the predecessor's issue numbers, so a
+> citation means `mew-archive#NNN` rather than this repo's issue of that number. This
+> repo's own counter has since grown past 10 of the 10 distinct numbers cited here,
+> so those now resolve to a real, live, unrelated issue or pull request — a wrong answer
+> rather than no answer. The archive is private, so a qualified link answers **404 unless
+> you are a maintainer, and that 404 is the expected result, not a broken link**. Measured
+> per file at this commit; the repo-wide sweep is #195.
+
 ---
 
 ## Phase 0 — Foundation *(this session)*
