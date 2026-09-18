@@ -5787,8 +5787,8 @@ export const useMew = create<MewState>((set, get) => {
       if (b.tag !== live.tag) return 'tag'
       return 'other'
     }
-    const back = (bs: Block[], one: (b: Block) => string, many: (n: number) => string) =>
-      bs.length ? [bs.length === 1 ? one(bs[0]) : many(bs.length)] : []
+    const back = <T>(xs: T[], one: (x: T) => string, many: (n: number) => string) =>
+      xs.length ? [xs.length === 1 ? one(xs[0]) : many(xs.length)] : []
     const by = (k: ReturnType<typeof kindOf>) => changed.filter((b) => kindOf(b) === k)
     parts.push(
       ...back(
@@ -5818,6 +5818,38 @@ export const useMew = create<MewState>((set, get) => {
       )
     )
     if (addedCaptureIds.length) parts.push(`cleared the note I'd jotted`)
+    /* #176: a standing rule has NO BLOCK, so every clause above passed it by and
+       the sentence came out `Undone — .` — the #149 class on the one kind #149
+       did not cover. Only `preference` earns a clause: an ordinary undo also
+       drops drift and completion notes, and naming those would put a rule
+       sentence on every undo that never touched one.
+       Both directions are written because they are one helper, but only the
+       DROPPED one is reachable today and only it is pinned: `remember` snapshots
+       for undo, while `forgetStandingPref` does not, so a forgotten rule cannot
+       be undone at all right now. That asymmetry is the product's, not this
+       summary's — noted rather than quietly implied by code that looks tested. */
+    const ruleName = (e: MemoryEvent) => e.pref?.match ?? 'that'
+    const droppedSet = new Set(droppedMemIds)
+    parts.push(
+      ...back(
+        s.memory.filter((e) => droppedSet.has(e.id) && e.kind === 'preference'),
+        (e) => `took back the rule about ${ruleName(e)}`,
+        (n) => `took back ${spell(n)} rules`
+      ),
+      ...back(
+        restoredMem.filter((e) => e.kind === 'preference'),
+        (e) => `brought back the rule about ${ruleName(e)}`,
+        (n) => `brought back ${spell(n)} rules`
+      )
+    )
+    /* INSURANCE, NOT A FIX, and said plainly because the difference is the whole
+       lesson of #171: no product path reaches this today. Every undoable action
+       either moves a block or — now — is a preference with a clause of its own,
+       so `parts` cannot currently come out empty, and mutating this line away
+       fails nothing. It is here because the CLASS is what bit us: the moment any
+       future action changes only memory, the dangling em dash returns. A terse
+       true sentence beats a fluent empty one, and this costs one line. */
+    if (!parts.length) return 'Undone.'
     return `Undone — ${joinHuman(parts)}.`
   }
 
