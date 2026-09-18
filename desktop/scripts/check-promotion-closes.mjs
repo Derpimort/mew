@@ -112,7 +112,10 @@ export function checkPromotionCloses(body, linked = null) {
     if (missing.length > 0)
       problems.push(
         `GitHub has not linked: ${missing.map((n) => `#${n}`).join(' ')} — if a keyword is fenced, inside an HTML ` +
-          `comment, or in a four-space indented block, re-saving can never link it; otherwise re-save the body and re-read.`
+          `comment, or in a four-space indented block, re-saving can never link it; NOR CAN IT IF THE NUMBER IS A ` +
+          `PULL REQUEST, because GitHub links closing keywords to issues only (check with ` +
+          `\`gh api repos/OWNER/REPO/issues/N --jq 'if .pull_request then "PR" else "issue" end'\`); ` +
+          `otherwise re-save the body and re-read.`
       )
     if (extra.length > 0)
       problems.push(`GitHub links issues the body does not claim: ${extra.map((n) => `#${n}`).join(' ')}.`)

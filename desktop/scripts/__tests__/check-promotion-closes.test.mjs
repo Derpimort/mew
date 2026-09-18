@@ -163,3 +163,20 @@ test('fence handling: ``` and ~~~, nesting of the other kind, and an unterminate
 test('an unreadable path exits 2', () => {
   assert.equal(run(join(dir, 'nope.md')).code, 2)
 })
+
+test('an unlinked number is told it might be a PULL REQUEST, which re-saving can never fix', () => {
+  // Measured on this repo: #172 is a pull request, so `Closes #172` is inert — GitHub links
+  // closing keywords to issues only. The guard already FAILED on it via the --linked
+  // difference, but its remedy offered only "re-save the body and re-read", which for a PR
+  // number cannot work. A correct failure with an impossible remedy sends a maintainer round
+  // a loop with no hint of the cause.
+  const r = checkPromotionCloses('Closes #172\nCloses #183\n', [183])
+  assert.equal(r.ok, false)
+  const msg = r.problems.join(' ')
+  assert.match(msg, /#172/)
+  assert.match(msg, /PULL REQUEST/)
+  assert.match(msg, /issues only/)
+
+  // control: the remedy it already had must survive, since fences remain the common cause
+  assert.match(msg, /fenced/)
+})
