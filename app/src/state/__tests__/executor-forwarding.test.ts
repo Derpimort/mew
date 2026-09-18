@@ -224,10 +224,27 @@ describe('#165 part 1 — every executor wrapper forwards every argument it decl
        mechanical rather than a convention someone remembers: a wrapper whose
        interface method takes a single `…Args` object must pass that identifier
        straight through to the exec* call. Rebuild it and this fails by name. */
-    const { objectArg } = declaredArities()
+    const { arities, members, objectArg } = declaredArities()
     const { wrappers } = wrapperShapes()
 
     expect(objectArg.size).toBeGreaterThan(0) // the set is read from the interface; an empty one would pass vacuously
+
+    /* AND THE SET MUST COVER EVERY MEMBER, not merely be non-empty. `size > 0`
+       was already too weak once tonight: coderpa renamed one converted method's
+       options type and the clause stopped watching it while the other three kept
+       the set non-empty, so the guard passed with the drop invisible. The same
+       weakness in a new dress is a member this rule cannot watch BY
+       CONSTRUCTION — anything with two or more parameters, which is where #160
+       lived. So account for all 23: every member is either watched (exactly one
+       parameter, and this clause proves its wrapper forwards it whole) or takes
+       no parameters at all and has nothing to drop. Reads 22 + 1 === 23 today;
+       the moment someone adds a two-parameter member it fails NAMING it, which
+       is the difference between a guarantee in a PR body and one the suite
+       re-proves on every run. */
+    const multiParam = [...arities].filter(([, n]) => n > 1).map(([name]) => name)
+    expect(multiParam).toEqual([])
+    const zeroParam = [...arities].filter(([, n]) => n === 0).length
+    expect(objectArg.size + zeroParam).toBe(members)
 
     const rebuilt: string[] = []
     for (const name of objectArg) {
