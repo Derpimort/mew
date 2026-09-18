@@ -1,6 +1,6 @@
 name: ui-proofs
 
-# The twelve gate-ready shoot proofs, on the PRs where the code actually changes.
+# The sixteen gate-ready shoot proofs, on the PRs where the code actually changes.
 #
 # WHY THIS FILE EXISTS RATHER THAN A WIDER ui-overlap.yml (#171 step 2). Seventeen
 # Playwright proofs live in app/scripts. Until #173 twelve of them ran only if a
@@ -17,24 +17,37 @@ name: ui-proofs
 # of duplicate browser time, once per release. If the owner ever widens
 # ui-overlap.yml's trigger, drop those two names from the list below.
 #
-# WHAT IS NOT HERE, and why, so the omissions are decisions rather than oversights:
-#   · shoot-console-brain, shoot-onboarding, shoot-rescue, shoot-sustenance
-#     pass a TIME and no DATE (`?t=` with no `?d=`), so in CI they would run on
-#     whatever weekday the runner woke up on. Gating them before they are pinned
-#     manufactures the exact "green on a Thursday" #171 step 3 is about — the pin
-#     is a PREREQUISITE for gating them, not something gating would validate.
-#   · shoot-dial asserts nothing at all: no assert/throw/exit(1), no harness
-#     checks(), and both risky steps swallowed by `.catch(() => {})`. It is a
-#     screenshot tool. Gating it would add a step that cannot fail.
+# SIXTEEN OF SEVENTEEN. Four of these joined in #205 and this comment used to say
+# why they could not: shoot-console-brain, shoot-onboarding, shoot-rescue and
+# shoot-sustenance navigated with a TIME and no DATE, so in CI they would have run
+# on whatever weekday the runner woke up on. They now go through clockUrl, and each
+# was measured green on the default pin AND on a Monday with the lever proven to
+# move (?d=2026-09-16 vs ?d=2026-09-21), so the reason for excluding them is gone
+# and they are in. An exclusion whose stated reason has expired is the thing this
+# whole issue is about, so it does not get to sit here.
+#
+# WHAT IS STILL NOT HERE, and it is one file:
+#   · shoot-dial. NOT because it cannot fail — that was my claim and it was WRONG.
+#     Measured: `node scripts/shoot-dial.mjs http://localhost:59999` exits 1. Two of
+#     its three risky steps are unswallowed awaits (`waitForSelector('.nx-stage')`,
+#     `stage.hover()`), and a top-level await rejection is fatal in ESM; only the
+#     .ob-scrim onboarding bypass is caught. coderpa measured that and I reproduced
+#     it. The TRUE and narrower reason is that it cannot fail on ANYTHING ABOUT THE
+#     DIAL — the 2-ring layout and bottom readout its own header names. It proves
+#     the harness, not its subject, and that subject is already asserted better by
+#     shoot.mjs:143-146 (role=application, the aria-label, the sr-only heading).
+#     Gating it would add a step that only re-proves the page loaded. See #204.
 on:
   pull_request:
     # The PRs where app code changes: feature PRs into an RC, and the promotion.
-    # Both RC spellings, matching ci.yml, because `v*-rc` does NOT match
-    # `v2026.10-rc1` — only `v*-rc*` does, and a future `v2026.11-rc` would be the
-    # other way round. `develop` is ci.yml's fourth entry and is deliberately NOT
-    # here: this repo promotes v*-rc* -> main, and ui-overlap.yml's own
-    # "develop -> main" comment is already known-stale and in the handoff. If a
-    # develop branch is ever revived, this list is where it goes.
+    # `v*-rc*` is REQUIRED and `v*-rc` is REDUNDANT — kept only to match ci.yml,
+    # which calls it "the legacy spelling". An earlier version of this comment
+    # claimed the two were complementary; that was wrong and runner2 caught it.
+    # `*` matches ZERO or more, so v*-rc* is a strict superset: it matches
+    # v2026.10-rc1 (which v*-rc does not) AND v2026.11-rc (which v*-rc does).
+    # `develop` is ci.yml's fourth entry and is deliberately NOT here: this repo
+    # promotes v*-rc* -> main, and ui-overlap.yml's own "develop -> main" comment
+    # is known-stale and in the handoff. If develop is revived, it goes here.
     branches: ['main', 'v*-rc*', 'v*-rc']
     paths: ['app/**', '.github/workflows/ui-proofs.yml']
   workflow_dispatch:
@@ -122,6 +135,14 @@ jobs:
         run: node scripts/shoot-review.mjs http://localhost:5198
       - name: weekly planning ritual
         run: node scripts/shoot-ritual.mjs http://localhost:5198
+      - name: memory console against a real gbrain
+        run: node scripts/shoot-console-brain.mjs http://localhost:5198
+      - name: first-run onboarding
+        run: node scripts/shoot-onboarding.mjs http://localhost:5198
+      - name: calendar-pull rescue chips
+        run: node scripts/shoot-rescue.mjs http://localhost:5198
+      - name: sustenance scaffold + morning brief
+        run: node scripts/shoot-sustenance.mjs http://localhost:5198
 
       # THE PROOFS MUST NOT DIRTY THE TREE, AND THIS IS THE GUARD THAT COVERS EVERY
       # ROUTE. Measured on 9fe1a88: all twelve run back to back leave
@@ -148,11 +169,15 @@ jobs:
         if: always()
         with:
           name: ui-proof-shots
-          # only what the twelve actually write. shots/onboarding belongs to
-          # shoot-onboarding, one of the four DELIBERATELY excluded proofs, so
-          # listing it here would read as though that proof still runs.
+          # only what the wired proofs actually write. shots/onboarding was
+          # REMOVED here in #203 because shoot-onboarding was excluded then, and is
+          # BACK because it is wired now (shoot-onboarding.mjs:17 resolves
+          # shots/onboarding and the run fills it). The reason governs the line, so
+          # the line moves when the reason does — do not re-remove it without
+          # checking whether shoot-onboarding is still in the steps above.
           path: |
             app/shots/latest
             app/shots/overlap
+            app/shots/onboarding
             app/shots/*.png
           if-no-files-found: ignore
