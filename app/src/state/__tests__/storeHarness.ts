@@ -176,7 +176,14 @@ export async function freshStore(
       hydrate: () => Promise<void>
       settings: Settings
     }
-    setState: (s: unknown, replace: true) => void
+    /* METHOD syntax on purpose, not property syntax. As a property this is
+       checked strictly (strictFunctionTypes) and zustand's own overloaded
+       setState — whose parameter is Partial<MewState>, narrower than unknown —
+       is not assignable to it, so `freshStore(useMew, …)` fails tsc at every
+       call site. Declared as a method it is bivariant and accepts the real
+       store. Found by being its first caller: this helper shipped with none,
+       so the signature had never met its subject (#176). */
+    setState(s: unknown, replace: true): void
   },
   opts: {
     at: Date
