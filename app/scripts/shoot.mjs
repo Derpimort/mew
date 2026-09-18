@@ -113,7 +113,7 @@ await page.waitForTimeout(1500)
 console.log('count:', await page.textContent('.nx-count'))
 console.log('task:', await page.textContent('.nx-task'))
 
-/* 1a · Dial accessibility (issue #172 · WCAG 2.2 §2.1.1/§1.1.1/§4.1.2 · APG
+/* 1a · Dial accessibility (mew-archive#172 · WCAG 2.2 §2.1.1/§1.1.1/§4.1.2 · APG
    Application pattern). The pure nav/label logic is unit-tested; this proves the
    real DOM carries the roles, names, and roving tabindex, and that the keyboard
    actually moves + acts on focus. Any miss fails the shoot gate. */
