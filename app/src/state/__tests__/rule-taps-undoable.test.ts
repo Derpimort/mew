@@ -238,6 +238,47 @@ describe('#182 — the second "forget" is undoable, and takes back nothing else'
     expect(dismissals()).toHaveLength(1) // the re-enable itself came back
   })
 
+  it('a tombstone earns no clause: undoing "not a rule" never claims to give back a rule', async () => {
+    /* coderpa's finding on this PR, and it is the right shape: the clause
+       comment in store.ts says a `dismissed_rule` is machinery rather than
+       something the owner did, and NOTHING asserted it. They measured the hole —
+       widening the filter to `learned_rule || dismissed_rule` survives this file
+       and all four undo files, 27 passed — so the exclusion was correct and its
+       REASON was unpinned. That is the same debt #176's `kind === 'preference'`
+       filter carried until a mutant caught it.
+       With the filter widened, this undo would announce "took back what I'd
+       picked up about probe" for a rule MEW never picked up: naming a thing the
+       owner did not do, in the receipt whose whole job is naming what they did. */
+    await boot()
+    const offer: ChatMessage = {
+      id: 'n-dismiss',
+      role: 'nudge',
+      ts: Date.now(),
+      nudgeType: 'learn-offer',
+      body: 'want me to always do that?',
+      actions: [
+        { id: 'confirm', label: 'yes, always', kind: 'primary' },
+        { id: 'dismiss', label: 'not a rule', kind: 'secondary' },
+      ],
+      payload: { match: 'probe', rule: JSON.stringify({ ...RULE, match: 'probe' }) },
+    }
+    useMew.setState((s) => ({ chat: [...s.chat, offer] }))
+    useMew.getState().nudgeAction('n-dismiss', 'dismiss')
+    await tick()
+    expect(dismissals()).toHaveLength(1)
+    expect(picked()).toHaveLength(0) // nothing was ever picked up
+
+    await say('undo that')
+    await tick()
+
+    /* the dismissal really is taken back … */
+    expect(dismissals()).toHaveLength(0)
+    /* … and MEW does not dress a tombstone up as a rule */
+    expect(lastMewBody()).not.toMatch(/picked up/i)
+    expect(lastMewBody()).not.toMatch(/probe/i)
+    expect(lastMewBody()).toBe('Undone.')
+  })
+
   it('the two taps that were already right are unchanged: a checkbox declines cleanly', async () => {
     await boot()
     await say('move deck polish to 15:00')
