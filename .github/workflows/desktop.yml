@@ -103,6 +103,19 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
       - run: pnpm --dir app install --frozen-lockfile
+      # BUILD BEFORE COVERAGE, for the same reason ci.yml's `unit` job does it:
+      # csp.test.ts asserts the built bundle carries no inline styles and can only
+      # do that when dist/index.html exists, and its `CI has a build to check`
+      # case FAILS rather than skips when it is missing — deliberately, so the
+      # step can never be quietly removed.
+      #
+      # ci.yml reasoned about this PR shape explicitly and put the build in `unit`
+      # "one place that fires on a feature PR and on the promotion PR alike".
+      # That reasoning was right and one file short: THIS job also runs the app
+      # suite, only on a promotion PR, so it was the last place the tripwire could
+      # still fire — and it did, on the v2026.9.0 promotion (#185), where a red
+      # check costs the most. Five built-bundle checks were skipping here.
+      - run: pnpm --dir app build
       # the gate: thresholds live in vitest.config.ts; a drop exits non-zero.
       # the config's json-summary reporter writes a tiny totals file the comment
       # step parses without re-reading the 1 MB per-file v8 json.
