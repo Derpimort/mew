@@ -61,11 +61,28 @@
 // a third.
 //
 // Usage:
-//   node desktop/scripts/check-citation-dates.mjs <file…> --issues <json>
+//   node desktop/scripts/check-citation-dates.mjs <file…> --issues <path-to-json>
 //
-// --issues is a JSON map of "<number>": "<created_at ISO>" | null, gathered OUT of band
-// exactly as check-promotion-closes.mjs takes --linked. The guard does no network I/O: it
-// stays deterministic, runs offline, and is testable without a token.
+// --issues takes a PATH to a JSON file, NOT inline JSON. Passing the JSON itself is the
+// natural mistake — this file's first reviewer made it on their first run and got exit 2
+// with ENAMETOOLONG — so it is spelled out rather than implied by the placeholder.
+//
+// It is NOT "the same as check-promotion-closes.mjs --linked", which an earlier version of
+// this header claimed and which is false: --linked takes an INLINE comma list. Pointing at
+// a working precedent while describing the wrong form is worse than not pointing at one,
+// because that is the sentence a reader trusts. The shared idea is only that dates arrive
+// OUT OF BAND rather than being fetched here; the carrier differs because a map of ISO
+// timestamps is not a comma list of integers.
+//
+// The file is {"<number>": "<created_at ISO>" | null}, null meaning this repo never
+// allocated that number. Gather it once, e.g.:
+//
+//   gh api --paginate 'repos/Derpimort/mew/issues?state=all&per_page=100' \
+//     -q '.[]|"\(.number) \(.created_at)"' > /tmp/nums
+//   # then map every number your files cite; anything absent from /tmp/nums is null
+//
+// The guard itself does NO network I/O, which is what keeps it deterministic, offline and
+// testable without a token.
 //
 // Exit 0 = nothing certain to report · 1 = at least one citation proven to mean the
 // archive · 2 = unreadable input.
