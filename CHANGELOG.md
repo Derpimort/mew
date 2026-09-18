@@ -13,7 +13,7 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 [`.github/RELEASES.md`](.github/RELEASES.md).
 
 > **Issue numbers in sections below `[2026.9.0]` point at a different repository.** MEW was
-> migrated from [`Derpimort/mew-archive`](https://github.com/Derpimort/mew-archive) and these notes
+> migrated from `Derpimort/mew-archive` (a private, maintainer-only repo) and these notes
 > kept the predecessor's numbering, so a `#NNN` in any section below `[2026.9.0]` means
 > `mew-archive#NNN` — not this repo's issue of that number. This repo's own counter has since
 > passed most of them, so those citations resolve to unrelated live issues and pull requests here

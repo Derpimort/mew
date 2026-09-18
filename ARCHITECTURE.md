@@ -2,10 +2,14 @@
 
 *Companion to `design_handoff_mew_mvp/PRD.md` and the vision doc. This document chooses the technical shape of MEW: three platform alternatives, one recommendation, and the internal architecture that stays the same regardless of which platform wins.*
 
-> **`#NNN` in this document usually means [`Derpimort/mew-archive`](https://github.com/Derpimort/mew-archive).**
-> MEW was migrated and the prose kept the predecessor's issue numbers. This repo's counter has
-> since passed many of them, so an unqualified `#NNN` here may resolve to an unrelated live issue
-> or pull request. Citations that matter to a decision are qualified inline; see #195.
+> **A bare `#N` in this document is an internal index, not an issue.** "Acceptance criterion #2",
+> "acceptance #7", "nudge #4" and the like number items *within this document*. Following one to an
+> issue tracker is a mistake: `#2`, `#4`, `#5`, `#6`, `#7`, `#8` and `#9` are all live issues in this
+> repo, about something else entirely.
+> Where this document cites a real issue from before the migration from `Derpimort/mew-archive`, the
+> citation is qualified inline as `mew-archive#N` — that repo is private, so the link answers 404
+> unless you are a maintainer, and the 404 is the expected answer rather than a broken link.
+> See [#195](https://github.com/Derpimort/mew/issues/195).
 
 ---
 
