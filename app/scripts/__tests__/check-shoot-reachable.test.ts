@@ -119,8 +119,12 @@ describe('findUnreachable — an exemption cannot outlive its reason', () => {
   })
 
   it('a repaired proof fails BOTH ways if the exemption is left behind', () => {
-    /* the shape that matters: someone fixes shoot-dial.mjs, wires it in, and
-       forgets the list. Reachability is satisfied, so only rule 3 catches it. */
+    /* the shape that matters: someone repairs a rotted proof, wires it in, and
+       forgets the list. Reachability is satisfied, so only rule 3 catches it.
+       The filenames below are literals handed to a pure function, which does not
+       care what they are called — `shoot-dial.mjs` no longer exists (it became
+       `capture-dial.mjs` in #204), so this sentence no longer names a real file
+       on purpose. */
     const r = check(
       ['shoot-dial.mjs'],
       { 'shoot:dial': 'node scripts/shoot-dial.mjs' },

@@ -11,9 +11,14 @@
    WHAT IT CAN AND CANNOT FAIL ON, measured rather than assumed, because the
    issue's first premise was that it "cannot fail" and that was wrong:
    `node scripts/capture-dial.mjs http://localhost:59999` EXITS 1. Two of its
-   three risky steps are unswallowed — the `.nx-stage` wait and `stage.hover()` —
-   and a top-level await rejection is fatal in ESM. Only the `.ob-scrim` wait and
-   the arc hover carry `.catch(() => {})`.
+   FOUR risky steps are unswallowed — the `.nx-stage` wait and `stage.hover()` —
+   and a top-level await rejection is fatal in ESM. The other two carry
+   `.catch(() => {})`: the `.ob-scrim` wait and the arc hover.
+   This said THREE until #212's follow-up, while naming four in the same
+   sentence: the count came from the first measurement, taken before the
+   `.ob-scrim` catch was noticed, and the list was corrected without the number.
+   No line numbers here on purpose — a comment that cites its own file's lines
+   goes stale the moment anything above it changes, which is how this one broke.
    So it fails on "the page never rendered" and "the stage is not hoverable". It
    cannot fail on the 2-ring layout or the bottom readout — the things the old
    header said it existed to verify. A proof of the harness, not of its subject.
