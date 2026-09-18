@@ -42,6 +42,7 @@
    plumbing, not the test's own setup. */
 
 import { chatOrder } from '../../adapters/storage-port'
+import { dayKey } from '../../domain/time'
 import type { Block, ChatMessage, Settings } from '../../domain/types'
 import type { ToolExecutor } from '../../adapters/model/types'
 
@@ -190,9 +191,15 @@ export async function freshStore(
   blocks.forEach((b) => fakeDb.blocks.set(b.id, b))
   memory.forEach((e) => fakeDb.memory.set(e.id, e))
   fakeDb.settings = { ...pristine.settings, ...settings }
-  const dayKey = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`
+  /* the PRODUCT's dayKey, not a copy of it (#169 review). The first draft
+     inlined the same template string — agreeing today and bound to nothing, so a
+     timezone fix in domain/time would leave this harness minting the old string
+     and 55 migrated tests would set lastTickDay to a value the product never
+     produces: green tests describing a world that no longer exists. A module
+     written to remove a copy shipping a copy is the same argument turned on
+     itself, and the copies it replaces all import this function. */
   useMew.setState(
-    { ...pristine, lastTickDay: dayKey, nowMs: at.getTime(), lastActivityMs: at.getTime() },
+    { ...pristine, lastTickDay: dayKey(at), nowMs: at.getTime(), lastActivityMs: at.getTime() },
     true
   )
   await useMew.getState().hydrate()
