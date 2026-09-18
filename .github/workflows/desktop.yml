@@ -103,6 +103,16 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 22, cache: pnpm, cache-dependency-path: app/pnpm-lock.yaml }
       - run: pnpm --dir app install --frozen-lockfile
+      # Build BEFORE the coverage run, for the same reason ci.yml's `unit` job
+      # does (#156): csp.test.ts asserts the BUILT bundle carries no inline
+      # styles, and its two describes skipIf away when dist/index.html is
+      # missing — so those checks would report nothing while the job reported a
+      # pass. #156 closed that in `unit` and named the promotion PR explicitly,
+      # but THIS job also runs the whole suite and it runs ONLY on a PR into
+      # main, so no feature PR could ever have exercised it. The tripwire #156
+      # added — "CI has a build to check: dist/index.html exists" — is what
+      # found it, on the first promotion PR after that guard existed.
+      - run: pnpm --dir app build
       # the gate: thresholds live in vitest.config.ts; a drop exits non-zero.
       # the config's json-summary reporter writes a tiny totals file the comment
       # step parses without re-reading the 1 MB per-file v8 json.
