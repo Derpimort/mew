@@ -181,6 +181,9 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - And a standing rule you take back is named too: "undo that" after "remember that gym starts at 7"
   now reads "took back the rule about gym", where it used to trail off into nothing. The rule itself
   always came back — only the sentence was empty.
+- And forgetting a rule can be taken back as well: "undo that" right after letting one go brings it
+  back, and says which one. Letting go of a rule MEW never had changes nothing and costs you nothing
+  — your last real change is still the one waiting to be undone.
 
 ### Ask about any stretch of time
 - Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three

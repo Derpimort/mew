@@ -5823,11 +5823,13 @@ export const useMew = create<MewState>((set, get) => {
        did not cover. Only `preference` earns a clause: an ordinary undo also
        drops drift and completion notes, and naming those would put a rule
        sentence on every undo that never touched one.
-       Both directions are written because they are one helper, but only the
-       DROPPED one is reachable today and only it is pinned: `remember` snapshots
-       for undo, while `forgetStandingPref` does not, so a forgotten rule cannot
-       be undone at all right now. That asymmetry is the product's, not this
-       summary's — noted rather than quietly implied by code that looks tested. */
+       BOTH DIRECTIONS ARE NOW REACHABLE AND BOTH ARE PINNED. When this was
+       written only the dropped one was: `remember` snapshotted for undo and
+       `forgetStandingPref` did not, so a forgotten rule could not be undone at
+       all, and this comment said so rather than letting the restore branch read
+       as tested. #158 gave forget its snapshot — the owner's condition is "undo
+       allowed for EVERY action", and forgetting is one — which is what reaches
+       the restore clause. See forget-undoable.test.ts. */
     const ruleName = (e: MemoryEvent) => e.pref?.match ?? 'that'
     const droppedSet = new Set(droppedMemIds)
     parts.push(
@@ -7800,6 +7802,16 @@ export const useMew = create<MewState>((set, get) => {
         .map((e) => e.id)
       const brainHasIt = (brainPrefs ?? []).some((p) => prefKey(p) === key)
       if (!drop.length && !brainHasIt) return
+      /* #158: forgetting a rule is undoable, like every other action that takes
+         something away. It reaches no tool, so it marks itself the way the other
+         tool-less taps do — snapshot before the change, mark the week after.
+         AFTER the guard above on purpose: a forget that finds nothing to forget
+         must not spend the undo slot, or "undo that" would answer the no-op
+         instead of whatever the owner actually did last.
+         The receipt already knows what to say — #176 wrote the restored-preference
+         clause and could not reach it, because nothing restored one. This is what
+         reaches it. */
+      snapshotForUndo()
       if (drop.length) {
         const gone = new Set(drop)
         set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
@@ -7814,6 +7826,7 @@ export const useMew = create<MewState>((set, get) => {
         dayKey: dayKey(new Date(get().nowMs)),
         pref: { kind: pref.kind, match: pref.match, value: '', stated: '' },
       })
+      markUndoLeft()
       if (brainOn()) void brain.ingest(forgottenPrefPage(pref)).then(() => refreshBrainPrefs())
       else refreshBrainPrefs()
     },
