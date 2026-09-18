@@ -2,6 +2,15 @@
 
 _Last updated after the big review-and-merge drain. Branch `main` @ `71a6490`, 337 passing + 1 env-gated skip, Docker healthy on localhost:3000._
 
+> **`#NNN` here is a `mew-archive` number.** MEW was migrated from
+> `Derpimort/mew-archive` and this document kept the predecessor's issue numbers, so a
+> citation means `mew-archive#NNN` rather than this repo's issue of that number. This
+> repo's own counter has since grown past 30 of the 30 distinct numbers cited here,
+> so those now resolve to a real, live, unrelated issue or pull request — a wrong answer
+> rather than no answer. The archive is private, so a qualified link answers **404 unless
+> you are a maintainer, and that 404 is the expected result, not a broken link**. Measured
+> per file at this commit; the repo-wide sweep is #195.
+
 ## Goal
 
 Make MEW research-grade and robust, and run all feature work through an autonomous **dev loop**: `/dev-plan` writes claimable `[dev]` issues → other agents run `/loop /dev-code` to build them into PRs → `/dev-review` audits → the human (or admin-merge) lands them on protected `main`. Right now the immediate goal is **draining the open PR queue to zero**, which closes the last two feature epics.
