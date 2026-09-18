@@ -1,5 +1,29 @@
-/* Tight, high-res capture of just the focus dial — to verify the 2-ring layout
-   and the bottom readout. Usage: node scripts/shoot-dial.mjs [baseUrl] */
+/* A CAPTURE TOOL, NOT A PROOF. It takes tight, high-res shots of the focus dial
+   for a human to look at. IT VERIFIES NOTHING ABOUT THE DIAL and is not wired
+   into any gate. Usage: node scripts/capture-dial.mjs [baseUrl] [HH:MM]
+
+   RENAMED OUT OF THE `shoot*` NAMESPACE (#204). `check-shoot-reachable.mjs`
+   treats every `scripts/shoot*.mjs` as a proof, so while this was called
+   `shoot-dial.mjs` it was counted as one — sixteen real proofs and this, in the
+   same directory, indistinguishable by name or location from files an acceptance
+   audit counts as evidence.
+
+   WHAT IT CAN AND CANNOT FAIL ON, measured rather than assumed, because the
+   issue's first premise was that it "cannot fail" and that was wrong:
+   `node scripts/capture-dial.mjs http://localhost:59999` EXITS 1. Two of its
+   three risky steps are unswallowed — the `.nx-stage` wait and `stage.hover()` —
+   and a top-level await rejection is fatal in ESM. Only the `.ob-scrim` wait and
+   the arc hover carry `.catch(() => {})`.
+   So it fails on "the page never rendered" and "the stage is not hoverable". It
+   cannot fail on the 2-ring layout or the bottom readout — the things the old
+   header said it existed to verify. A proof of the harness, not of its subject.
+
+   THE DIAL'S REAL CONTRACT IS ALREADY ASSERTED, AND BETTER: `shoot.mjs` step 1a
+   pins `role="application"`, a descriptive aria-label, the sr-only `h2` heading
+   and that ArrowRight actually moves focus, citing mew-archive#172 and WCAG 2.2
+   §2.1.1/§1.1.1/§4.1.2. It runs in `ui-proofs.yml` on every PR touching `app/`.
+   If you want the dial verified, that is the file — teaching this one to assert
+   would either duplicate it or invent a contract nobody decided. */
 import { chromium } from 'playwright-core'
 import { findChromium } from './lib/chromium.mjs'
 import { mkdirSync } from 'node:fs'

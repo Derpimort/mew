@@ -27,8 +27,11 @@ name: ui-proofs
 # whole issue is about, so it does not get to sit here.
 #
 # WHAT IS STILL NOT HERE, and it is one file:
-#   · shoot-dial. NOT because it cannot fail — that was my claim and it was WRONG.
-#     Measured: `node scripts/shoot-dial.mjs http://localhost:59999` exits 1. Two of
+#   · the dial capture tool. RENAMED to `capture-dial.mjs` in #204 and no longer a
+#     proof at all, so `check-shoot-reachable.mjs` counts SIXTEEN and this job runs
+#     all sixteen — the set and the gate now agree by construction.
+#     NOT excluded because it cannot fail — that was my claim and it was WRONG.
+#     Measured: `node scripts/capture-dial.mjs http://localhost:59999` exits 1. Two of
 #     its three risky steps are unswallowed awaits (`waitForSelector('.nx-stage')`,
 #     `stage.hover()`), and a top-level await rejection is fatal in ESM; only the
 #     .ob-scrim onboarding bypass is caught. coderpa measured that and I reproduced
