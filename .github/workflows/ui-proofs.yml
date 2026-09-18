@@ -105,7 +105,7 @@ jobs:
 
       - run: pnpm build
 
-      # One build, one preview server, twelve proofs against the same bytes.
+      # One build, one preview server, sixteen proofs against the same bytes.
       # Each proof is its own step so a failure names itself in the job summary
       # instead of hiding inside a loop's exit code.
       - name: serve
@@ -148,8 +148,11 @@ jobs:
         run: node scripts/shoot-sustenance.mjs http://localhost:5198
 
       # THE PROOFS MUST NOT DIRTY THE TREE, AND THIS IS THE GUARD THAT COVERS EVERY
-      # ROUTE. Measured on 9fe1a88: all twelve run back to back leave
-      # `git status --porcelain` empty, because every write lands under the
+      # ROUTE, and it is verified with all SIXTEEN rather than the twelve-proof run
+      # this line used to cite — sixteen is not twelve plus a guess. CI run
+      # 35382513436, on #209's own head, executed all sixteen on a clean runner and
+      # this step passed there, so the tree stays clean with four more writers.
+      # Every write lands under the
       # gitignored shots/ paths. With PIN_CANON=1 on a SINGLE proof, seven tracked
       # canon PNGs are modified WHILE THAT PROOF EXITS 0 — a green proof rewriting
       # the evidence it is judged against, which is how canon rots.
@@ -166,7 +169,7 @@ jobs:
             echo "$dirty"
             exit 1
           fi
-          echo "tree clean after all twelve proofs"
+          echo "tree clean after all sixteen proofs"
 
       - uses: actions/upload-artifact@v7
         if: always()
