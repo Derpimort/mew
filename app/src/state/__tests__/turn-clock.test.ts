@@ -7,113 +7,28 @@
    seams (the dayload harness + a scripted local model); no jsdom. */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Block, ChatMessage, Settings } from '../../domain/types'
-import { chatOrder } from '../../adapters/storage-port'
-import type { ToolExecutor } from '../../adapters/model/types'
+import type { Block } from '../../domain/types'
+import {
+  aiAdapterMock,
+  brainMock,
+  desktopMock,
+  fakeDb,
+  notifyMock,
+  scriptedModel,
+  storageMock,
+} from './storeHarness'
 
-/* ── fakes ────────────────────────────────────────────────────────── */
-
-const fakeDb = {
-  blocks: new Map<string, unknown>(),
-  captures: new Map<string, unknown>(),
-  chat: new Map<string, unknown>(),
-  memory: new Map<string, unknown>(),
-  settings: null as Settings | null,
-  chatAsc(): ChatMessage[] {
-    return ([...this.chat.values()] as ChatMessage[]).sort(chatOrder)
-  },
-  reset() {
-    this.blocks.clear()
-    this.captures.clear()
-    this.chat.clear()
-    this.memory.clear()
-    this.settings = null
-  },
-}
-
-vi.mock('../../adapters/storage', () => ({
-  createDexieStorage: () => ({
-    load: async () => ({
-      blocks: [...fakeDb.blocks.values()],
-      captures: [...fakeDb.captures.values()],
-      chat: fakeDb.chatAsc(),
-      memory: [...fakeDb.memory.values()],
-      settings: fakeDb.settings,
-    }),
-    putBlocks: async (bs: { id: string }[]) => bs.forEach((b) => fakeDb.blocks.set(b.id, b)),
-    deleteBlocks: async (ids: string[]) => ids.forEach((i) => fakeDb.blocks.delete(i)),
-    putCaptures: async (cs: { id: string }[]) => cs.forEach((c) => fakeDb.captures.set(c.id, c)),
-    deleteCaptures: async (ids: string[]) => ids.forEach((i) => fakeDb.captures.delete(i)),
-    putChat: async (ms: { id: string }[]) => ms.forEach((m) => fakeDb.chat.set(m.id, m)),
-    countChat: async () => fakeDb.chat.size,
-    loadChatBefore: async () => [],
-    loadChatOlderThan: async () => [],
-    deleteChat: async (ids: string[]) => ids.forEach((i) => fakeDb.chat.delete(i)),
-    putMemory: async (es: { id: string }[]) => es.forEach((e) => fakeDb.memory.set(e.id, e)),
-    deleteMemory: async (ids: string[]) => ids.forEach((i) => fakeDb.memory.delete(i)),
-    putSettings: async (s: Settings) => {
-      fakeDb.settings = s
-    },
-    loadSyncMap: async () => [],
-    saveSyncMap: async () => {},
-    deleteSyncForCalendar: async () => {},
-    exportJson: async () => '{}',
-    importJson: async () => {},
-    getAuditLog: async () => [],
-    wipe: async () => fakeDb.reset(),
-  }),
-}))
-
-vi.mock('../../adapters/desktop', () => ({
-  isTauri: () => false,
-  readBackup: async () => null,
-  latestBackupDate: async () => null,
-  writeBackup: async () => {},
-  registerCloseFlush: () => {},
-  backupPath: () => '',
-  openBackupFolder: async () => {},
-  onUpdateReady: () => {},
-  applyUpdate: async () => {},
-  brainEndpoint: async () => null,
-  brainStatus: async () => null,
-  onBrainEndpoint: () => {},
-  onBrainStatus: () => {},
-  onShellTick: () => {},
-  onTrayAction: () => {},
-  updateTray: async () => {},
-}))
-
-vi.mock('../../adapters/notify', () => {
-  const stub = () => ({ mirror: () => {} })
-  return { createNotifier: stub, createBrowserNotifier: stub }
-})
-
-vi.mock('../../adapters/brain/gbrainHttp', () => ({
-  createGbrainHttp: () => ({
-    ingest: async () => {},
-    recall: async () => [],
-    health: async () => false,
-    listPrefs: async () => [],
-    links: async () => [],
-  }),
-}))
-
-/* a scripted local model: hands the turn the real executor (the keyed path) */
-const scripted = {
-  midTurn: null as null | ((exec: ToolExecutor) => void),
-  ctxToday: null as string | null,
-}
-vi.mock('../../adapters/model/aiAdapter', () => ({
-  createAiAdapter: (spec: { provider: string }) => ({
-    id: spec.provider,
-    async *converse(_thread: unknown, ctx: { todayKey: string }, exec: ToolExecutor) {
-      if (spec.provider !== 'ollama') throw Object.assign(new Error('offline'), { statusCode: 503 })
-      scripted.ctxToday = ctx.todayKey
-      yield 'on it.'
-      scripted.midTurn?.(exec)
-    },
-  }),
-}))
+/* the five adapter seams. The CALLS stay here because vitest hoists vi.mock
+   above this file's own imports, and each factory must be an inline arrow that
+   CALLS the shared builder rather than the builder itself: passing the imported
+   binding directly is dereferenced at hoist time and throws "Cannot access
+   __vi_import_0__ before initialization". Inside the arrow it is read lazily,
+   when the mocked module is first imported. */
+vi.mock('../../adapters/storage', () => storageMock())
+vi.mock('../../adapters/desktop', () => desktopMock())
+vi.mock('../../adapters/notify', () => notifyMock())
+vi.mock('../../adapters/brain/gbrainHttp', () => brainMock())
+vi.mock('../../adapters/model/aiAdapter', () => aiAdapterMock())
 
 import { useMew } from '../store'
 
@@ -176,8 +91,9 @@ const settle = async () => {
 
 beforeEach(() => {
   vi.useFakeTimers()
-  scripted.midTurn = null
-  scripted.ctxToday = null
+  scriptedModel.reset()
+  /* this file's own inline adapter always yielded one chunk before midTurn */
+  scriptedModel.chunks = ['on it.']
 })
 afterEach(() => {
   vi.useRealTimers()
@@ -214,7 +130,7 @@ describe('#96 — a turn in the seconds after midnight reads one clock', () => {
 
   it('keyed: the model is told Wednesday, and a tool call for day +1 lands on Thursday', async () => {
     await atTheSeam([], 'local')
-    scripted.midTurn = (exec) => {
+    scriptedModel.midTurn = (exec) => {
       exec.plan(
         [{ title: 'budget review', tag: 'work', dayOffset: 1, startMin: 9 * 60, durationMin: 60 }],
         []
@@ -222,7 +138,7 @@ describe('#96 — a turn in the seconds after midnight reads one clock', () => {
     }
     await say('put the budget review tomorrow at 9')
     await settle()
-    expect(scripted.ctxToday).toBe(WED)
+    expect(scriptedModel.ctxToday).toBe(WED)
     expect(blocks().find((b) => b.title === 'budget review')!.dayKey).toBe(THU)
   })
 
@@ -244,6 +160,6 @@ describe('#96 — a turn in the seconds after midnight reads one clock', () => {
     vi.setSystemTime(TUE_235958)
     await say('what does thursday look like')
     await settle()
-    expect(scripted.ctxToday).toBe(WED)
+    expect(scriptedModel.ctxToday).toBe(WED)
   })
 })
