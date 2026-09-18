@@ -16,6 +16,13 @@
    1) found ten still passing and two rotted — one missing the onboarding bypass
    that #160's tour made necessary, one asserting a sentence the product no
    longer says while its own log showed the behaviour it claimed was broken.
+   Both were repaired in #173 before this landed, so all seventeen are wired up
+   and KNOWN_BROKEN below is empty on purpose.
+
+   What is NOT settled by reachability: nine of the twelve pin no date, so they
+   passed on a Thursday and nobody knows about a Sunday (#171 step 3), and a run
+   still rewrites tracked canon PNGs in place under a gitignored directory. This
+   guard makes the proofs runnable; it does not make them trustworthy.
 
    BOTH DIRECTIONS, because a guard that checks one is the vacuous half:
      1. a proof with no package.json script pointing at it   → orphan
@@ -56,25 +63,28 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
-/** Proofs measured BROKEN by #171 step 1 and deliberately not wired up yet.
-    Each line is a claim someone can check, and rule 3 deletes the line for you
-    the moment it stops being true. */
-export const KNOWN_BROKEN = [
-  // #160's first-run concept tour opens over the dial and eats the pointer:
-  // `locator.hover` times out on `.ob-scrim` intercepting. It is the one proof
-  // that predates both the tour and lib/harness.mjs, so it builds its own
-  // browser and page and reaches no bypass. (My first count said eight proofs
-  // lacked one; that grepped the IDIOM, not the behaviour — coderpa classified
-  // all seventeen and four of those eight get it from harness boot(), while
-  // shoot-onboarding must never have one because proving the tour is its job.
-  // Exactly one orphan, not eight: a count right about its subject and wrong
-  // about what it measured.)
-  'shoot-dial.mjs',
-  // The assertion is frozen on old copy: it demands "rescue drill is now
-  // 15:00–15:30" while MEW says "now runs 15:00–15:30". The split it claims is
-  // broken is visible, correct, in the log tail the script itself prints.
-  'shoot-rescue.mjs',
-]
+/** Proofs measured BROKEN and deliberately left unwired, each with the reason
+    beside it as a claim someone can check.
+
+    DELIBERATELY EMPTY ON ARRIVAL — read the emptiness as a measurement, not an
+    oversight. The two proofs this list was written for (`shoot-dial.mjs`, whose
+    hover timed out on #160's concept tour, and `shoot-rescue.mjs`, which
+    asserted a sentence MEW had stopped saying) were repaired in #173 and are
+    wired up below with the other ten. All seventeen are reachable.
+
+    The machinery stays because the next rotted proof will want it, and because
+    of what happened when it nearly shipped populated: an exemption whose reason
+    describes a string no longer in the file it describes is a false reasoning
+    trail inside the guard against false reasoning trails. coderpa measured that
+    window rather than arguing it — copied the repaired proofs onto this branch,
+    left them unwired exactly as this PR would have, and the guard reported
+    "15 of 17 reachable, 2 exempt" with both proofs passing. Hence the merge
+    order, and hence an empty list.
+
+    So, for whoever adds the next entry: write the reason, and wire the proof up
+    in the SAME change once it is repaired, because rule 3 can only see an
+    exemption that became reachable or lost its file (see the boundary above). */
+export const KNOWN_BROKEN = []
 
 /** every shoot proof ENTRY POINT in a scripts dir: `scripts/shoot*.mjs`, but
     not `scripts/lib/*` — `lib/shootClock.mjs` is a helper five proofs import,
