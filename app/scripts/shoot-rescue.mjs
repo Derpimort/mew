@@ -9,6 +9,7 @@ import { chromium } from 'playwright-core'
 import { mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { findChromium } from './lib/chromium.mjs'
+import { clockUrl } from './lib/shootClock.mjs'
 
 const base = process.argv[2] ?? 'http://localhost:5199'
 const exe = findChromium()
@@ -52,7 +53,7 @@ phase = 'identity'
 const distHtml = readFileSync(path.resolve('dist/index.html'), 'utf8')
 const wantSrc = distHtml.match(/src="([^"]*assets\/index-[^"]+\.js)"/)?.[1]
 assert(wantSrc, 'dist/index.html has no hashed index bundle — run pnpm build first')
-await page.goto(`${base}/?t=9:40`)
+await page.goto(clockUrl(base, '9:40'))
 const servedSrc = await page.evaluate(() =>
   [...document.querySelectorAll('script[src]')].map((s) => s.getAttribute('src')).join(' ')
 )
