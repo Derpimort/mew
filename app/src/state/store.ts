@@ -5836,6 +5836,13 @@ export const useMew = create<MewState>((set, get) => {
        allowed for EVERY action", and forgetting is one — which is what reaches
        the restore clause. See forget-undoable.test.ts. */
     const ruleName = (e: MemoryEvent) => e.pref?.match ?? 'that'
+    /* a rule MEW worked out for itself is named the way the console names it —
+       "what I've picked up" — so the receipt cannot be read as the other kind of
+       rule, the kind the owner told MEW. Two buttons say "forget" and #182 is
+       what happens when their two halves are confused; the words keep them
+       apart. A `dismissed_rule` tombstone still earns no clause: it is
+       machinery, not something the owner did. */
+    const pickedName = (e: MemoryEvent) => e.rule?.match ?? 'that'
     const droppedSet = new Set(droppedMemIds)
     parts.push(
       ...back(
@@ -5847,6 +5854,16 @@ export const useMew = create<MewState>((set, get) => {
         restoredMem.filter((e) => e.kind === 'preference'),
         (e) => `brought back the rule about ${ruleName(e)}`,
         (n) => `brought back ${spell(n)} rules`
+      ),
+      ...back(
+        s.memory.filter((e) => droppedSet.has(e.id) && e.kind === 'learned_rule'),
+        (e) => `took back what I'd picked up about ${pickedName(e)}`,
+        (n) => `took back ${spell(n)} things I'd picked up`
+      ),
+      ...back(
+        restoredMem.filter((e) => e.kind === 'learned_rule'),
+        (e) => `brought back what I'd picked up about ${pickedName(e)}`,
+        (n) => `brought back ${spell(n)} things I'd picked up`
       )
     )
     /* NOW REACHABLE AND PINNED — the label on this line has changed, and the
@@ -7023,9 +7040,15 @@ export const useMew = create<MewState>((set, get) => {
              forever. Deterministic here, so keyless confirms identically. */
           const rule = parseLearnedRule(typeof payload.rule === 'string' ? payload.rule : '')
           if (rule) {
+            /* #182: the same tap from the chat rather than the console, so it
+               gets the same snapshot — a chip is an action too. The snapshot
+               sits inside the `if`, so a chip carrying an unparseable rule
+               changes nothing and spends no undo slot. */
+            snapshotForUndo()
             logMemory({ kind: 'learned_rule', dayKey: todayKey, rule })
             if (brainOn()) void brain.ingest(learnedRulePage(rule))
             post([mewMsg("Got it — I'll just do that from now on.")])
+            markUndoLeft()
           }
           resolveNudge(msgId, 'yes, always')
           break
@@ -7034,7 +7057,13 @@ export const useMew = create<MewState>((set, get) => {
           /* dismiss = "not a rule": a persisted dismissal so this pattern is
              never offered again (detectTaskRules skips it). No week change. */
           const match = typeof payload.match === 'string' ? payload.match : ''
-          if (match) logMemory({ kind: 'dismissed_rule', dayKey: todayKey, rule: { match } })
+          if (match) {
+            /* #182: as above — and an empty match writes nothing, so it must not
+               take a snapshot either. */
+            snapshotForUndo()
+            logMemory({ kind: 'dismissed_rule', dayKey: todayKey, rule: { match } })
+            markUndoLeft()
+          }
           resolveNudge(msgId, 'not a rule')
           break
         }
@@ -7802,13 +7831,40 @@ export const useMew = create<MewState>((set, get) => {
        memory the learn/remember paths already write, so keyless and keyed
        behave identically and the console stays tools-only. */
     confirmTaskRule(rule) {
+      /* #182: confirming a rule is something the OWNER did, so it snapshots and
+         marks like every other action. Before this it was invisible to undo in
+         both directions, and the second one was the damaging half: the next
+         unrelated "undo that" restored a memory snapshot taken BEFORE the
+         confirmation and threw it away without a word.
+         NO GUARD HERE, on purpose: memory is append-only, so a confirm always
+         changes something and there is no no-op to protect the undo slot from —
+         unlike the forget below, where there is. */
+      snapshotForUndo()
       logMemory({ kind: 'learned_rule', dayKey: dayKey(new Date(get().nowMs)), rule })
       if (brainOn()) void brain.ingest(learnedRulePage(rule))
+      markUndoLeft()
     },
     forgetRule(match) {
       const drop = get()
         .memory.filter((e) => e.kind === 'learned_rule' && e.rule?.match === match)
         .map((e) => e.id)
+      /* #182: the OTHER button labelled "forget", one screen from the one #158
+         fixed. It took no snapshot, and because weekMark() records blocks,
+         captures and completions but not memory it did not trip #130's guard
+         either — so "undo that" after it reverted an unrelated MOVE while the
+         rule stayed forgotten. Two identical-looking buttons, opposite
+         behaviour. See rule-taps-undoable.test.ts for both directions.
+         THE GUARD FIRST, then the snapshot, the same order forgetStandingPref
+         uses: a forget with nothing left to forget must not spend the undo slot,
+         or "undo that" would answer the no-op instead of whatever the owner
+         actually did last. Nothing left means no stored rule AND a dismissal
+         already on file — a first dismissal is a real change, which is what the
+         "not a rule" chip does. */
+      const dismissed = get().memory.some(
+        (e) => e.kind === 'dismissed_rule' && e.rule?.match === match
+      )
+      if (!drop.length && dismissed) return
+      snapshotForUndo()
       if (drop.length) {
         const gone = new Set(drop)
         set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
@@ -7819,15 +7875,27 @@ export const useMew = create<MewState>((set, get) => {
          remember); applying reads confirmedRulesFrom(local memory) only, so the
          rule truly stops applying regardless of the brain. */
       logMemory({ kind: 'dismissed_rule', dayKey: dayKey(new Date(get().nowMs)), rule: { match } })
+      markUndoLeft()
     },
     reEnableRule(match) {
       const drop = get()
         .memory.filter((e) => e.kind === 'dismissed_rule' && e.rule?.match === match)
         .map((e) => e.id)
       if (!drop.length) return
+      /* #182: same treatment, and the reason is the bug rather than symmetry —
+         without a snapshot of its own, re-enabling would let the next "undo
+         that" reach past it and revert unrelated work while the re-enable
+         stood.
+         WHAT RE-ENABLE MEANS IS UNCHANGED, and undo does not make it redundant:
+         a forget DELETES the stored rule and writes a dismissal, so undoing a
+         forget brings the rule itself back, while re-enabling only lifts the
+         dismissal so the pattern can be OFFERED again. One returns what MEW
+         knew; the other lets MEW ask again. They stay different acts. */
+      snapshotForUndo()
       const gone = new Set(drop)
       set((s) => ({ memory: s.memory.filter((e) => !gone.has(e.id)) }))
       persistDeleteMemory(drop)
+      markUndoLeft()
     },
     saveStandingPref(pref) {
       /* the same remember path a typed rule takes (append + mirror to brain);

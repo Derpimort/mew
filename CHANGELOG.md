@@ -184,6 +184,11 @@ same tree (`app/dist`, dockerized) and rides the same notes. How releases are cu
 - And forgetting a rule can be taken back as well: "undo that" right after letting one go brings it
   back, and says which one. Letting go of a rule MEW never had changes nothing and costs you nothing
   — your last real change is still the one waiting to be undone.
+- And that holds for the rules MEW works out for itself, not just the ones you tell it: letting one
+  go from the memory console, or saying "yes, always" to one, is taken back by "undo that" too. MEW
+  names which kind came back — "what I'd picked up about deep work" for one it noticed, against "the
+  rule about gym" for one you told it — so the two never read as the same thing. And taking one back
+  leaves the rest of your week exactly where it is.
 
 ### Ask about any stretch of time
 - Ask MEW about any stretch of your history, not just one week: "since August 1", "the last three
